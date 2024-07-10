@@ -2824,25 +2824,16 @@ impl Workspace {
                     .follower_states
                     .get_mut(&pane)
                     .ok_or_else(|| anyhow!("following interrupted"))?;
-                state.active_view_id = if let Some(active_view_id) = response.active_view_id {
-                    Some(ViewId::from_proto(active_view_id)?)
-                } else {
-                    None
-                };
+                state.active_view_id = response
+                    .active_view
+                    .as_ref()
+                    .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
                 Self::add_view_from_leader(this.clone(), leader_id, pane.clone(), &view, &mut cx)
                     .await?;
             }
-            Self::add_views_from_leader(
-                this.clone(),
-                leader_id,
-                vec![pane],
-                response.views,
-                &mut cx,
-            )
-            .await?;
             this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
             Ok(())
         }))
@@ -3088,52 +3079,9 @@ impl Workspace {
         follower_project_id: Option<u64>,
         cx: &mut ViewContext<Self>,
     ) -> proto::FollowResponse {
-        let client = &self.app_state.client;
-        let project_id = self.project.read(cx).remote_id();
-
-        let active_view = self.active_view_for_follower(follower_project_id, cx);
-        let active_view_id = active_view.as_ref().and_then(|view| view.id.clone());
-
         cx.notify();
-
         proto::FollowResponse {
-            active_view,
-            // TODO: once v0.124.0 is retired we can stop sending these
-            active_view_id,
-            views: self
-                .panes()
-                .iter()
-                .flat_map(|pane| {
-                    let leader_id = self.leader_for_pane(pane);
-                    pane.read(cx).items().filter_map({
-                        let cx = &cx;
-                        move |item| {
-                            let item = item.to_followable_item_handle(cx)?;
-
-                            // If the item belongs to a particular project, then it should
-                            // only be included if this project is shared, and the follower
-                            // is in the project.
-                            //
-                            // Some items, like channel notes, do not belong to a particular
-                            // project, so they should be included regardless of whether the
-                            // current project is shared, or what project the follower is in.
-                            if item.is_project_item(cx)
-                                && (project_id.is_none() || project_id != follower_project_id)
-                            {
-                                return None;
-                            }
-
-                            let id = item.remote_id(client, cx)?.to_proto();
-                            let variant = item.to_state_proto(cx)?;
-                            Some(proto::View {
-                                id: Some(id),
-                                leader_id,
-                                variant: Some(variant),
-                            })
-                        }
-                    })
-                })
-                .collect(),
+            active_view: self.active_view_for_follower(follower_project_id, cx),
         }
     }
 
@@ -3163,12 +3111,10 @@ impl Workspace {
                             continue;
                         }
 
-                        state.active_view_id =
-                            if let Some(active_view_id) = update_active_view.id.clone() {
-                                Some(ViewId::from_proto(active_view_id)?)
-                            } else {
-                                None
-                            };
+                        state.active_view_id = update_active_view
+                            .view
+                            .as_ref()
+                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
 
                         if state.active_view_id.is_some_and(|view_id| {
                             !state.items_by_leader_view_id.contains_key(&view_id)
@@ -3360,12 +3306,7 @@ impl Workspace {
                                 });
 
                                 is_project_item = item.is_project_item(cx);
-                                update = proto::UpdateActiveView {
-                                    view,
-                                    // TODO: once v0.124.0 is retired we can stop sending these
-                                    id: Some(id),
-                                    leader_id,
-                                };
+                                update = proto::UpdateActiveView { view };
                             }
                         };
                     }
@@ -3373,8 +3314,9 @@ impl Workspace {
             }
         }
 
-        if &update.id != &self.last_active_view_id {
-            self.last_active_view_id.clone_from(&update.id);
+        let active_view_id = update.view.as_ref().and_then(|view| view.id.as_ref());
+        if active_view_id != self.last_active_view_id.as_ref() {
+            self.last_active_view_id = active_view_id.cloned();
             self.update_followers(
                 is_project_item,
                 proto::update_followers::Variant::UpdateActiveView(update),
@@ -4371,24 +4313,8 @@ impl WorkspaceStore {
                 workspace
                     .update(cx, |workspace, cx| {
                         let handler_response = workspace.handle_follow(follower.project_id, cx);
-                        if response.views.is_empty() {
-                            response.views = handler_response.views;
-                        } else {
-                            response.views.extend_from_slice(&handler_response.views);
-                        }
-
-                        if let Some(active_view_id) = handler_response.active_view_id.clone() {
-                            if response.active_view_id.is_none()
-                                || workspace.project.read(cx).remote_id() == follower.project_id
-                            {
-                                response.active_view_id = Some(active_view_id);
-                            }
-                        }
-
                         if let Some(active_view) = handler_response.active_view.clone() {
-                            if response.active_view_id.is_none()
-                                || workspace.project.read(cx).remote_id() == follower.project_id
-                            {
+                            if workspace.project.read(cx).remote_id() == follower.project_id {
                                 response.active_view = Some(active_view)
                             }
                         }
