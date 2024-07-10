@@ -39,7 +39,7 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
-mod signature_help_popover;
+mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -156,7 +156,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help_popover::{SignatureHelpHiddenBy, SignatureHelpState};
+use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
