@@ -7,7 +7,6 @@ use syn::{
     parse_macro_input, Token, Visibility,
 };
 
-#[derive(Debug)]
 struct StyleableMacroInput {
     method_visibility: Visibility,
 }
