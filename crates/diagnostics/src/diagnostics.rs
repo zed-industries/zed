@@ -373,6 +373,7 @@ impl ProjectDiagnosticsEditor {
         // TODO kb panics on wrong exceprt insert order (wrong excerpt selected), on invalid excerpt range edges
         self.excerpts.update(cx, |multi_buffer, cx| {
             path_update.apply_excerpt_changes(
+                path_state,
                 self.context,
                 buffer_snapshot,
                 multi_buffer,
@@ -1035,6 +1036,7 @@ impl PathUpdate {
 
     fn apply_excerpt_changes(
         &mut self,
+        path_state: &mut PathState,
         context: u32,
         buffer_snapshot: BufferSnapshot,
         multi_buffer: &mut MultiBuffer,
@@ -1076,6 +1078,8 @@ impl PathUpdate {
             multi_buffer.expand_excerpts(excerpts, line_count, direction, cx);
         }
         multi_buffer.remove_excerpts(std::mem::take(&mut self.excerpts_to_remove), cx);
+        path_state.first_excerpt_id = self.first_excerpt_id;
+        path_state.last_excerpt_id = self.last_excerpt_id;
     }
 
     fn prepare_blocks_to_insert(
