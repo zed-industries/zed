@@ -381,9 +381,7 @@ impl RuntimePanel {
                         // If no kernelspec but language is one of typescript, python, r, or julia
                         // then we return RequiresSetup
                         match language.as_str() {
-                            "typescript" | "python" | "r" | "julia" => {
-                                SessionSupport::RequiresSetup(language)
-                            }
+                            "typescript" | "python" => SessionSupport::RequiresSetup(language),
                             _ => SessionSupport::Unsupported,
                         }
                     }
