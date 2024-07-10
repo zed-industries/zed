@@ -77,11 +77,32 @@ struct PathState {
     diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 struct DiagnosticData {
     language_server_id: LanguageServerId,
     is_primary: bool,
     entry: DiagnosticEntry<language::Anchor>,
+}
+
+impl PartialEq for DiagnosticData {
+    fn eq(&self, other: &Self) -> bool {
+        self.language_server_id == other.language_server_id
+            && self.is_primary == other.is_primary
+            && self.entry.range == other.entry.range
+            && equal_without_group_ids(&self.entry.diagnostic, &other.entry.diagnostic)
+    }
+}
+
+// `group_id` can differ between LSP server diagnostics output,
+// hence ignore it when checking diagnostics for updates.
+fn equal_without_group_ids(a: &language::Diagnostic, b: &language::Diagnostic) -> bool {
+    a.source == b.source
+        && a.code == b.code
+        && a.severity == b.severity
+        && a.message == b.message
+        && a.is_primary == b.is_primary
+        && a.is_disk_based == b.is_disk_based
+        && a.is_unnecessary == b.is_unnecessary
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -322,6 +343,8 @@ impl ProjectDiagnosticsEditor {
             }
         };
 
+        // TODO kb when warnings are turned off, there's a lot of refresh for many paths happening, why?
+        // TODO kb *.ts file gets pushed as first excerpt, not the last, why?
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
@@ -331,40 +354,14 @@ impl ProjectDiagnosticsEditor {
         let excerpt_borders = self.excerpt_borders_for_path(path_ix);
         let path_state = &mut self.path_states[path_ix];
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let mut new_diagnostics = path_state
-            .diagnostics
-            .iter()
-            .filter(|(diagnostic_data, _)| {
-                server_to_update.map_or(false, |server_id| {
-                    diagnostic_data.language_server_id != server_id
-                })
-            })
-            .filter(|(diagnostic_data, _)| {
-                diagnostic_data.entry.diagnostic.severity <= max_severity
-            })
-            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(*block_id)))
-            .collect::<Vec<_>>();
-        for (server_id, group) in buffer_snapshot
-            .diagnostic_groups(server_to_update)
-            .into_iter()
-            .filter(|(_, group)| {
-                group.entries[group.primary_ix].diagnostic.severity <= max_severity
-            })
-        {
-            for (diagnostic_index, diagnostic) in group.entries.iter().enumerate() {
-                let new_data = DiagnosticData {
-                    language_server_id: server_id,
-                    is_primary: diagnostic_index == group.primary_ix,
-                    entry: diagnostic.clone(),
-                };
-                let (Ok(i) | Err(i)) = new_diagnostics.binary_search_by(|probe| {
-                    compare_data_locations(&probe.0, &new_data, &buffer_snapshot)
-                });
-                new_diagnostics.insert(i, (new_data, None));
-            }
-        }
 
-        let mut path_update = PathUpdate::new(excerpt_borders, new_diagnostics);
+        let mut path_update = PathUpdate::new(
+            excerpt_borders,
+            &buffer_snapshot,
+            server_to_update,
+            max_severity,
+            path_state,
+        );
         path_update.prepare_excerpt_data(
             self.context,
             self.excerpts.read(cx).snapshot(cx),
@@ -709,20 +706,73 @@ struct PathUpdate {
 impl PathUpdate {
     fn new(
         path_excerpts_borders: (Option<ExcerptId>, Option<ExcerptId>),
-        new_diagnostics: Vec<(DiagnosticData, Option<BlockId>)>,
+        buffer_snapshot: &BufferSnapshot,
+        server_to_update: Option<LanguageServerId>,
+        max_severity: DiagnosticSeverity,
+        path_state: &PathState,
     ) -> Self {
+        let mut blocks_to_remove = HashSet::default();
+        let mut removed_groups = HashSet::default();
+        let mut new_diagnostics = path_state
+            .diagnostics
+            .iter()
+            .filter(|(diagnostic_data, _)| {
+                server_to_update.map_or(true, |server_id| {
+                    diagnostic_data.language_server_id != server_id
+                })
+            })
+            .filter(|(diagnostic_data, block_id)| {
+                let diagnostic = &diagnostic_data.entry.diagnostic;
+                let retain = !diagnostic.is_primary || diagnostic.severity <= max_severity;
+                if !retain {
+                    removed_groups.insert(diagnostic.group_id);
+                    blocks_to_remove.insert(*block_id);
+                }
+                retain
+            })
+            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(*block_id)))
+            .collect::<Vec<_>>();
+        new_diagnostics.retain(|(diagnostic_data, block_id)| {
+            let retain = !removed_groups.contains(&diagnostic_data.entry.diagnostic.group_id);
+            if !retain {
+                if let Some(block_id) = block_id {
+                    blocks_to_remove.insert(*block_id);
+                }
+            }
+            retain
+        });
+        for (server_id, group) in buffer_snapshot
+            .diagnostic_groups(server_to_update)
+            .into_iter()
+            .filter(|(_, group)| {
+                group.entries[group.primary_ix].diagnostic.severity <= max_severity
+            })
+        {
+            for (diagnostic_index, diagnostic) in group.entries.iter().enumerate() {
+                let new_data = DiagnosticData {
+                    language_server_id: server_id,
+                    is_primary: diagnostic_index == group.primary_ix,
+                    entry: diagnostic.clone(),
+                };
+                let (Ok(i) | Err(i)) = new_diagnostics.binary_search_by(|probe| {
+                    compare_data_locations(&probe.0, &new_data, &buffer_snapshot)
+                });
+                new_diagnostics.insert(i, (new_data, None));
+            }
+        }
+
         let latest_excerpt_id = path_excerpts_borders.0.unwrap_or_else(|| ExcerptId::min());
         Self {
-            new_diagnostics,
             latest_excerpt_id,
             path_excerpts_borders,
+            new_diagnostics,
+            blocks_to_remove,
             diagnostics_by_row_label: BTreeMap::new(),
-            blocks_to_remove: HashSet::default(),
+            excerpts_to_remove: Vec::new(),
             excerpts_with_new_diagnostics: HashSet::default(),
             unchanged_blocks: HashMap::default(),
             excerpts_to_add: HashMap::default(),
             excerpt_expands: HashMap::default(),
-            excerpts_to_remove: Vec::new(),
             first_excerpt_id: None,
             last_excerpt_id: None,
         }
