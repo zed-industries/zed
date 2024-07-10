@@ -6,7 +6,6 @@ use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use shellexpand;
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -32,12 +31,14 @@ pub struct JournalSettings {
     pub entry_format: Option<String>,
 }
 
+const DEFAULT_ENTRY_FORMAT: &str = "journal/%Y/%m/%d.md";
+
 impl Default for JournalSettings {
     fn default() -> Self {
         Self {
             path: Some("~".into()),
             hour_format: Some(Default::default()),
-            entry_format: Some("journal/%Y/%m/%d.md".into()),
+            entry_format: Some(DEFAULT_ENTRY_FORMAT.into()),
         }
     }
 }
@@ -62,10 +63,9 @@ impl settings::Settings for JournalSettings {
 
 impl JournalSettings {
     pub fn get_entry_path(&self, date: NaiveDate) -> String {
-        let formatted_path = date
-            .format(self.entry_format.as_deref().unwrap_or(""))
-            .to_string();
-        format!("{}", formatted_path)
+        let format_str = self.entry_format.as_deref().unwrap_or(DEFAULT_ENTRY_FORMAT);
+        let formatted_path = std::panic::catch_unwind(|| date.format(format_str).to_string());
+        formatted_path.unwrap_or_else(|_| date.format(DEFAULT_ENTRY_FORMAT).to_string())
     }
 }
 
@@ -94,11 +94,8 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
 
     let now = Local::now();
     let date = NaiveDate::from_ymd_opt(now.year(), now.month(), now.day()).unwrap();
-
     let entry_path = journal_dir.join(settings.get_entry_path(date));
-
-    let now = now.time();
-    let entry_heading = heading_entry(now, &settings.hour_format);
+    let entry_heading = heading_entry(now.time(), &settings.hour_format);
 
     let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(entry_path.parent().unwrap())?;
@@ -205,7 +202,7 @@ mod tests {
         }
     }
 
-    mod folder_structure_tests {
+    mod entry_format_tests {
         use super::super::*;
         use chrono::NaiveDate;
 
@@ -228,6 +225,19 @@ mod tests {
             let entry_path = settings.get_entry_path(date);
 
             assert_eq!(entry_path, format!("custom/2024-07-10.md"));
+        }
+
+        #[test]
+        fn test_get_entry_format_with_invalid_characters() {
+            let settings = JournalSettings {
+                entry_format: Some("/inva%Plid/\0/path/file.md".to_string()),
+                ..Default::default()
+            };
+            let date = NaiveDate::from_ymd_opt(2024, 7, 10).unwrap();
+            let entry_path = settings.get_entry_path(date);
+
+            // should fall back to default format
+            assert_eq!(entry_path, format!("journal/2024/07/10.md"));
         }
 
         #[test]
@@ -265,10 +275,10 @@ mod tests {
         }
 
         #[test]
-        fn test_journal_dir_and_get_entry_path_together() {
+        fn test_journal_dir_resolve_absolute_file_path() {
             let settings = JournalSettings {
                 path: Some("~".to_string()),
-                entry_format: Some("entries/%Y/%m/%d-entry.md".to_string()),
+                entry_format: Some(DEFAULT_ENTRY_FORMAT.into()),
                 ..Default::default()
             };
 
