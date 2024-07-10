@@ -11767,7 +11767,7 @@ fn snippet_completions(
     let language = buffer.read(cx).language_at(buffer_position);
     let language_name = language.as_ref().map(|language| language.lsp_id());
     let snippet_store = project.snippets().read(cx);
-    let snippets = snippet_store.snippets_for(language_name);
+    let snippets = snippet_store.snippets_for(language_name, cx);
 
     if snippets.is_empty() {
         return vec![];

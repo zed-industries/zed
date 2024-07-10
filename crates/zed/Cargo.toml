@@ -87,6 +87,7 @@ serde_json.workspace = true
 settings.workspace = true
 simplelog = "0.9"
 smol.workspace = true
+snippet_provider.workspace = true
 tab_switcher.workspace = true
 supermaven.workspace = true
 task.workspace = true
