@@ -58,58 +58,62 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("missing prompt")));
         };
 
-        let mut wip_action: String = String::new();
         let provider = CompletionProvider::global(cx);
-        for summary in summaries(SUMMARY.to_string(), provider, cx).await? {
-            let prompt = format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{SUMMARY}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{argument}");
-            let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: prompt,
-                }],
-                stop: vec![],
-                temperature: 1.0,
-            };
-
-            let stream = provider.complete(request);
-            let task: Task<Result<String>> = cx.spawn(|_cx| async move {
-                let mut actions_text = String::new();
-                let stream_completion = async {
-                    let mut messages = stream.await?;
-
-                    while let Some(message) = messages.next().await {
-                        let text = message?;
-
-                        chunked_line(&mut wip_action, &text, |line| {
-                            actions_text.push('/');
-                            actions_text.push_str(line);
-                            actions_text.push('\n');
-                        });
-
-                        smol::future::yield_now().await;
-                    }
-
-                    anyhow::Ok(())
-                };
-
-                stream_completion.await?;
-
-                Ok(actions_text)
-            });
-        }
-
-        // As a convenience, append /auto's argument to the end of the prompt
-        // so you don't have to write it again.
-        let argument = argument.to_string();
+        let summaries_future = summaries(SUMMARY.to_string(), provider, cx);
 
         cx.background_executor().spawn(async move {
-            let mut text = task.await?;
+            let mut answer = String::new();
 
-            text.push_str(&argument);
+            for summary in summaries_future.await? {
+                let prompt = format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{SUMMARY}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{argument}");
+                let request = LanguageModelRequest {
+                    model: CompletionProvider::global(cx).model(),
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: prompt,
+                    }],
+                    stop: vec![],
+                    temperature: 1.0,
+                };
+
+                let stream = provider.complete(request);
+                let mut wip_action: String = String::new();
+                let task: Task<Result<String>> = cx.spawn(|_cx| async move {
+                    let mut actions_text = String::new();
+                    let stream_completion = async {
+                        let mut messages = stream.await?;
+
+                        while let Some(message) = messages.next().await {
+                            let text = message?;
+
+                            chunked_line(&mut wip_action, &text, |line| {
+                                actions_text.push('/');
+                                actions_text.push_str(line);
+                                actions_text.push('\n');
+                            });
+
+                            smol::future::yield_now().await;
+                        }
+
+                        anyhow::Ok(())
+                    };
+
+                    stream_completion.await?;
+
+                    Ok(actions_text)
+                });
+
+                answer.push_str(&task.await?);
+            }
+
+            // As a convenience, append /auto's argument to the end of the prompt
+            // so you don't have to write it again.
+            let argument = argument.to_string();
+
+            answer.push_str(&argument);
 
             Ok(SlashCommandOutput {
-                text,
+                text: answer,
                 sections: Vec::new(),
                 run_commands_in_text: true,
             })
