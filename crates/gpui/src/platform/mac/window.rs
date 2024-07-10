@@ -546,7 +546,7 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let frame = NSScreen::visibleFrame(screen);
+                let frame = NSScreen::frame(screen);
                 let display_id = display_id_for_screen(screen);
                 if display_id == display.0 {
                     screen_frame = Some(frame);
@@ -557,7 +557,7 @@ impl MacWindow {
             let screen_frame = screen_frame.unwrap_or_else(|| {
                 let screen = NSScreen::mainScreen(nil);
                 target_screen = screen;
-                NSScreen::visibleFrame(screen)
+                NSScreen::frame(screen)
             });
 
             let window_rect = NSRect::new(
