@@ -770,7 +770,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace => {}
+            Mode::Insert | Mode::Replace | Mode::EasyMotion => {}
         }
     }
 
