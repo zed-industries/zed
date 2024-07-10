@@ -22,7 +22,7 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
+use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
     register_followable_item,
@@ -572,6 +572,19 @@ impl FollowableItem for ChannelView {
 
     fn to_follow_event(event: &Self::Event) -> Option<workspace::item::FollowEvent> {
         Editor::to_follow_event(event)
+    }
+
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+        let existing = existing.channel_buffer.read(cx);
+        if self.channel_buffer.read(cx).channel_id == existing.channel_id {
+            if existing.is_connected() {
+                Some(Dedup::KeepExisting)
+            } else {
+                Some(Dedup::ReplaceExisting)
+            }
+        } else {
+            None
+        }
     }
 }
 

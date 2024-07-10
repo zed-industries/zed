@@ -3209,25 +3209,33 @@ impl Workspace {
                 ));
             };
 
-            let new_item = task.await?;
+            let mut new_item = task.await?;
             pane.update(cx, |pane, cx| {
-                if new_item.is_singleton(cx) {
-                    let new_item_ids = new_item.project_item_model_ids(cx);
-                    pane.items()
-                        .find_map(|item| {
-                            if item.is_singleton(cx)
-                                && item.project_item_model_ids(cx) == new_item_ids
-                            {
-                                item.to_followable_item_handle(cx)
-                            } else {
-                                None
+                let mut item_ix_to_remove = None;
+                for (ix, item) in pane.items().enumerate() {
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        match new_item.dedup(item.as_ref(), cx) {
+                            Some(item::Dedup::KeepExisting) => {
+                                new_item =
+                                    item.boxed_clone().to_followable_item_handle(cx).unwrap();
+                                break;
                             }
-                        })
-                        .unwrap_or(new_item)
-                } else {
-                    new_item
+                            Some(item::Dedup::ReplaceExisting) => {
+                                item_ix_to_remove = Some(ix);
+                                break;
+                            }
+                            None => {}
+                        }
+                    }
                 }
-            })?
+
+                if let Some(ix) = item_ix_to_remove {
+                    pane.remove_item(ix, false, false, cx);
+                    pane.add_item(new_item.boxed_clone(), false, false, Some(ix), cx);
+                }
+            })?;
+
+            new_item
         };
 
         this.update(cx, |this, cx| {

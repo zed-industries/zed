@@ -753,6 +753,11 @@ pub enum FollowEvent {
     Unfollow,
 }
 
+pub enum Dedup {
+    KeepExisting,
+    ReplaceExisting,
+}
+
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
@@ -777,6 +782,7 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -798,6 +804,7 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup>;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for View<T> {
@@ -850,6 +857,11 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
+    }
+
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup> {
+        let existing = existing.to_any().downcast::<T>().ok()?;
+        self.read(cx).dedup(existing.read(cx), cx)
     }
 }
 

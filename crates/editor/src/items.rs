@@ -19,7 +19,7 @@ use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{ItemSettings, TabContentParams};
+use workspace::item::{Dedup, ItemSettings, TabContentParams};
 
 use std::{
     any::TypeId,
@@ -307,6 +307,16 @@ impl FollowableItem for Editor {
 
     fn is_project_item(&self, _cx: &WindowContext) -> bool {
         true
+    }
+
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+        let self_singleton = self.buffer.read(cx).as_singleton()?;
+        let other_singleton = existing.buffer.read(cx).as_singleton()?;
+        if self_singleton == other_singleton {
+            Some(Dedup::KeepExisting)
+        } else {
+            None
+        }
     }
 }
 
