@@ -212,6 +212,8 @@ impl Default for TextStyle {
             // todo(linux) make this configurable or choose better default
             font_family: if cfg!(target_os = "linux") {
                 "FreeMono".into()
+            } else if cfg!(target_os = "windows") {
+                "Segoe UI".into()
             } else {
                 "Helvetica".into()
             },
