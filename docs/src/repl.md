@@ -2,11 +2,18 @@
 
 Read. Eval. Print. Loop.
 
+<div class="warning">
+
+This feature is in active development. Details may change. We're delighted to get feedback as the REPL feature evolves.
+
+</div>
+
+
 The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
-(TODO: Include GIF in action)
+<!-- TODO: Include GIF in action -->
 
-To start using it the REPL, add the following to your Zed `settings.json` to bring the power of Jupyter kernels to your editor:
+To start using the REPL, add the following to your Zed `settings.json` to bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor:
 
 ```json
 {
