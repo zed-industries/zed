@@ -357,7 +357,6 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
 }
 
 type FollowableItemBuilder = fn(
-    View<Pane>,
     View<Workspace>,
     ViewId,
     &mut Option<proto::view::Variant>,
@@ -382,8 +381,8 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     builders.insert(
         TypeId::of::<I>(),
         (
-            |pane, workspace, id, state, cx| {
-                I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
+            |workspace, id, state, cx| {
+                I::from_state_proto(workspace, id, state, cx).map(|task| {
                     cx.foreground_executor()
                         .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                 })
@@ -3180,23 +3179,56 @@ impl Workspace {
         };
         let id = ViewId::from_proto(id)?;
 
-        let mut variant = view.variant.clone();
-        if variant.is_none() {
-            Err(anyhow!("missing view variant"))?;
-        }
+        let existing_item = pane.update(cx, |pane, cx| {
+            let client = this.read(cx).client().clone();
+            pane.items().find_map(|item| {
+                let item = item.to_followable_item_handle(cx)?;
+                if item.remote_id(&client, cx) == Some(id) {
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+        })?;
+        let item = if let Some(existing_item) = existing_item {
+            existing_item
+        } else {
+            let mut variant = view.variant.clone();
+            if variant.is_none() {
+                Err(anyhow!("missing view variant"))?;
+            }
 
-        let task = item_builders.iter().find_map(|build_item| {
-            cx.update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx))
-                .log_err()
-                .flatten()
-        });
-        let Some(task) = task else {
-            return Err(anyhow!(
-                "failed to construct view from leader (maybe from a different version of zed?)"
-            ));
+            let task = item_builders.iter().find_map(|build_item| {
+                cx.update(|cx| build_item(this.clone(), id, &mut variant, cx))
+                    .log_err()
+                    .flatten()
+            });
+            let Some(task) = task else {
+                return Err(anyhow!(
+                    "failed to construct view from leader (maybe from a different version of zed?)"
+                ));
+            };
+
+            let new_item = task.await?;
+            pane.update(cx, |pane, cx| {
+                if new_item.is_singleton(cx) {
+                    let new_item_ids = new_item.project_item_model_ids(cx);
+                    pane.items()
+                        .find_map(|item| {
+                            if item.is_singleton(cx)
+                                && item.project_item_model_ids(cx) == new_item_ids
+                            {
+                                item.to_followable_item_handle(cx)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(new_item)
+                } else {
+                    new_item
+                }
+            })?
         };
-
-        let item = task.await?;
 
         this.update(cx, |this, cx| {
             let state = this.follower_states.get_mut(&pane)?;

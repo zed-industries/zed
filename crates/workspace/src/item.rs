@@ -757,7 +757,6 @@ pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
-        pane: View<Pane>,
         project: View<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
