@@ -1,23 +1,16 @@
-use std::{
-    fmt::{Debug, Display},
-    sync::{Arc, Weak},
-};
+use std::fmt::{Debug, Display};
 
-use calloop::{channel::Channel, EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
+use super::dbusmenu::{
+    DBusMenu, DBusMenuEvents, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
+    DBusMenuUpdatedProperties, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
+};
+use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use serde::Deserialize;
 use zbus::{
     export::futures_util::{Stream, StreamExt},
     interface,
     object_server::{InterfaceRef, SignalContext},
-    zvariant::{OwnedObjectPath, OwnedValue, Structure, StructureBuilder, Type},
-    AsyncDrop, MessageStream,
-};
-
-use crate::BackgroundExecutor;
-
-use super::dbusmenu::{
-    DBusMenu, DBusMenuEvents, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
-    DBusMenuUpdatedProperties, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
+    zvariant::{OwnedObjectPath, Structure, StructureBuilder, Type},
 };
 
 pub(crate) struct StatusNotifierWatcher<'a>(zbus::Proxy<'a>);
@@ -604,37 +597,6 @@ impl StatusNotifierItem {
         let status_str = status.to_string();
         iface.options.status = status;
         iface.new_status(cx, status_str).await?;
-        Ok(())
-    }
-
-    /// Adds a submenu to root
-    pub async fn add_submenu(&self, submenu: DBusMenuItem) -> zbus::Result<()> {
-        let mut iface = self.menu_ref.get_mut().await;
-        let updated = iface.menu.add_submenu(submenu);
-        drop(iface);
-        self.update_layout(0, updated, Vec::default()).await?;
-        Ok(())
-    }
-
-    pub async fn add_submenu_to(&self, user_id: &str, submenu: DBusMenuItem) -> zbus::Result<()> {
-        let mut iface = self.menu_ref.get_mut().await;
-        let updated = iface.menu.add_submenu_to(user_id, submenu);
-        drop(iface);
-        if let Some((parent_id, updated)) = updated {
-            self.update_layout(parent_id, updated, Vec::default())
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// Removes a submenu from the menu tree
-    pub async fn remove_submenu(&self, id: impl Into<String>) -> zbus::Result<()> {
-        let mut iface = self.menu_ref.get_mut().await;
-        if let Some((parent_id, removed)) = iface.menu.remove_submenu(id) {
-            drop(iface);
-            self.update_layout(parent_id, Vec::default(), removed)
-                .await?;
-        }
         Ok(())
     }
 

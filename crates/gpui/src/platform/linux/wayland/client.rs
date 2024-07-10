@@ -63,7 +63,7 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
-use crate::platform::linux::dbus::dbusmenu::DBusMenu;
+use crate::platform::linux::dbus::dbusmenu::{DBusMenu, DBusMenuEvents};
 use crate::platform::linux::dbus::status_notifier::{
     StatusNotifierItem, StatusNotifierItemEvents, StatusNotifierItemOptions,
 };
@@ -619,27 +619,35 @@ impl LinuxClient for WaylandClient {
                             .loop_handle
                             .insert_source(item, |event, _, client| {
                                 let client = client.get_client();
-                                let mut state = client.borrow_mut();
                                 let Some(mut tray_event) =
-                                    state.common.callbacks.tray_events.take()
+                                    client.borrow_mut().common.callbacks.tray_event.take()
                                 else {
                                     return;
                                 };
-                                drop(state);
                                 match event {
                                     StatusNotifierItemEvents::Activate(x, y) => {
-                                        tray_event(TrayEvent::LeftClick)
+                                        tray_event(TrayEvent::LeftClick {
+                                            position: Point::new(x, y),
+                                        });
                                     }
                                     StatusNotifierItemEvents::SecondaryActivate(x, y) => {
-                                        tray_event(TrayEvent::MiddleClick)
+                                        tray_event(TrayEvent::MiddleClick {
+                                            position: Point::new(x, y),
+                                        });
                                     }
-                                    StatusNotifierItemEvents::XdgActivationToken(token) => {}
-                                    StatusNotifierItemEvents::Scroll(delta, orientation) => {
-                                        tray_event(TrayEvent::Scroll)
+                                    StatusNotifierItemEvents::XdgActivationToken(_token) => {
+                                        // Should we ignore this?
                                     }
-                                    StatusNotifierItemEvents::MenuEvent(event) => {}
+                                    StatusNotifierItemEvents::Scroll(_delta, _orientation) => {
+                                        tray_event(TrayEvent::Scroll);
+                                    }
+                                    StatusNotifierItemEvents::MenuEvent(event) => match event {
+                                        DBusMenuEvents::MenuClick(id) => {
+                                            tray_event(TrayEvent::MenuClick { id });
+                                        }
+                                    },
                                 }
-                                client.borrow_mut().common.callbacks.tray_events = Some(tray_event);
+                                client.borrow_mut().common.callbacks.tray_event = Some(tray_event);
                             })
                             .log_err();
                     }

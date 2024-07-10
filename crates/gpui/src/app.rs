@@ -31,8 +31,8 @@ use crate::{
     Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, TrayEvent, TrayItem,
-    View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, TrayItem, View,
+    ViewContext, Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -1153,11 +1153,11 @@ impl AppContext {
 
     ///
     pub fn set_tray_item(&mut self, mut item: TrayItem) {
-        if let Some(mut event) = item.event.take() {
+        if let Some(mut fun) = item.event.take() {
             self.platform.on_tray_event(Box::new({
                 let cx = self.to_async();
-                move |events| {
-                    cx.update(|cx| event(events, cx)).log_err();
+                move |event| {
+                    cx.update(|cx| fun(event, cx)).log_err();
                 }
             }));
         }

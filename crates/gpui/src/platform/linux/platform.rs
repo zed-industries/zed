@@ -91,7 +91,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
-    pub(crate) tray_events: Option<Box<dyn FnMut(TrayEvent)>>,
+    pub(crate) tray_event: Option<Box<dyn FnMut(TrayEvent)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
@@ -135,8 +135,8 @@ impl LinuxCommon {
 
     fn create_submenu(&mut self, menu_item: TrayMenuItem) -> DBusMenuItem {
         match menu_item {
-            TrayMenuItem::Separator { id, label } => {
-                let mut this = DBusMenuItem::new(id);
+            TrayMenuItem::Separator { label } => {
+                let mut this = DBusMenuItem::new();
                 this.set_type(dbus::dbusmenu::MenuType::Separator);
                 if let Some(label) = label {
                     this.set_label(label);
@@ -151,8 +151,8 @@ impl LinuxCommon {
                 children,
                 ..
             } => {
-                let mut this = DBusMenuItem::new(id);
-                this.set_label(label);
+                let mut this = DBusMenuItem::new();
+                this.set_id(id).set_label(label);
                 if let Some(TrayIcon::Name(name)) = icon {
                     this.set_icon(dbus::dbusmenu::Icon::Name(name.to_owned()));
                 }
@@ -168,9 +168,6 @@ impl LinuxCommon {
                         }
                     }
                 }
-                // if let Some(action) = on_click {
-                //     self.tray_actions.insert(id.to_string(), action);
-                // }
                 let mut submenus = Vec::default();
                 for child in children {
                     submenus.push(self.create_submenu(child));
@@ -427,7 +424,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn on_tray_event(&self, callback: Box<dyn FnMut(TrayEvent)>) {
         self.with_common(|common| {
-            common.callbacks.tray_events = Some(callback);
+            common.callbacks.tray_event = Some(callback);
         });
     }
 
@@ -446,11 +443,14 @@ impl<P: LinuxClient + 'static> Platform for P {
             .icon(icon)
             .tooltip(
                 ToolTip::new()
-                    .title(item.title)
+                    .title(item.tooltip.as_str())
                     .description(item.description),
             );
         let mut menu: Option<DBusMenu> = None;
         self.with_common(|common| {
+            if item.submenus.is_empty() {
+                return;
+            }
             let mut dbus_menu = DBusMenu::new();
             for submenu in item.submenus {
                 dbus_menu = dbus_menu.submenu(common.create_submenu(submenu));

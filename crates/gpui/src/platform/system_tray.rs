@@ -1,4 +1,4 @@
-use crate::AppContext;
+use crate::{AppContext, Point};
 
 ///
 pub enum TrayIcon<'a> {
@@ -25,8 +25,6 @@ pub enum TrayMenuItem<'a> {
     /// This item usually represents a line dividing submenus.
     /// Some desktop environments can display a label on top of the separator.
     Separator {
-        ///
-        id: &'a str,
         /// Text displayed on top of the separator.
         label: Option<&'a str>,
     },
@@ -48,13 +46,27 @@ pub enum TrayMenuItem<'a> {
 ///
 pub enum TrayEvent {
     ///
-    LeftClick,
+    LeftClick {
+        ///
+        position: Point<i32>,
+    },
     ///
-    RightClick,
+    RightClick {
+        ///
+        position: Point<i32>,
+    },
     ///
-    MiddleClick,
+    MiddleClick {
+        ///
+        position: Point<i32>,
+    },
     ///
     Scroll,
+    ///
+    MenuClick {
+        ///
+        id: String,
+    },
 }
 
 ///
@@ -67,11 +79,50 @@ pub struct TrayItem<'a> {
     #[cfg(target_os = "linux")]
     pub overlay: Option<TrayIcon<'a>>,
     /// Title of this item.
-    pub title: &'a str,
-    /// Detailed text.
-    pub description: &'a str,
+    pub title: String,
+    /// Text displayed when a mouse is hovered.
+    pub tooltip: String,
+    /// Detailed text displayed with a tooltip.
+    pub description: String,
     ///
     pub submenus: Vec<TrayMenuItem<'a>>,
     ///
     pub event: Option<Box<dyn FnMut(TrayEvent, &mut AppContext)>>,
+}
+
+impl<'a> TrayItem<'a> {
+    ///
+    pub fn new() -> Self {
+        TrayItem::default()
+    }
+
+    ///
+    pub fn icon(mut self, icon: TrayIcon<'a>) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    ///
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    ///
+    pub fn tooltip(mut self, header: impl Into<String>) -> Self {
+        self.tooltip = header.into();
+        self
+    }
+
+    ///
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    ///
+    pub fn on_event(mut self, event: impl FnMut(TrayEvent, &mut AppContext) + 'static) -> Self {
+        self.event = Some(Box::new(event));
+        self
+    }
 }

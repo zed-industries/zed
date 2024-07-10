@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::collections::HashMap;
 
 use serde::Serialize;
 use zbus::{
@@ -139,7 +136,7 @@ pub(crate) struct DBusMenuRemovedProperties {
 pub(crate) struct DBusMenuItemPrivate {
     id: i32,
     parent_id: i32,
-    pub(crate) user_id: String,
+    pub(crate) user_id: Option<String>,
     properties: HashMap<&'static str, MenuProperty>,
     children: Vec<i32>,
 }
@@ -223,18 +220,21 @@ impl DBusMenuItemPrivate {
 ///
 #[derive(Default)]
 pub struct DBusMenuItem {
-    user_id: String,
+    user_id: Option<String>,
     properties: HashMap<&'static str, MenuProperty>,
     children: Vec<DBusMenuItem>,
 }
 
 impl DBusMenuItem {
     ///
-    pub fn new(user_id: impl Into<String>) -> Self {
-        Self {
-            user_id: user_id.into(),
-            ..Default::default()
-        }
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    ///
+    pub fn set_id(&mut self, id: impl Into<String>) -> &mut Self {
+        self.user_id = Some(id.into());
+        self
     }
 
     ///
@@ -329,96 +329,6 @@ impl DBusMenu {
         self
     }
 
-    /// Add a submenu to the root.
-    pub(crate) fn add_submenu(&mut self, submenu: DBusMenuItem) -> Vec<DBusMenuUpdatedProperties> {
-        let mut result = Vec::default();
-        let new_id = self.add_to_root(submenu, 0);
-        let mut queue = VecDeque::default();
-        queue.push_back(self.items.get(&new_id).unwrap());
-        while !queue.is_empty() {
-            let submenu = queue.pop_front().unwrap();
-            result.push(DBusMenuUpdatedProperties {
-                id: new_id,
-                properties: submenu
-                    .properties
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone().into()))
-                    .collect(),
-            });
-            for id in &submenu.children {
-                queue.push_back(self.items.get(&id).unwrap())
-            }
-        }
-        result
-    }
-
-    /// Add a submenu to the specified id, if the id is not found,
-    /// the submenu is not gonna be added
-    pub(crate) fn add_submenu_to(
-        &mut self,
-        user_id: &str,
-        submenu: DBusMenuItem,
-    ) -> Option<(i32, Vec<DBusMenuUpdatedProperties>)> {
-        let Some(parent) = self.user_id_to_id_map.get(user_id).cloned() else {
-            return None;
-        };
-        let new_id = self.add_to_root(submenu, parent);
-        let mut result = Vec::default();
-        let mut queue = VecDeque::default();
-        queue.push_back(self.items.get(&new_id).unwrap());
-        while !queue.is_empty() {
-            let submenu = queue.pop_front().unwrap();
-            result.push(DBusMenuUpdatedProperties {
-                id: submenu.id,
-                properties: submenu
-                    .properties
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone().into()))
-                    .collect(),
-            });
-            for id in &submenu.children {
-                queue.push_back(self.items.get(id).unwrap());
-            }
-        }
-        Some((parent, result))
-    }
-
-    /// Returns the parent id of the submenu and a vector of removed properties.
-    pub(crate) fn remove_submenu(
-        &mut self,
-        user_id: impl Into<String>,
-    ) -> Option<(i32, Vec<DBusMenuRemovedProperties>)> {
-        let Some(id) = self.user_id_to_id_map.get(&user_id.into()) else {
-            return None;
-        };
-        let menu = self.items.remove(id).unwrap();
-        let parent_id = menu.parent_id;
-        let mut result = Vec::default();
-        let mut queue = VecDeque::default();
-        queue.push_back(menu);
-        while !queue.is_empty() {
-            let submenu = queue.pop_front().unwrap();
-            let user_id = submenu.user_id;
-            let parent = self.items.get_mut(&submenu.parent_id).unwrap();
-            parent.children.retain(|child| *child != submenu.id);
-            self.user_id_to_id_map.remove(&user_id);
-            for id in submenu.children {
-                queue.push_back(self.items.remove(&id).unwrap());
-            }
-            if !submenu.properties.is_empty() {
-                result.push(DBusMenuRemovedProperties {
-                    id: submenu.id,
-                    property_names: submenu
-                        .properties
-                        .iter()
-                        .map(|(k, _)| k.to_string())
-                        .collect(),
-                });
-            }
-        }
-        Some((parent_id, result))
-    }
-
     pub(crate) fn update_submenu_properties<'a>(
         &mut self,
         user_id: &str,
@@ -462,8 +372,9 @@ impl DBusMenu {
         for child in submenu.children {
             self.add_to_root(child, id);
         }
-        self.user_id_to_id_map
-            .insert(new_submenu.user_id.clone(), id);
+        if let Some(user_id) = new_submenu.user_id.clone() {
+            self.user_id_to_id_map.insert(user_id, id);
+        }
         self.items.insert(id, new_submenu);
         if let Some(parent) = self.items.get_mut(&parent_id) {
             parent.children.push(id);
@@ -534,8 +445,9 @@ impl DBusMenuInterface {
     async fn event(&self, id: i32, event_id: String, _event_data: Value<'_>, _timestamp: u32) {
         if event_id.eq("clicked") {
             let menu = self.menu.items.get(&id).unwrap();
-            self.sender
-                .send(DBusMenuEvents::MenuClick(menu.user_id.clone()));
+            if let Some(user_id) = menu.user_id.clone() {
+                let _ = self.sender.send(DBusMenuEvents::MenuClick(user_id));
+            }
         }
     }
 

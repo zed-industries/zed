@@ -20,21 +20,31 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
         cx.on_action(quit);
-        cx.set_tray_item(TrayItem {
-            icon: TrayIcon::Name("kmail"),
-            title: "Testing",
-            description: "Description",
-            event: Some(Box::new(|event, app| match event {
-                TrayEvent::LeftClick => {
-                    app.quit();
+        let item = TrayItem::new()
+            .icon(TrayIcon::Name("kmail"))
+            .title("Testing")
+            .tooltip("My Tooltip")
+            .description("Little description")
+            .on_event({
+                let show_window = false;
+                move |event, app| match event {
+                    TrayEvent::LeftClick { .. } => {
+                        app.dispatch_action(&Quit);
+                    }
+                    TrayEvent::MenuClick { id } => match id.as_str() {
+                        "window" => {
+                            if show_window {
+                                app.activate(true);
+                            } else {
+                                app.hide();
+                            }
+                            show_window ^= true;
+                        }
+                    },
+                    _ => {}
                 }
-                TrayEvent::MiddleClick => {
-                    app.activate(true);
-                }
-                _ => {}
-            })),
-            ..Default::default()
-        });
+            });
+        cx.set_tray_item(item);
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| SetTrayIcons {})
         })
@@ -46,7 +56,7 @@ fn main() {
 actions!(set_tray_menus, [Quit]);
 
 // Define the quit function that is registered with the AppContext
-fn quit(q: &Quit, cx: &mut AppContext) {
+fn quit(_: &Quit, cx: &mut AppContext) {
     println!("Gracefully quitting the application . . .");
     cx.quit();
 }
