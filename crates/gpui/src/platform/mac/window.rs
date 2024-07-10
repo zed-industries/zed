@@ -940,6 +940,11 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
