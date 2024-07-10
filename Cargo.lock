@@ -13332,7 +13332,6 @@ dependencies = [
  "ignore",
  "language",
  "log",
- "node_runtime",
  "parking_lot",
  "paths",
  "postage",
@@ -13345,7 +13344,6 @@ dependencies = [
  "settings",
  "smol",
  "sum_tree",
- "tempfile",
  "text",
  "util",
 ]
