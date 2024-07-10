@@ -356,6 +356,9 @@ pub enum Event {
     },
     CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
+    HostReshared,
+    Reshared,
+    Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
@@ -1718,6 +1721,7 @@ impl Project {
         self.shared_buffers.clear();
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.metadata_changed(cx);
+        cx.emit(Event::Reshared);
         Ok(())
     }
 
@@ -1755,6 +1759,7 @@ impl Project {
             .collect();
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
+        cx.emit(Event::Rejoined);
         cx.notify();
         Ok(())
     }
@@ -1807,9 +1812,11 @@ impl Project {
                 }
             }
 
-            self.client.send(proto::UnshareProject {
-                project_id: remote_id,
-            })?;
+            self.client
+                .send(proto::UnshareProject {
+                    project_id: remote_id,
+                })
+                .ok();
 
             Ok(())
         } else {
@@ -4101,6 +4108,7 @@ impl Project {
             return;
         }
 
+        #[allow(clippy::mutable_key_type)]
         let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
@@ -8864,6 +8872,7 @@ impl Project {
                     .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
                 this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
                     .unwrap();
+                cx.emit(Event::HostReshared);
             }
 
             cx.emit(Event::CollaboratorUpdated {
@@ -11149,6 +11158,7 @@ async fn populate_labels_for_symbols(
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     output: &mut Vec<Symbol>,
 ) {
+    #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
     let mut unknown_path = None;

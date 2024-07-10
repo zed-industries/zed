@@ -1134,11 +1134,10 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        h_flex().ml_4().child(
-                                            Label::new(text.clone())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
                                     )
                                 }
                             } else {
@@ -1161,7 +1160,7 @@ impl CompletionsMenu {
                                     }
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
+                                .end_slot::<Label>(documentation_label),
                         )
                     })
                     .collect()
@@ -11156,6 +11155,7 @@ impl Editor {
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
                         let project = project.read(cx);
+                        #[allow(clippy::mutable_key_type)]
                         let languages_affected = multibuffer
                             .read(cx)
                             .all_buffers()
@@ -11830,7 +11830,7 @@ fn snippet_completions(
     let language = buffer.read(cx).language_at(buffer_position);
     let language_name = language.as_ref().map(|language| language.lsp_id());
     let snippet_store = project.snippets().read(cx);
-    let snippets = snippet_store.snippets_for(language_name);
+    let snippets = snippet_store.snippets_for(language_name, cx);
 
     if snippets.is_empty() {
         return vec![];

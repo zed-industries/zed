@@ -1,4 +1,5 @@
 mod format;
+mod registry;
 
 use std::{
     path::{Path, PathBuf},
@@ -12,7 +13,12 @@ use format::VSSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+pub use registry::*;
 use util::ResultExt;
+
+pub fn init(cx: &mut AppContext) {
+    SnippetRegistry::init_global(cx);
+}
 
 // Is `None` if the snippet file is global.
 type SnippetKind = Option<String>;
@@ -168,28 +174,37 @@ impl SnippetProvider {
             Ok(())
         })
     }
+
     fn lookup_snippets<'a>(
         &'a self,
         language: &'a SnippetKind,
-    ) -> Option<impl Iterator<Item = Arc<Snippet>> + 'a> {
-        Some(
-            self.snippets
-                .get(&language)?
-                .iter()
-                .flat_map(|(_, snippets)| snippets.iter().cloned()),
-        )
+        cx: &AppContext,
+    ) -> Vec<Arc<Snippet>> {
+        let mut user_snippets: Vec<_> = self
+            .snippets
+            .get(&language)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|(_, snippets)| snippets.into_iter())
+            .collect();
+
+        let Some(registry) = SnippetRegistry::try_global(cx) else {
+            return user_snippets;
+        };
+
+        let registry_snippets = registry.get_snippets(language);
+        user_snippets.extend(registry_snippets);
+
+        user_snippets
     }
 
-    pub fn snippets_for(&self, language: SnippetKind) -> Vec<Arc<Snippet>> {
-        let mut requested_snippets: Vec<_> = self
-            .lookup_snippets(&language)
-            .map(|snippets| snippets.collect())
-            .unwrap_or_default();
+    pub fn snippets_for(&self, language: SnippetKind, cx: &AppContext) -> Vec<Arc<Snippet>> {
+        let mut requested_snippets = self.lookup_snippets(&language, cx);
+
         if language.is_some() {
             // Look up global snippets as well.
-            if let Some(global_snippets) = self.lookup_snippets(&None) {
-                requested_snippets.extend(global_snippets);
-            }
+            requested_snippets.extend(self.lookup_snippets(&None, cx));
         }
         requested_snippets
     }

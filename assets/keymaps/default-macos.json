@@ -570,7 +570,7 @@
     }
   },
   {
-    "context": "Editor && jupyter",
+    "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
       "cmd-enter": "repl::Run"
     }

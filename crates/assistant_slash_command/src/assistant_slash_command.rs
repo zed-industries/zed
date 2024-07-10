@@ -67,7 +67,7 @@ pub struct SlashCommandOutput {
     pub run_commands_in_text: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
     pub icon: IconName,

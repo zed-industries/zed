@@ -1051,6 +1051,8 @@ fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
+    // mouse double click
+    lock.click_state.system_update();
     Some(0)
 }
 

@@ -49,8 +49,7 @@ struct DirectWriteComponent {
 
 struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
-    normal_dc_target: ID2D1DeviceContext4,
-    emoji_dc_target: ID2D1DeviceContext4,
+    dc_target: ID2D1DeviceContext4,
 }
 
 // All use of the IUnknown methods should be "thread-safe".
@@ -128,16 +127,7 @@ impl GlyphRenderContext {
                 DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                 grid_fit_mode,
             )?;
-            let normal_dc_target = {
-                let target = d2d1_factory.CreateDCRenderTarget(&get_render_target_property(
-                    DXGI_FORMAT_A8_UNORM,
-                    D2D1_ALPHA_MODE_STRAIGHT,
-                ))?;
-                let target = target.cast::<ID2D1DeviceContext4>()?;
-                target.SetTextRenderingParams(&params);
-                target
-            };
-            let emoji_dc_target = {
+            let dc_target = {
                 let target = d2d1_factory.CreateDCRenderTarget(&get_render_target_property(
                     DXGI_FORMAT_B8G8R8A8_UNORM,
                     D2D1_ALPHA_MODE_PREMULTIPLIED,
@@ -147,11 +137,7 @@ impl GlyphRenderContext {
                 target
             };
 
-            Ok(Self {
-                params,
-                normal_dc_target,
-                emoji_dc_target,
-            })
+            Ok(Self { params, dc_target })
         }
     }
 }
@@ -571,11 +557,7 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let render_target = if params.is_emoji {
-            &self.components.render_context.emoji_dc_target
-        } else {
-            &self.components.render_context.normal_dc_target
-        };
+        let render_target = &self.components.render_context.dc_target;
         unsafe {
             render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);

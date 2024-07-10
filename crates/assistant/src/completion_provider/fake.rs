@@ -13,7 +13,6 @@ pub struct FakeCompletionProvider {
 }
 
 impl FakeCompletionProvider {
-    #[cfg(test)]
     pub fn setup_test(cx: &mut AppContext) -> Self {
         use crate::CompletionProvider;
         use parking_lot::RwLock;

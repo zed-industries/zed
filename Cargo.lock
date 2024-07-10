@@ -377,6 +377,7 @@ dependencies = [
  "cargo_toml",
  "chrono",
  "client",
+ "clock",
  "collections",
  "command_palette_hooks",
  "ctor",
@@ -419,6 +420,7 @@ dependencies = [
  "telemetry_events",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",
@@ -2405,6 +2407,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "parking_lot",
+ "serde",
  "smallvec",
 ]
 
@@ -2463,6 +2466,7 @@ version = "0.44.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assistant",
  "async-trait",
  "async-tungstenite",
  "audio",
@@ -3932,6 +3936,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "snippet_provider",
  "task",
  "theme",
  "toml 0.8.10",
@@ -8269,6 +8274,7 @@ dependencies = [
  "assistant",
  "editor",
  "gpui",
+ "repl",
  "search",
  "settings",
  "ui",
@@ -9867,6 +9873,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "parking_lot",
  "serde",
  "serde_json",
  "snippet",
@@ -13579,7 +13586,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.144.0"
+version = "0.145.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13654,6 +13661,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "snippet_provider",
  "supermaven",
  "tab_switcher",
  "task",
