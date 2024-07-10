@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+# Downloads the latest tarball from https://zed.dev/releases and unpacks it
+# into ~/.local/. If you'd prefer to do this manually, instructions are at
+# https://zed.dev/docs/linux.
+
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
