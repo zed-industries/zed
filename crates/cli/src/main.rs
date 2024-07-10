@@ -125,7 +125,11 @@ fn main() -> Result<()> {
     let mut paths = vec![];
     let mut urls = vec![];
     for path in args.paths_with_position.iter() {
-        if path.starts_with("zed://") || path.starts_with("http://") {
+        if path.starts_with("zed://")
+            || path.starts_with("http://")
+            || path.starts_with("https://")
+            || path.starts_with("file://")
+        {
             urls.push(path.to_string());
         } else {
             paths.push(parse_path_with_position(path)?)
