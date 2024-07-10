@@ -38,7 +38,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -275,6 +275,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {

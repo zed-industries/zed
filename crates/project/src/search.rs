@@ -1,7 +1,6 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use client::proto;
-use itertools::Itertools;
 use language::{char_kind, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
@@ -19,18 +18,18 @@ static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::ne
 #[derive(Clone, Debug)]
 pub struct SearchInputs {
     query: Arc<str>,
-    files_to_include: Vec<PathMatcher>,
-    files_to_exclude: Vec<PathMatcher>,
+    files_to_include: PathMatcher,
+    files_to_exclude: PathMatcher,
 }
 
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
     }
-    pub fn files_to_include(&self) -> &[PathMatcher] {
+    pub fn files_to_include(&self) -> &PathMatcher {
         &self.files_to_include
     }
-    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+    pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
     }
 }
@@ -62,8 +61,8 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -89,8 +88,8 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -167,16 +166,8 @@ impl SearchQuery {
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
-            files_to_include: self
-                .files_to_include()
-                .iter()
-                .map(|matcher| matcher.to_string())
-                .join(","),
-            files_to_exclude: self
-                .files_to_exclude()
-                .iter()
-                .map(|matcher| matcher.to_string())
-                .join(","),
+            files_to_include: self.files_to_include().sources().join(","),
+            files_to_exclude: self.files_to_exclude().sources().join(","),
         }
     }
 
@@ -377,11 +368,11 @@ impl SearchQuery {
         matches!(self, Self::Regex { .. })
     }
 
-    pub fn files_to_include(&self) -> &[PathMatcher] {
+    pub fn files_to_include(&self) -> &PathMatcher {
         self.as_inner().files_to_include()
     }
 
-    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+    pub fn files_to_exclude(&self) -> &PathMatcher {
         self.as_inner().files_to_exclude()
     }
 
@@ -390,17 +381,10 @@ impl SearchQuery {
             Some(file_path) => {
                 let mut path = file_path.to_path_buf();
                 loop {
-                    if self
-                        .files_to_exclude()
-                        .iter()
-                        .any(|exclude_glob| exclude_glob.is_match(&path))
-                    {
+                    if self.files_to_exclude().is_match(&path) {
                         return false;
-                    } else if self.files_to_include().is_empty()
-                        || self
-                            .files_to_include()
-                            .iter()
-                            .any(|include_glob| include_glob.is_match(&path))
+                    } else if self.files_to_include().sources().is_empty()
+                        || self.files_to_include().is_match(&path)
                     {
                         return true;
                     } else if !path.pop() {
@@ -408,7 +392,7 @@ impl SearchQuery {
                     }
                 }
             }
-            None => self.files_to_include().is_empty(),
+            None => self.files_to_include().sources().is_empty(),
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {
@@ -418,16 +402,13 @@ impl SearchQuery {
     }
 }
 
-fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<Vec<PathMatcher>> {
-    glob_set
+fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
+    let globs = glob_set
         .split(',')
         .map(str::trim)
-        .filter(|glob_str| !glob_str.is_empty())
-        .map(|glob_str| {
-            PathMatcher::new(glob_str)
-                .with_context(|| format!("deserializing path match glob {glob_str}"))
-        })
-        .collect()
+        .filter_map(|glob_str| (!glob_str.is_empty()).then(|| glob_str.to_owned()))
+        .collect::<Vec<_>>();
+    Ok(PathMatcher::new(&globs)?)
 }
 
 #[cfg(test)]
@@ -445,7 +426,7 @@ mod tests {
             "dir/[a-z].txt",
             "../dir/filé",
         ] {
-            let path_matcher = PathMatcher::new(valid_path).unwrap_or_else(|e| {
+            let path_matcher = PathMatcher::new(&[valid_path.to_owned()]).unwrap_or_else(|e| {
                 panic!("Valid path {valid_path} should be accepted, but got: {e}")
             });
             assert!(
@@ -458,7 +439,7 @@ mod tests {
     #[test]
     fn path_matcher_creation_for_globs() {
         for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
-            match PathMatcher::new(invalid_glob) {
+            match PathMatcher::new(&[invalid_glob.to_owned()]) {
                 Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
                 Err(_expected) => {}
             }
@@ -471,9 +452,9 @@ mod tests {
             "dir/[a-z].txt",
             "{dir,file}",
         ] {
-            match PathMatcher::new(valid_glob) {
+            match PathMatcher::new(&[valid_glob.to_owned()]) {
                 Ok(_expected) => {}
-                Err(e) => panic!("Valid glob {valid_glob} should be accepted, but got: {e}"),
+                Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
             }
         }
     }

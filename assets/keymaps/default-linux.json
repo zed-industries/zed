@@ -1,5 +1,4 @@
 [
-  // todo(linux): Review the editor bindings
   // Standard Linux bindings
   {
     "bindings": {
@@ -43,13 +42,8 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
-      // "ctrl-backspace": "editor::DeleteToBeginningOfLine",
-      // "ctrl-delete": "editor::DeleteToEndOfLine",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      // "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      // "alt-h": "editor::DeleteToPreviousWordStart",
-      // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
@@ -59,25 +53,19 @@
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
-      // "ctrl-up": "editor::MoveToStartOfParagraph", todo(linux) Should be "scroll down by 1 line"
+      "ctrl-up": "editor::LineUp",
+      "ctrl-down": "editor::LineDown",
       "pageup": "editor::PageUp",
-      // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
+      "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      // "ctrl-down": "editor::MoveToEndOfParagraph", todo(linux) should be "scroll up by 1 line"
       "pagedown": "editor::PageDown",
-      // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
+      "shift-pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
-      // "alt-b": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
-      // "alt-f": "editor::MoveToNextWordEnd",
-      // "cmd-left": "editor::MoveToBeginningOfLine",
-      // "ctrl-a": "editor::MoveToBeginningOfLine",
-      // "cmd-right": "editor::MoveToEndOfLine",
-      // "ctrl-e": "editor::MoveToEndOfLine",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
@@ -88,8 +76,6 @@
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
-      // "ctrl-shift-up": "editor::SelectToStartOfParagraph",
-      // "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
@@ -294,6 +280,13 @@
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
     }
   },
   // Bindings from VS Code

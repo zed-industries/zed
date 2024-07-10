@@ -15,13 +15,13 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::{paths, ResultExt};
+use util::ResultExt;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
     notifications::NotificationId,
     ui::{
-        popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+        ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip,
     },
     StatusItemView, Toast, Workspace,
 };
@@ -112,7 +112,7 @@ impl Render for InlineCompletionButton {
                 let this = cx.view().clone();
 
                 div().child(
-                    popover_menu("copilot")
+                    PopoverMenu::new("copilot")
                         .menu(move |cx| {
                             Some(match status {
                                 Status::Authorized => {
@@ -161,7 +161,7 @@ impl Render for InlineCompletionButton {
                 let this = cx.view().clone();
 
                 return div().child(
-                    popover_menu("supermaven")
+                    PopoverMenu::new("supermaven")
                         .menu(move |cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
                                 Some(ContextMenu::build(cx, |menu, _| {
@@ -369,7 +369,7 @@ async fn configure_disabled_globs(
 ) -> Result<()> {
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {
-            create_and_open_local_file(&paths::SETTINGS, cx, || {
+            create_and_open_local_file(paths::settings_file(), cx, || {
                 settings::initial_user_settings_content().as_ref().into()
             })
         })?

@@ -22,6 +22,7 @@ use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktr
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::OnceCell,
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
@@ -46,7 +47,7 @@ pub struct ProjectPanel {
     fs: Arc<dyn Fs>,
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
-    visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
+    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -675,7 +676,7 @@ impl ProjectPanel {
                 return;
             }
 
-            let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
+            let (worktree_id, worktree_entries, _) = &self.visible_entries[worktree_ix];
             let selection = SelectedEntry {
                 worktree_id: *worktree_id,
                 entry_id: worktree_entries[entry_ix].id,
@@ -1120,7 +1121,7 @@ impl ProjectPanel {
         if let Some(selection) = self.selection {
             let (mut worktree_ix, mut entry_ix, _) =
                 self.index_for_selection(selection).unwrap_or_default();
-            if let Some((_, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+            if let Some((_, worktree_entries, _)) = self.visible_entries.get(worktree_ix) {
                 if entry_ix + 1 < worktree_entries.len() {
                     entry_ix += 1;
                 } else {
@@ -1129,7 +1130,8 @@ impl ProjectPanel {
                 }
             }
 
-            if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+            if let Some((worktree_id, worktree_entries, _)) = self.visible_entries.get(worktree_ix)
+            {
                 if let Some(entry) = worktree_entries.get(entry_ix) {
                     let selection = SelectedEntry {
                         worktree_id: *worktree_id,
@@ -1170,7 +1172,9 @@ impl ProjectPanel {
         let worktree = self
             .visible_entries
             .first()
-            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+            .and_then(|(worktree_id, _, _)| {
+                self.project.read(cx).worktree_for_id(*worktree_id, cx)
+            });
         if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
@@ -1190,10 +1194,9 @@ impl ProjectPanel {
     }
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
-        let worktree = self
-            .visible_entries
-            .last()
-            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
+            self.project.read(cx).worktree_for_id(*worktree_id, cx)
+        });
         if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
@@ -1461,7 +1464,7 @@ impl ProjectPanel {
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
-        for (worktree_index, (worktree_id, worktree_entries)) in
+        for (worktree_index, (worktree_id, worktree_entries, _)) in
             self.visible_entries.iter().enumerate()
         {
             if *worktree_id == selection.worktree_id {
@@ -1623,7 +1626,7 @@ impl ProjectPanel {
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
             self.visible_entries
-                .push((worktree_id, visible_worktree_entries));
+                .push((worktree_id, visible_worktree_entries, OnceCell::new()));
         }
 
         if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -1794,7 +1797,7 @@ impl ProjectPanel {
         mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
         let mut ix = 0;
-        for (worktree_id, visible_worktree_entries) in &self.visible_entries {
+        for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
             if ix >= range.end {
                 return;
             }
@@ -1823,10 +1826,12 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = visible_worktree_entries
-                    .iter()
-                    .map(|e| (e.path.clone()))
-                    .collect();
+                let entries = entries_paths.get_or_init(|| {
+                    visible_worktree_entries
+                        .iter()
+                        .map(|e| (e.path.clone()))
+                        .collect()
+                });
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
@@ -2298,7 +2303,7 @@ impl Render for ProjectPanel {
                         "entries",
                         self.visible_entries
                             .iter()
-                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .map(|(_, worktree_entries, _)| worktree_entries.len())
                             .sum(),
                         {
                             |this, range, cx| {

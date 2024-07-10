@@ -39,8 +39,8 @@ impl LocalPaths {
         Self(Arc::new(paths))
     }
 
-    pub fn paths(&self) -> Arc<Vec<PathBuf>> {
-        self.0.clone()
+    pub fn paths(&self) -> &Arc<Vec<PathBuf>> {
+        &self.0
     }
 }
 

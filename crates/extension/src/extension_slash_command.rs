@@ -3,9 +3,9 @@ use std::sync::{atomic::AtomicBool, Arc};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::FutureExt;
-use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
@@ -36,13 +36,34 @@ impl SlashCommand for ExtensionSlashCommand {
     }
 
     fn complete_argument(
-        &self,
-        _query: String,
+        self: Arc<Self>,
+        query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(Vec::new()))
+        cx.background_executor().spawn(async move {
+            self.extension
+                .call({
+                    let this = self.clone();
+                    move |extension, store| {
+                        async move {
+                            let completions = extension
+                                .call_complete_slash_command_argument(
+                                    store,
+                                    &this.command,
+                                    query.as_ref(),
+                                )
+                                .await?
+                                .map_err(|e| anyhow!("{}", e))?;
+
+                            anyhow::Ok(completions)
+                        }
+                        .boxed()
+                    }
+                })
+                .await
+        })
     }
 
     fn run(
@@ -52,11 +73,9 @@ impl SlashCommand for ExtensionSlashCommand {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let command_name = SharedString::from(self.command.name.clone());
         let argument = argument.map(|arg| arg.to_string());
-        let text = cx.background_executor().spawn(async move {
-            let output = self
-                .extension
+        let output = cx.background_executor().spawn(async move {
+            self.extension
                 .call({
                     let this = self.clone();
                     move |extension, store| {
@@ -77,29 +96,21 @@ impl SlashCommand for ExtensionSlashCommand {
                         .boxed()
                     }
                 })
-                .await?;
-            output.ok_or_else(|| anyhow!("no output from command: {}", self.command.name))
+                .await
         });
         cx.foreground_executor().spawn(async move {
-            let text = text.await?;
-            let range = 0..text.len();
+            let output = output.await?;
             Ok(SlashCommandOutput {
-                text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
-                    render_placeholder: Arc::new({
-                        let command_name = command_name.clone();
-                        move |id, unfold, _cx| {
-                            ButtonLike::new(id)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::Code))
-                                .child(Label::new(command_name.clone()))
-                                .on_click(move |_event, cx| unfold(cx))
-                                .into_any_element()
-                        }
-                    }),
-                }],
+                text: output.text,
+                sections: output
+                    .sections
+                    .into_iter()
+                    .map(|section| SlashCommandOutputSection {
+                        range: section.range.into(),
+                        icon: IconName::Code,
+                        label: section.label.into(),
+                    })
+                    .collect(),
                 run_commands_in_text: false,
             })
         })

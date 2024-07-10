@@ -51,7 +51,7 @@ use std::{
 };
 use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
-use util::{maybe, paths::EXTENSIONS_DIR, ResultExt};
+use util::{maybe, ResultExt};
 use wasm_host::{
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,
@@ -179,7 +179,7 @@ pub fn init(
 
     let store = cx.new_model(move |cx| {
         ExtensionStore::new(
-            EXTENSIONS_DIR.clone(),
+            paths::extensions_dir().clone(),
             None,
             fs,
             client.http_client().clone(),

@@ -26,6 +26,7 @@ lazy_static.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
@@ -57,6 +58,6 @@ util.workspace = true
 
 [dev-dependencies]
 text.workspace = true
-theme.workspace = true
+theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

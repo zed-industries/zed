@@ -8,7 +8,7 @@ use http::Method;
 use isahc::config::Configurable;
 
 use http::{self, HttpClient, HttpClientWithUrl};
-use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
+use paths::{crashes_dir, crashes_retired_dir};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
 use settings::Settings;
@@ -22,7 +22,7 @@ use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::LocationData;
 use telemetry_events::Panic;
 use telemetry_events::PanicRequest;
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -113,7 +113,7 @@ pub fn init_panic_hook(
         if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
+                let panic_file_path = paths::logs_dir().join(format!("zed-{}.panic", timestamp));
                 let panic_file = std::fs::OpenOptions::new()
                     .append(true)
                     .create(true)
@@ -368,7 +368,7 @@ async fn upload_previous_panics(
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<Option<(i64, String)>> {
     let panic_report_url = http.build_zed_api_url("/telemetry/panics", &[])?;
-    let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+    let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
 
     let mut most_recent_panic = None;
 
@@ -460,8 +460,8 @@ async fn upload_previous_crashes(
 
     let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
-    // crash directories are only set on MacOS
-    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR]
+    // Crash directories are only set on macOS.
+    for dir in [crashes_dir(), crashes_retired_dir()]
         .iter()
         .filter_map(|d| d.as_deref())
     {

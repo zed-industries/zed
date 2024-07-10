@@ -1097,6 +1097,8 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    uint64 server_id = 6;
+    bytes lsp_completion = 7;
 }
 
 message ResolveInlayHint {
@@ -1199,6 +1201,7 @@ message UpdateLanguageServer {
 
 message LspWorkStart {
     string token = 1;
+    optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
 }

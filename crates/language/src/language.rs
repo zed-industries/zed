@@ -61,6 +61,7 @@ use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
+use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -438,6 +439,14 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
+    async fn label_for_resolved_completion(
+        &self,
+        completion_item: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        self.label_for_completion(completion_item, language).await
+    }
+
     async fn labels_for_symbols(
         self: Arc<Self>,
         symbols: &[(String, lsp::SymbolKind)],
@@ -803,6 +812,9 @@ pub struct BracketPair {
     pub end: String,
     /// True if `end` should be automatically inserted right after `start` characters.
     pub close: bool,
+    /// True if selected text should be surrounded by `start` and `end` characters.
+    #[serde(default = "default_true")]
+    pub surround: bool,
     /// True if an extra newline should be inserted while the cursor is in the middle
     /// of that bracket pair.
     pub newline: bool,

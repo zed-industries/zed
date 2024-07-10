@@ -224,9 +224,10 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
                 let combined_string = match location {
-                    SerializedWorkspaceLocation::Local(paths, _) => paths
-                        .paths()
+                    SerializedWorkspaceLocation::Local(paths, order) => order
+                        .order()
                         .iter()
+                        .filter_map(|i| paths.paths().get(*i))
                         .map(|path| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
@@ -285,7 +286,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     } else {
                         match candidate_workspace_location {
                             SerializedWorkspaceLocation::Local(paths, _) => {
-                                let paths = paths.paths().as_ref().clone();
+                                let paths = paths.paths().to_vec();
                                 if replace_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
@@ -389,7 +390,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let mut path_start_offset = 0;
         let paths = match location {
-            SerializedWorkspaceLocation::Local(paths, _) => paths.paths(),
+            SerializedWorkspaceLocation::Local(paths, order) => Arc::new(
+                order
+                    .order()
+                    .iter()
+                    .filter_map(|i| paths.paths().get(*i).cloned())
+                    .collect(),
+            ),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",

@@ -5,8 +5,9 @@ world extension {
     import platform;
     import nodejs;
 
+    use common.{range};
     use lsp.{completion, symbol};
-    use slash-command.{slash-command};
+    use slash-command.{slash-command, slash-command-output};
 
     /// Initializes the extension.
     export init-extension: func();
@@ -118,17 +119,12 @@ world extension {
         highlight-name: option<string>,
     }
 
-    /// A (half-open) range (`[start, end)`).
-    record range {
-        /// The start of the range (inclusive).
-        start: u32,
-        /// The end of the range (exclusive).
-        end: u32,
-    }
-
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
     export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
 
-    /// Runs the provided slash command.
-    export run-slash-command: func(command: slash-command, argument: option<string>, worktree: borrow<worktree>) -> result<option<string>, string>;
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    export complete-slash-command-argument: func(command: slash-command, query: string) -> result<list<string>, string>;
+
+    /// Returns the output from running the provided slash command.
+    export run-slash-command: func(command: slash-command, argument: option<string>, worktree: borrow<worktree>) -> result<slash-command-output, string>;
 }

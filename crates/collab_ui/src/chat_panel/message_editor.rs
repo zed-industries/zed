@@ -25,8 +25,15 @@ use crate::panel_settings::MessageEditorSettings;
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
+    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+        "@[-_\\w]+",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default()
+    )
+    .unwrap();
 }
 
 pub struct MessageEditor {
@@ -63,8 +70,8 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _completion_indices: Vec<usize>,
         _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<bool>> {
-        Task::ready(Ok(false))
+    ) -> Task<anyhow::Result<Vec<usize>>> {
+        Task::ready(Ok(Vec::new()))
     }
 
     fn apply_additional_edits_for_completion(

@@ -1,5 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
+use gpui::action_as;
 use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -169,6 +170,7 @@ gpui::actions!(
         AddSelectionBelow,
         Backspace,
         Cancel,
+        CancelLanguageServerWork,
         ConfirmRename,
         ContextMenuFirst,
         ContextMenuLast,
@@ -279,6 +281,8 @@ gpui::actions!(
         SelectToPreviousWordStart,
         SelectToStartOfParagraph,
         SelectUp,
+        SelectPageDown,
+        SelectPageUp,
         ShowCharacterPalette,
         ShowInlineCompletion,
         ShuffleLines,
@@ -289,6 +293,7 @@ gpui::actions!(
         TabPrev,
         ToggleGitBlame,
         ToggleGitBlameInline,
+        ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
@@ -303,3 +308,7 @@ gpui::actions!(
         UniqueLinesCaseSensitive,
     ]
 );
+
+action_as!(outline, ToggleOutline as Toggle);
+
+action_as!(go_to_line, ToggleGoToLine as Toggle);

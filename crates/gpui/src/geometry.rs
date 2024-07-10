@@ -2157,6 +2157,12 @@ impl From<Percentage> for Radians {
 #[repr(transparent)]
 pub struct Pixels(pub f32);
 
+impl std::fmt::Display for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{}px", self.0))
+    }
+}
+
 impl std::ops::Div for Pixels {
     type Output = f32;
 

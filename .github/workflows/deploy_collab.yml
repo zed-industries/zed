@@ -27,7 +27,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Run clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
   tests:
     name: Run tests

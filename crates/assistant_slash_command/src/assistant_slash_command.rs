@@ -1,14 +1,15 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
+use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use workspace::Workspace;
+use workspace::{ui::IconName, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
@@ -22,7 +23,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn description(&self) -> String;
     fn menu_text(&self) -> String;
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
@@ -49,14 +50,16 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Default)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
     pub run_commands_in_text: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
-    pub render_placeholder: RenderFoldPlaceholder,
+    pub icon: IconName,
+    pub label: SharedString,
 }

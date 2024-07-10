@@ -54,6 +54,60 @@ impl<'a> Matcher<'a> {
         }
     }
 
+    pub fn match_all_candidates<C: MatchCandidate, R, F>(
+        &mut self,
+        prefix: &[char],
+        lowercase_prefix: &[char],
+        candidates: impl Iterator<Item = C>,
+        results: &mut Vec<R>,
+        cancel_flag: &AtomicBool,
+        build_match: F,
+    ) where
+        R: Match,
+        F: Fn(&C, f64) -> R,
+    {
+        let mut candidate_chars = Vec::new();
+        let mut lowercase_candidate_chars = Vec::new();
+
+        for candidate in candidates {
+            if cancel_flag.load(atomic::Ordering::Relaxed) {
+                break;
+            }
+
+            if !candidate.has_chars(self.query_char_bag) {
+                continue;
+            }
+
+            candidate_chars.clear();
+            lowercase_candidate_chars.clear();
+            for c in candidate.to_string().chars() {
+                candidate_chars.push(c);
+                lowercase_candidate_chars.append(&mut c.to_lowercase().collect::<Vec<_>>());
+            }
+
+            if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
+                continue;
+            }
+
+            let matrix_len = self.query.len() * (prefix.len() + candidate_chars.len());
+            self.score_matrix.clear();
+            self.score_matrix.resize(matrix_len, None);
+            self.best_position_matrix.clear();
+            self.best_position_matrix.resize(matrix_len, 0);
+
+            let score = self.score_match(
+                &candidate_chars,
+                &lowercase_candidate_chars,
+                prefix,
+                lowercase_prefix,
+            );
+
+            let mut mat = build_match(&candidate, score);
+            mat.set_positions(self.match_positions.clone());
+            results.push(mat);
+        }
+    }
+
     pub fn match_candidates<C: MatchCandidate, R, F>(
         &mut self,
         prefix: &[char],

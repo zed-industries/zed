@@ -29,7 +29,7 @@ impl SlashCommand for NowSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
@@ -53,9 +53,8 @@ impl SlashCommand for NowSlashCommand {
             text,
             sections: vec![SlashCommandOutputSection {
                 range,
-                render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    NowPlaceholder { id, unfold, now }.into_any_element()
-                }),
+                icon: IconName::CountdownTimer,
+                label: now.to_rfc3339().into(),
             }],
             run_commands_in_text: false,
         }))

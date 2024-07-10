@@ -741,7 +741,7 @@ mod tests {
                 Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
                     lsp::LocationLink {
                         origin_selection_range: Some(symbol_range),
-                        target_uri: url.clone().into(),
+                        target_uri: url.clone(),
                         target_range,
                         target_selection_range: target_range,
                     },
@@ -815,7 +815,7 @@ mod tests {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
-                    target_uri: url.clone().into(),
+                    target_uri: url.clone(),
                     target_range,
                     target_selection_range: target_range,
                 },
@@ -841,7 +841,7 @@ mod tests {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
-                    target_uri: url.clone().into(),
+                    target_uri: url.clone(),
                     target_range,
                     target_selection_range: target_range,
                 },
@@ -904,7 +904,7 @@ mod tests {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
-                    target_uri: url.into(),
+                    target_uri: url,
                     target_range,
                     target_selection_range: target_range,
                 },
@@ -980,7 +980,7 @@ mod tests {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: None,
-                    target_uri: url.into(),
+                    target_uri: url,
                     target_range,
                     target_selection_range: target_range,
                 },
@@ -1008,7 +1008,7 @@ mod tests {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: None,
-                    target_uri: url.into(),
+                    target_uri: url,
                     target_range,
                     target_selection_range: target_range,
                 },
@@ -1088,7 +1088,7 @@ mod tests {
         let hint_label = ": TestStruct";
         cx.lsp
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let expected_uri = expected_uri.clone().into();
+                let expected_uri = expected_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, expected_uri);
                     Ok(Some(vec![lsp::InlayHint {

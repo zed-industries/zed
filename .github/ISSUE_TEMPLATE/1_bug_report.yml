@@ -1,40 +1,45 @@
 name: Bug Report
 description: |
-    Use this template for **non-crash-related** bug reports.
-    Tip: open this issue template from within Zed with the `file bug report` command palette action.
+  Use this template for **non-crash-related** bug reports.
+  Tip: open this issue template from within Zed with the `file bug report` command palette action.
 labels: ["admin read", "triage", "defect"]
 body:
-    - type: checkboxes
-      attributes:
-          label: Check for existing issues
-          description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
-          options:
-              - label: Completed
-                required: true
-    - type: textarea
-      attributes:
-          label: Describe the bug / provide steps to reproduce it
-          description: A clear and concise description of what the bug is.
-      validations:
+  - type: checkboxes
+    attributes:
+      label: Check for existing issues
+      description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
+      options:
+        - label: Completed
           required: true
-    - type: textarea
-      id: environment
-      attributes:
-          label: Environment
-          description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below.
-      validations:
-          required: true
-    - type: textarea
-      attributes:
-          label: If applicable, add mockups / screenshots to help explain present your vision of the feature
-          description: Drag issues into the text input below
-      validations:
-          required: false
-    - type: textarea
-      attributes:
-          label: If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
-          description: |
-              Drag Zed.log into the text input below.
-              If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
-      validations:
-          required: false
+  - type: textarea
+    attributes:
+      label: Describe the bug / provide steps to reproduce it
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: If applicable, add mockups / screenshots to help explain present your vision of the feature
+      description: Drag issues into the text input below
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
+      description: |
+        Drag Zed.log into the text input below.
+        If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
+      value: |
+        <details><summary>Zed.log</summary><pre>
+        <!-- Click below this line and paste or drag-and-drop your log-->
+
+        <!-- Click above this line and paste or drag-and-drop your log--></pre></details>
+    validations:
+      required: false

@@ -12,7 +12,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use copypasta::{ClipboardContext, ClipboardProvider};
+use clipboard_win::{get_clipboard_string, set_clipboard_string};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -502,16 +502,14 @@ impl Platform for WindowsPlatform {
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         if item.text.len() > 0 {
-            let mut ctx = ClipboardContext::new().unwrap();
-            ctx.set_contents(item.text().to_owned()).unwrap();
+            set_clipboard_string(item.text()).unwrap();
         }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().ok()?;
+        let text = get_clipboard_string().ok()?;
         Some(ClipboardItem {
-            text: content,
+            text,
             metadata: None,
         })
     }

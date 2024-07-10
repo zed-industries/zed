@@ -3,7 +3,6 @@ use crate::{
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
     ToggleReplace, ToggleWholeWord,
 };
-use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     actions::SelectAll,
@@ -876,7 +875,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-                    vec![]
+                    PathMatcher::default()
                 }
             };
         let excluded_files =
@@ -894,7 +893,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-                    vec![]
+                    PathMatcher::default()
                 }
             };
 
@@ -960,15 +959,14 @@ impl ProjectSearchView {
         query
     }
 
-    fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
-        text.split(',')
+    fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
+        let queries = text
+            .split(',')
             .map(str::trim)
             .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
-            .map(|maybe_glob_str| {
-                PathMatcher::new(maybe_glob_str)
-                    .with_context(|| format!("parsing {maybe_glob_str} as path matcher"))
-            })
-            .collect()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Ok(PathMatcher::new(&queries)?)
     }
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {

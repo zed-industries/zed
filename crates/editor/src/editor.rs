@@ -535,11 +535,13 @@ pub struct Editor {
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
+    use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    show_selection_menu: Option<bool>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -554,6 +556,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
+    breadcrumb_header: Option<String>,
 }
 
 #[derive(Clone)]
@@ -887,7 +890,7 @@ struct CompletionsMenu {
     buffer: Model<Buffer>,
     completions: Arc<RwLock<Box<[Completion]>>>,
     match_candidates: Arc<[StringMatchCandidate]>,
-    matches: Arc<[StringMatch]>,
+    matches: Arc<RwLock<Box<[StringMatch]>>>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
@@ -905,7 +908,7 @@ impl CompletionsMenu {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
-            self.selected_item = self.matches.len() - 1;
+            self.selected_item = self.matches.read().len() - 1;
         }
         self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -913,7 +916,7 @@ impl CompletionsMenu {
     }
 
     fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.matches.len() {
+        if self.selected_item + 1 < self.matches.read().len() {
             self.selected_item += 1;
         } else {
             self.selected_item = 0;
@@ -924,17 +927,84 @@ impl CompletionsMenu {
     }
 
     fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.matches.len() - 1;
+        self.selected_item = self.matches.read().len() - 1;
         self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
+    async fn update_matches(
+        resolved_completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        matches: Arc<RwLock<Box<[StringMatch]>>>,
+        query: Option<String>,
+        executor: BackgroundExecutor,
+    ) {
+        let match_candidates = {
+            let completions = completions.read();
+            resolved_completion_indices
+                .iter()
+                .map(|id| {
+                    let completion = &completions[*id];
+                    StringMatchCandidate::new(
+                        *id,
+                        completion.label.text[completion.label.filter_range.clone()].into(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let new_matches = if let Some(query) = query {
+            fuzzy::match_all_strings_in_order(
+                &match_candidates,
+                query.as_str(),
+                query.chars().any(|c| c.is_uppercase()),
+                1000,
+                &Default::default(),
+                executor,
+            )
+            .await
+        } else {
+            match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        };
+
+        let completions = completions.read();
+        let mut matches_write = matches.write();
+        let map = HashMap::from_iter(
+            matches_write
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (m.candidate_id, i)),
+        );
+
+        for new_mat in new_matches {
+            let old_mat_index = map.get(&new_mat.candidate_id).unwrap().to_owned();
+            let completion = &completions[new_mat.candidate_id];
+            let old_mat = matches_write.get_mut(old_mat_index).unwrap();
+
+            old_mat.string.clone_from(&completion.label.text);
+            old_mat.positions = new_mat.positions;
+            for position in &mut old_mat.positions {
+                *position += completion.label.filter_range.start;
+            }
+        }
+    }
+
     fn pre_resolve_completion_documentation(
         buffer: Model<Buffer>,
         completions: Arc<RwLock<Box<[Completion]>>>,
-        matches: Arc<[StringMatch]>,
+        matches: Arc<RwLock<Box<[StringMatch]>>>,
         editor: &Editor,
+        query: Option<String>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<()> {
         let settings = EditorSettings::get_global(cx);
@@ -946,15 +1016,25 @@ impl CompletionsMenu {
             return Task::ready(());
         };
 
-        let resolve_task = provider.resolve_completions(
-            buffer,
-            matches.iter().map(|m| m.candidate_id).collect(),
-            completions.clone(),
-            cx,
-        );
+        let candidates = matches.read().iter().map(|m| m.candidate_id).collect();
+        let resolve_task =
+            provider.resolve_completions(buffer, candidates, completions.clone(), cx);
 
         return cx.spawn(move |this, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
+            if let Some(res) = resolve_task.await.log_err() {
+                if res.is_empty() {
+                    return;
+                }
+
+                CompletionsMenu::update_matches(
+                    res,
+                    completions,
+                    matches,
+                    query,
+                    cx.background_executor().clone(),
+                )
+                .await;
+
                 this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
         });
@@ -970,7 +1050,7 @@ impl CompletionsMenu {
             return;
         }
 
-        let completion_index = self.matches[self.selected_item].candidate_id;
+        let completion_index = self.matches.read()[self.selected_item].candidate_id;
         let Some(project) = project else {
             return;
         };
@@ -992,15 +1072,17 @@ impl CompletionsMenu {
             .lock()
             .fire_new(delay, cx, |_, cx| {
                 cx.spawn(move |this, mut cx| async move {
-                    if let Some(true) = resolve_task.await.log_err() {
-                        this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    if let Some(res) = resolve_task.await.log_err() {
+                        if !res.is_empty() {
+                            this.update(&mut cx, |_, cx| cx.notify()).ok();
+                        }
                     }
                 })
             });
     }
 
     fn visible(&self) -> bool {
-        !self.matches.is_empty()
+        !self.matches.read().is_empty()
     }
 
     fn render(
@@ -1013,8 +1095,8 @@ impl CompletionsMenu {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
 
-        let widest_completion_ix = self
-            .matches
+        let matches = self.matches.read();
+        let widest_completion_ix = matches
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
@@ -1034,13 +1116,13 @@ impl CompletionsMenu {
             .map(|(ix, _)| ix);
 
         let completions = self.completions.clone();
-        let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let style = style.clone();
 
         let multiline_docs = if show_completion_documentation {
-            let mat = &self.matches[selected_item];
-            let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
+            let id = matches[selected_item].candidate_id.to_owned();
+
+            let multiline_docs = match &self.completions.read()[id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -1071,6 +1153,7 @@ impl CompletionsMenu {
             None
         };
 
+        let matches_lock = self.matches.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -1079,6 +1162,7 @@ impl CompletionsMenu {
                 let start_ix = range.start;
                 let completions_guard = completions.read();
 
+                let matches = matches_lock.read();
                 matches[range]
                     .iter()
                     .enumerate()
@@ -1159,6 +1243,8 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
+
+        drop(matches);
 
         Popover::new()
             .child(list)
@@ -1268,7 +1354,7 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        self.matches = matches.into();
+        self.matches = Arc::new(RwLock::new(matches.into()));
         self.selected_item = 0;
     }
 }
@@ -1813,6 +1899,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1837,6 +1924,7 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
+            show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
@@ -1865,6 +1953,7 @@ impl Editor {
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
+            breadcrumb_header: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2188,6 +2277,10 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
+    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
+    }
+
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
@@ -2214,7 +2307,7 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
-            let selections = self.selections.all::<usize>(cx);
+            let selections = &self.selections.disjoint;
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
@@ -2887,7 +2980,7 @@ impl Editor {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if !pair.close {
+                        if !pair.close && !pair.surround {
                             continue;
                         }
 
@@ -2905,9 +2998,10 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let autoclose = self.use_autoclose
-                        && snapshot.settings_at(selection.start, cx).use_autoclose;
-
+                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
+                    let auto_surround =
+                        self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2929,6 +3023,7 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
                             if autoclose
+                                && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
                             {
@@ -2980,7 +3075,8 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if autoclose
+                    else if auto_surround
+                        && bracket_pair.surround
                         && is_bracket_pair_start
                         && bracket_pair.start.chars().count() == 1
                     {
@@ -3975,7 +4071,7 @@ impl Editor {
                             .collect(),
                         buffer: buffer.clone(),
                         completions: Arc::new(RwLock::new(completions.into())),
-                        matches: Vec::new().into(),
+                        matches: Arc::new(RwLock::new(Vec::new().into())),
                         selected_item: 0,
                         scroll_handle: UniformListScrollHandle::new(),
                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
@@ -3985,7 +4081,7 @@ impl Editor {
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
-                    if menu.matches.is_empty() {
+                    if menu.matches.read().is_empty() {
                         None
                     } else {
                         this.update(&mut cx, |editor, cx| {
@@ -4003,6 +4099,7 @@ impl Editor {
                                         completions,
                                         matches,
                                         editor,
+                                        query,
                                         cx,
                                     )
                                 });
@@ -4066,12 +4163,15 @@ impl Editor {
             return None;
         };
 
-        let mat = completions_menu
+        let candidate_id = completions_menu
             .matches
-            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
+            .read()
+            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?
+            .candidate_id;
+
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
-        let completion = completions.get(mat.candidate_id)?;
+        let completion = completions.get(candidate_id)?;
         cx.stop_propagation();
 
         let snippet;
@@ -6722,6 +6822,20 @@ impl Editor {
         })
     }
 
+    pub fn select_page_up(&mut self, _: &SelectPageUp, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6732,9 +6846,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
@@ -6809,6 +6921,20 @@ impl Editor {
         }
     }
 
+    pub fn select_page_down(&mut self, _: &SelectPageDown, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6829,9 +6955,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
@@ -8214,6 +8338,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if !EditorSettings::get_global(cx).gutter.runnables {
+            self.clear_tasks();
+            return Task::ready(());
+        }
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
@@ -8975,7 +9103,7 @@ impl Editor {
                         });
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
-                            lsp::Uri::from(lsp_location.uri.clone()),
+                            lsp_location.uri.clone(),
                             server_id,
                             language_server_name,
                             cx,
@@ -9493,6 +9621,20 @@ impl Editor {
             self.buffer.update(cx, |multi_buffer, cx| {
                 project.update(cx, |project, cx| {
                     project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                });
+            })
+        }
+    }
+
+    fn cancel_language_server_work(
+        &mut self,
+        _: &CancelLanguageServerWork,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.cancel_language_server_work_for_buffers(multi_buffer.all_buffers(), cx);
                 });
             })
         }
@@ -10175,6 +10317,20 @@ impl Editor {
         self.git_blame_inline_enabled
     }
 
+    pub fn toggle_selection_menu(&mut self, _: &ToggleSelectionMenu, cx: &mut ViewContext<Self>) {
+        self.show_selection_menu = self
+            .show_selection_menu
+            .map(|show_selections_menu| !show_selections_menu)
+            .or_else(|| Some(!EditorSettings::get_global(cx).toolbar.selections_menu));
+
+        cx.notify();
+    }
+
+    pub fn selection_menu_enabled(&self, cx: &AppContext) -> bool {
+        self.show_selection_menu
+            .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
+    }
+
     fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
@@ -10480,6 +10636,10 @@ impl Editor {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         )
+    }
+
+    pub fn set_breadcrumb_header(&mut self, new_header: String) {
+        self.breadcrumb_header = Some(new_header);
     }
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut ViewContext<Self>) {
@@ -10978,6 +11138,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.tasks_update_task = Some(self.refresh_runnables(cx));
         self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -11529,7 +11690,7 @@ pub trait CompletionProvider {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>>;
+    ) -> Task<Result<Vec<usize>>>;
 
     fn apply_additional_edits_for_completion(
         &self,
@@ -11568,7 +11729,7 @@ impl CompletionProvider for Model<Project> {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Vec<usize>>> {
         self.update(cx, |project, cx| {
             project.resolve_completions(buffer, completion_indices, completions, cx)
         })
@@ -11751,7 +11912,7 @@ impl EditorSnapshot {
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions {
+        left_padding += if show_code_actions || gutter_settings.runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -12160,9 +12321,12 @@ impl ViewInputHandler for Editor {
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
             this.handle_input(text, cx);
             this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

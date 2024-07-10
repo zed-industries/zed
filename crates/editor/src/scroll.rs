@@ -2,6 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -199,8 +200,20 @@ impl ScrollManager {
                 0,
             )
         } else {
+            let scroll_top = scroll_position.y;
+            let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+                ScrollBeyondLastLine::OnePage => scroll_top,
+                ScrollBeyondLastLine::Off => scroll_top
+                    .min((map.max_buffer_row().as_f32()) - self.visible_line_count.unwrap() + 1.0),
+                ScrollBeyondLastLine::VerticalScrollMargin => scroll_top.min(
+                    (map.max_buffer_row().as_f32()) - self.visible_line_count.unwrap()
+                        + 1.0
+                        + self.vertical_scroll_margin,
+                ),
+            };
+
             let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_position.y as u32), 0).to_point(&map);
+                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(&map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -210,7 +223,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_position.y - top_anchor.to_display_point(&map).row().as_f32(),
+                        scroll_top - top_anchor.to_display_point(&map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -328,6 +341,11 @@ impl Editor {
 
     pub fn visible_line_count(&self) -> Option<f32> {
         self.scroll_manager.visible_line_count
+    }
+
+    pub fn visible_row_count(&self) -> Option<u32> {
+        self.visible_line_count()
+            .map(|line_count| line_count as u32 - 1)
     }
 
     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {

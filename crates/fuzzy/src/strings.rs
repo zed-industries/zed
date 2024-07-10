@@ -3,9 +3,10 @@ use crate::{
     CharBag,
 };
 use gpui::BackgroundExecutor;
+use std::cmp::Ordering;
 use std::{
     borrow::Cow,
-    cmp::{self, Ordering},
+    cmp::{self},
     iter,
     ops::Range,
     sync::atomic::AtomicBool,
@@ -184,4 +185,77 @@ pub async fn match_strings(
         }
     }
     results
+}
+
+pub async fn match_all_strings_in_order(
+    candidates: &[StringMatchCandidate],
+    query: &str,
+    smart_case: bool,
+    max_results: usize,
+    cancel_flag: &AtomicBool,
+    executor: BackgroundExecutor,
+) -> Vec<StringMatch> {
+    if candidates.is_empty() || max_results == 0 {
+        return Default::default();
+    }
+
+    if query.is_empty() {
+        return candidates
+            .iter()
+            .map(|candidate| StringMatch {
+                candidate_id: candidate.id,
+                score: 0.,
+                positions: Default::default(),
+                string: candidate.string.clone(),
+            })
+            .collect();
+    }
+
+    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let query = query.chars().collect::<Vec<_>>();
+
+    let lowercase_query = &lowercase_query;
+    let query = &query;
+    let query_char_bag = CharBag::from(&lowercase_query[..]);
+
+    let num_cpus = executor.num_cpus().min(candidates.len());
+    let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
+    let mut segment_results = (0..num_cpus)
+        .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
+        .collect::<Vec<_>>();
+
+    executor
+        .scoped(|scope| {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let cancel_flag = &cancel_flag;
+                scope.spawn(async move {
+                    let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
+                    let segment_end = cmp::min(segment_start + segment_size, candidates.len());
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        max_results,
+                    );
+
+                    matcher.match_all_candidates(
+                        &[],
+                        &[],
+                        candidates[segment_start..segment_end].iter(),
+                        results,
+                        cancel_flag,
+                        |candidate, score| StringMatch {
+                            candidate_id: candidate.id,
+                            score,
+                            positions: Vec::new(),
+                            string: candidate.string.to_string(),
+                        },
+                    );
+                });
+            }
+        })
+        .await;
+
+    segment_results.into_iter().flatten().collect()
 }

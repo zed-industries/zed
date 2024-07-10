@@ -310,7 +310,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 }
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
     SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
@@ -1911,7 +1911,7 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
         let mut lock = window_state.lock();
 
         if let Some(mut input_handler) = lock.input_handler.take() {
-            match ime.clone() {
+            match ime {
                 ImeInput::InsertText(text, range) => {
                     if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
                         ime_input.push((text, range));
@@ -1931,6 +1931,15 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
                 }
             }
             window_state.lock().input_handler = Some(input_handler);
+        } else {
+            match ime {
+                ImeInput::InsertText(text, range) => {
+                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                        ime_input.push((text, range));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

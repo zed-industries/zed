@@ -61,7 +61,7 @@ impl HandleTag for RustdocHeadingHandler {
             || writer.is_inside("h6")
         {
             let text = text
-                .trim_matches(|char| char == '\n' || char == '\r' || char == '§')
+                .trim_matches(|char| char == '\n' || char == '\r')
                 .replace('\n', " ");
             writer.push_str(&text);
 
@@ -212,7 +212,7 @@ pub struct RustdocChromeRemover;
 impl HandleTag for RustdocChromeRemover {
     fn should_handle(&self, tag: &str) -> bool {
         match tag {
-            "head" | "script" | "nav" | "summary" | "button" | "div" | "span" => true,
+            "head" | "script" | "nav" | "summary" | "button" | "a" | "div" | "span" => true,
             _ => false,
         }
     }
@@ -234,12 +234,17 @@ impl HandleTag for RustdocChromeRemover {
                     return StartTagOutcome::Skip;
                 }
             }
-            "div" | "span" => {
-                let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
-                if tag.has_any_classes(&classes_to_skip) {
+            "a" => {
+                if tag.has_any_classes(&["anchor", "doc-anchor", "src"]) {
                     return StartTagOutcome::Skip;
                 }
             }
+            "div" | "span" => {
+                if tag.has_any_classes(&["nav-container", "sidebar-elems", "out-of-band"]) {
+                    return StartTagOutcome::Skip;
+                }
+            }
+
             _ => {}
         }
 

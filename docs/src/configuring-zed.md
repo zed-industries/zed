@@ -725,6 +725,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "indent_guides": {
     "enabled": true,
     "line_width": 1,
+    "active_line_width": 1,
     "coloring": "fixed",
     "background_coloring": "disabled"
   }
@@ -758,7 +759,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ```
 
 3. Enable indent aware coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {
@@ -770,7 +771,7 @@ The colors that are used for different indentation levels are defined in the the
 ```
 
 4. Enable indent aware background coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {

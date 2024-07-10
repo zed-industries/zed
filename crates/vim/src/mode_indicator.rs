@@ -1,4 +1,5 @@
 use gpui::{div, Element, Render, Subscription, ViewContext};
+use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{state::Mode, Vim};
@@ -7,34 +8,56 @@ use crate::{state::Mode, Vim};
 pub struct ModeIndicator {
     pub(crate) mode: Option<Mode>,
     pub(crate) operators: String,
-    _subscription: Subscription,
+    pending_keys: Option<String>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let _subscription = cx.observe_global::<Vim>(|this, cx| this.update_mode(cx));
+        let _subscriptions = vec![
+            cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
+            cx.observe_pending_input(|this, cx| {
+                this.update_pending_keys(cx);
+                cx.notify();
+            }),
+        ];
+
         let mut this = Self {
             mode: None,
             operators: "".to_string(),
-            _subscription,
+            pending_keys: None,
+            _subscriptions,
         };
         this.update_mode(cx);
         this
     }
 
     fn update_mode(&mut self, cx: &mut ViewContext<Self>) {
-        // Vim doesn't exist in some tests
-        let Some(vim) = cx.try_global::<Vim>() else {
-            return;
-        };
-
-        if vim.enabled {
+        if let Some(vim) = self.vim(cx) {
             self.mode = Some(vim.state().mode);
             self.operators = self.current_operators_description(&vim);
         } else {
             self.mode = None;
         }
+    }
+
+    fn update_pending_keys(&mut self, cx: &mut ViewContext<Self>) {
+        if self.vim(cx).is_some() {
+            self.pending_keys = cx.pending_input_keystrokes().map(|keystrokes| {
+                keystrokes
+                    .iter()
+                    .map(|keystroke| format!("{}", keystroke))
+                    .join(" ")
+            });
+        } else {
+            self.pending_keys = None;
+        }
+    }
+
+    fn vim<'a>(&self, cx: &'a mut ViewContext<Self>) -> Option<&'a Vim> {
+        // In some tests Vim isn't enabled, so we use try_global.
+        cx.try_global::<Vim>().filter(|vim| vim.enabled)
     }
 
     fn current_operators_description(&self, vim: &Vim) -> String {
@@ -61,7 +84,9 @@ impl Render for ModeIndicator {
             return div().into_any();
         };
 
-        Label::new(format!("{} -- {} --", self.operators, mode))
+        let pending = self.pending_keys.as_ref().unwrap_or(&self.operators);
+
+        Label::new(format!("{} -- {} --", pending, mode))
             .size(LabelSize::Small)
             .line_height_style(LineHeightStyle::UiLabel)
             .into_any_element()

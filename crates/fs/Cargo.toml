@@ -12,33 +12,31 @@ workspace = true
 path = "src/fs.rs"
 
 [dependencies]
-collections.workspace = true
-rope.workspace = true
-text.workspace = true
-util.workspace = true
-
 anyhow.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
+collections.workspace = true
 futures.workspace = true
-tempfile.workspace = true
-lazy_static.workspace = true
-parking_lot.workspace = true
-smol.workspace = true
 git.workspace = true
 git2.workspace = true
+gpui = { workspace = true, optional = true }
+lazy_static.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+rope.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-libc.workspace = true
+smol.workspace = true
+tempfile.workspace = true
+text.workspace = true
 time.workspace = true
-
-gpui = { workspace = true, optional = true }
+util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
 objc = "0.2"
 cocoa = "0.25"
-
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"

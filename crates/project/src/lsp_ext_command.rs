@@ -58,7 +58,7 @@ impl LspCommand for ExpandMacro {
     ) -> ExpandMacroParams {
         ExpandMacroParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Uri::from_file_path(path).unwrap().into(),
+                uri: lsp::Url::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
         }

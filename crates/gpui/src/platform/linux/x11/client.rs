@@ -8,14 +8,11 @@ use calloop::generic::{FdWrapper, Generic};
 use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
 use collections::HashMap;
-use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
-use copypasta::ClipboardProvider;
-
 use util::ResultExt;
+
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
-use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
@@ -48,7 +45,7 @@ use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSour
 pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
 pub(crate) struct WindowRef {
-    window: X11WindowStatePtr,
+    pub window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
 }
 
@@ -129,8 +126,7 @@ pub struct X11ClientState {
     pub(crate) scroll_y: Option<f32>,
 
     pub(crate) common: LinuxCommon,
-    pub(crate) clipboard: X11ClipboardContext<Clipboard>,
-    pub(crate) primary: X11ClipboardContext<Primary>,
+    pub(crate) clipboard: x11_clipboard::Clipboard,
 }
 
 #[derive(Clone)]
@@ -277,8 +273,7 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
-        let primary = X11ClipboardContext::<Primary>::new().unwrap();
+        let clipboard = x11_clipboard::Clipboard::new().unwrap();
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -296,13 +291,39 @@ impl X11Client {
             .insert_source(
                 Generic::new_with_error::<EventHandlerError>(
                     fd,
-                    calloop::Interest::READ,
+                    calloop::Interest::BOTH,
                     calloop::Mode::Level,
                 ),
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
+                        let windows = client
+                            .0
+                            .borrow()
+                            .windows
+                            .values()
+                            .map(|window_ref| window_ref.window.clone())
+                            .collect::<Vec<_>>();
+
                         while let Some(event) = xcb_connection.poll_for_event()? {
+                            for window in &windows {
+                                let last_render_at;
+                                let refresh_rate;
+                                {
+                                    let window_state = window.state.borrow();
+                                    last_render_at = window_state.last_render_at;
+                                    refresh_rate = window_state.refresh_rate;
+                                }
+
+                                if let Some(last_render_at) = last_render_at {
+                                    if last_render_at.elapsed() >= refresh_rate {
+                                        window.refresh();
+                                    }
+                                } else {
+                                    window.refresh();
+                                }
+                            }
+
                             let mut state = client.0.borrow_mut();
                             if state.ximc.is_none() || state.xim_handler.is_none() {
                                 drop(state);
@@ -399,7 +420,6 @@ impl X11Client {
             scroll_y: None,
 
             clipboard,
-            primary,
         })))
     }
 
@@ -475,9 +495,8 @@ impl X11Client {
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
                     if window.should_close() {
-                        let window_ref = state.windows.remove(&event.window)?;
-                        state.loop_handle.remove(window_ref.refresh_event_token);
                         // Rest of the close logic is handled in drop_window()
+                        window.close();
                     }
                 }
             }
@@ -961,60 +980,18 @@ impl LinuxClient for X11Client {
             state.common.appearance,
         )?;
 
-        let screen_resources = state
-            .xcb_connection
-            .randr_get_screen_resources(x_window)
-            .unwrap()
-            .reply()
-            .expect("Could not find available screens");
-
-        let mode = screen_resources
-            .crtcs
-            .iter()
-            .find_map(|crtc| {
-                let crtc_info = state
-                    .xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                    .ok()?
-                    .reply()
-                    .ok()?;
-
-                screen_resources
-                    .modes
-                    .iter()
-                    .find(|m| m.id == crtc_info.mode)
-            })
-            .expect("Unable to find screen refresh rate");
-
         let refresh_event_token = state
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
-                let refresh_duration = mode_refresh_rate(mode);
-                move |mut instant, (), client| {
-                    let state = client.0.borrow_mut();
-                    state
-                        .xcb_connection
-                        .send_event(
-                            false,
-                            x_window,
-                            xproto::EventMask::EXPOSURE,
-                            xproto::ExposeEvent {
-                                response_type: xproto::EXPOSE_EVENT,
-                                sequence: 0,
-                                window: x_window,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                                count: 1,
-                            },
-                        )
-                        .unwrap();
-                    let _ = state.xcb_connection.flush().unwrap();
+                let window = window.0.clone();
+                let refresh_rate = window.state.borrow().refresh_rate;
+                move |mut instant, (), _| {
+                    window.refresh();
+
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
                     while instant < now {
-                        instant += refresh_duration;
+                        instant += refresh_rate;
                     }
                     calloop::timer::TimeoutAction::ToInstant(instant)
                 }
@@ -1073,35 +1050,61 @@ impl LinuxClient for X11Client {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().primary.set_contents(item.text).ok();
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .store(
+                state.clipboard.setter.atoms.primary,
+                state.clipboard.setter.atoms.utf8_string,
+                item.text().as_bytes(),
+            )
+            .ok();
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().clipboard.set_contents(item.text).ok();
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .store(
+                state.clipboard.setter.atoms.clipboard,
+                state.clipboard.setter.atoms.utf8_string,
+                item.text().as_bytes(),
+            )
+            .ok();
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
-            .primary
-            .get_contents()
-            .ok()
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .load(
+                state.clipboard.getter.atoms.primary,
+                state.clipboard.getter.atoms.utf8_string,
+                state.clipboard.getter.atoms.property,
+                Duration::from_secs(3),
+            )
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
+            .ok()
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
+        let state = self.0.borrow_mut();
+        state
             .clipboard
-            .get_contents()
-            .ok()
+            .load(
+                state.clipboard.getter.atoms.clipboard,
+                state.clipboard.getter.atoms.utf8_string,
+                state.clipboard.getter.atoms.property,
+                Duration::from_secs(3),
+            )
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
+            .ok()
     }
 
     fn run(&self) {
@@ -1124,15 +1127,6 @@ impl LinuxClient for X11Client {
                 .map(|window| window.handle())
         })
     }
-}
-
-// Adatpted from:
-// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing at {} micros", micros);
-    Duration::from_micros(micros)
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {

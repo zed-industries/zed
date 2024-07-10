@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{maybe, paths, ResultExt};
+use util::{maybe, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
@@ -98,19 +98,19 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(&paths::SETTINGS),
-                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                            schema_file_match(paths::settings_file()),
+                            paths::local_settings_file_relative_path()
                         ],
                         "schema": settings_schema,
                     },
                     {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                        "fileMatch": [schema_file_match(paths::keymap_file())],
                         "schema": KeymapFile::generate_json_schema(&action_names),
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(&paths::TASKS),
-                            &*paths::LOCAL_TASKS_RELATIVE_PATH,
+                            schema_file_match(paths::tasks_file()),
+                            paths::local_tasks_file_relative_path()
                         ],
                         "schema": tasks_schema,
                     }

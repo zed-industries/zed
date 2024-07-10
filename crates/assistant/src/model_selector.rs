@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{assistant_settings::AssistantSettings, CompletionProvider, ToggleModelSelector};
 use fs::Fs;
 use settings::update_settings_file;
-use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, PopoverMenuHandle, Tooltip};
+use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
 #[derive(IntoElement)]
 pub struct ModelSelector {
@@ -19,7 +19,7 @@ impl ModelSelector {
 
 impl RenderOnce for ModelSelector {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        popover_menu("model-switcher")
+        PopoverMenu::new("model-switcher")
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {

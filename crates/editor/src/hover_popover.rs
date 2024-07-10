@@ -1376,7 +1376,7 @@ mod tests {
         let closure_uri = uri.clone();
         cx.lsp
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_uri = closure_uri.clone().into();
+                let task_uri = closure_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, task_uri);
                     Ok(Some(vec![lsp::InlayHint {
@@ -1467,7 +1467,7 @@ mod tests {
                             lsp::InlayHintLabelPart {
                                 value: new_type_label.to_string(),
                                 location: Some(lsp::Location {
-                                    uri: task_uri.clone().into(),
+                                    uri: task_uri.clone(),
                                     range: new_type_target_range,
                                 }),
                                 tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
@@ -1482,7 +1482,7 @@ mod tests {
                             lsp::InlayHintLabelPart {
                                 value: struct_label.to_string(),
                                 location: Some(lsp::Location {
-                                    uri: task_uri.into(),
+                                    uri: task_uri,
                                     range: struct_target_range,
                                 }),
                                 tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
