@@ -24,7 +24,7 @@ use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 pub struct Session {
     pub editor: WeakView<Editor>,
     pub kernel: Kernel,
-    pub blocks: HashMap<String, EditorBlock>,
+    blocks: HashMap<String, EditorBlock>,
     pub messaging_task: Task<()>,
     pub kernel_specification: KernelSpecification,
 }
