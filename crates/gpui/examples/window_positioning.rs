@@ -101,7 +101,8 @@ fn main() {
             .unwrap();
 
             let bounds = Bounds {
-                origin: screen.bounds().lower_left() + point(margin_offset, -margin_offset),
+                origin: screen.bounds().lower_left()
+                    - point(-margin_offset, size.height + margin_offset),
                 size,
             };
 
@@ -116,7 +117,7 @@ fn main() {
 
             let bounds = Bounds {
                 origin: screen.bounds().lower_right()
-                    - point(size.width + margin_offset, margin_offset),
+                    - point(size.width + margin_offset, size.height + margin_offset),
                 size,
             };
 
@@ -194,7 +195,7 @@ fn main() {
             let bounds = Bounds {
                 origin: point(
                     screen.bounds().center().x - size.center().x,
-                    screen.bounds().size.height - margin_offset,
+                    screen.bounds().size.height - size.height - margin_offset,
                 ),
                 size,
             };
