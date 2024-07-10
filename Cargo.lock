@@ -8274,6 +8274,7 @@ dependencies = [
  "assistant",
  "editor",
  "gpui",
+ "repl",
  "search",
  "settings",
  "ui",

@@ -82,7 +82,7 @@ pub enum Kernel {
 }
 
 impl Kernel {
-    pub fn dot(&mut self) -> Indicator {
+    pub fn dot(&self) -> Indicator {
         match self {
             Kernel::RunningKernel(kernel) => match kernel.execution_state {
                 ExecutionState::Idle => Indicator::dot().color(Color::Success),
