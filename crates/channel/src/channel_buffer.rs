@@ -138,7 +138,6 @@ impl ChannelBuffer {
     async fn handle_update_channel_buffer(
         this: Model<Self>,
         update_channel_buffer: TypedEnvelope<proto::UpdateChannelBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let ops = update_channel_buffer
@@ -160,7 +159,6 @@ impl ChannelBuffer {
     async fn handle_update_channel_buffer_collaborators(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannelBufferCollaborators>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {

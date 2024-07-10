@@ -19,7 +19,7 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{btree_map, hash_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -85,6 +85,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use snippet::Snippet;
+use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -230,6 +231,7 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    snippets: Model<SnippetProvider>,
 }
 
 pub enum LanguageServerToQuery {
@@ -354,6 +356,9 @@ pub enum Event {
     },
     CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
+    HostReshared,
+    Reshared,
+    Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
@@ -720,7 +725,9 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
-
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -746,6 +753,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
+                snippets,
                 languages,
                 client,
                 user_store,
@@ -842,6 +850,9 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -860,6 +871,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+
             let mut this = Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -878,6 +890,7 @@ impl Project {
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
+                snippets,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -1337,6 +1350,10 @@ impl Project {
         &self.tasks
     }
 
+    pub fn snippets(&self) -> &Model<SnippetProvider> {
+        &self.snippets
+    }
+
     pub fn search_history(&self) -> &SearchHistory {
         &self.search_history
     }
@@ -1703,6 +1720,7 @@ impl Project {
         self.shared_buffers.clear();
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.metadata_changed(cx);
+        cx.emit(Event::Reshared);
         Ok(())
     }
 
@@ -1740,6 +1758,7 @@ impl Project {
             .collect();
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
+        cx.emit(Event::Rejoined);
         cx.notify();
         Ok(())
     }
@@ -1792,9 +1811,11 @@ impl Project {
                 }
             }
 
-            self.client.send(proto::UnshareProject {
-                project_id: remote_id,
-            })?;
+            self.client
+                .send(proto::UnshareProject {
+                    project_id: remote_id,
+                })
+                .ok();
 
             Ok(())
         } else {
@@ -3663,29 +3684,26 @@ impl Project {
                     let this = this.clone();
                     let name = name.to_string();
                     async move {
-                        if let Some(actions) = params.actions {
-                            let (tx, mut rx) = smol::channel::bounded(1);
-                            let request = LanguageServerPromptRequest {
-                                level: match params.typ {
-                                    lsp::MessageType::ERROR => PromptLevel::Critical,
-                                    lsp::MessageType::WARNING => PromptLevel::Warning,
-                                    _ => PromptLevel::Info,
-                                },
-                                message: params.message,
-                                actions,
-                                response_channel: tx,
-                                lsp_name: name.clone(),
-                            };
+                        let actions = params.actions.unwrap_or_default();
+                        let (tx, mut rx) = smol::channel::bounded(1);
+                        let request = LanguageServerPromptRequest {
+                            level: match params.typ {
+                                lsp::MessageType::ERROR => PromptLevel::Critical,
+                                lsp::MessageType::WARNING => PromptLevel::Warning,
+                                _ => PromptLevel::Info,
+                            },
+                            message: params.message,
+                            actions,
+                            response_channel: tx,
+                            lsp_name: name.clone(),
+                        };
 
-                            if let Ok(_) = this.update(&mut cx, |_, cx| {
-                                cx.emit(Event::LanguageServerPrompt(request));
-                            }) {
-                                let response = rx.next().await;
+                        if let Ok(_) = this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerPrompt(request));
+                        }) {
+                            let response = rx.next().await;
 
-                                Ok(response)
-                            } else {
-                                Ok(None)
-                            }
+                            Ok(response)
                         } else {
                             Ok(None)
                         }
@@ -3740,7 +3758,33 @@ impl Project {
                 }
             })
             .detach();
+        language_server
+            .on_notification::<lsp::notification::ShowMessage, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
 
+                    let (tx, _) = smol::channel::bounded(1);
+                    let request = LanguageServerPromptRequest {
+                        level: match params.typ {
+                            lsp::MessageType::ERROR => PromptLevel::Critical,
+                            lsp::MessageType::WARNING => PromptLevel::Warning,
+                            _ => PromptLevel::Info,
+                        },
+                        message: params.message,
+                        actions: vec![],
+                        response_channel: tx,
+                        lsp_name: name.clone(),
+                    };
+
+                    let _ = this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::LanguageServerPrompt(request));
+                    });
+                }
+            })
+            .detach();
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
                 if let Some(this) = this.upgrade() {
@@ -4029,7 +4073,6 @@ impl Project {
     async fn handle_restart_language_servers(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::RestartLanguageServers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         project.update(&mut cx, |project, cx| {
@@ -4064,6 +4107,7 @@ impl Project {
             return;
         }
 
+        #[allow(clippy::mutable_key_type)]
         let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
@@ -8244,7 +8288,7 @@ impl Project {
                 }
             };
 
-            if abs_path.ends_with(local_settings_file_relative_path()) {
+            if path.ends_with(local_settings_file_relative_path()) {
                 let settings_dir = Arc::from(
                     path.ancestors()
                         .nth(local_settings_file_relative_path().components().count())
@@ -8261,7 +8305,7 @@ impl Project {
                         },
                     )
                 });
-            } else if abs_path.ends_with(local_tasks_file_relative_path()) {
+            } else if path.ends_with(local_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8281,7 +8325,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+            } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8612,7 +8656,6 @@ impl Project {
     async fn handle_blame_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BlameBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BlameBufferResponse> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -8643,7 +8686,6 @@ impl Project {
     async fn handle_multi_lsp_query(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::MultiLspQuery>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -8755,7 +8797,6 @@ impl Project {
     async fn handle_unshare_project(
         this: Model<Self>,
         _: TypedEnvelope<proto::UnshareProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8771,7 +8812,6 @@ impl Project {
     async fn handle_add_collaborator(
         this: Model<Self>,
         mut envelope: TypedEnvelope<proto::AddProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let collaborator = envelope
@@ -8795,7 +8835,6 @@ impl Project {
     async fn handle_update_project_collaborator(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let old_peer_id = envelope
@@ -8830,6 +8869,7 @@ impl Project {
                     .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
                 this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
                     .unwrap();
+                cx.emit(Event::HostReshared);
             }
 
             cx.emit(Event::CollaboratorUpdated {
@@ -8844,7 +8884,6 @@ impl Project {
     async fn handle_remove_collaborator(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RemoveProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8873,7 +8912,6 @@ impl Project {
     async fn handle_update_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8888,7 +8926,6 @@ impl Project {
     async fn handle_update_worktree(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8906,7 +8943,6 @@ impl Project {
     async fn handle_update_worktree_settings(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8930,7 +8966,6 @@ impl Project {
     async fn handle_create_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let worktree = this.update(&mut cx, |this, cx| {
@@ -8944,7 +8979,6 @@ impl Project {
     async fn handle_rename_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8958,7 +8992,6 @@ impl Project {
     async fn handle_copy_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CopyProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8972,7 +9005,6 @@ impl Project {
     async fn handle_delete_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8987,7 +9019,6 @@ impl Project {
     async fn handle_expand_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -9000,7 +9031,6 @@ impl Project {
     async fn handle_update_diagnostic_summary(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9048,7 +9078,6 @@ impl Project {
     async fn handle_start_language_server(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::StartLanguageServer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let server = envelope
@@ -9073,7 +9102,6 @@ impl Project {
     async fn handle_update_language_server(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateLanguageServer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9136,7 +9164,6 @@ impl Project {
     async fn handle_update_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
@@ -9174,7 +9201,6 @@ impl Project {
     async fn handle_create_buffer_for_peer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9260,7 +9286,6 @@ impl Project {
     async fn handle_update_diff_base(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiffBase>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9283,7 +9308,6 @@ impl Project {
     async fn handle_update_buffer_file(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let buffer_id = envelope.payload.buffer_id;
@@ -9314,7 +9338,6 @@ impl Project {
     async fn handle_save_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -9356,7 +9379,6 @@ impl Project {
     async fn handle_reload_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ReloadBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ReloadBuffersResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9386,7 +9408,6 @@ impl Project {
     async fn handle_synchronize_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeBuffersResponse> {
         let project_id = envelope.payload.project_id;
@@ -9477,7 +9498,6 @@ impl Project {
     async fn handle_format_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::FormatBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::FormatBuffersResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9508,7 +9528,6 @@ impl Project {
     async fn handle_apply_additional_edits_for_completion(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
         let (buffer, completion) = this.update(&mut cx, |this, _| {
@@ -9560,7 +9579,6 @@ impl Project {
     async fn handle_resolve_completion_documentation(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveCompletionDocumentationResponse> {
         let lsp_completion: CompletionItem =
@@ -9631,7 +9649,6 @@ impl Project {
     async fn handle_apply_code_action(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9663,7 +9680,6 @@ impl Project {
     async fn handle_on_type_formatting(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OnTypeFormatting>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OnTypeFormattingResponse> {
         let on_type_formatting = this.update(&mut cx, |this, cx| {
@@ -9696,7 +9712,6 @@ impl Project {
     async fn handle_inlay_hints(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::InlayHints>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::InlayHintsResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9745,7 +9760,6 @@ impl Project {
     async fn handle_resolve_inlay_hint(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveInlayHintResponse> {
         let proto_hint = envelope
@@ -9780,7 +9794,6 @@ impl Project {
     async fn handle_task_context_for_location(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskContext> {
         let location = envelope
@@ -9823,7 +9836,6 @@ impl Project {
     async fn handle_task_templates(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskTemplates>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskTemplatesResponse> {
         let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
@@ -9989,7 +10001,6 @@ impl Project {
     async fn handle_refresh_inlay_hints(
         this: Model<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
@@ -10001,7 +10012,6 @@ impl Project {
     async fn handle_lsp_command<T: LspCommand>(
         this: Model<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
     where
@@ -10047,7 +10057,6 @@ impl Project {
     async fn handle_get_project_symbols(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::GetProjectSymbols>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::GetProjectSymbolsResponse> {
         let symbols = this
@@ -10064,7 +10073,6 @@ impl Project {
     async fn handle_search_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SearchProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SearchProjectResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10104,7 +10112,6 @@ impl Project {
     async fn handle_open_buffer_for_symbol(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10170,7 +10177,6 @@ impl Project {
     async fn handle_open_buffer_by_id(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferById>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10184,7 +10190,6 @@ impl Project {
     async fn handle_open_buffer_by_path(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferByPath>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10206,7 +10211,6 @@ impl Project {
     async fn handle_open_new_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenNewBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this.update(&mut cx, |this, cx| this.create_local_buffer("", None, cx))?;
@@ -10601,7 +10605,6 @@ impl Project {
     async fn handle_buffer_saved(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferSaved>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let version = deserialize_version(&envelope.payload.version);
@@ -10626,7 +10629,6 @@ impl Project {
     async fn handle_buffer_reloaded(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferReloaded>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let payload = envelope.payload;
@@ -10959,12 +10961,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
-            let language = location
-                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
+                })
+                .unwrap_or_default();
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
-                .list_tasks(language, worktree)))
+                .list_tasks(file, language, worktree, cx)))
         } else if let Some(project_id) = self
             .remote_id()
             .filter(|_| self.ssh_connection_string(cx).is_some())
@@ -11112,6 +11121,7 @@ async fn populate_labels_for_symbols(
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     output: &mut Vec<Symbol>,
 ) {
+    #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
     let mut unknown_path = None;

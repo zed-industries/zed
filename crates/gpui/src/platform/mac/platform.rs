@@ -796,14 +796,24 @@ impl Platform for MacPlatform {
                 CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
                 CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), verticalResizeCursor],
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
                 CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+
+                // Undocumented, private class methods:
+                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+                CursorStyle::ResizeUpLeftDownRight => {
+                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+                }
+                CursorStyle::ResizeUpRightDownLeft => {
+                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+                }
+
                 CursorStyle::IBeamCursorForVerticalLayout => {
                     msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
                 }

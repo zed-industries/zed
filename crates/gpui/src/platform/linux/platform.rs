@@ -3,10 +3,11 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::panic::Location;
 use std::rc::Weak;
 use std::{
@@ -19,6 +20,8 @@ use std::{
 
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
+use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
+use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
@@ -65,6 +68,7 @@ pub trait LinuxClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
+    fn reveal_path(&self, path: PathBuf);
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
@@ -299,20 +303,27 @@ impl<P: LinuxClient + 'static> Platform for P {
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let result = SaveFileRequest::default()
+                let request = SaveFileRequest::default()
                     .modal(true)
                     .title("Select new path")
                     .accept_label("Accept")
-                    .send()
-                    .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
-                        response
-                            .uris()
-                            .first()
-                            .and_then(|uri| uri.to_file_path().ok())
-                    });
+                    .current_folder(directory);
+
+                let result = if let Ok(request) = request {
+                    request
+                        .send()
+                        .await
+                        .ok()
+                        .and_then(|request| request.response().ok())
+                        .and_then(|response| {
+                            response
+                                .uris()
+                                .first()
+                                .and_then(|uri| uri.to_file_path().ok())
+                        })
+                } else {
+                    None
+                };
 
                 done_tx.send(result);
             })
@@ -322,13 +333,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn reveal_path(&self, path: &Path) {
-        if path.is_dir() {
-            open::that_detached(path);
-            return;
-        }
-        // If `path` is a file, the system may try to open it in a text editor
-        let dir = path.parent().unwrap_or(Path::new(""));
-        open::that_detached(dir);
+        self.reveal_path(path.to_owned());
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
@@ -489,23 +494,66 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
-pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
-    let mut last_err = None;
-    for mut command in open::commands(uri) {
-        if let Some(token) = activation_token {
-            command.env("XDG_ACTIVATION_TOKEN", token);
-        }
-        match command.spawn() {
-            Ok(_) => return,
-            Err(err) => last_err = Some(err),
-        }
+pub(super) fn open_uri_internal(
+    executor: BackgroundExecutor,
+    uri: &str,
+    activation_token: Option<String>,
+) {
+    if let Some(uri) = url::Url::parse(uri).log_err() {
+        executor
+            .spawn(async move {
+                OpenUriRequest::default()
+                    .activation_token(activation_token.map(ActivationToken::from))
+                    .send_uri(&uri)
+                    .await
+                    .log_err();
+            })
+            .detach();
     }
-    log::error!("failed to open uri: {uri:?}, last error: {last_err:?}");
+}
+
+pub(super) fn reveal_path_internal(
+    executor: BackgroundExecutor,
+    path: PathBuf,
+    activation_token: Option<String>,
+) {
+    executor
+        .spawn(async move {
+            if let Some(dir) = File::open(path).log_err() {
+                OpenDirectoryRequest::default()
+                    .activation_token(activation_token.map(ActivationToken::from))
+                    .send(&dir.as_fd())
+                    .await
+                    .log_err();
+            }
+        })
+        .detach();
 }
 
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::State> {
+    let mut locales = Vec::default();
+    if let Some(locale) = std::env::var_os("LC_CTYPE") {
+        locales.push(locale);
+    }
+    locales.push(OsString::from("C"));
+    let mut state: Option<xkb::compose::State> = None;
+    for locale in locales {
+        if let Ok(table) =
+            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+        {
+            state = Some(xkb::compose::State::new(
+                &table,
+                xkb::compose::STATE_NO_FLAGS,
+            ));
+            break;
+        }
+    }
+    state
 }
 
 pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
@@ -536,6 +584,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => Shape::NResize,
             CursorStyle::ResizeDown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::ResizeUpLeftDownRight => Shape::NwseResize,
+            CursorStyle::ResizeUpRightDownLeft => Shape::NeswResize,
             CursorStyle::ResizeColumn => Shape::ColResize,
             CursorStyle::ResizeRow => Shape::RowResize,
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
@@ -563,6 +613,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => "n-resize",
             CursorStyle::ResizeDown => "s-resize",
             CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::ResizeUpLeftDownRight => "nwse-resize",
+            CursorStyle::ResizeUpRightDownLeft => "nesw-resize",
             CursorStyle::ResizeColumn => "col-resize",
             CursorStyle::ResizeRow => "row-resize",
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
@@ -583,19 +635,13 @@ impl Keystroke {
         let key_utf8 = state.key_get_utf8(keycode);
         let key_sym = state.key_get_one_sym(keycode);
 
-        // The logic here tries to replicate the logic in `../mac/events.rs`
-        // "Consumed" modifiers are modifiers that have been used to translate a key, for example
-        // pressing "shift" and "1" on US layout produces the key `!` but "consumes" the shift.
-        // Notes:
-        //  - macOS gets the key character directly ("."), xkb gives us the key name ("period")
-        //  - macOS logic removes consumed shift modifier for symbols: "{", not "shift-{"
-        //  - macOS logic keeps consumed shift modifiers for letters: "shift-a", not "a" or "A"
-
-        let mut handle_consumed_modifiers = true;
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
+            Keysym::ISO_Left_Tab => "tab".to_owned(),
+            Keysym::KP_Prior => "pageup".to_owned(),
+            Keysym::KP_Next => "pagedown".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -633,29 +679,28 @@ impl Keystroke {
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
 
-            Keysym::ISO_Left_Tab => {
-                handle_consumed_modifiers = false;
-                "tab".to_owned()
-            }
-
             _ => {
-                handle_consumed_modifiers = false;
-                xkb::keysym_get_name(key_sym).to_lowercase()
+                let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                if key_sym.is_keypad_key() {
+                    name.replace("kp_", "")
+                } else {
+                    name
+                }
             }
         };
+
+        if modifiers.shift {
+            // we only include the shift for upper-case letters by convention,
+            // so don't include for numbers and symbols, but do include for
+            // tab/enter, etc.
+            if key.chars().count() == 1 && key_utf8 == key {
+                modifiers.shift = false;
+            }
+        }
 
         // Ignore control characters (and DEL) for the purposes of ime_key
         let ime_key =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
-
-        if handle_consumed_modifiers {
-            let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);
-            let is_shift_consumed = state.mod_index_is_consumed(keycode, mod_shift_index);
-
-            if modifiers.shift && is_shift_consumed {
-                modifiers.shift = false;
-            }
-        }
 
         Keystroke {
             modifiers,

@@ -8,7 +8,7 @@ Supported versions: Catalina (10.15) - Sonoma (14.x).
 
 ## Linux
 
-Not yet available as an official download. Can be built [from source](./development/linux.md).
+Zed requires a physical GPU with a Vulkan 1.3 driver.
 
 ## Windows
 

@@ -90,6 +90,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .find(|display| display.uuid().ok() == Some(uuid))
     });
     let app_id = ReleaseChannel::global(cx).app_id();
+    let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+        Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+        Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+        _ => gpui::WindowDecorations::Client,
+    };
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -105,6 +110,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        window_decorations: Some(window_decorations),
+        window_min_size: Some(gpui::Size {
+            width: px(360.0),
+            height: px(240.0),
+        }),
     }
 }
 
@@ -187,6 +197,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.spawn(|workspace_handle, mut cx| async move {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
+
+            let runtime_panel = repl::RuntimePanel::load(workspace_handle.clone(), cx.clone());
+
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -204,6 +217,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
+                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -212,6 +226,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
+                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -219,6 +234,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
+                workspace.add_panel(runtime_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
@@ -3107,11 +3123,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])
@@ -3177,7 +3193,8 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
-            assistant::init(app_state.client.clone(), cx);
+            assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+            repl::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

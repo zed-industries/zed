@@ -2,7 +2,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -42,8 +44,12 @@ impl SlashCommand for TermSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(vec![LINE_COUNT_ARG.to_string()]))
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        Task::ready(Ok(vec![ArgumentCompletion {
+            label: LINE_COUNT_ARG.to_string(),
+            new_text: LINE_COUNT_ARG.to_string(),
+            run_command: true,
+        }]))
     }
 
     fn run(

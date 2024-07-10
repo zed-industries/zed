@@ -1,6 +1,13 @@
+.git
+.github
+**/.gitignore
+**/.gitkeep
+.gitattributes
+.mailmap
 **/target
 zed.xcworkspace
 .DS_Store
+compose.yml
 plugins/bin
 script/node_modules
 styles/node_modules

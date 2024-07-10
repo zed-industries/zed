@@ -20,8 +20,11 @@ use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
+mod repl_menu;
+
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
+    repl_menu: Option<View<ContextMenu>>,
     toggle_settings_menu: Option<View<ContextMenu>>,
     toggle_selections_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
@@ -40,6 +43,7 @@ impl QuickActionBar {
             buffer_search_bar,
             toggle_settings_menu: None,
             toggle_selections_menu: None,
+            repl_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -210,7 +214,7 @@ impl Render for QuickActionBar {
                         let menu = ContextMenu::build(cx, |mut menu, _| {
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(
-                                    "Show Inlay Hints",
+                                    "Inlay Hints",
                                     inlay_hints_enabled,
                                     Some(editor::actions::ToggleInlayHints.boxed_clone()),
                                     {
@@ -228,7 +232,7 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.toggleable_entry(
-                                "Show Git Blame Inline",
+                                "Inline Git Blame",
                                 git_blame_inline_enabled,
                                 Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
                                 {
@@ -245,7 +249,7 @@ impl Render for QuickActionBar {
                             );
 
                             menu = menu.toggleable_entry(
-                                "Show Selection Menu",
+                                "Selection Menu",
                                 selection_menu_enabled,
                                 Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
                                 {
@@ -276,19 +280,27 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap_3()
+            .gap(Spacing::XLarge.rems(cx))
             .child(
                 h_flex()
-                    .gap_1p5()
+                    .gap(Spacing::Medium.rems(cx))
                     .children(search_button)
-                    .children(editor_selections_dropdown)
                     .when(
                         AssistantSettings::get_global(cx).enabled
                             && AssistantSettings::get_global(cx).button,
                         |bar| bar.child(assistant_button),
                     ),
             )
-            .child(editor_settings_dropdown)
+            .child(
+                h_flex()
+                    .gap(Spacing::Medium.rems(cx))
+                    .children(self.render_repl_menu(cx))
+                    .children(editor_selections_dropdown)
+                    .child(editor_settings_dropdown),
+            )
+            .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
+                el.child(Self::render_menu_overlay(repl_menu))
+            })
             .when_some(
                 self.toggle_settings_menu.as_ref(),
                 |el, toggle_settings_menu| {

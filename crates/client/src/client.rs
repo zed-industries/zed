@@ -217,6 +217,9 @@ pub struct Client {
             >,
         >,
     >,
+
+    #[cfg(any(test, feature = "test-support"))]
+    rpc_url: RwLock<Option<Url>>,
 }
 
 #[derive(Error, Debug)]
@@ -527,6 +530,8 @@ impl Client {
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            rpc_url: RwLock::default(),
         })
     }
 
@@ -581,6 +586,12 @@ impl Client {
             + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
+        self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn override_rpc_url(&self, url: Url) -> &Self {
+        *self.rpc_url.write() = Some(url);
         self
     }
 
@@ -692,6 +703,22 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        F: 'static + Future<Output = Result<()>>,
+    {
+        self.add_message_handler_impl(entity, move |model, message, _, cx| {
+            handler(model, message, cx)
+        })
+    }
+
+    fn add_message_handler_impl<M, E, H, F>(
+        self: &Arc<Self>,
+        entity: WeakModel<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: EnvelopedMessage,
+        E: 'static,
         H: 'static
             + Sync
             + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
@@ -737,19 +764,11 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static
-            + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
-            + Send
-            + Sync,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_message_handler(model, move |handle, envelope, this, cx| {
-            Self::respond_to_request(
-                envelope.receipt(),
-                handler(handle, envelope, this.clone(), cx),
-                this,
-            )
+        self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
         })
     }
 
@@ -757,11 +776,11 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            handler(subscriber.downcast::<E>().unwrap(), message, client, cx)
+        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, _, cx| {
+            handler(subscriber.downcast::<E>().unwrap(), message, cx)
         })
     }
 
@@ -808,13 +827,13 @@ impl Client {
     where
         M: EntityMessage + RequestMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_model_message_handler(move |entity, envelope, client, cx| {
+        self.add_entity_message_handler::<M, E, _, _>(move |entity, envelope, client, cx| {
             Self::respond_to_request::<M, _>(
                 envelope.receipt(),
-                handler(entity, envelope, client.clone(), cx),
+                handler(entity.downcast::<E>().unwrap(), envelope, cx),
                 client,
             )
         })
@@ -1078,38 +1097,50 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
-    async fn get_rpc_url(
+    fn rpc_url(
+        &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> Result<Url> {
-        if let Some(url) = &*ZED_RPC_URL {
-            return Url::parse(url).context("invalid rpc url");
-        }
+    ) -> impl Future<Output = Result<Url>> {
+        #[cfg(any(test, feature = "test-support"))]
+        let url_override = self.rpc_url.read().clone();
 
-        let mut url = http.build_url("/rpc");
-        if let Some(preview_param) =
-            release_channel.and_then(|channel| channel.release_query_param())
-        {
-            url += "?";
-            url += preview_param;
-        }
-        let response = http.get(&url, Default::default(), false).await?;
-        let collab_url = if response.status().is_redirection() {
-            response
-                .headers()
-                .get("Location")
-                .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                .to_str()
-                .map_err(EstablishConnectionError::other)?
-                .to_string()
-        } else {
-            Err(anyhow!(
-                "unexpected /rpc response status {}",
-                response.status()
-            ))?
-        };
+        async move {
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some(url) = url_override {
+                return Ok(url);
+            }
 
-        Url::parse(&collab_url).context("invalid rpc url")
+            if let Some(url) = &*ZED_RPC_URL {
+                return Url::parse(url).context("invalid rpc url");
+            }
+
+            let mut url = http.build_url("/rpc");
+            if let Some(preview_param) =
+                release_channel.and_then(|channel| channel.release_query_param())
+            {
+                url += "?";
+                url += preview_param;
+            }
+
+            let response = http.get(&url, Default::default(), false).await?;
+            let collab_url = if response.status().is_redirection() {
+                response
+                    .headers()
+                    .get("Location")
+                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                    .to_str()
+                    .map_err(EstablishConnectionError::other)?
+                    .to_string()
+            } else {
+                Err(anyhow!(
+                    "unexpected /rpc response status {}",
+                    response.status()
+                ))?
+            };
+
+            Url::parse(&collab_url).context("invalid rpc url")
+        }
     }
 
     fn establish_websocket_connection(
@@ -1136,8 +1167,9 @@ impl Client {
             );
 
         let http = self.http.clone();
+        let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http, release_channel).await?;
+            let mut rpc_url = rpc_url.await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
@@ -1178,6 +1210,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> Task<Result<Credentials>> {
         let http = self.http.clone();
+        let this = self.clone();
         cx.spawn(|cx| async move {
             let background = cx.background_executor().clone();
 
@@ -1207,7 +1240,8 @@ impl Client {
                     {
                         eprintln!("authenticate as admin {login}, {token}");
 
-                        return Self::authenticate_as_admin(http, login.clone(), token.clone())
+                        return this
+                            .authenticate_as_admin(http, login.clone(), token.clone())
                             .await;
                     }
 
@@ -1295,6 +1329,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
+        self: &Arc<Self>,
         http: Arc<HttpClientWithUrl>,
         login: String,
         mut api_token: String,
@@ -1311,7 +1346,7 @@ impl Client {
 
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
-        let mut url = Self::get_rpc_url(http.clone(), None).await?;
+        let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
         let request = Request::get(url.as_str())
@@ -1912,7 +1947,7 @@ mod tests {
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         client.add_model_message_handler(
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1974,7 +2009,7 @@ mod tests {
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -1982,7 +2017,7 @@ mod tests {
         drop(subscription1);
         let _subscription2 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -2008,7 +2043,7 @@ mod tests {
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();

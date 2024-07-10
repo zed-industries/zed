@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::{preprocess_anthropic_request, LanguageModel, LanguageModelRequest};
 pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
 pub use ollama::Model as OllamaModel;
@@ -15,8 +16,6 @@ use serde::{
 use settings::{Settings, SettingsSources};
 use strum::{EnumIter, IntoEnumIterator};
 
-use crate::{preprocess_anthropic_request, LanguageModel, LanguageModelRequest};
-
 #[derive(Clone, Debug, Default, PartialEq, EnumIter)]
 pub enum CloudModel {
     Gpt3Point5Turbo,
@@ -24,6 +23,7 @@ pub enum CloudModel {
     Gpt4Turbo,
     #[default]
     Gpt4Omni,
+    Claude3_5Sonnet,
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
@@ -105,6 +105,7 @@ impl CloudModel {
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
             Self::Gpt4Omni => "gpt-4o",
+            Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
@@ -118,6 +119,7 @@ impl CloudModel {
             Self::Gpt4 => "GPT 4",
             Self::Gpt4Turbo => "GPT 4 Turbo",
             Self::Gpt4Omni => "GPT 4 Omni",
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -130,7 +132,10 @@ impl CloudModel {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
             Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
@@ -163,6 +168,7 @@ pub enum AssistantProvider {
         model: OpenAiModel,
         api_url: String,
         low_speed_timeout_in_seconds: Option<u64>,
+        available_models: Vec<OpenAiModel>,
     },
     Anthropic {
         model: AnthropicModel,
@@ -182,6 +188,7 @@ impl Default for AssistantProvider {
             model: OpenAiModel::default(),
             api_url: open_ai::OPEN_AI_API_URL.into(),
             low_speed_timeout_in_seconds: None,
+            available_models: Default::default(),
         }
     }
 }
@@ -196,6 +203,7 @@ pub enum AssistantProviderContent {
         default_model: Option<OpenAiModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
+        available_models: Option<Vec<OpenAiModel>>,
     },
     #[serde(rename = "anthropic")]
     Anthropic {
@@ -266,6 +274,7 @@ impl AssistantSettingsContent {
                         default_model: settings.default_open_ai_model.clone(),
                         api_url: Some(open_ai_api_url.clone()),
                         low_speed_timeout_in_seconds: None,
+                        available_models: Some(Default::default()),
                     })
                 } else {
                     settings.default_open_ai_model.clone().map(|open_ai_model| {
@@ -273,6 +282,7 @@ impl AssistantSettingsContent {
                             default_model: Some(open_ai_model),
                             api_url: None,
                             low_speed_timeout_in_seconds: None,
+                            available_models: Some(Default::default()),
                         }
                     })
                 },
@@ -320,6 +330,14 @@ impl AssistantSettingsContent {
                             *model = Some(new_model);
                         }
                     }
+                    Some(AssistantProviderContent::Ollama {
+                        default_model: model,
+                        ..
+                    }) => {
+                        if let LanguageModel::Ollama(new_model) = new_model {
+                            *model = Some(new_model);
+                        }
+                    }
                     provider => match new_model {
                         LanguageModel::Cloud(model) => {
                             *provider = Some(AssistantProviderContent::ZedDotDev {
@@ -331,6 +349,7 @@ impl AssistantSettingsContent {
                                 default_model: Some(model),
                                 api_url: None,
                                 low_speed_timeout_in_seconds: None,
+                                available_models: Some(Default::default()),
                             })
                         }
                         LanguageModel::Anthropic(model) => {
@@ -475,15 +494,18 @@ impl Settings for AssistantSettings {
                             model,
                             api_url,
                             low_speed_timeout_in_seconds,
+                            available_models,
                         },
                         AssistantProviderContent::OpenAi {
                             default_model: model_override,
                             api_url: api_url_override,
                             low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+                            available_models: available_models_override,
                         },
                     ) => {
                         merge(model, model_override);
                         merge(api_url, api_url_override);
+                        merge(available_models, available_models_override);
                         if let Some(low_speed_timeout_in_seconds_override) =
                             low_speed_timeout_in_seconds_override
                         {
@@ -544,10 +566,12 @@ impl Settings for AssistantSettings {
                                 default_model: model,
                                 api_url,
                                 low_speed_timeout_in_seconds,
+                                available_models,
                             } => AssistantProvider::OpenAi {
                                 model: model.unwrap_or_default(),
                                 api_url: api_url.unwrap_or_else(|| open_ai::OPEN_AI_API_URL.into()),
                                 low_speed_timeout_in_seconds,
+                                available_models: available_models.unwrap_or_default(),
                             },
                             AssistantProviderContent::Anthropic {
                                 default_model: model,
@@ -604,6 +628,7 @@ mod tests {
                 model: OpenAiModel::FourOmni,
                 api_url: open_ai::OPEN_AI_API_URL.into(),
                 low_speed_timeout_in_seconds: None,
+                available_models: Default::default(),
             }
         );
 
@@ -626,6 +651,7 @@ mod tests {
                 model: OpenAiModel::FourOmni,
                 api_url: "test-url".into(),
                 low_speed_timeout_in_seconds: None,
+                available_models: Default::default(),
             }
         );
         SettingsStore::update_global(cx, |store, cx| {
@@ -646,6 +672,7 @@ mod tests {
                 model: OpenAiModel::Four,
                 api_url: open_ai::OPEN_AI_API_URL.into(),
                 low_speed_timeout_in_seconds: None,
+                available_models: Default::default(),
             }
         );
 

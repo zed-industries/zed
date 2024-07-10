@@ -1,27 +1,35 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
+use http::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
-use smol::fs;
+use smol::{
+    fs::{self},
+    io::BufReader,
+};
 use std::{
     any::Any,
+    env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{maybe, ResultExt};
+use util::{fs::remove_matching, maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const SERVER_PATH: &str =
+    "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
@@ -87,6 +95,10 @@ impl JsonLspAdapter {
                 "format": {
                     "enable": true,
                 },
+                "validate":
+                {
+                    "enable": true,
+                },
                 "schemas": [
                     {
                         "fileMatch": ["tsconfig.json"],
@@ -133,7 +145,7 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("vscode-json-languageserver")
+                .npm_package_latest_version("vscode-langservers-extracted")
                 .await?,
         ) as Box<_>)
     }
@@ -146,7 +158,7 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-json-languageserver";
+        let package_name = "vscode-langservers-extracted";
 
         let should_install_language_server = self
             .node
@@ -154,9 +166,11 @@ impl LspAdapter for JsonLspAdapter {
             .await;
 
         if should_install_language_server {
+            // TODO: the postinstall fails on Windows
             self.node
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await?;
+                .await
+                .log_err();
         }
 
         Ok(LanguageServerBinary {
@@ -203,7 +217,12 @@ impl LspAdapter for JsonLspAdapter {
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
-        [("JSON".into(), "jsonc".into())].into_iter().collect()
+        [
+            ("JSON".into(), "json".into()),
+            ("JSONC".into(), "jsonc".into()),
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -240,7 +259,151 @@ async fn get_cached_server_binary(
     .log_err()
 }
 
-fn schema_file_match(path: &Path) -> &Path {
+#[inline]
+fn schema_file_match(path: &Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
+pub(super) struct NodeVersionAdapter;
+
+#[async_trait(?Send)]
+impl LspAdapter for NodeVersionAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("package-version-server".into())
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        let release = latest_github_release(
+            "zed-industries/package-version-server",
+            true,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
+        let os = match consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let suffix = if consts::OS == "windows" {
+            ".zip"
+        } else {
+            ".tar.gz"
+        };
+        let asset_name = format!("package-version-server-{}-{os}{suffix}", consts::ARCH);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(Box::new(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url.clone(),
+        }))
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: Box<dyn 'static + Send + Any>,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let destination_path = container_dir.join(format!(
+            "package-version-server-{}{}",
+            version.name,
+            std::env::consts::EXE_SUFFIX
+        ));
+        let destination_container_path =
+            container_dir.join(format!("package-version-server-{}-tmp", version.name));
+        if fs::metadata(&destination_path).await.is_err() {
+            let mut response = delegate
+                .http_client()
+                .get(&version.url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+            if version.url.ends_with(".zip") {
+                node_runtime::extract_zip(
+                    &destination_container_path,
+                    BufReader::new(response.body_mut()),
+                )
+                .await?;
+            } else if version.url.ends_with(".tar.gz") {
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                let archive = Archive::new(decompressed_bytes);
+                archive.unpack(&destination_container_path).await?;
+            }
+
+            fs::copy(
+                destination_container_path.join(format!(
+                    "package-version-server{}",
+                    std::env::consts::EXE_SUFFIX
+                )),
+                &destination_path,
+            )
+            .await?;
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &destination_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
+        }
+
+        Ok(LanguageServerBinary {
+            path: destination_path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_version_server_binary(container_dir).await
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_version_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--version".into()];
+                binary
+            })
+    }
+}
+
+async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    maybe!(async {
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
+        }
+
+        anyhow::Ok(LanguageServerBinary {
+            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            env: None,
+            arguments: Default::default(),
+        })
+    })
+    .await
+    .log_err()
 }

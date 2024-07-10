@@ -300,7 +300,6 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(count - 1, cx);
             self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }

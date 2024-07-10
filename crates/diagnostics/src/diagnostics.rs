@@ -102,6 +102,9 @@ impl Render for ProjectDiagnosticsEditor {
 
         div()
             .track_focus(&self.focus_handle)
+            .when(self.path_states.is_empty(), |el| {
+                el.key_context("EmptyPane")
+            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
@@ -137,7 +140,7 @@ impl ProjectDiagnosticsEditor {
                     this.summary = project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(EditorEvent::TitleChanged);
 
-                    if this.editor.read(cx).is_focused(cx) || this.focus_handle.is_focused(cx) {
+                    if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                     } else {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");

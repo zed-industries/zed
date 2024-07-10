@@ -23,6 +23,11 @@ impl AssetSource for Assets {
     }
 }
 
+const ARROW_CIRCLE_SVG: &'static str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/image/arrow_circle.svg"
+);
+
 struct AnimationExample {}
 
 impl Render for AnimationExample {
@@ -42,7 +47,7 @@ impl Render for AnimationExample {
                     .child(
                         svg()
                             .size_8()
-                            .path("examples/image/arrow_circle.svg")
+                            .path(ARROW_CIRCLE_SVG)
                             .text_color(black())
                             .with_animation(
                                 "image_circle",

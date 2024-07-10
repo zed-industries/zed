@@ -1,0 +1,21 @@
+[package]
+name = "snippet_provider"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+snippet.workspace = true
+util.workspace = true

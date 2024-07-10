@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
+use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
@@ -70,6 +71,8 @@ pub enum Operator {
     Uppercase,
     OppositeCase,
     Register,
+    RecordRegister,
+    ReplayRegister,
 }
 
 #[derive(Default, Clone)]
@@ -95,6 +98,7 @@ pub struct EditorState {
     pub undo_modes: HashMap<TransactionId, Mode>,
 
     pub selected_register: Option<char>,
+    pub search: SearchState,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -154,18 +158,25 @@ impl From<String> for Register {
 
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
-    pub search: SearchState,
     pub last_find: Option<Motion>,
 
-    pub recording: bool,
+    pub dot_recording: bool,
+    pub dot_replaying: bool,
+
     pub stop_recording_after_next_action: bool,
-    pub replaying: bool,
+    pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
+    pub recording_register: Option<char>,
+    pub last_recorded_register: Option<char>,
+    pub last_replayed_register: Option<char>,
+    pub replayer: Option<Replayer>,
+
     pub last_yank: Option<SharedString>,
     pub registers: HashMap<char, Register>,
+    pub recordings: HashMap<char, Vec<ReplayableAction>>,
 }
 
 #[derive(Debug)]
@@ -225,6 +236,8 @@ impl EditorState {
                 | Some(Operator::FindBackward { .. })
                 | Some(Operator::Mark)
                 | Some(Operator::Register)
+                | Some(Operator::RecordRegister)
+                | Some(Operator::ReplayRegister)
                 | Some(Operator::Jump { .. })
         )
     }
@@ -285,7 +298,10 @@ impl EditorState {
                 .unwrap_or_else(|| "none"),
         );
 
-        if matches!(self.mode, Mode::Replace | Mode::EasyMotion) {
+        if matches!(self.mode, Mode::Replace | Mode::EasyMotion)
+            || (matches!(active_operator, Some(Operator::AddSurrounds { .. }))
+                && self.mode.is_visual())
+        {
             context.add("VimWaiting");
         }
         context
@@ -317,6 +333,8 @@ impl Operator {
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
             Operator::Register => "\"",
+            Operator::RecordRegister => "q",
+            Operator::ReplayRegister => "@",
         }
     }
 
@@ -328,6 +346,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
             | Operator::Register
+            | Operator::RecordRegister
+            | Operator::ReplayRegister
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
             | Operator::ChangeSurrounds { .. }

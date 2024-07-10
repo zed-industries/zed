@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use crate::stdio::TerminalOutput;
 use anyhow::Result;
-use gpui::{img, AnyElement, FontWeight, ImageData, Render, View};
+use gpui::{img, AnyElement, FontWeight, ImageData, Render, TextRun, View};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
 // Given these outputs are destined for the editor with the block decorations API, all of them must report
@@ -60,7 +62,12 @@ impl ImageView {
         let bytes = base64::decode(base64_encoded_data)?;
 
         let format = image::guess_format(&bytes)?;
-        let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+        let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+
+        // Convert from RGBA to BGRA.
+        for pixel in data.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
 
         let height = data.height();
         let width = data.width();
@@ -92,9 +99,67 @@ impl LineHeight for ImageView {
 /// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
 pub struct TableView {
     pub table: TabularDataResource,
+    pub widths: Vec<Pixels>,
+}
+
+fn cell_content(row: &Value, field: &str) -> String {
+    match row.get(&field) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        Some(Value::Array(arr)) => format!("{:?}", arr),
+        Some(Value::Object(obj)) => format!("{:?}", obj),
+        Some(Value::Null) | None => String::new(),
+    }
 }
 
 impl TableView {
+    pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
+        let mut widths = Vec::with_capacity(table.schema.fields.len());
+
+        let text_system = cx.text_system();
+        let text_style = cx.text_style();
+        let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
+        let font_size = ThemeSettings::get_global(cx).buffer_font_size;
+        let mut runs = [TextRun {
+            len: 0,
+            font: text_font,
+            color: text_style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+
+        for field in table.schema.fields.iter() {
+            runs[0].len = field.name.len();
+            let mut width = text_system
+                .layout_line(&field.name, font_size, &runs)
+                .map(|layout| layout.width)
+                .unwrap_or(px(0.));
+
+            let Some(data) = table.data.as_ref() else {
+                widths.push(width);
+                continue;
+            };
+
+            for row in data {
+                let content = cell_content(&row, &field.name);
+                runs[0].len = content.len();
+                let cell_width = cx
+                    .text_system()
+                    .layout_line(&content, font_size, &runs)
+                    .map(|layout| layout.width)
+                    .unwrap_or(px(0.));
+
+                width = width.max(cell_width)
+            }
+
+            widths.push(width)
+        }
+
+        Self { table, widths }
+    }
+
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let data = match &self.table.data {
             Some(data) => data,
@@ -114,6 +179,8 @@ impl TableView {
             .map(|row| self.render_row(&self.table.schema, false, &row, cx));
 
         v_flex()
+            .id("table")
+            .overflow_x_scroll()
             .w_full()
             .child(header)
             .children(body)
@@ -132,7 +199,8 @@ impl TableView {
         let row_cells = schema
             .fields
             .iter()
-            .map(|field| {
+            .zip(self.widths.iter())
+            .map(|(field, width)| {
                 let container = match field.field_type {
                     runtimelib::datatable::FieldType::String => div(),
 
@@ -148,17 +216,11 @@ impl TableView {
                     _ => div(),
                 };
 
-                let value = match row.get(&field.name) {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(Value::Number(n)) => n.to_string(),
-                    Some(Value::Bool(b)) => b.to_string(),
-                    Some(Value::Array(arr)) => format!("{:?}", arr),
-                    Some(Value::Object(obj)) => format!("{:?}", obj),
-                    Some(Value::Null) | None => String::new(),
-                };
+                let value = cell_content(row, &field.name);
 
                 let mut cell = container
-                    .w_full()
+                    .min_w(*width + px(22.))
+                    .w(*width + px(22.))
                     .child(value)
                     .px_2()
                     .py_1()
@@ -173,7 +235,16 @@ impl TableView {
             })
             .collect::<Vec<_>>();
 
-        h_flex().children(row_cells).into_any_element()
+        let mut total_width = px(0.);
+        for width in self.widths.iter() {
+            // Width fudge factor: border + 2 (heading), padding
+            total_width += *width + px(22.);
+        }
+
+        h_flex()
+            .w(total_width)
+            .children(row_cells)
+            .into_any_element()
     }
 }
 
@@ -261,6 +332,20 @@ impl OutputType {
 
         el
     }
+
+    pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
+        match data.richest(rank_mime_type) {
+            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
+                Ok(view) => OutputType::Image(view),
+                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::DataTable(data)) => OutputType::Table(TableView::new(data.clone(), cx)),
+            // Any other media types are not supported
+            _ => OutputType::Message("Unsupported media type".to_string()),
+        }
+    }
 }
 
 impl LineHeight for OutputType {
@@ -278,32 +363,17 @@ impl LineHeight for OutputType {
     }
 }
 
-impl From<&MimeBundle> for OutputType {
-    fn from(data: &MimeBundle) -> Self {
-        match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputType::Image(view),
-                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
-            },
-            Some(MimeType::DataTable(data)) => OutputType::Table(TableView {
-                table: data.clone(),
-            }),
-            // Any other media types are not supported
-            _ => OutputType::Message("Unsupported media type".to_string()),
-        }
-    }
-}
-
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum ExecutionStatus {
     #[default]
     Unknown,
-    #[allow(unused)]
     ConnectingToKernel,
+    Queued,
     Executing,
     Finished,
+    ShuttingDown,
+    Shutdown,
+    KernelErrored(String),
 }
 
 pub struct ExecutionView {
@@ -312,18 +382,18 @@ pub struct ExecutionView {
 }
 
 impl ExecutionView {
-    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(status: ExecutionStatus, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             outputs: Default::default(),
-            status: ExecutionStatus::Unknown,
+            status,
         }
     }
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
         let output: OutputType = match message {
-            JupyterMessageContent::ExecuteResult(result) => (&result.data).into(),
-            JupyterMessageContent::DisplayData(result) => (&result.data).into(),
+            JupyterMessageContent::ExecuteResult(result) => OutputType::new(&result.data, cx),
+            JupyterMessageContent::DisplayData(result) => OutputType::new(&result.data, cx),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
@@ -349,19 +419,21 @@ impl ExecutionView {
                         // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
                         // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
-                            let output: OutputType = (data).into();
+                            let output = OutputType::new(data, cx);
                             self.outputs.push(output);
                         }
 
+                        // Comments from @rgbkrk, reach out with questions
+
                         // Set next input adds text to the next cell. Not required to support.
-                        // However, this could be implemented by
-                        // runtimelib::Payload::SetNextInput { text, replace } => todo!(),
+                        // However, this could be implemented by adding text to the buffer.
+                        // runtimelib::Payload::SetNextInput { text, replace } => {},
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
-                        // runtimelib::Payload::EditMagic { filename, line_number } => todo!(),
+                        // runtimelib::Payload::EditMagic { filename, line_number } => {},
 
-                        //
-                        // runtimelib::Payload::AskExit { keepkernel } => todo!(),
+                        // Ask the user if they want to exit the kernel. Not required to support.
+                        // runtimelib::Payload::AskExit { keepkernel } => {},
                         _ => {}
                     }
                 }
@@ -426,28 +498,24 @@ impl ExecutionView {
         new_terminal.append_text(text);
         Some(OutputType::Stream(new_terminal))
     }
-
-    pub fn set_status(&mut self, status: ExecutionStatus, cx: &mut ViewContext<Self>) {
-        self.status = status;
-        cx.notify();
-    }
 }
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
-            match self.status {
-                ExecutionStatus::ConnectingToKernel => {
-                    return div().child("Connecting to kernel...").into_any_element()
+            return match &self.status {
+                ExecutionStatus::ConnectingToKernel => div().child("Connecting to kernel..."),
+                ExecutionStatus::Executing => div().child("Executing..."),
+                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
+                ExecutionStatus::Unknown => div().child("..."),
+                ExecutionStatus::ShuttingDown => div().child("Kernel shutting down..."),
+                ExecutionStatus::Shutdown => div().child("Kernel shutdown"),
+                ExecutionStatus::Queued => div().child("Queued"),
+                ExecutionStatus::KernelErrored(error) => {
+                    div().child(format!("Kernel error: {}", error))
                 }
-                ExecutionStatus::Executing => {
-                    return div().child("Executing...").into_any_element()
-                }
-                ExecutionStatus::Finished => {
-                    return div().child(Icon::new(IconName::Check)).into_any_element()
-                }
-                ExecutionStatus::Unknown => return div().child("...").into_any_element(),
             }
+            .into_any_element();
         }
 
         div()

@@ -2,7 +2,7 @@
 
 ## Folder-specific settings
 
-Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
+Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only at a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
 
 The following global settings can be overridden with a folder-specific configuration:
 
@@ -46,7 +46,7 @@ Here are all the currently available settings.
 
 **Options**
 
-1. To disable autosave, set it to `off`
+1. To disable autosave, set it to `off`:
 
 ```json
 {
@@ -96,7 +96,7 @@ Here are all the currently available settings.
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Mono`
+- Default: `Zed Plex Mono`
 
 **Options**
 
@@ -110,14 +110,23 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
+Zed supports all OpenType features that can be enabled or disabled for a given buffer or terminal font, as well as setting values for font features.
 
-For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
+For example, to disable font ligatures, add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false,
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "buffer_font_features": {
     "cv01": 7
   }
 }
@@ -132,6 +141,16 @@ For example, to disable ligatures and set `7` to `cv01` for a given font you can
 **Options**
 
 `integer` values
+
+## Buffer Font Weight
+
+- Description: The default font weight for text in the editor.
+- Setting: `buffer_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## Confirm Quit
 
@@ -201,19 +220,19 @@ List of `string` values
 "current_line_highlight": "none"
 ```
 
-2. Highlight the gutter area.
+2. Highlight the gutter area:
 
 ```json
 "current_line_highlight": "gutter"
 ```
 
-3. Highlight the editor area.
+3. Highlight the editor area:
 
 ```json
 "current_line_highlight": "line"
 ```
 
-4. Highlight the full line.
+4. Highlight the full line:
 
 ```json
 "current_line_highlight": "all"
@@ -1104,19 +1123,20 @@ These values take in the same options as the root-level settings with the same n
 1. `all`
 2. `selection`
 3. `none`
-4. `boundaries`
+4. `boundary`
 
 ## Soft Wrap
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `none`
+- Default: `prefer_line`
 
 **Options**
 
-1. `editor_width`
-2. `preferred_line_length`
-3. `none`
+1. `none` to stop the soft-wrapping
+2. `prefer_line` to avoid wrapping generally, unless the line is too long
+3. `editor_width` to wrap lines that overflow the editor width
+4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
 ## Wrap Guides (Vertical Rulers)
 
@@ -1595,7 +1615,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Mono",
+  "buffer_font_family": "Zed Plex Mono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
