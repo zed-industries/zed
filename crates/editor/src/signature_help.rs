@@ -15,6 +15,8 @@ pub use popover::SignatureHelpPopover;
 pub use state::SignatureHelpState;
 
 pub const QUOTES_PAIRS: [(&'static str, &'static str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
+pub const BRACKETS_PAIRS: [(&'static str, &'static str); 4] =
+    [("(", ")"), ("[", "]"), ("{", "}"), ("<", ">")];
 
 impl Editor {
     pub(super) fn hide_signature_help(

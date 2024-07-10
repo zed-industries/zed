@@ -156,7 +156,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
+use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState, BRACKETS_PAIRS};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -2964,6 +2964,7 @@ impl Editor {
 
         let selections = self.selections.all_adjusted(cx);
         let mut brace_inserted = false;
+        let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         let mut new_selections = Vec::with_capacity(selections.len());
@@ -3025,6 +3026,14 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
+
+                            if BRACKETS_PAIRS
+                                .into_iter()
+                                .any(|(start, _end)| start == bracket_pair.start.as_str())
+                            {
+                                bracket_inserted = true;
+                            }
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
@@ -3251,6 +3260,10 @@ impl Editor {
                 {
                     on_type_format_task.detach_and_log_err(cx);
                 }
+            }
+
+            if bracket_inserted && EditorSettings::get_global(cx).auto_signature_help {
+                this.show_signature_help(&ShowSignatureHelp, cx);
             }
 
             let trigger_in_words = !had_active_inline_completion;
