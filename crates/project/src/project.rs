@@ -11,6 +11,7 @@ pub mod terminals;
 #[cfg(test)]
 mod project_tests;
 pub mod search_history;
+mod yarn;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
@@ -116,6 +117,7 @@ use util::{
     NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
+use yarn::YarnPathStore;
 
 pub use fs::*;
 pub use language::Location;
@@ -231,6 +233,7 @@ pub struct Project {
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
+    yarn: Model<YarnPathStore>,
 }
 
 pub enum LanguageServerToQuery {
@@ -749,6 +752,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
+                yarn: YarnPathStore::new(fs.clone(), cx),
                 snippets,
                 languages,
                 client,
@@ -887,6 +891,7 @@ impl Project {
                 languages,
                 user_store: user_store.clone(),
                 snippets,
+                yarn: YarnPathStore::new(fs.clone(), cx),
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -2162,18 +2167,44 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         cx.spawn(move |this, mut cx| async move {
             // Escape percent-encoded string.
+            let current_scheme = abs_path.scheme().to_owned();
             let _ = abs_path.set_scheme("file");
+
             let abs_path = abs_path
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
-            let (worktree, relative_path) = if let Some(result) =
-                this.update(&mut cx, |this, cx| this.find_local_worktree(&abs_path, cx))?
-            {
-                result
+            let p = abs_path.clone();
+            let yarn_worktree = this
+                .update(&mut cx, move |this, cx| {
+                    this.yarn.update(cx, |_, cx| {
+                        cx.spawn(|this, mut cx| async move {
+                            let t = this
+                                .update(&mut cx, |this, cx| {
+                                    this.process_path(&p, &current_scheme, cx)
+                                })
+                                .ok()?;
+                            t.await
+                        })
+                    })
+                })?
+                .await;
+            let (worktree_root_target, known_relative_path) =
+                if let Some((zip_root, relative_path)) = yarn_worktree {
+                    (zip_root, Some(relative_path))
+                } else {
+                    (Arc::<Path>::from(abs_path.as_path()), None)
+                };
+            let (worktree, relative_path) = if let Some(result) = this
+                .update(&mut cx, |this, cx| {
+                    this.find_local_worktree(&worktree_root_target, cx)
+                })? {
+                let relative_path =
+                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                (result.0, relative_path)
             } else {
                 let worktree = this
                     .update(&mut cx, |this, cx| {
-                        this.create_local_worktree(&abs_path, false, cx)
+                        this.create_local_worktree(&worktree_root_target, false, cx)
                     })?
                     .await?;
                 this.update(&mut cx, |this, cx| {
@@ -2183,13 +2214,17 @@ impl Project {
                     );
                 })
                 .ok();
-
                 let worktree_root = worktree.update(&mut cx, |this, _| this.abs_path())?;
-                (worktree, abs_path.strip_prefix(worktree_root)?.into())
+                let relative_path = if let Some(known_path) = known_relative_path {
+                    known_path
+                } else {
+                    abs_path.strip_prefix(worktree_root)?.into()
+                };
+                (worktree, relative_path)
             };
             let project_path = ProjectPath {
                 worktree_id: worktree.update(&mut cx, |worktree, _| worktree.id())?,
-                path: relative_path.into(),
+                path: relative_path,
             };
             this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))?
                 .await
