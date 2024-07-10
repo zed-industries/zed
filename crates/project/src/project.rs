@@ -9910,15 +9910,16 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })??;
-        let position = envelope
-            .payload
-            .position
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
-
+        let response = GetSignatureHelp::from_proto(
+            envelope.payload.clone(),
+            project.clone(),
+            buffer.clone(),
+            cx.clone(),
+        )
+        .await?;
         let help_response = project
             .update(&mut cx, |project, cx| {
-                project.signature_help(&buffer, position, cx)
+                project.signature_help(&buffer, response.position, cx)
             })?
             .await;
         project.update(&mut cx, |project, cx| {
