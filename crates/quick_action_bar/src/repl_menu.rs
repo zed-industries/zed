@@ -3,7 +3,6 @@ use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, Session,
     SessionSupport,
 };
-use settings::Settings;
 use ui::{prelude::*, ButtonLike, IconWithIndicator, IntoElement, Tooltip};
 
 use crate::QuickActionBar;
