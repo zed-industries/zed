@@ -1,4 +1,4 @@
-mod buffer_store;
+pub mod buffer_store;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
@@ -15,6 +15,7 @@ pub mod search_history;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
+use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
     TypedEnvelope, UserStore,
@@ -715,12 +716,17 @@ impl Project {
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+
+            let buffer_store = cx.new_model(|_| BufferStore::new(false));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
-                buffer_store: cx.new_model(|_| Default::default()),
+                buffer_store,
                 shared_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
                 loading_local_worktrees: Default::default(),
@@ -855,12 +861,16 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
 
+            let buffer_store = cx.new_model(|_| BufferStore::new(true));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
             let mut this = Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
                 loading_buffers_by_path: Default::default(),
-                buffer_store: cx.new_model(|_| Default::default()),
+                buffer_store,
                 shared_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
                 active_entry: None,
@@ -1507,8 +1517,9 @@ impl Project {
                 .set_model(&cx.handle(), &mut cx.to_async()),
         );
 
-        self.buffer_store
-            .update(cx, |buffer_store, _| buffer_store.make_all_strong());
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.set_retain_buffers(true, cx)
+        });
 
         for worktree_handle in self.worktrees.iter_mut() {
             match worktree_handle {
@@ -1759,8 +1770,9 @@ impl Project {
                 }
             }
 
-            self.buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.make_all_weak(cx));
+            self.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.set_retain_buffers(false, cx)
+            });
 
             self.client
                 .send(proto::UnshareProject {
@@ -1896,8 +1908,9 @@ impl Project {
             Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
-        self.register_buffer(&buffer, cx)
-            .expect("creating local buffers always succeeds");
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.add_buffer(buffer.clone(), cx).log_err()
+        });
         buffer
     }
 
@@ -2061,7 +2074,11 @@ impl Project {
                 }),
                 Err(e) => Err(e),
             }?;
-            this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))??;
+            this.update(&mut cx, |this, cx| {
+                this.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store.add_buffer(buffer.clone(), cx).log_err();
+                });
+            })?;
             Ok(buffer)
         })
     }
@@ -2345,10 +2362,6 @@ impl Project {
             buffer.set_language_registry(self.languages.clone())
         });
 
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.add_buffer(buffer, self.is_remote() || self.is_shared(), cx)
-        })?;
-
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
         })
@@ -2607,6 +2620,19 @@ impl Project {
         }
 
         Ok(())
+    }
+
+    fn on_buffer_store_event(
+        &mut self,
+        _: Model<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                self.register_buffer(buffer, cx).log_err();
+            }
+        }
     }
 
     fn on_buffer_event(
@@ -8930,11 +8956,9 @@ impl Project {
                     });
                 }
                 proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
-                    if let Some(buffer) = this.buffer_store.update(cx, |buffer_store, cx| {
+                    this.buffer_store.update(cx, |buffer_store, cx| {
                         buffer_store.add_incomplete_buffer_chunk(chunk, cx)
-                    })? {
-                        this.register_buffer(&buffer, cx)?;
-                    }
+                    })?;
                 }
             }
 

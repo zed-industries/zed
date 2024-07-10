@@ -2,7 +2,7 @@ use crate::ProjectPath;
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use futures::channel::oneshot;
-use gpui::{AppContext, Context as _, Model, Task, WeakModel};
+use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel};
 use language::{Buffer, Capability, Operation};
 use rpc::{proto, ErrorExt as _, TypedEnvelope};
 use std::{path::Path, sync::Arc};
@@ -10,8 +10,14 @@ use text::BufferId;
 use util::{debug_panic, maybe};
 use worktree::{File, ProjectEntryId};
 
-#[derive(Default)]
-pub(crate) struct BufferStore {
+pub enum BufferStoreEvent {
+    BufferAdded(Model<Buffer>),
+}
+
+impl EventEmitter<BufferStoreEvent> for BufferStore {}
+
+pub struct BufferStore {
+    retain_buffers: bool,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     remote_buffer_listeners:
         HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
@@ -27,15 +33,21 @@ enum OpenBuffer {
 }
 
 impl BufferStore {
-    pub fn add_buffer(
-        &mut self,
-        buffer: &Model<Buffer>,
-        is_strong: bool,
-        cx: &mut AppContext,
-    ) -> Result<()> {
+    pub fn new(retain_buffers: bool) -> Self {
+        Self {
+            retain_buffers,
+            opened_buffers: Default::default(),
+            remote_buffer_listeners: Default::default(),
+            incomplete_remote_buffers: Default::default(),
+            local_buffer_ids_by_path: Default::default(),
+            local_buffer_ids_by_entry_id: Default::default(),
+        }
+    }
+
+    pub fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = buffer.read(cx).replica_id() != 0;
-        let open_buffer = if is_strong {
+        let open_buffer = if self.retain_buffers {
             OpenBuffer::Strong(buffer.clone())
         } else {
             OpenBuffer::Weak(buffer.downgrade())
@@ -83,6 +95,7 @@ impl BufferStore {
             }
         }
 
+        cx.emit(BufferStoreEvent::BufferAdded(buffer));
         Ok(())
     }
 
@@ -110,8 +123,8 @@ impl BufferStore {
     pub fn add_incomplete_buffer_chunk(
         &mut self,
         chunk: proto::BufferChunk,
-        cx: &mut AppContext,
-    ) -> Result<Option<Model<Buffer>>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let buffer_id = BufferId::new(chunk.buffer_id)?;
         let buffer = self
             .incomplete_remote_buffers
@@ -140,14 +153,12 @@ impl BufferStore {
                     listener.send(Err(error.cloned())).ok();
                 }
             }
-        } else {
-            if chunk.is_last {
-                self.incomplete_remote_buffers.remove(&buffer_id);
-                return Ok(Some(buffer));
-            }
+        } else if chunk.is_last {
+            self.incomplete_remote_buffers.remove(&buffer_id);
+            self.add_buffer(buffer, cx)?;
         }
 
-        Ok(None)
+        Ok(())
     }
 
     pub fn buffers(&self) -> impl '_ + Iterator<Item = Model<Buffer>> {
@@ -233,22 +244,8 @@ impl BufferStore {
         (buffers, incomplete_buffer_ids)
     }
 
-    pub fn make_all_strong(&mut self) {
-        for open_buffer in self.opened_buffers.values_mut() {
-            match open_buffer {
-                OpenBuffer::Strong(_) => {}
-                OpenBuffer::Weak(buffer) => {
-                    if let Some(buffer) = buffer.upgrade() {
-                        *open_buffer = OpenBuffer::Strong(buffer);
-                    }
-                }
-                OpenBuffer::Operations(_) => unreachable!(),
-            }
-        }
-    }
-
     pub fn disconnected_from_host(&mut self, cx: &mut AppContext) {
-        self.make_all_weak(cx);
+        self.set_retain_buffers(false, cx);
 
         for buffer in self.buffers() {
             buffer.update(cx, |buffer, cx| {
@@ -261,14 +258,22 @@ impl BufferStore {
         self.remote_buffer_listeners.clear();
     }
 
-    pub fn make_all_weak(&mut self, cx: &mut AppContext) {
+    pub fn set_retain_buffers(&mut self, retain_buffers: bool, cx: &mut AppContext) {
+        self.retain_buffers = retain_buffers;
         for open_buffer in self.opened_buffers.values_mut() {
-            // Wake up any tasks waiting for peers' edits to this buffer.
-            if let Some(buffer) = open_buffer.upgrade() {
-                buffer.update(cx, |buffer, _| buffer.give_up_waiting());
-            }
-            if let OpenBuffer::Strong(buffer) = open_buffer {
-                *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+            if retain_buffers {
+                if let OpenBuffer::Weak(buffer) = open_buffer {
+                    if let Some(buffer) = buffer.upgrade() {
+                        *open_buffer = OpenBuffer::Strong(buffer);
+                    }
+                }
+            } else {
+                if let Some(buffer) = open_buffer.upgrade() {
+                    buffer.update(cx, |buffer, _| buffer.give_up_waiting());
+                }
+                if let OpenBuffer::Strong(buffer) = open_buffer {
+                    *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                }
             }
         }
     }
