@@ -42,32 +42,39 @@ impl QuickActionBar {
         };
 
         let kernel_name: SharedString = session.kernel_specification.name.clone().into();
+        let kernel_language: SharedString = session
+            .kernel_specification
+            .kernelspec
+            .language
+            .clone()
+            .into();
 
-        let tooltip = |session: &Session| {
-            match &session.kernel {
-                Kernel::RunningKernel(kernel) => {
-                    match &kernel.execution_state {
-                        ExecutionState::Idle => format!("{} is ready", kernel_name), // Play
-                        ExecutionState::Busy => format!("{} is executing", kernel_name), // Interrupt button
-                    }
+        let tooltip = |session: &Session| match &session.kernel {
+            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+                ExecutionState::Idle => {
+                    format!("Run code on {} ({})", kernel_name, kernel_language)
                 }
-                Kernel::StartingKernel(_) => format!("{} is starting", kernel_name),
-                Kernel::ErroredLaunch(e) => format!("Error: {}", e),
-                Kernel::ShuttingDown => format!("{} is shutting down", kernel_name),
-                Kernel::Shutdown => "Nothing running".to_string(),
-            }
+                ExecutionState::Busy => format!("Interrupt {} ({})", kernel_name, kernel_language),
+            },
+            Kernel::StartingKernel(_) => format!("{} is starting", kernel_name),
+            Kernel::ErroredLaunch(e) => format!("Error with kernel {}: {}", kernel_name, e),
+            Kernel::ShuttingDown => format!("{} is shutting down", kernel_name),
+            Kernel::Shutdown => "Nothing running".to_string(),
         };
 
         let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
 
         let button = ButtonLike::new("toggle_repl_icon")
-            .child(IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot())).indicator_border_color(Some(cx.theme().colors().border)))
+            .child(
+                IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot()))
+                    .indicator_border_color(Some(cx.theme().colors().border)),
+            )
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
             .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
-                .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
-
-            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))).into_any_element();
+            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
+            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
+            .into_any_element();
 
         Some(button)
     }
