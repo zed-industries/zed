@@ -7,10 +7,12 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
-    Anchor, AnchorRangeExt as _, Editor,
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{div, prelude::*, EventEmitter, Render, Task, View, ViewContext, WeakView};
+use gpui::{
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
+};
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
@@ -27,6 +29,7 @@ pub struct Session {
     blocks: HashMap<String, EditorBlock>,
     pub messaging_task: Task<()>,
     pub kernel_specification: KernelSpecification,
+    _buffer_subscription: Subscription,
 }
 
 struct EditorBlock {
@@ -63,6 +66,10 @@ impl EditorBlock {
             block_id,
             execution_view,
         })
+    }
+
+    fn position(&self) -> Anchor {
+        self.code_range.end
     }
 
     fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
@@ -179,13 +186,52 @@ impl Session {
             })
             .shared();
 
+        let subscription = match editor.upgrade() {
+            Some(editor) => {
+                let buffer = editor.read(cx).buffer().clone();
+                cx.subscribe(&buffer, Self::on_buffer_event)
+            }
+            None => Subscription::new(|| {}),
+        };
+
         return Self {
             editor,
             kernel: Kernel::StartingKernel(pending_kernel),
             messaging_task: Task::ready(()),
             blocks: HashMap::default(),
             kernel_specification,
+            _buffer_subscription: subscription,
         };
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<MultiBuffer>,
+        _event: &multi_buffer::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = buffer.read(cx).snapshot(cx);
+
+        let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+
+        self.blocks.retain(|_id, block| {
+            let anchor = block.position();
+            if anchor.is_valid(&snapshot) {
+                true
+            } else {
+                blocks_to_remove.insert(block.block_id);
+                false
+            }
+        });
+
+        if !blocks_to_remove.is_empty() {
+            self.editor
+                .update(cx, |editor, cx| {
+                    editor.remove_blocks(blocks_to_remove, None, cx);
+                })
+                .ok();
+            cx.notify();
+        }
     }
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
