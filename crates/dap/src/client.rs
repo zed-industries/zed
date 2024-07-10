@@ -67,7 +67,6 @@ pub struct DebugAdapterClient {
     config: DebugAdapterConfig,
     client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
     thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
-    current_thread_id: Arc<Mutex<Option<u64>>>,
     request_type: DebugRequestType,
 }
 
@@ -166,7 +165,6 @@ impl DebugAdapterClient {
             capabilities: None,
             server_tx: server_tx.clone(),
             request_count: AtomicU64::new(0),
-            current_thread_id: Arc::new(Mutex::new(None)),
             thread_state: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -248,14 +246,6 @@ impl DebugAdapterClient {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn current_thread_id(&self) -> Option<u64> {
-        *self.current_thread_id.lock()
-    }
-
-    pub fn update_current_thread_id(&self, thread_id: u64) {
-        *self.current_thread_id.lock() = Some(thread_id);
-    }
-
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
         if let Some(thread_state) = self.thread_state().get_mut(&thread_id) {
             thread_state.status = status;
@@ -266,28 +256,8 @@ impl DebugAdapterClient {
         self.thread_state.lock()
     }
 
-    pub fn current_thread_state(&self) -> Option<ThreadState> {
-        if let Some(id) = self.current_thread_id() {
-            self.thread_state().clone().get(&id).cloned()
-        } else {
-            None
-        }
-    }
-
-    pub fn update_current_stack_frame_id(&self, stack_frame_id: u64) {
-        if let Some(id) = self.current_thread_id() {
-            if let Some(thread_state) = self.thread_state().get_mut(&id) {
-                thread_state.current_stack_frame_id = Some(stack_frame_id);
-            };
-        }
-    }
-
-    pub fn current_stack_frame_id(&self) -> Option<u64> {
-        if let Some(thread_state) = self.current_thread_state() {
-            thread_state.current_stack_frame_id
-        } else {
-            None
-        }
+    pub fn thread_state_by_id(&self, thread_id: u64) -> ThreadState {
+        self.thread_state.lock().get(&thread_id).cloned().unwrap()
     }
 
     pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {

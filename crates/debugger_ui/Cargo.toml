@@ -20,10 +20,10 @@ picker.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+task.workspace = true
+tasks_ui.workspace = true
 ui.workspace = true
 workspace.workspace = true
-tasks_ui.workspace = true
-task.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
