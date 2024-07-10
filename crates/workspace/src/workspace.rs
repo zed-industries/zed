@@ -3154,16 +3154,6 @@ impl Workspace {
                 })??;
                 try_join_all(tasks).await.log_err();
             }
-            proto::update_followers::Variant::CreateView(view) => {
-                let panes = this.update(cx, |this, _| {
-                    this.follower_states
-                        .iter()
-                        .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
-                        .cloned()
-                        .collect()
-                })?;
-                Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
-            }
         }
         this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
         Ok(())
@@ -3216,69 +3206,6 @@ impl Workspace {
             Some(())
         })?;
 
-        Ok(())
-    }
-
-    async fn add_views_from_leader(
-        this: WeakView<Self>,
-        leader_id: PeerId,
-        panes: Vec<View<Pane>>,
-        views: Vec<proto::View>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let this = this.upgrade().context("workspace dropped")?;
-
-        let item_builders = cx.update(|cx| {
-            cx.default_global::<FollowableItemBuilders>()
-                .values()
-                .map(|b| b.0)
-                .collect::<Vec<_>>()
-        })?;
-
-        let mut item_tasks_by_pane = HashMap::default();
-        for pane in panes {
-            let mut item_tasks = Vec::new();
-            let mut leader_view_ids = Vec::new();
-            for view in &views {
-                let Some(id) = &view.id else {
-                    continue;
-                };
-                let id = ViewId::from_proto(id.clone())?;
-                let mut variant = view.variant.clone();
-                if variant.is_none() {
-                    Err(anyhow!("missing view variant"))?;
-                }
-                for build_item in &item_builders {
-                    let task = cx.update(|cx| {
-                        build_item(pane.clone(), this.clone(), id, &mut variant, cx)
-                    })?;
-                    if let Some(task) = task {
-                        item_tasks.push(task);
-                        leader_view_ids.push(id);
-                        break;
-                    } else if variant.is_none() {
-                        Err(anyhow!(
-                            "failed to construct view from leader (maybe from a different version of zed?)"
-                        ))?;
-                    }
-                }
-            }
-
-            item_tasks_by_pane.insert(pane, (item_tasks, leader_view_ids));
-        }
-
-        for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
-            let items = futures::future::try_join_all(item_tasks).await?;
-            this.update(cx, |this, cx| {
-                let state = this.follower_states.get_mut(&pane)?;
-                for (id, item) in leader_view_ids.into_iter().zip(items) {
-                    item.set_leader_peer_id(Some(leader_id), cx);
-                    state.items_by_leader_view_id.insert(id, item);
-                }
-
-                Some(())
-            })?;
-        }
         Ok(())
     }
 

@@ -472,22 +472,6 @@ impl<T: Item> ItemHandle for View<T> {
             this.added_to_workspace(workspace, cx);
         });
 
-        if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            if let Some(message) = followed_item.to_state_proto(cx) {
-                workspace.update_followers(
-                    followed_item.is_project_item(cx),
-                    proto::update_followers::Variant::CreateView(proto::View {
-                        id: followed_item
-                            .remote_id(&workspace.client(), cx)
-                            .map(|id| id.to_proto()),
-                        variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane),
-                    }),
-                    cx,
-                );
-            }
-        }
-
         if workspace
             .panes_by_item
             .insert(self.item_id(), pane.downgrade())

@@ -1585,9 +1585,8 @@ message UpdateFollowers {
     uint64 room_id = 1;
     optional uint64 project_id = 2;
     reserved 3;
+    reserved 5;
     oneof variant {
-        View create_view = 5;
-        // TODO: after 0.124.0 is retired, remove these.
         UpdateActiveView update_active_view = 4;
         UpdateView update_view = 6;
     }
