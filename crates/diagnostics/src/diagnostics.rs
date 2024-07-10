@@ -22,6 +22,7 @@ use gpui::{
     FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
+use itertools::Itertools;
 use language::{
     Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
     ToPoint as _,
@@ -370,7 +371,6 @@ impl ProjectDiagnosticsEditor {
             buffer.read(cx).snapshot(),
             path_state.diagnostics.iter(),
         );
-        // TODO kb panics on wrong exceprt insert order (wrong excerpt selected), on invalid excerpt range edges
         self.excerpts.update(cx, |multi_buffer, cx| {
             path_update.apply_excerpt_changes(
                 path_state,
@@ -1070,7 +1070,7 @@ impl PathUpdate {
                 cx,
             );
             if self.first_excerpt_id.is_none() {
-                self.first_excerpt_id = excerpts.last().copied();
+                self.first_excerpt_id = excerpts.first().copied();
             }
             self.last_excerpt_id = excerpts.last().copied();
         }
@@ -1166,35 +1166,36 @@ impl PathUpdate {
         );
 
         self.diagnostics_by_row_label
-            .values_mut()
+            .values()
             .flat_map(|(earliest_in_row_position, diagnostics_by_label)| {
                 diagnostics_by_label
-                    .values_mut()
-                    .filter_map(|diagnostics_with_same_label| {
-                        diagnostics_with_same_label.sort_by(|&(index_a, _), &(index_b, _)| {
-                            let a = &self.new_diagnostics[index_a].0.entry.diagnostic;
-                            let b = &self.new_diagnostics[index_b].0.entry.diagnostic;
-                            a.is_primary
-                                .cmp(&b.is_primary)
-                                .then_with(|| a.group_id.cmp(&b.group_id))
-                                .then_with(|| a.severity.cmp(&b.severity))
-                        });
-                        let (index, _) = diagnostics_with_same_label.first()?;
-                        if self.unchanged_blocks.contains_key(index) {
-                            None
-                        } else {
-                            let new_diagnostic =
-                                self.new_diagnostics[*index].0.entry.diagnostic.clone();
-                            Some(BlockProperties {
-                                position: *earliest_in_row_position,
-                                height: new_diagnostic.message.matches('\n').count() as u8 + 1,
-                                style: BlockStyle::Sticky,
-                                // TODO kb need to render something that will toggle diagnostics for the same line
-                                render: diagnostic_block_renderer(new_diagnostic, false, true),
-                                disposition: BlockDisposition::Above,
-                            })
-                        }
+                    .values()
+                    .flat_map(|diagnostics_with_same_label| {
+                        diagnostics_with_same_label
+                            .first()
+                            .map(|&(index, _)| (*earliest_in_row_position, index))
                     })
+            })
+            .filter(|(_, index)| !self.unchanged_blocks.contains_key(index))
+            .sorted_by(|&(position_a, index_a), &(position_b, index_b)| {
+                let a = &self.new_diagnostics[index_a].0.entry.diagnostic;
+                let b = &self.new_diagnostics[index_b].0.entry.diagnostic;
+                position_a
+                    .cmp(&position_b, &multi_buffer_snapshot)
+                    .then_with(|| a.group_id.cmp(&b.group_id))
+                    .then_with(|| a.is_primary.cmp(&b.is_primary).reverse())
+                    .then_with(|| a.severity.cmp(&b.severity))
+            })
+            .map(|(earliest_in_row_position, index)| {
+                let new_diagnostic = self.new_diagnostics[index].0.entry.diagnostic.clone();
+                BlockProperties {
+                    position: earliest_in_row_position,
+                    height: new_diagnostic.message.matches('\n').count() as u8 + 1,
+                    style: BlockStyle::Sticky,
+                    // TODO kb need to render something that will toggle diagnostics for the same line
+                    render: diagnostic_block_renderer(new_diagnostic, false, true),
+                    disposition: BlockDisposition::Above,
+                }
             })
             .collect()
     }
