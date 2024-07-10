@@ -583,6 +583,18 @@ impl DirectWriteState {
                 DWRITE_MEASURING_MODE_NATURAL,
             )?
         };
+        // todo(windows)
+        // This is a walkaround, deleted when figured out.
+        let y_offset;
+        let extra_height;
+        if params.is_emoji {
+            y_offset = 0;
+            extra_height = 0;
+        } else {
+            // make some room for scaler.
+            y_offset = -1;
+            extra_height = 2;
+        }
 
         if bounds.right < bounds.left {
             Ok(Bounds {
@@ -593,11 +605,13 @@ impl DirectWriteState {
             Ok(Bounds {
                 origin: point(
                     ((bounds.left * params.scale_factor).ceil() as i32).into(),
-                    ((bounds.top * params.scale_factor).ceil() as i32).into(),
+                    ((bounds.top * params.scale_factor).ceil() as i32 + y_offset).into(),
                 ),
                 size: size(
                     (((bounds.right - bounds.left) * params.scale_factor).ceil() as i32).into(),
-                    (((bounds.bottom - bounds.top) * params.scale_factor).ceil() as i32).into(),
+                    (((bounds.bottom - bounds.top) * params.scale_factor).ceil() as i32
+                        + extra_height)
+                        .into(),
                 ),
             })
         }
