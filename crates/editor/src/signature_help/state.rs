@@ -1,5 +1,5 @@
-use crate::signature_help::hidden_by::SignatureHelpHiddenBy;
 use crate::signature_help::popover::SignatureHelpPopover;
+use crate::signature_help::SignatureHelpHiddenBy;
 use gpui::Task;
 
 #[derive(Debug)]

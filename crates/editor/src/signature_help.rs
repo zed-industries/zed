@@ -1,24 +1,49 @@
-mod hidden_by;
 mod popover;
 mod state;
 
 use crate::actions::ShowSignatureHelp;
-use crate::{Editor, EditorSettings};
+use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{AppContext, ViewContext};
 use language::markdown::parse_markdown;
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 
-pub use hidden_by::SignatureHelpHiddenBy;
 pub use popover::SignatureHelpPopover;
 pub use state::SignatureHelpState;
 
-pub const QUOTES_PAIRS: [(&'static str, &'static str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
-pub const BRACKETS_PAIRS: [(&'static str, &'static str); 4] =
-    [("(", ")"), ("[", "]"), ("{", "}"), ("<", ">")];
+// Language-specific settings may define quotes as "brackets", so filter them out separately.
+const QUOTE_PAIRS: [(&'static str, &'static str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SignatureHelpHiddenBy {
+    AutoClose,
+    Escape,
+    Selection,
+}
 
 impl Editor {
+    pub fn toggle_auto_signature_help_menu(
+        &mut self,
+        _: &ToggleAutoSignatureHelp,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.auto_signature_help = self
+            .auto_signature_help
+            .map(|auto_signature_help| !auto_signature_help)
+            .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
+        match self.auto_signature_help {
+            Some(auto_signature_help) if auto_signature_help => {
+                self.show_signature_help(&ShowSignatureHelp, cx);
+            }
+            Some(_) => {
+                self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
+            }
+            None => {}
+        }
+        cx.notify();
+    }
+
     pub(super) fn hide_signature_help(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -69,10 +94,10 @@ impl Editor {
             (a, b) if b <= buffer_snapshot.len() => a - 1..b,
             (a, b) => a - 1..b - 1,
         };
-        let range_filter = |start: Range<usize>, end: Range<usize>| {
+        let not_quote_like_brackets = |start: Range<usize>, end: Range<usize>| {
             let text = buffer_snapshot.text();
             let (text_start, text_end) = (text.get(start), text.get(end));
-            QUOTES_PAIRS
+            QUOTE_PAIRS
                 .into_iter()
                 .all(|(start, end)| text_start != Some(start) && text_end != Some(end))
         };
@@ -80,14 +105,20 @@ impl Editor {
         let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
         let previous_brackets_range = bracket_range(previous_position);
         let previous_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(previous_brackets_range, Some(&range_filter))
+            .innermost_enclosing_bracket_ranges(
+                previous_brackets_range,
+                Some(&not_quote_like_brackets),
+            )
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != previous_position
                     && end_bracket_range.end != previous_position
             });
         let current_brackets_range = bracket_range(head);
         let current_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(current_brackets_range, Some(&range_filter))
+            .innermost_enclosing_bracket_ranges(
+                current_brackets_range,
+                Some(&not_quote_like_brackets),
+            )
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != head && end_bracket_range.end != head
             });

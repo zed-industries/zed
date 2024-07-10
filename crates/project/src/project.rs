@@ -45,8 +45,7 @@ use language::{
     language_settings::{
         language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
     },
-    markdown::{self},
-    point_to_lsp, prepare_completion_documentation,
+    markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_line_ending, serialize_version, split_operations,
@@ -9917,7 +9916,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+                .with_context(|| format!("unknown buffer id {}", envelope.payload.buffer_id))
         })??;
         let response = GetSignatureHelp::from_proto(
             envelope.payload.clone(),

@@ -156,7 +156,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState, BRACKETS_PAIRS};
+use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -2962,7 +2962,6 @@ impl Editor {
         }
 
         let selections = self.selections.all_adjusted(cx);
-        let mut brace_inserted = false;
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
@@ -3026,13 +3025,6 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
 
-                            if BRACKETS_PAIRS
-                                .into_iter()
-                                .any(|(start, _end)| start == bracket_pair.start.as_str())
-                            {
-                                bracket_inserted = true;
-                            }
-
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
@@ -3050,7 +3042,7 @@ impl Editor {
                                     selection.range(),
                                     format!("{}{}", text, bracket_pair.end).into(),
                                 ));
-                                brace_inserted = true;
+                                bracket_inserted = true;
                                 continue;
                             }
                         }
@@ -3096,7 +3088,7 @@ impl Editor {
                             selection.end..selection.end,
                             bracket_pair.end.as_str().into(),
                         ));
-                        brace_inserted = true;
+                        bracket_inserted = true;
                         new_selections.push((
                             Selection {
                                 id: selection.id,
@@ -3253,7 +3245,7 @@ impl Editor {
                 s.select(new_selections)
             });
 
-            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if !bracket_inserted && EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -10436,27 +10428,6 @@ impl Editor {
     pub fn selection_menu_enabled(&self, cx: &AppContext) -> bool {
         self.show_selection_menu
             .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
-    }
-
-    pub fn toggle_auto_signature_help_menu(
-        &mut self,
-        _: &ToggleAutoSignatureHelp,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.auto_signature_help = self
-            .auto_signature_help
-            .map(|auto_signature_help| !auto_signature_help)
-            .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
-        match self.auto_signature_help {
-            Some(auto_signature_help) if auto_signature_help => {
-                self.show_signature_help(&ShowSignatureHelp, cx);
-            }
-            Some(_) => {
-                self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
-            }
-            None => {}
-        }
-        cx.notify();
     }
 
     fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
