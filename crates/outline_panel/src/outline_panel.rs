@@ -1207,6 +1207,7 @@ impl OutlinePanel {
 
         self.selected_entry = Some(entry_with_selection);
         self.update_cached_entries(None, cx);
+        self.autoscroll(cx);
     }
 
     fn render_excerpt(
