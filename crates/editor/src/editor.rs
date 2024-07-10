@@ -3526,7 +3526,7 @@ impl Editor {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
-        self.insert_change_tx(cx, |buffer, selections, cx| {
+        self.insert_internal(cx, |buffer, selections, cx| {
             buffer.edit(
                 selections.iter().map(|s| ((s.start..s.end), text)),
                 autoindent,
@@ -3535,7 +3535,7 @@ impl Editor {
         });
     }
 
-    fn insert_change_tx(
+    fn insert_internal(
         &mut self,
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut MultiBuffer, Vec<Selection<Point>>, &mut ModelContext<MultiBuffer>),
@@ -4874,7 +4874,7 @@ impl Editor {
 
         let text = &completion.text.to_string();
 
-        self.insert_change_tx(cx, |buffer, selections, cx| {
+        self.insert_internal(cx, |buffer, selections, cx| {
             buffer.edit(
                 selections.iter().map(|s| {
                     // truncate the line
@@ -4923,7 +4923,7 @@ impl Editor {
 
                 let text = &completion.text.to_string();
 
-                self.insert_change_tx(cx, |buffer, selections, cx| {
+                self.insert_internal(cx, |buffer, selections, cx| {
                     buffer.edit(
                         selections.iter().map(|s| {
                             // truncate the line
