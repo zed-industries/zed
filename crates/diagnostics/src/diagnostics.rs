@@ -324,10 +324,9 @@ impl ProjectDiagnosticsEditor {
 
         // TODO kb change selections as in the old panel, to the next primary diagnostics
         let was_empty = self.path_states.is_empty();
-        let path_ix = match self
-            .path_states
-            .binary_search_by_key(&&path_to_update, |e| &e.path)
-        {
+        let path_ix = match self.path_states.binary_search_by(|probe| {
+            project::compare_paths((&probe.path.path, true), (&path_to_update.path, true))
+        }) {
             Ok(ix) => ix,
             Err(ix) => {
                 self.path_states.insert(
@@ -344,7 +343,6 @@ impl ProjectDiagnosticsEditor {
         };
 
         // TODO kb when warnings are turned off, there's a lot of refresh for many paths happening, why?
-        // TODO kb *.ts file gets pushed as first excerpt, not the last, why?
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
