@@ -191,11 +191,4 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &mut AppContext) {
             cx.update(|cx| cx.dispatch_action(action)).log_err();
         }
     }));
-
-    platform.on_tray_menu_action(Box::new({
-        let cx = cx.to_async();
-        move |action| {
-            cx.update(|cx| cx.dispatch_action(action)).log_err();
-        }
-    }));
 }

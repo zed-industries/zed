@@ -24,6 +24,15 @@ fn main() {
             icon: TrayIcon::Name("kmail"),
             title: "Testing",
             description: "Description",
+            event: Some(Box::new(|event, app| match event {
+                TrayEvent::LeftClick => {
+                    app.quit();
+                }
+                TrayEvent::MiddleClick => {
+                    app.activate(true);
+                }
+                _ => {}
+            })),
             ..Default::default()
         });
         cx.open_window(WindowOptions::default(), |cx| {

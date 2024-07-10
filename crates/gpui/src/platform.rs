@@ -158,7 +158,7 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn on_tray_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_tray_event(&self, callback: Box<dyn FnMut(TrayEvent)>);
 
     fn compositor_name(&self) -> &'static str {
         ""

@@ -255,7 +255,7 @@ impl Platform for TestPlatform {
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
-    fn on_tray_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+    fn on_tray_event(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

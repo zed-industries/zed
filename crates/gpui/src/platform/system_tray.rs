@@ -46,6 +46,18 @@ pub enum TrayMenuItem<'a> {
 }
 
 ///
+pub enum TrayEvent {
+    ///
+    LeftClick,
+    ///
+    RightClick,
+    ///
+    MiddleClick,
+    ///
+    Scroll,
+}
+
+///
 #[derive(Default)]
 pub struct TrayItem<'a> {
     /// Icon displayed
@@ -61,5 +73,5 @@ pub struct TrayItem<'a> {
     ///
     pub submenus: Vec<TrayMenuItem<'a>>,
     ///
-    pub event: Option<Box<dyn FnMut(&mut AppContext)>>,
+    pub event: Option<Box<dyn FnMut(TrayEvent, &mut AppContext)>>,
 }

@@ -83,7 +83,7 @@ use crate::platform::linux::{
 use crate::platform::PlatformWindow;
 use crate::{
     point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    TrayEvent, DOUBLE_CLICK_INTERVAL, SCROLL_LINES, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -617,12 +617,29 @@ impl LinuxClient for WaylandClient {
                         }
                         state.tray_item_token = state
                             .loop_handle
-                            .insert_source(item, |event, _, client| match event {
-                                StatusNotifierItemEvents::Activate(x, y) => {}
-                                StatusNotifierItemEvents::SecondaryActivate(x, y) => {}
-                                StatusNotifierItemEvents::XdgActivationToken(token) => {}
-                                StatusNotifierItemEvents::Scroll(delta, orientation) => {}
-                                StatusNotifierItemEvents::MenuEvent(event) => {}
+                            .insert_source(item, |event, _, client| {
+                                let client = client.get_client();
+                                let mut state = client.borrow_mut();
+                                let Some(mut tray_event) =
+                                    state.common.callbacks.tray_events.take()
+                                else {
+                                    return;
+                                };
+                                drop(state);
+                                match event {
+                                    StatusNotifierItemEvents::Activate(x, y) => {
+                                        tray_event(TrayEvent::LeftClick)
+                                    }
+                                    StatusNotifierItemEvents::SecondaryActivate(x, y) => {
+                                        tray_event(TrayEvent::MiddleClick)
+                                    }
+                                    StatusNotifierItemEvents::XdgActivationToken(token) => {}
+                                    StatusNotifierItemEvents::Scroll(delta, orientation) => {
+                                        tray_event(TrayEvent::Scroll)
+                                    }
+                                    StatusNotifierItemEvents::MenuEvent(event) => {}
+                                }
+                                client.borrow_mut().common.callbacks.tray_events = Some(tray_event);
                             })
                             .log_err();
                     }

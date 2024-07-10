@@ -43,8 +43,8 @@ use crate::{
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
     PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
-    Size, Task, TrayIcon, TrayItem, TrayMenuItem, TrayToggleType, WindowAppearance, WindowOptions,
-    WindowParams,
+    Size, Task, TrayEvent, TrayIcon, TrayItem, TrayMenuItem, TrayToggleType, WindowAppearance,
+    WindowOptions, WindowParams,
 };
 
 use super::dbus;
@@ -91,7 +91,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
-    pub(crate) tray_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
+    pub(crate) tray_events: Option<Box<dyn FnMut(TrayEvent)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
@@ -104,8 +104,6 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
-    pub(crate) tray_id: i32,
-    pub(crate) tray_item: Option<Arc<StatusNotifierItem>>,
     pub(crate) tray_actions: HashMap<String, Box<dyn Action>>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
@@ -128,8 +126,6 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
-            tray_id: 1,
-            tray_item: None,
             tray_actions: HashMap::default(),
             menus: Vec::new(),
         };
@@ -429,9 +425,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         });
     }
 
-    fn on_tray_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    fn on_tray_event(&self, callback: Box<dyn FnMut(TrayEvent)>) {
         self.with_common(|common| {
-            common.callbacks.tray_menu_action = Some(callback);
+            common.callbacks.tray_events = Some(callback);
         });
     }
 
