@@ -120,7 +120,7 @@ actions!(
         ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
-        CopyPath,
+        CopyRelativePath,
         CopyAbsolutePath,
         Feedback,
         FollowNextCollaborator,

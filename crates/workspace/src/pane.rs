@@ -5,7 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, CopyAbsolutePath, CopyPath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    CloseWindow, CopyAbsolutePath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
     OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -1797,8 +1797,8 @@ impl Pane {
                             )
                             .when_some(rel_path, |menu, path| {
                                 menu.entry(
-                                    "Copy Path",
-                                    Some(Box::new(CopyPath)),
+                                    "Copy Relative Path",
+                                    Some(Box::new(CopyRelativePath)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new(
                                             path.to_string_lossy().into_owned(),
