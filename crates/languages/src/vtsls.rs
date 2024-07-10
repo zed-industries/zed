@@ -163,7 +163,7 @@ impl LspAdapter for VtslsLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "typescript": {
-                "tsdk": "/Users/hiro/Projects/repros/yarn-issue-11977/.yarn/sdks/typescript/lib",
+                "tsdk": "node_modules/typescript/lib",
                 "format": {
                     "enable": true
                 },
@@ -191,9 +191,6 @@ impl LspAdapter for VtslsLspAdapter {
                 }
             },
             "vtsls": {
-                "typescript": {
-                    "globalTsdk": "/Users/hiro/Projects/repros/yarn-issue-11977/.yarn/sdks/typescript/lib"
-                },
                 "experimental": {
                     "completion": {
                         "enableServerSideFuzzyMatch": true,
@@ -214,7 +211,7 @@ impl LspAdapter for VtslsLspAdapter {
                 "suggest": {
                     "completeFunctionCalls": true
                 },
-                "tsdk": "/Users/hiro/Projects/repros/yarn-issue-11977/.yarn/sdks/typescript/lib",
+                "tsdk": "node_modules/typescript/lib",
                 "format": {
                     "enable": true
                 },
@@ -242,9 +239,6 @@ impl LspAdapter for VtslsLspAdapter {
                 }
             },
             "vtsls": {
-                "typescript": {
-                    "globalTsdk": "/Users/hiro/Projects/repros/yarn-issue-11977/.yarn/sdks/typescript/lib"
-                },
                 "experimental": {
                     "completion": {
                         "enableServerSideFuzzyMatch": true,
