@@ -1403,6 +1403,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
+
                     if state.enter_token.is_some() {
                         state.enter_token = None;
                     }
@@ -1416,7 +1417,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
                     }
                     drop(state);
-                    window.set_focused(true);
+                    window.set_hovered(true);
                 }
             }
             wl_pointer::Event::Leave { .. } => {
@@ -1432,7 +1433,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                     drop(state);
                     focused_window.handle_input(input);
-                    focused_window.set_focused(false);
+                    focused_window.set_hovered(false);
                 }
             }
             wl_pointer::Event::Motion {
