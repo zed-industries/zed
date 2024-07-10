@@ -945,6 +945,18 @@ impl Terminal {
         &self.last_content
     }
 
+    pub fn total_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.total_lines()
+    }
+
+    pub fn viewport_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.screen_lines()
+    }
+
     //To test:
     //- Activate match on terminal (scrolling and selection)
     //- Editor search snapping behavior
@@ -999,9 +1011,19 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Delta(1)));
     }
 
+    pub fn scroll_up_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(lines as i32)));
+    }
+
     pub fn scroll_line_down(&mut self) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Delta(-1)));
+    }
+
+    pub fn scroll_down_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(-(lines as i32))));
     }
 
     pub fn scroll_page_up(&mut self) {
@@ -1434,6 +1456,13 @@ impl Terminal {
 
             all_search_matches(&term, &mut searcher).collect()
         })
+    }
+
+    pub fn working_directory(&self) -> Option<PathBuf> {
+        self.pty_info
+            .current
+            .as_ref()
+            .map(|process| process.cwd.clone())
     }
 
     pub fn title(&self, truncate: bool) -> String {

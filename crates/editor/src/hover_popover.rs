@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, window_is_transparent, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 pub const HOVER_DELAY_MILLIS: u64 = 350;
@@ -665,15 +665,12 @@ impl DiagnosticPopover {
         div()
             .id("diagnostic")
             .block()
-            .elevation_2(cx)
-            .overflow_y_scroll()
-            .px_2()
-            .py_1()
-            .bg(diagnostic_colors.background)
-            .text_color(style.text.color)
-            .border_1()
-            .border_color(diagnostic_colors.border)
-            .rounded_md()
+            .elevation_2_borderless(cx)
+            // Don't draw the background color if the theme
+            // allows transparent surfaces.
+            .when(window_is_transparent(cx), |this| {
+                this.bg(gpui::transparent_black())
+            })
             .max_w(max_size.width)
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
@@ -685,7 +682,19 @@ impl DiagnosticPopover {
             // because that would move the cursor.
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
-            .child(SharedString::from(text))
+            .child(
+                div()
+                    .id("diagnostic-inner")
+                    .overflow_y_scroll()
+                    .px_2()
+                    .py_1()
+                    .bg(diagnostic_colors.background)
+                    .text_color(style.text.color)
+                    .border_1()
+                    .border_color(diagnostic_colors.border)
+                    .rounded_lg()
+                    .child(SharedString::from(text)),
+            )
             .into_any_element()
     }
 

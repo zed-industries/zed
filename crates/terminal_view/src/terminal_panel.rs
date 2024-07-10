@@ -371,7 +371,6 @@ impl TerminalPanel {
         spawn_task.args = user_args;
         let spawn_task = spawn_task;
 
-        let reveal = spawn_task.reveal;
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
 
@@ -420,20 +419,6 @@ impl TerminalPanel {
                         .ok();
                 }),
             );
-
-            match reveal {
-                RevealStrategy::Always => {
-                    self.activate_terminal_view(existing_item_index, cx);
-                    let task_workspace = self.workspace.clone();
-                    cx.spawn(|_, mut cx| async move {
-                        task_workspace
-                            .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
-                            .ok()
-                    })
-                    .detach();
-                }
-                RevealStrategy::Never => {}
-            }
         }
     }
 

@@ -2,6 +2,7 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_0_7;
+use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
@@ -19,7 +20,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
-    zed::extension::slash_command::SlashCommandOutput,
+    zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
@@ -262,7 +263,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         query: &str,
-    ) -> Result<Result<Vec<String>, String>> {
+    ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
         match self {
             Extension::V007(ext) => {
                 ext.call_complete_slash_command_argument(store, command, query)
@@ -286,6 +287,24 @@ impl Extension {
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
                 Err(anyhow!("`run_slash_command` not available prior to v0.0.7"))
+            }
+        }
+    }
+
+    pub async fn call_index_docs(
+        &self,
+        store: &mut Store<WasmState>,
+        provider: &str,
+        package_name: &str,
+        database: Resource<Arc<IndexedDocsDatabase>>,
+    ) -> Result<Result<(), String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_index_docs(store, provider, package_name, database)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`index_docs` not available prior to v0.0.7"))
             }
         }
     }

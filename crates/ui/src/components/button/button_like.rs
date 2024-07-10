@@ -332,7 +332,7 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
-    pub base: Div,
+    pub(super) base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
@@ -507,8 +507,10 @@ impl RenderOnce for ButtonLike {
                         })
                 },
             )
-            .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |cx| tooltip(cx))
+            .when(!self.selected, |this| {
+                this.when_some(self.tooltip, |this, tooltip| {
+                    this.tooltip(move |cx| tooltip(cx))
+                })
             })
             .children(self.children)
     }

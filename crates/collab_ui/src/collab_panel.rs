@@ -2547,9 +2547,8 @@ impl CollabPanel {
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
                         Some(
-                            div()
+                            Label::new(format!("+{extra_count}"))
                                 .ml_2()
-                                .child(Label::new(format!("+{extra_count}")))
                                 .into_any_element(),
                         )
                     } else {

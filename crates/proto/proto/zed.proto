@@ -255,7 +255,14 @@ message Envelope {
         TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
-        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
+        LinkedEditingRangeResponse linked_editing_range_response = 210;
+
+        AdvertiseContexts advertise_contexts = 211;
+        OpenContext open_context = 212;
+        OpenContextResponse open_context_response = 213;
+        UpdateContext update_context = 214;
+        SynchronizeContexts synchronize_contexts = 215;
+        SynchronizeContextsResponse synchronize_contexts_response = 216; // current max
     }
 
     reserved 158 to 161;
@@ -2221,4 +2228,118 @@ message TaskSourceKind {
     message Language {
         string name = 1;
     }
+}
+
+message ContextMessageStatus {
+    oneof variant {
+        Done done = 1;
+        Pending pending = 2;
+        Error error = 3;
+    }
+
+    message Done {}
+
+    message Pending {}
+
+    message Error {
+        string message = 1;
+    }
+}
+
+message ContextMessage {
+    LamportTimestamp id = 1;
+    Anchor start = 2;
+    LanguageModelRole role = 3;
+    ContextMessageStatus status = 4;
+}
+
+message SlashCommandOutputSection {
+    AnchorRange range = 1;
+    string icon_name = 2;
+    string label = 3;
+}
+
+message ContextOperation {
+    oneof variant {
+        InsertMessage insert_message = 1;
+        UpdateMessage update_message = 2;
+        UpdateSummary update_summary = 3;
+        SlashCommandFinished slash_command_finished = 4;
+        BufferOperation buffer_operation = 5;
+    }
+
+    message InsertMessage {
+        ContextMessage message = 1;
+        repeated VectorClockEntry version = 2;
+    }
+
+    message UpdateMessage {
+        LamportTimestamp message_id = 1;
+        LanguageModelRole role = 2;
+        ContextMessageStatus status = 3;
+        LamportTimestamp timestamp = 4;
+        repeated VectorClockEntry version = 5;
+    }
+
+    message UpdateSummary {
+        string summary = 1;
+        bool done = 2;
+        LamportTimestamp timestamp = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandFinished {
+        LamportTimestamp id = 1;
+        AnchorRange output_range = 2;
+        repeated SlashCommandOutputSection sections = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message BufferOperation {
+        Operation operation = 1;
+    }
+}
+
+message Context {
+    repeated ContextOperation operations = 1;
+}
+
+message ContextMetadata {
+    string context_id = 1;
+    optional string summary = 2;
+}
+
+message AdvertiseContexts {
+    uint64 project_id = 1;
+    repeated ContextMetadata contexts = 2;
+}
+
+message OpenContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+}
+
+message OpenContextResponse {
+    Context context = 1;
+}
+
+message UpdateContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+    ContextOperation operation = 3;
+}
+
+message ContextVersion {
+    string context_id = 1;
+    repeated VectorClockEntry context_version = 2;
+    repeated VectorClockEntry buffer_version = 3;
+}
+
+message SynchronizeContexts {
+    uint64 project_id = 1;
+    repeated ContextVersion contexts = 2;
+}
+
+message SynchronizeContextsResponse {
+    repeated ContextVersion contexts = 1;
 }

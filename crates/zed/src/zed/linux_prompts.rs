@@ -1,7 +1,7 @@
 use gpui::{
-    div, opaque_grey, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
-    Render, RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
+    div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
+    RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
 };
 use settings::Settings;
 use theme::ThemeSettings;
@@ -31,6 +31,7 @@ pub fn fallback_prompt_renderer(
             detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
+            active_action_id: 0,
         }
     });
 
@@ -44,10 +45,12 @@ pub struct FallbackPromptRenderer {
     detail: Option<String>,
     actions: Vec<String>,
     focus: FocusHandle,
+    active_action_id: usize,
 }
+
 impl FallbackPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        cx.emit(PromptResponse(0));
+        cx.emit(PromptResponse(self.active_action_id));
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -55,7 +58,32 @@ impl FallbackPromptRenderer {
             cx.emit(PromptResponse(ix));
         }
     }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        self.active_action_id = self.actions.len().saturating_sub(1);
+        cx.notify();
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        self.active_action_id = 0;
+        cx.notify();
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        if self.active_action_id > 0 {
+            self.active_action_id -= 1;
+        } else {
+            self.active_action_id = self.actions.len().saturating_sub(1);
+        }
+        cx.notify();
+    }
+
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
+        cx.notify();
+    }
 }
+
 impl Render for FallbackPromptRenderer {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
@@ -66,6 +94,10 @@ impl Render for FallbackPromptRenderer {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .elevation_3(cx)
             .w_72()
             .overflow_hidden()
@@ -91,7 +123,7 @@ impl Render for FallbackPromptRenderer {
                     ui::Button::new(ix, action.clone())
                         .label_size(LabelSize::Large)
                         .style(ButtonStyle::Filled)
-                        .when(ix == 0, |el| {
+                        .when(ix == self.active_action_id, |el| {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
                         .layer(ElevationIndex::ModalSurface)
@@ -101,35 +133,24 @@ impl Render for FallbackPromptRenderer {
                 }),
             ));
 
-        div()
-            .size_full()
-            .occlude()
-            .child(
-                div()
-                    .size_full()
-                    .bg(opaque_grey(0.5, 0.6))
-                    .absolute()
-                    .top_0()
-                    .left_0(),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_col()
-                    .justify_around()
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .justify_around()
-                            .child(prompt),
-                    ),
-            )
+        div().size_full().occlude().child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_around()
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .justify_around()
+                        .child(prompt),
+                ),
+        )
     }
 }
 
