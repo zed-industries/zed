@@ -1,28 +1,27 @@
 use crate::{
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
+    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState, SignatureHelp,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, Model};
+use gpui::{AppContext, AsyncAppContext, FontWeight, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind},
+    markdown::{MarkdownHighlight, MarkdownHighlightStyle},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
-    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Language, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::request::Request;
 use lsp::{
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, ServerCapabilities, SignatureHelp,
+    OneOf, ServerCapabilities,
 };
-use rpc::proto::RequestMessage;
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
@@ -1233,83 +1232,259 @@ impl LspCommand for GetDocumentHighlights {
     }
 }
 
-// TODO kb create an inner SignatureHelp struct and use that instead of the LSP one
+pub const SIGNATURE_HELP_HIGHLIGHT_CURRENT: MarkdownHighlight =
+    MarkdownHighlight::Style(MarkdownHighlightStyle {
+        italic: false,
+        underline: false,
+        strikethrough: false,
+        weight: FontWeight::EXTRA_BOLD,
+    });
+
+pub const SIGNATURE_HELP_HIGHLIGHT_OVERLOAD: MarkdownHighlight =
+    MarkdownHighlight::Style(MarkdownHighlightStyle {
+        italic: true,
+        underline: false,
+        strikethrough: false,
+        weight: FontWeight::NORMAL,
+    });
+
+pub fn create_signature_help_markdown_string(
+    lsp::SignatureHelp {
+        signatures,
+        active_signature,
+        active_parameter,
+        ..
+    }: lsp::SignatureHelp,
+    language: Option<Arc<Language>>,
+) -> Option<(String, Vec<(Range<usize>, MarkdownHighlight)>)> {
+    let function_options_count = signatures.len();
+
+    let signature_information = active_signature
+        .and_then(|active_signature| signatures.get(active_signature as usize))
+        .or_else(|| signatures.first())?;
+
+    let str_for_join = ", ";
+    let parameter_length = signature_information
+        .parameters
+        .as_ref()
+        .map(|parameters| parameters.len())
+        .unwrap_or(0);
+    let mut highlight_start = 0;
+    let (markdown, mut highlights): (Vec<_>, Vec<_>) = signature_information
+        .parameters
+        .as_ref()?
+        .iter()
+        .enumerate()
+        .filter_map(|(i, parameter_information)| {
+            let string = match parameter_information.label.clone() {
+                lsp::ParameterLabel::Simple(string) => string,
+                lsp::ParameterLabel::LabelOffsets(offset) => signature_information
+                    .label
+                    .chars()
+                    .skip(offset[0] as usize)
+                    .take((offset[1] - offset[0]) as usize)
+                    .collect::<String>(),
+            };
+            let string_length = string.len();
+
+            let result = if let Some(active_parameter) = active_parameter {
+                if i == active_parameter as usize {
+                    Some((
+                        string,
+                        Some((
+                            highlight_start..(highlight_start + string_length),
+                            SIGNATURE_HELP_HIGHLIGHT_CURRENT,
+                        )),
+                    ))
+                } else {
+                    Some((string, None))
+                }
+            } else {
+                Some((string, None))
+            };
+
+            if i != parameter_length {
+                highlight_start += string_length + str_for_join.len();
+            }
+
+            result
+        })
+        .unzip();
+
+    if markdown.is_empty() {
+        None
+    } else {
+        let markdown = markdown.join(str_for_join);
+        let language_name = language
+            .map(|n| n.name().to_lowercase())
+            .unwrap_or_default();
+
+        let markdown = if function_options_count >= 2 {
+            let suffix = format!("(+{} overload)", function_options_count - 1);
+            let highlight_start = markdown.len() + 1;
+            highlights.push(Some((
+                highlight_start..(highlight_start + suffix.len()),
+                SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
+            )));
+            format!("```{language_name}\n{markdown} {suffix}")
+        } else {
+            format!("```{language_name}\n{markdown}")
+        };
+
+        Some((markdown, highlights.into_iter().flatten().collect()))
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
     type Response = Option<SignatureHelp>;
-    type LspRequest = lsp::request::SignatureHelpRequest;
+    type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
+
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        capabilities.signature_help_provider.is_some()
+    }
 
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> <Self::LspRequest as Request>::Params {
+        _cx: &AppContext,
+    ) -> lsp::SignatureHelpParams {
         let url_result = lsp::Url::from_file_path(path);
         if url_result.is_err() {
             log::error!("an invalid file path has been specified");
         }
 
         lsp::SignatureHelpParams {
-            context: None,
             text_document_position_params: lsp::TextDocumentPositionParams {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: url_result.expect("invalid file path"),
                 },
                 position: point_to_lsp(self.position),
             },
+            context: None,
             work_done_progress_params: Default::default(),
         }
     }
 
     async fn response_from_lsp(
         self,
-        message: <Self::LspRequest as Request>::Result,
+        message: Option<lsp::SignatureHelp>,
         _: Model<Project>,
-        _: Model<Buffer>,
+        buffer: Model<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
-        Ok(message)
+        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        Ok(message
+            .and_then(|message| create_signature_help_markdown_string(message, language))
+            .map(|(markdown, highlights)| SignatureHelp {
+                markdown,
+                highlights,
+            }))
     }
 
-    fn to_proto(&self, _: u64, _: &Buffer) -> Self::ProtoRequest {
-        // TODO: Handle cases that are not local later
-        unimplemented!("GetSignatureHelp::to_proto is unimplemented")
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        let offset = buffer.point_utf16_to_offset(self.position);
+        proto::GetSignatureHelp {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(serialize_anchor(&buffer.anchor_after(offset))),
+            version: serialize_version(&buffer.version()),
+        }
     }
 
     async fn from_proto(
-        _: Self::ProtoRequest,
+        payload: Self::ProtoRequest,
         _: Model<Project>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Self> {
-        // TODO: Handle cases that are not local later
-        anyhow::bail!("GetSignatureHelp::from_proto is unimplemented")
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&payload.version))
+            })?
+            .await
+            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
+        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        Ok(Self {
+            position: payload
+                .position
+                .and_then(deserialize_anchor)
+                .context("invalid position")?
+                .to_point_utf16(&buffer_snapshot),
+        })
     }
 
     fn response_to_proto(
-        _: Self::Response,
+        response: Self::Response,
         _: &mut Project,
         _: PeerId,
         _: &Global,
         _: &mut AppContext,
-    ) -> <Self::ProtoRequest as RequestMessage>::Response {
-        // TODO: Handle cases that are not local later
-        unimplemented!("GetSignatureHelp::response_to_proto is unimplemented")
+    ) -> proto::GetSignatureHelpResponse {
+        match response {
+            Some(signature_help) => proto::GetSignatureHelpResponse {
+                rendered_text: Some(signature_help.markdown),
+                highlights: signature_help
+                    .highlights
+                    .into_iter()
+                    .filter_map(|(range, highlight)| {
+                        let MarkdownHighlight::Style(highlight) = highlight else {
+                            return None;
+                        };
+
+                        Some(proto::HighlightedRange {
+                            range: Some(proto::Range {
+                                start: range.start as u64,
+                                end: range.end as u64,
+                            }),
+                            highlight: Some(proto::MarkdownHighlight {
+                                italic: highlight.italic,
+                                underline: highlight.underline,
+                                strikethrough: highlight.strikethrough,
+                                weight: highlight.weight.0,
+                            }),
+                        })
+                    })
+                    .collect(),
+            },
+            None => proto::GetSignatureHelpResponse {
+                rendered_text: None,
+                highlights: Vec::new(),
+            },
+        }
     }
 
     async fn response_from_proto(
         self,
-        _: <Self::ProtoRequest as RequestMessage>::Response,
+        response: proto::GetSignatureHelpResponse,
         _: Model<Project>,
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> Result<Self::Response> {
-        // TODO: Handle cases that are not local later
-        anyhow::bail!("GetSignatureHelp::response_from_proto is unimplemented")
+        Ok(response.rendered_text.map(|rendered_text| SignatureHelp {
+            markdown: rendered_text,
+            highlights: response
+                .highlights
+                .into_iter()
+                .filter_map(|highlight| {
+                    let proto_highlight = highlight.highlight?;
+                    let range = highlight.range?;
+                    Some((
+                        range.start as usize..range.end as usize,
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: proto_highlight.italic,
+                            underline: proto_highlight.underline,
+                            strikethrough: proto_highlight.strikethrough,
+                            weight: FontWeight(proto_highlight.weight),
+                        }),
+                    ))
+                })
+                .collect(),
+        }))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {

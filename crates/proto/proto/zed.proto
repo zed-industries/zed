@@ -938,42 +938,20 @@ message GetSignatureHelp {
 }
 
 message GetSignatureHelpResponse {
-    uint64 buffer_id = 1;
-    repeated SignatureInformation signatures = 2;
-    optional uint32 active_signature = 3;
-    optional uint32 active_parameter = 4;
+    optional string rendered_text = 1;
+    repeated HighlightedRange highlights = 2;
 }
 
-message SignatureInformation {
-    string label = 1;
-    optional Documentation documentation = 2;
-    repeated ParameterInformation parameters = 3;
-    optional uint32 active_parameter = 4;
+message HighlightedRange {
+    Range range = 1;
+    MarkdownHighlight highlight = 2;
 }
 
-message Documentation {
-    oneof content {
-        string value = 1;
-        MarkupContent markup_content = 2;
-    }
-}
-
-enum MarkupKind {
-    PlainText = 0;
-    Markdown = 1;
-}
-
-message ParameterInformation {
-    oneof label {
-        string simple = 1;
-        LabelOffsets label_offsets = 2;
-    }
-    optional Documentation documentation = 3;
-}
-
-message LabelOffsets {
-    uint32 start = 1;
-    uint32 end = 2;
+message MarkdownHighlight {
+    bool italic = 1;
+    bool underline = 2;
+    bool strikethrough = 3;
+    float weight = 4;
 }
 
 message GetHover {

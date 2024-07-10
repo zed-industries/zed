@@ -158,8 +158,7 @@ use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help_popover::{
-    create_signature_help_markdown_string, SignatureHelpHiddenBy, SignatureHelpPopover,
-    SignatureHelpState, QUOTES_PAIRS,
+    SignatureHelpHiddenBy, SignatureHelpPopover, SignatureHelpState, QUOTES_PAIRS,
 };
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
@@ -4134,37 +4133,39 @@ impl Editor {
 
         self.signature_help_state
             .set_task(cx.spawn(move |editor, mut cx| async move {
-                let markdown_task = editor
+                let signature_help = editor
                     .update(&mut cx, |editor, cx| {
                         let language = editor.language_at(position, cx);
                         let project = editor.project.clone()?;
                         let (markdown, language_registry) = {
-                            let language = language.clone();
                             project.update(cx, |project, mut cx| {
                                 let language_registry = project.languages().clone();
-                                let markdown = project
-                                    .signature_help(&buffer, buffer_position, &mut cx)
-                                    .map(|signature_help| {
-                                        create_signature_help_markdown_string(
-                                            signature_help?,
-                                            language,
-                                        )
-                                    });
-                                (markdown, language_registry)
+                                (
+                                    project.signature_help(&buffer, buffer_position, &mut cx),
+                                    language_registry,
+                                )
                             })
                         };
                         Some((markdown, language_registry, language))
                     })
                     .ok()
                     .flatten();
-                let signature_help_popover = if let Some((markdown, language_registry, language)) =
-                    markdown_task
+                let signature_help_popover = if let Some((
+                    signature_help_task,
+                    language_registry,
+                    language,
+                )) = signature_help
                 {
-                    let markdown = markdown.await;
-                    if let Some((markdown, mut markdown_highlights)) = markdown {
-                        let mut parsed_content =
-                            parse_markdown(markdown.as_str(), &language_registry, language).await;
-                        parsed_content.highlights.append(&mut markdown_highlights);
+                    if let Some(mut signature_help) = signature_help_task.await {
+                        let mut parsed_content = parse_markdown(
+                            signature_help.markdown.as_str(),
+                            &language_registry,
+                            language,
+                        )
+                        .await;
+                        parsed_content
+                            .highlights
+                            .append(&mut signature_help.highlights);
                         Some(SignatureHelpPopover { parsed_content })
                     } else {
                         None

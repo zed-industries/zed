@@ -1,5 +1,4 @@
 use super::*;
-use crate::signature_help_popover::SIGNATURE_HELP_HIGHLIGHT_CURRENT;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -27,8 +26,11 @@ use language::{
 use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
-use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use project::{
+    lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
+    project_settings::{LspSettings, ProjectSettings},
+};
 use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;

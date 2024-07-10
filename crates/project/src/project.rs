@@ -45,7 +45,8 @@ use language::{
     language_settings::{
         language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
     },
-    markdown, point_to_lsp, prepare_completion_documentation,
+    markdown::{self, MarkdownHighlight},
+    point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_line_ending, serialize_version, split_operations,
@@ -634,6 +635,11 @@ pub enum SearchResult {
         ranges: Vec<Range<Anchor>>,
     },
     LimitReached,
+}
+
+pub struct SignatureHelp {
+    pub markdown: String,
+    pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -5776,10 +5782,9 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<lsp::SignatureHelp>> {
+    ) -> Task<Option<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        // TODO kb remove `true` after fixing all conversion-related todo!'s
-        if true || self.is_local() {
+        if self.is_local() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
@@ -5792,7 +5797,7 @@ impl Project {
                     .await
                     .into_iter()
                     .flatten()
-                    .find(|help| !help.signatures.is_empty())
+                    .find(|help| !help.markdown.is_empty())
             })
         } else if let Some(project_id) = self.remote_id() {
             let position_anchor = buffer
@@ -5804,16 +5809,9 @@ impl Project {
                 buffer_id: buffer.read(cx).remote_id().to_proto(),
                 version: serialize_version(&buffer.read(cx).version()),
             });
-            cx.spawn(move |project, mut cx| async move {
+            let buffer = buffer.clone();
+            cx.spawn(move |project, cx| async move {
                 let response = request.await.log_err()?;
-                let buffer_id = BufferId::new(response.buffer_id).ok()?;
-                let buffer = project
-                    .update(&mut cx, |project, cx| {
-                        project.wait_for_remote_buffer(buffer_id, cx)
-                    })
-                    .ok()?
-                    .await
-                    .log_err()?;
                 let project = project.upgrade()?;
                 GetSignatureHelp::response_from_proto(
                     GetSignatureHelp { position },
@@ -9917,12 +9915,6 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })?
-            .await
-            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
         let position = envelope
             .payload
             .position
