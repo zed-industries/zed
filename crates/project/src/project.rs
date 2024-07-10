@@ -637,6 +637,7 @@ pub enum SearchResult {
     LimitReached,
 }
 
+#[derive(Debug)]
 pub struct SignatureHelp {
     pub markdown: String,
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,

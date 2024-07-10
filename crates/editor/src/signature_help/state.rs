@@ -65,3 +65,10 @@ impl SignatureHelpState {
         self.popover.is_some()
     }
 }
+
+#[cfg(test)]
+impl SignatureHelpState {
+    pub fn task(&self) -> Option<&Task<()>> {
+        self.task.as_ref()
+    }
+}

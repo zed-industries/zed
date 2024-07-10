@@ -6835,7 +6835,9 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-async fn test_handle_input_for_show_signature_help(cx: &mut gpui::TestAppContext) {
+async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     cx.update(|cx| {
@@ -6972,6 +6974,120 @@ async fn test_handle_input_for_show_signature_help(cx: &mut gpui::TestAppContext
         } = signature_help_state.unwrap().parsed_content;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+    });
+}
+
+#[gpui::test]
+async fn test_handle_input_for_show_signature_help_auto_signature_help_false(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(false);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]".to_string(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let language = Arc::new(language);
+
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+
+    cx.editor(|editor, _| {
+        // Ensure that signature_help is not called.
+        assert!(editor.signature_help_state.task().is_none());
     });
 }
 
