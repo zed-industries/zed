@@ -49,7 +49,7 @@ use std::{
     future::Future,
     mem,
     ops::{AddAssign, Deref, DerefMut, Sub},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -120,7 +120,6 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
-    _root_tempdir: Option<tempfile::TempDir>,
 }
 
 struct ScanRequest {
@@ -314,9 +313,6 @@ struct BackgroundScannerState {
     removed_entry_ids: HashMap<(u64, SystemTime), ProjectEntryId>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
-    /// Temporary directories created during scan.
-    /// We create them for .zip unpacking.
-    _tempdirs: HashMap<Arc<Path>, tempfile::TempDir>,
 }
 
 #[derive(Debug, Clone)]
@@ -375,30 +371,6 @@ static EMPTY_PATH: &str = "";
 
 impl EventEmitter<Event> for Worktree {}
 
-fn zip_path(path: &Path) -> Option<&Path> {
-    let path_str = path.to_str()?;
-    let zip_end = path_str.find(".zip/")?;
-    let zip_path = &path_str[..zip_end + 4]; // ".zip" is 4 characters long
-    Some(Path::new(zip_path))
-}
-
-async fn dump_zip(path: Arc<Path>, fs: Arc<dyn Fs>) -> Result<tempfile::TempDir> {
-    let dir = tempfile::tempdir()?;
-    let contents = fs.load_bytes(&path).await?;
-    node_runtime::extract_zip(dir.path(), futures::io::Cursor::new(contents)).await?;
-    Ok(dir)
-}
-
-fn is_unpackable(child_path: &Path) -> bool {
-    child_path.components().last().map_or(false, |component| {
-        if let Component::Normal(component) = component {
-            Path::new(component).extension() == Some("zip".as_ref())
-        } else {
-            false
-        }
-    })
-}
-
 impl Worktree {
     pub async fn local(
         path: impl Into<Arc<Path>>,
@@ -407,29 +379,12 @@ impl Worktree {
         next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
-        let mut abs_path = path.into();
-        let mut metadata = fs
+        let abs_path = path.into();
+        let metadata = fs
             .metadata(&abs_path)
             .await
-            .context("failed to stat worktree path");
-        let mut _root_tempdir = None;
-        let mut canonical_path = None;
-        if metadata.is_err() {
-            if let Some(base_zip_path) = zip_path(&abs_path) {
-                // Treat this path as a zip container.
-                let base_zip_path: Arc<Path> = Arc::from(base_zip_path);
-                let dir = dump_zip(base_zip_path.clone(), fs.clone()).await?;
-                canonical_path = Some(dir.path().to_owned());
+            .context("failed to stat worktree path")?;
 
-                abs_path = base_zip_path;
-                metadata = fs
-                    .metadata(&dir.path())
-                    .await
-                    .context("failed to stat worktree path");
-                _root_tempdir = Some(dir);
-            }
-        }
-        let metadata = metadata?;
         let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
             log::error!(
                 "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
@@ -469,19 +424,16 @@ impl Worktree {
             };
 
             if let Some(metadata) = metadata {
-                let mut entry = Entry::new(
-                    Arc::from(Path::new("")),
-                    &metadata,
-                    &next_entry_id,
-                    snapshot.root_char_bag,
-                    None,
+                snapshot.insert_entry(
+                    Entry::new(
+                        Arc::from(Path::new("")),
+                        &metadata,
+                        &next_entry_id,
+                        snapshot.root_char_bag,
+                        None,
+                    ),
+                    fs.as_ref(),
                 );
-                if canonical_path.is_some() {
-                    entry.is_symlink = true;
-                    entry.kind = EntryKind::PendingDir;
-                    entry.canonical_path = canonical_path;
-                }
-                snapshot.insert_entry(entry, fs.as_ref());
             }
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
@@ -499,7 +451,6 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
-                _root_tempdir,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1102,7 +1053,6 @@ impl LocalWorktree {
                         paths_to_scan: Default::default(),
                         removed_entry_ids: Default::default(),
                         changed_paths: Default::default(),
-                        _tempdirs: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
@@ -1304,7 +1254,6 @@ impl LocalWorktree {
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
-            let entry = entry.await.unwrap();
             let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
@@ -1344,7 +1293,7 @@ impl LocalWorktree {
             let worktree = this
                 .upgrade()
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
-            let file = match entry {
+            let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs
@@ -1783,9 +1732,9 @@ impl LocalWorktree {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.update(&mut cx, |this, _| {
-                this.entry_for_path(path.clone())
+                this.entry_for_path(path)
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path `{path:?}` after update"))
+                    .ok_or_else(|| anyhow!("failed to read path after update"))
             })??;
             Ok(Some(new_entry))
         })
@@ -1982,20 +1931,10 @@ impl Snapshot {
         {
             return Err(anyhow!("invalid path"));
         }
-        let root_path: Arc<Path> = {
-            if let Some(canonical_path) = self
-                .root_entry()
-                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::<Path>::from))
-            {
-                canonical_path.clone()
-            } else {
-                self.abs_path.clone()
-            }
-        };
         if path.file_name().is_some() {
-            Ok(root_path.join(path))
+            Ok(self.abs_path.join(path))
         } else {
-            Ok(root_path.to_path_buf())
+            Ok(self.abs_path.to_path_buf())
         }
     }
 
@@ -3583,18 +3522,7 @@ impl BackgroundScanner {
         request.relative_paths.sort_unstable();
         self.forcibly_load_paths(&request.relative_paths).await;
 
-        let root_path = {
-            let state = self.state.lock();
-            if let Some(canonical_path) = state
-                .snapshot
-                .root_entry()
-                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::from))
-            {
-                canonical_path
-            } else {
-                state.snapshot.abs_path.clone()
-            }
-        };
+        let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -3636,18 +3564,7 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
-        let root_path = {
-            let state = self.state.lock();
-            if let Some(canonical_path) = state
-                .snapshot
-                .root_entry()
-                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::from))
-            {
-                canonical_path
-            } else {
-                state.snapshot.abs_path.clone()
-            }
-        };
+        let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -3895,8 +3812,7 @@ impl BackgroundScanner {
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
-            .await
-            .unwrap()
+            .await?
             .filter_map(|entry| async {
                 match entry {
                     Ok(entry) => Some(entry),
@@ -4011,39 +3927,18 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path);
             }
 
-            let is_unpackable = is_unpackable(&child_path);
+            if child_entry.is_dir() {
+                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
-            if child_entry.is_dir() || is_unpackable {
-                child_entry.is_ignored =
-                    ignore_stack.is_abs_path_ignored(&child_abs_path, child_entry.is_dir());
-
-                if !child_entry.is_dir() {
-                    debug_assert!(is_unpackable);
-
-                    let dir = dump_zip(child_abs_path.clone(), self.fs.clone()).await?;
-                    let path: Arc<Path> = dir.path().into();
-
-                    child_entry.kind = EntryKind::PendingDir;
-                    child_entry.is_symlink = true;
-                    child_entry.canonical_path = Some(dir.path().into());
-                    self.state.lock()._tempdirs.insert(path, dir);
-                }
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
                     new_jobs.push(None);
                 } else {
                     let mut ancestor_inodes = job.ancestor_inodes.clone();
                     ancestor_inodes.insert(child_entry.inode);
-                    let abs_path = if child_entry.is_dir() && !is_unpackable {
-                        child_abs_path.clone()
-                    } else if let Some(canonical) = &child_entry.canonical_path {
-                        dbg!(&canonical);
-                        Arc::from(canonical.as_ref())
-                    } else {
-                        unreachable!();
-                    };
+
                     new_jobs.push(Some(ScanJob {
-                        abs_path,
+                        abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
@@ -4118,47 +4013,29 @@ impl BackgroundScanner {
     ) {
         let metadata = futures::future::join_all(
             abs_paths
-                .into_iter()
-                .map(|mut abs_path| {
-                    let root = root_abs_path.clone();
-                    async move {
-                        let as_zip = zip_path(&abs_path);
-                        if let Some(zip) = &as_zip {
-                            let state = self.state.lock();
+                .iter()
+                .map(|abs_path| async move {
+                    let metadata = self.fs.metadata(abs_path).await?;
+                    if let Some(metadata) = metadata {
+                        let canonical_path = self.fs.canonicalize(abs_path).await?;
 
-                            let Ok(zip) = zip.strip_prefix(&root) else {
+                        // If we're on a case-insensitive filesystem (default on macOS), we want
+                        // to only ignore metadata for non-symlink files if their absolute-path matches
+                        // the canonical-path.
+                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
+                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
+                        // treated as removed.
+                        if !self.fs_case_sensitive && !metadata.is_symlink {
+                            let canonical_file_name = canonical_path.file_name();
+                            let file_name = abs_path.file_name();
+                            if canonical_file_name != file_name {
                                 return Ok(None);
-                            };
-
-                            let Some(root_entry) = state.snapshot.entry_for_path(zip) else {
-                                return Ok(None);
-                            };
-                            if let Some(canonical) = &root_entry.canonical_path {
-                                abs_path = canonical.clone();
                             }
                         }
 
-                        let metadata = self.fs.metadata(&abs_path).await?;
-                        if let Some(metadata) = metadata {
-                            let canonical_path = self.fs.canonicalize(&abs_path).await.unwrap();
-
-                            // If we're on a case-insensitive filesystem (default on macOS), we want
-                            // to only ignore metadata for non-symlink files if their absolute-path matches
-                            // the canonical-path.
-                            // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
-                            // and we want to ignore the metadata for the old path (`test.txt`) so it's
-                            // treated as removed.
-                            if !self.fs_case_sensitive && !metadata.is_symlink {
-                                let canonical_file_name = canonical_path.file_name();
-                                let file_name = abs_path.file_name();
-                                if canonical_file_name != file_name {
-                                    return Ok(None);
-                                }
-                            }
-                            anyhow::Ok(Some((metadata, canonical_path)))
-                        } else {
-                            Ok(None)
-                        }
+                        anyhow::Ok(Some((metadata, canonical_path)))
+                    } else {
+                        Ok(None)
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -4229,10 +4106,8 @@ impl BackgroundScanner {
                     self.remove_repo_path(path, &mut state.snapshot);
                 }
                 Err(err) => {
-                    if !is_unpackable(path) {
-                        // TODO - create a special 'error' entry in the entries tree to mark this
-                        log::error!("error reading file {abs_path:?} on event: {err:#}");
-                    }
+                    // TODO - create a special 'error' entry in the entries tree to mark this
+                    log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
         }

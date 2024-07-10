@@ -44,13 +44,10 @@ impl IgnoreStack {
                 abs_base_path,
                 ignore,
                 parent: prev,
-            } => match abs_path.strip_prefix(abs_base_path) {
-                Ok(relative_path) => match ignore.matched(relative_path, is_dir) {
-                    ignore::Match::None => prev.is_abs_path_ignored(abs_path, is_dir),
-                    ignore::Match::Ignore(_) => true,
-                    ignore::Match::Whitelist(_) => false,
-                },
-                Err(_) => false,
+            } => match ignore.matched(abs_path.strip_prefix(abs_base_path).unwrap(), is_dir) {
+                ignore::Match::None => prev.is_abs_path_ignored(abs_path, is_dir),
+                ignore::Match::Ignore(_) => true,
+                ignore::Match::Whitelist(_) => false,
             },
         }
     }
