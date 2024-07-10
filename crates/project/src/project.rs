@@ -727,6 +727,7 @@ impl Project {
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let yarn = YarnPathStore::new(fs.clone(), cx);
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -752,7 +753,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
-                yarn: YarnPathStore::new(fs.clone(), cx),
+                yarn,
                 snippets,
                 languages,
                 client,
@@ -853,6 +854,7 @@ impl Project {
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let yarn = YarnPathStore::new(fs.clone(), cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -891,7 +893,7 @@ impl Project {
                 languages,
                 user_store: user_store.clone(),
                 snippets,
-                yarn: YarnPathStore::new(fs.clone(), cx),
+                yarn,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
