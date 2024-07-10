@@ -1,6 +1,9 @@
-
 use gpui::AnyElement;
-use repl::{ExecutionState, Kernel, KernelSpecification, RuntimePanel, Session, SessionSupport};
+use repl::{
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, Session,
+    SessionSupport,
+};
+use settings::Settings;
 use ui::{prelude::*, ButtonLike, IconWithIndicator, IntoElement, Tooltip};
 
 use crate::QuickActionBar;
@@ -9,6 +12,10 @@ const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
 
 impl QuickActionBar {
     pub fn render_repl_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if !JupyterSettings::enabled(cx) {
+            return None;
+        }
+
         let workspace = self.workspace.upgrade()?.read(cx);
 
         let (editor, repl_panel) = if let (Some(editor), Some(repl_panel)) =
