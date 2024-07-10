@@ -131,7 +131,6 @@ fn main() -> Result<()> {
             paths.push(parse_path_with_position(path)?)
         }
     }
-    dbg!(&paths);
 
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
