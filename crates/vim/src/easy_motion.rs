@@ -306,7 +306,8 @@ impl EasyMotion {
             editor,
             trie.iter(),
             trie.len(),
-            &snapshot.buffer_snapshot,
+            &snapshot.buffer_snapshot, but this fixes the bug with a match
+            appearing at the end of a folded block
             &snapshot.display_snapshot,
             cx,
         );
