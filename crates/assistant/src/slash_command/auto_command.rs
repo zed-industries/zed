@@ -129,6 +129,38 @@ async fn summaries(
 ) -> Result<Vec<String>> {
     let model = completion_provider.model();
     let max_token_count = model.max_token_count();
+    let tokens_needed = |content: String| {
+        let request = LanguageModelRequest {
+            model: model.clone(),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content,
+            }],
+            stop: Vec::new(),
+            temperature: 1.0,
+        };
+
+        completion_provider.count_tokens(request, cx)
+    };
+    let full_summary_tokens = tokens_needed(full_summary.to_string()).await?;
+
+    // See if the summary will fit in one request. If so, we're done!
+    if full_summary_tokens <= max_token_count {
+        Ok(vec![full_summary.to_string()])
+    } else {
+        let mut buf = String::new();
+
+        // We need to split up the request into smaller chunks.
+        for context in full_summary.trim().split(OPENING_CONTEXT_TAG) {
+            let context = context.trim();
+
+            if context.ends_with(CLOSING_CONTEXT_TAG) {
+                buf.push_str(OPENING_CONTEXT_TAG);
+                buf.push_str(context);
+            }
+        }
+    }
+
     // If we can't get chunks of at least this size, decide it's hopeless and we give up.
     // Otherwise it's going to take an unreasonable number of calls to the model to get everything.
     const MIN_CHUNK_LENGTH: usize = 2048 + OPENING_CONTEXT_TAG.len() + CLOSING_CONTEXT_TAG.len();
