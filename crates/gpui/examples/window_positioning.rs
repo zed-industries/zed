@@ -7,22 +7,23 @@ struct WindowContent {
 }
 
 impl Render for WindowContent {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let window_bounds = cx.bounds();
+
         div()
             .flex()
             .flex_col()
-            .gap_2()
             .bg(self.bg)
             .size_full()
             .items_center()
-            .text_xl()
             .text_color(rgb(0xffffff))
             .child(self.text.clone())
             .child(
                 div()
                     .flex()
-                    .text_base()
-                    .justify_center()
+                    .flex_col()
+                    .text_sm()
+                    .items_center()
                     .size_full()
                     .child(format!(
                         "origin: {}, {} size: {}, {}",
@@ -30,6 +31,13 @@ impl Render for WindowContent {
                         self.bounds.origin.y,
                         self.bounds.size.width,
                         self.bounds.size.height
+                    ))
+                    .child(format!(
+                        "cx.bounds() origin: {}, {} size {}, {}",
+                        window_bounds.origin.x,
+                        window_bounds.origin.y,
+                        window_bounds.size.width,
+                        window_bounds.size.height
                     )),
             )
     }
@@ -57,8 +65,8 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         // Create several new windows, positioned in the top right corner of each screen
         let size = Size {
-            width: px(400.),
-            height: px(72.),
+            width: px(350.),
+            height: px(75.),
         };
         let margin_offset = px(150.);
 
