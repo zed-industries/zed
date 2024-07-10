@@ -453,17 +453,48 @@ impl Frame {
         }
     }
 
+    #[profiling::function]
     pub(crate) fn clear(&mut self) {
-        self.element_states.clear();
-        self.accessed_element_states.clear();
-        self.mouse_listeners.clear();
-        self.dispatch_tree.clear();
-        self.scene.clear();
-        self.input_handlers.clear();
-        self.tooltip_requests.clear();
-        self.cursor_styles.clear();
-        self.hitboxes.clear();
-        self.deferred_draws.clear();
+        {
+            profiling::scope!("element_states clear");
+            self.element_states.clear();
+        }
+        {
+            profiling::scope!("accessed_element_states clear");
+            self.accessed_element_states.clear();
+        }
+        {
+            profiling::scope!("mouse_listeners clear");
+            self.mouse_listeners.clear();
+        }
+        {
+            profiling::scope!("dispatch_tree clear");
+            self.dispatch_tree.clear();
+        }
+        {
+            profiling::scope!("scene clear");
+            self.scene.clear();
+        }
+        {
+            profiling::scope!("input handlers clear");
+            self.input_handlers.clear();
+        }
+        {
+            profiling::scope!("tooltip_requests clear");
+            self.tooltip_requests.clear();
+        }
+        {
+            profiling::scope!("cursor styles clear");
+            self.cursor_styles.clear();
+        }
+        {
+            profiling::scope!("hitboxes clear");
+            self.hitboxes.clear();
+        }
+        {
+            profiling::scope!("deferred draws clear");
+            self.deferred_draws.clear();
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -695,6 +726,7 @@ impl Window {
             }
         }));
         platform_window.on_request_frame(Box::new({
+            profiling::scope!("on_request_frame");
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
             let active = active.clone();
@@ -1429,6 +1461,7 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .finish(&mut self.window.rendered_frame);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            profiling::scope!("element area clear");
             let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
             if percentage >= 80. {
                 log::warn!("elevated element arena occupation: {}.", percentage);
@@ -1439,37 +1472,47 @@ impl<'a> WindowContext<'a> {
         self.window.draw_phase = DrawPhase::Focus;
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
-        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
-        self.window.next_frame.clear();
-        let current_focus_path = self.window.rendered_frame.focus_path();
-        let current_window_active = self.window.rendered_frame.window_active;
-
-        if previous_focus_path != current_focus_path
-            || previous_window_active != current_window_active
         {
-            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
-                self.window
-                    .focus_lost_listeners
-                    .clone()
-                    .retain(&(), |listener| listener(self));
-            }
+            profiling::scope!("swapping frames");
+            mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        }
+        {
+            profiling::scope!("clearing next frame");
+            self.window.next_frame.clear();
+        }
 
-            let event = WindowFocusEvent {
-                previous_focus_path: if previous_window_active {
-                    previous_focus_path
-                } else {
-                    Default::default()
-                },
-                current_focus_path: if current_window_active {
-                    current_focus_path
-                } else {
-                    Default::default()
-                },
-            };
-            self.window
-                .focus_listeners
-                .clone()
-                .retain(&(), |listener| listener(&event, self));
+        {
+            profiling::scope!("updating focus path");
+            let current_focus_path = self.window.rendered_frame.focus_path();
+            let current_window_active = self.window.rendered_frame.window_active;
+
+            if previous_focus_path != current_focus_path
+                || previous_window_active != current_window_active
+            {
+                if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+                    self.window
+                        .focus_lost_listeners
+                        .clone()
+                        .retain(&(), |listener| listener(self));
+                }
+
+                let event = WindowFocusEvent {
+                    previous_focus_path: if previous_window_active {
+                        previous_focus_path
+                    } else {
+                        Default::default()
+                    },
+                    current_focus_path: if current_window_active {
+                        current_focus_path
+                    } else {
+                        Default::default()
+                    },
+                };
+                self.window
+                    .focus_listeners
+                    .clone()
+                    .retain(&(), |listener| listener(&event, self));
+            }
         }
 
         self.reset_cursor_style();
@@ -1487,6 +1530,7 @@ impl<'a> WindowContext<'a> {
         profiling::finish_frame!();
     }
 
+    #[profiling::function]
     fn draw_roots(&mut self) {
         self.window.draw_phase = DrawPhase::Prepaint;
         self.window.tooltip_bounds.take();
@@ -1854,6 +1898,7 @@ impl<'a> WindowContext<'a> {
     /// Updates the global element offset based on the given offset. This is used to implement
     /// drag handles and other manual painting of elements. This method should only be called during
     /// the prepaint phase of element drawing.
+    #[profiling::function]
     pub fn with_absolute_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
@@ -2719,6 +2764,7 @@ impl<'a> WindowContext<'a> {
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
+    #[profiling::function]
     pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
         debug_assert_eq!(
             self.window.draw_phase,
@@ -2727,7 +2773,10 @@ impl<'a> WindowContext<'a> {
         );
 
         let mut layout_engine = self.window.layout_engine.take().unwrap();
-        layout_engine.compute_layout(layout_id, available_space, self);
+        {
+            profiling::scope!("layout_engine compute_layout");
+            layout_engine.compute_layout(layout_id, available_space, self);
+        }
         self.window.layout_engine = Some(layout_engine);
     }
 

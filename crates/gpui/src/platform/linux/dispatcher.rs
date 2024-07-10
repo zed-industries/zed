@@ -38,6 +38,8 @@ impl LinuxDispatcher {
             .map(|i| {
                 let receiver = background_receiver.clone();
                 std::thread::spawn(move || {
+                    let thread_name = format!("background-{}", i);
+                    profiling::register_thread!(&thread_name);
                     for runnable in receiver {
                         let start = Instant::now();
 
@@ -55,6 +57,8 @@ impl LinuxDispatcher {
 
         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
         let timer_thread = std::thread::spawn(|| {
+            profiling::register_thread!("timer-thread");
+
             let mut event_loop: EventLoop<()> =
                 EventLoop::try_new().expect("Failed to initialize timer loop!");
 

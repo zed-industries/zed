@@ -1182,6 +1182,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    #[profiling::function]
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
         inner.renderer.draw(scene);

@@ -387,6 +387,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
+    #[profiling::function]
     pub(crate) fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
@@ -503,6 +504,7 @@ impl AnyElement {
     }
 
     /// Performs layout for this element within the given available space and returns its size.
+    #[profiling::function]
     pub fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
@@ -517,6 +519,7 @@ impl AnyElement {
     }
 
     /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.
+    #[profiling::function]
     pub fn prepaint_as_root(
         &mut self,
         origin: Point<Pixels>,
@@ -524,7 +527,10 @@ impl AnyElement {
         cx: &mut WindowContext,
     ) {
         self.layout_as_root(available_space, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.0.prepaint(cx));
+        cx.with_absolute_element_offset(origin, |cx| {
+            profiling::scope!("with_absolute_element_offset prepaint");
+            self.0.prepaint(cx)
+        });
     }
 }
 

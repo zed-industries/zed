@@ -524,6 +524,7 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
+    #[profiling::function]
     pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);

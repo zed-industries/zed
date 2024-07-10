@@ -142,6 +142,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
+    #[profiling::function]
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
@@ -161,6 +162,7 @@ impl TaffyLayoutEngine {
         //
 
         if !self.computed_layouts.insert(id) {
+            profiling::scope!("compute layout stack extension");
             let mut stack = SmallVec::<[LayoutId; 64]>::new();
             stack.push(id);
             while let Some(id) = stack.pop() {
@@ -181,6 +183,8 @@ impl TaffyLayoutEngine {
                 id.into(),
                 available_space.into(),
                 |known_dimensions, available_space, node_id, _context| {
+                    profiling::scope!("measure function");
+
                     let Some(measure) = self.nodes_to_measure.get_mut(&node_id.into()) else {
                         return taffy::geometry::Size::default();
                     };
@@ -190,7 +194,10 @@ impl TaffyLayoutEngine {
                         height: known_dimensions.height.map(Pixels),
                     };
 
-                    measure(known_dimensions, available_space.into(), cx).into()
+                    {
+                        profiling::scope!("calling measure");
+                        measure(known_dimensions, available_space.into(), cx).into()
+                    }
                 },
             )
             .expect(EXPECT_MESSAGE);
