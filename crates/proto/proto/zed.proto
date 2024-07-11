@@ -945,7 +945,11 @@ message GetSignatureHelp {
 }
 
 message GetSignatureHelpResponse {
-    optional string rendered_text = 1;
+    repeated SignatureHelp entries = 1;
+}
+
+message SignatureHelp {
+    string rendered_text = 1;
     repeated HighlightedRange highlights = 2;
 }
 

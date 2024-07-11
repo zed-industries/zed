@@ -5784,7 +5784,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<SignatureHelp>> {
+    ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
         if self.is_local() {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -5799,7 +5799,8 @@ impl Project {
                     .await
                     .into_iter()
                     .flatten()
-                    .find(|help| !help.markdown.is_empty())
+                    .filter(|help| !help.markdown.is_empty())
+                    .collect::<Vec<_>>()
             })
         } else if let Some(project_id) = self.remote_id() {
             let position_anchor = buffer
@@ -5813,8 +5814,12 @@ impl Project {
             });
             let buffer = buffer.clone();
             cx.spawn(move |project, cx| async move {
-                let response = request.await.log_err()?;
-                let project = project.upgrade()?;
+                let Some(response) = request.await.log_err() else {
+                    return Vec::new();
+                };
+                let Some(project) = project.upgrade() else {
+                    return Vec::new();
+                };
                 GetSignatureHelp::response_from_proto(
                     GetSignatureHelp { position },
                     response,
@@ -5824,10 +5829,10 @@ impl Project {
                 )
                 .await
                 .log_err()
-                .flatten()
+                .unwrap_or_default()
             })
         } else {
-            Task::ready(None)
+            Task::ready(Vec::new())
         }
     }
 
