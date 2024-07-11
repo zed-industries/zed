@@ -216,7 +216,7 @@ impl SlashCommand for DocsSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    icon: IconName::FileRust,
+                    icon: IconName::FileDoc,
                     label: format!("docs ({provider}): {path}",).into(),
                 }],
                 run_commands_in_text: false,
