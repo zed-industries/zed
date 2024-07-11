@@ -6,19 +6,10 @@ use crate::prelude::*;
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 /// Represents different segments of a tree branch in a tree-like structure.
 pub enum TreeBranchSegment {
-    /// The topmost segment of a branch.
+    /// A full height segment that continues both upward and downward.
     ///
-    /// Used for the first segment of any branch, typically connecting to a parent node.
-    ///
-    /// Example:
-    /// ```
-    /// Root
-    /// │
-    /// └─ Child
-    /// ```
-    Root,
-
-    /// A middle segment that continues both upward and downward.
+    /// It can be used for both full height continuous branches and for
+    /// the middle segment of a branch that has space on the top and bottom.
     ///
     /// Used for segments that connect upper and lower parts of a branch.
     ///
@@ -31,6 +22,33 @@ pub enum TreeBranchSegment {
     /// └─ Child
     /// ```
     Continuous,
+
+    /// The start of a continuous segment.
+    ///
+    /// Used for the beginning of a continuous branch.
+    ///
+    /// Example:
+    /// ```
+    /// Parent
+    /// │
+    /// ContinuousStart
+    /// │
+    /// Continuous
+    /// ```
+    ContinuousStart,
+
+    /// The end of a continuous segment.
+    ///
+    /// Used for the end of a continuous branch.
+    ///
+    /// Example:
+    /// ```
+    /// Continuous
+    /// │
+    /// ContinuousEnd
+    /// └─ Child
+    /// ```
+    ContinuousEnd,
 
     /// The start of a leaf (includes a horizontal line).
     ///
@@ -56,35 +74,6 @@ pub enum TreeBranchSegment {
     /// └─ LeafEnd
     /// ```
     LeafEnd,
-
-    /// The start of a segment that skips a level (no horizontal line).
-    ///
-    /// Used when a branch needs to skip a level without creating a leaf.
-    ///
-    /// Example:
-    /// ```
-    /// Parent
-    /// │
-    /// SkipStart
-    /// │
-    /// └─ Grandchild
-    /// ```
-    SkipStart,
-
-    /// The end of a segment that skips a level (continues downward).
-    ///
-    /// Used to end a skip and continue the branch downward.
-    ///
-    /// Example:
-    /// ```
-    /// Parent
-    /// │
-    /// SkipStart
-    /// │
-    /// SkipEnd
-    /// └─ Grandchild
-    /// ```
-    SkipEnd,
 }
 
 #[derive(IntoElement)]
@@ -116,14 +105,12 @@ impl TreeBranch {
         let color = cx.theme().colors().icon_placeholder;
         let overdraw_length = px(1.);
 
-        let overdraw = matches!(segment, TreeBranchSegment::Continuous | TreeBranchSegment::SkipStart | TreeBranchSegment::SkipEnd);
-
         Self {
             width,
             height,
             color,
             segment,
-            overdraw,
+            overdraw: false,
             overdraw_length,
         }
     }
@@ -153,6 +140,15 @@ impl RenderOnce for TreeBranch {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let thickness = px(1.);
 
+        let has_start_gap = matches!(self.segment, TreeBranchSegment::LeafStart | TreeBranchSegment::ContinuousStart);
+        // The start of a tree has a small gap before the first segment
+        let gap_before_start = px(4.);
+
+        let has_end_gap = matches!(self.segment, TreeBranchSegment::LeafEnd | TreeBranchSegment::ContinuousEnd);
+        // The last segment of a tree should only be half the height
+        // of the other segments, ending at the leaf.
+        let last_segment_height = self.height / 2.;
+
         canvas(
             |_, _| {},
             move |bounds, _, cx| {
@@ -162,20 +158,21 @@ impl RenderOnce for TreeBranch {
                 let top = bounds.top();
 
                 // Vertical line
-                if !matches!(self.segment, TreeBranchSegment::LeafEnd) {
-                    let bottom = if self.overdraw {
-                        bounds.bottom() + self.overdraw_length
-                    } else {
-                        bounds.bottom()
-                    };
-                    cx.paint_quad(fill(
-                        Bounds::from_corners(
-                            point(start_x, if matches!(self.segment, TreeBranchSegment::Root) { top } else { bounds.top() }),
-                            point(start_x + thickness, bottom),
-                        ),
-                        self.color,
-                    ));
-                }
+                let top = if has_start_gap { top + gap_before_start } else { top };
+                let bottom = if self.overdraw {
+                    bounds.bottom() + self.overdraw_length
+                } else if has_end_gap {
+                    start_y
+                } else {
+                    bounds.bottom()
+                };
+                cx.paint_quad(fill(
+                    Bounds::from_corners(
+                        point(start_x, top),
+                        point(start_x + thickness, bottom),
+                    ),
+                    self.color,
+                ));
 
                 // Horizontal line
                 if matches!(self.segment, TreeBranchSegment::LeafStart | TreeBranchSegment::LeafEnd) {
@@ -197,7 +194,7 @@ mod stories {
     use story::{StoryContainer, StoryItem, StorySection};
     use strum::IntoEnumIterator;
 
-    use crate::{prelude::*};
+    use crate::prelude::*;
 
     use super::{TreeBranch, TreeBranchSegment};
 
