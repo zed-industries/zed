@@ -1,5 +1,75 @@
 # Configuring Zed
 
+## Configuration files
+
+Zed can source settings from a number of places. These configuration sources have priority over each other and can override settings from lower-priority sources. The order of priority is as follows (from lower to higher):
+
+- Default settings
+- Extension-provided settings
+- User settings
+  - Release channel settings
+- Folder-specific settings
+
+### Configuration file format
+
+All configuration files are in JSON format. Zed allows comments in settings files, but only in the form of single-line comments starting with `//`. Multi-line comments are not supported.
+
+### Default settings
+
+Default settings are provided by the application. Technically there are two sources of default values: the default config file, and built-in values.
+
+The default config file is embedded into the application. It is a JSON file that contains the default values for many but not all settings. It's also split into multiple thematic parts: settings, keymaps, and themes. Keymaps and themes are described in separate sections.
+
+Built-in values are hardcoded in the code and are used as fallbacks when a setting is not found in any of the setting files.
+
+The source of the default settings can viewed in Zed by running the command `zed: open default settings`, or by choosing `Zed > Settings… > Open Default Settings` from the main menu.
+
+### Extension-provided settings
+
+These settings are provided by extensions. At the moment extension can only provide language servers configurations.
+
+### User settings
+
+User settings are stored in a number of JSON files in the user's home directory. The location of theses files is platform-dependent:
+
+- macOS: `~/.config/zed/settings`
+- Linux (one of the following):
+  - `$FLATPAK_XDG_CONFIG_HOME/zed/settings.json`
+  - `$XDG_CONFIG_HOME/zed/settings.json`
+  - `~/.config/zed/settings.json`
+
+Configuration files:
+
+- `settings.json`: contains the user's settings
+- `keymaps.json`: contains the user's keymaps
+- `tasks.json`: contains the user's global tasks
+
+The user's settings can be accessed in Zed in a number of ways:
+
+- By running the command `zed: open settings`.
+- By choosing `Zed > Settings… > Open Settings` from the main menu.
+- By using the keyboard shortcut `⌘ + ,` (macOS) or `^ + ,` (Linux).
+- Or by just opening the settings file from the disk.
+
+#### User's global tasks
+
+The user's global tasks are stored in the `tasks.json` file. This file contains a list of tasks that are available to all projects.
+
+The source of the user's settings can be viewed in Zed by running the command `zed: open tasks` or by opening the tasks file from the disk.
+
+### Release channel settings
+
+These are settings that are only applicable to a particular release channel of Zed. The idea is to have a possibility to have different settings for different release channels. For example, the `nightly` release channel could have a different set of settings than the `stable` release channel. This is particularly useful for Zed development when one might want to test different settings in the development version of Zed while not affecting the stable version.
+
+These settings don't have a dedicated file, but are stored in the user's settings file. They are stored under release channel key in the `settings.json` file. There are four release channels in Zed:
+
+- `dev`
+- `nightly`
+- `preview`
+- `stable`
+
+The release channel key is one of these values and the value is a JSON object with the settings for that release channel. All the same settings can be used under the release channel key.
+
 ## Folder-specific settings
 
 Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only at a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
