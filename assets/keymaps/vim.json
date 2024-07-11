@@ -202,16 +202,10 @@
     }
   },
   {
-    // escape is in its own section so that it cancels a pending count.
-    "context": "Editor && vim_mode == normal && !VimWaiting",
+    "context": "Editor && vim_mode == normal",
     "bindings": {
       "escape": "editor::Cancel",
-      "ctrl-[": "editor::Cancel"
-    }
-  },
-  {
-    "context": "Editor && vim_mode == normal && !VimWaiting",
-    "bindings": {
+      "ctrl-[": "editor::Cancel",
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
       "shift-c": "vim::ChangeToEndOfLine",
@@ -259,7 +253,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting",
+    "context": "Editor && vim_mode == visual",
     "bindings": {
       "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
@@ -360,7 +354,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
+    "context": "Editor && vim_mode == visual && !VimObject",
     "bindings": {
       "u": "vim::ConvertToLowerCase",
       "U": "vim::ConvertToUpperCase",
@@ -399,7 +393,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && !VimWaiting",
+    "context": "Editor && vim_mode == normal",
     "bindings": {
       "g c c": "vim::ToggleComments"
     }
@@ -443,23 +437,14 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
-      "tab": "vim::Tab",
-      "enter": "vim::Enter",
       "backspace": "vim::UndoReplace"
     }
   },
   {
-    "context": "Editor && vim_mode != replace && VimWaiting",
+    "context": "Editor && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter"
-    }
-  },
-  {
-    "context": "Editor && vim_mode == insert && VimWaiting",
-    "bindings": {
-      "escape": "vim::NormalBefore",
-      "ctrl-[": "vim::NormalBefore"
     }
   },
   {

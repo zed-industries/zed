@@ -131,7 +131,6 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         },
     );
     workspace.register_action(|_: &mut Workspace, _: &ClearOperators, cx| {
-        println!("------ CLEAR OPERATORS! -------");
         Vim::update(cx, |vim, cx| vim.clear_operator(cx))
     });
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
