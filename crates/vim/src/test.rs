@@ -1279,3 +1279,22 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
         .await
         .assert_eq(r#"<label for="guests">ˇo</label>"#);
 }
+
+#[gpui::test]
+async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {
+        "one
+           two
+        thrˇee
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes("-").await;
+    cx.shared_state().await.assert_matches();
+    cx.simulate_shared_keystrokes("-").await;
+    cx.shared_state().await.assert_matches();
+    cx.simulate_shared_keystrokes("+").await;
+    cx.shared_state().await.assert_matches();
+}
