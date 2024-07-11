@@ -155,10 +155,14 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let mut tasks = Vec::new();
-        for (_, thread_state) in client.thread_state().clone() {
-            for stack_frame in thread_state.stack_frames {
+        for thread_state in client.thread_state().values() {
+            for stack_frame in thread_state.stack_frames.clone() {
                 tasks.push(self.remove_editor_highlight(&stack_frame, cx));
             }
+        }
+
+        if tasks.is_empty() {
+            return Task::ready(Ok(()));
         }
 
         cx.spawn(|_, _| async move {
@@ -175,7 +179,6 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let mut tasks = Vec::new();
-
         if let Some(thread_state) = client.thread_state().get(&thread_id) {
             for stack_frame in thread_state.stack_frames.clone() {
                 tasks.push(self.remove_editor_highlight(&stack_frame, cx));
