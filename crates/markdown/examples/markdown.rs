@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, App, KeyBinding, Length, StyleRefinement, Task, View, WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, Length, StyleRefinement, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
@@ -107,23 +107,14 @@ pub fn main() {
             cx.new_view(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
-                        font_family: "Zed Plex Mono".into(),
+                        font_family: "Zed Plex Sans".into(),
                         color: cx.theme().colors().terminal_ansi_black,
                         ..Default::default()
                     },
-                    code_block: StyleRefinement {
-                        text: Some(gpui::TextStyleRefinement {
-                            font_family: Some("Zed Plex Mono".into()),
-                            ..Default::default()
-                        }),
-                        margin: gpui::EdgesRefinement {
-                            top: Some(Length::Definite(rems(4.).into())),
-                            left: Some(Length::Definite(rems(4.).into())),
-                            right: Some(Length::Definite(rems(4.).into())),
-                            bottom: Some(Length::Definite(rems(4.).into())),
-                        },
-                        ..Default::default()
-                    },
+                    code_block: StyleRefinement::default()
+                        .font_family("Zed Plex Mono")
+                        .m(rems(1.))
+                        .bg(rgb(0xAAAAAAA)),
                     inline_code: gpui::TextStyleRefinement {
                         font_family: Some("Zed Mono".into()),
                         color: Some(cx.theme().colors().editor_foreground),
@@ -151,7 +142,7 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
-                    break_style: Default::default(),
+                    ..Default::default()
                 };
 
                 MarkdownExample::new(
