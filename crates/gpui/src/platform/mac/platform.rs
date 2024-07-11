@@ -797,7 +797,7 @@ impl Platform for MacPlatform {
                 CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), verticalResizeCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
                 CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
