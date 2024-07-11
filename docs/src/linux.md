@@ -104,8 +104,14 @@ For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/titl
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
-### Opening files does not work
+### I can't open any files
+### Zed isn't remembering my login
+### Clicking links isn't working
 
-If opening new files or projects is not working, the likely problem is that your XDG desktop does not provide a file picker.
+All of these features are provided by XDG desktop portals, specifically:
 
-If you are using a distribution that lets you configure your XDG provider or a window manager that does not provide one, you must make sure you have a backup provider configured. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point.
+- `org.freedesktop.portal.FileChooser`
+- `org.freedesktop.portal.OpenURI`
+- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
+
+Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this. 
