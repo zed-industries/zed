@@ -35,6 +35,7 @@ pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
+    pub size_offset: WindowSizeOffset,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -82,6 +83,8 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
+        let size_offset = WindowSizeOffset::default();
+        println!("Size: {:#?}", size_offset);
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -94,6 +97,7 @@ impl WindowsWindowState {
             origin,
             logical_size,
             fullscreen_restore_bounds,
+            size_offset,
             scale_factor,
             callbacks,
             input_handler,
@@ -308,7 +312,6 @@ impl WindowsWindow {
         };
         let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
         register_drag_drop(state_ptr.clone());
-        let wnd = Self(state_ptr);
 
         unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -322,13 +325,20 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
-            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            placement.rcNormalPosition = calcualte_window_position(bounds, raw_hwnd).unwrap();
+            let bounds = bounds.to_device_pixels(state_ptr.state.borrow().scale_factor);
+            state_ptr
+                .state
+                .borrow_mut()
+                .size_offset
+                .udpate(raw_hwnd)
+                .unwrap();
+            let size_offset = state_ptr.state.borrow().size_offset;
+            placement.rcNormalPosition = calcualte_window_position(bounds, size_offset);
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
-        wnd
+        Self(state_ptr)
     }
 }
 
@@ -861,6 +871,32 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct WindowSizeOffset {
+    width_offset: i32,
+    height_offset: i32,
+}
+
+impl WindowSizeOffset {
+    pub fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+        let window_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut rect)?;
+            rect
+        };
+        let client_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetClientRect(hwnd, &mut rect)?;
+            rect
+        };
+        self.width_offset =
+            (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+        self.height_offset =
+            (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+        Ok(())
+    }
+}
+
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -955,27 +991,15 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     };
 }
 
-fn calcualte_window_position(bounds: Bounds<DevicePixels>, hwnd: HWND) -> anyhow::Result<RECT> {
+fn calcualte_window_position(bounds: Bounds<DevicePixels>, size_offset: WindowSizeOffset) -> RECT {
     let mut rect = RECT {
         left: bounds.left().0,
         top: bounds.top().0,
         right: bounds.right().0,
         bottom: bounds.bottom().0,
     };
-    let window_rect = unsafe {
-        let mut rect = std::mem::zeroed();
-        GetWindowRect(hwnd, &mut rect)?;
-        rect
-    };
-    let client_rect = unsafe {
-        let mut rect = std::mem::zeroed();
-        GetClientRect(hwnd, &mut rect)?;
-        rect
-    };
-    let width_offset =
-        (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
-    let height_offset =
-        (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+    let width_offset = size_offset.width_offset;
+    let height_offset = size_offset.height_offset;
     let left_offset = width_offset / 2;
     let top_offset = height_offset / 2;
     let right_offset = width_offset - left_offset;
@@ -984,7 +1008,7 @@ fn calcualte_window_position(bounds: Bounds<DevicePixels>, hwnd: HWND) -> anyhow
     rect.top -= top_offset;
     rect.right += right_offset;
     rect.bottom += bottom_offet;
-    Ok(rect)
+    rect
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
