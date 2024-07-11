@@ -50,9 +50,7 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": [
-    "Zed Plex Sans"
-  ],
+  "ui_font_family": ["Zed Plex Sans"],
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
