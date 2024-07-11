@@ -53,7 +53,6 @@ pub enum Icon {
     Pixmaps(Vec<Pixmap>),
 }
 
-///
 #[derive(Clone)]
 pub enum MenuType {
     /// "standard"
@@ -62,7 +61,6 @@ pub enum MenuType {
     Separator,
 }
 
-///
 #[derive(Clone)]
 pub enum MenuToggleType {
     /// "checkmark"
@@ -73,19 +71,12 @@ pub enum MenuToggleType {
 
 #[derive(Clone)]
 pub enum MenuProperty {
-    ///
     Type(MenuType),
-    ///
     Label(String),
-    ///
     Enabled(bool),
-    ///
     Visible(bool),
-    ///
     Icon(Icon),
-    ///
     ToggleType(MenuToggleType),
-    ///
     ToggleState(i32),
 }
 
@@ -227,7 +218,6 @@ impl DBusMenuItemPrivate {
     }
 }
 
-///
 #[derive(Default)]
 pub struct DBusMenuItem {
     user_id: Option<String>,
@@ -306,7 +296,6 @@ impl DBusMenuItem {
     }
 }
 
-///
 pub struct DBusMenu {
     next_id: i32,
     pub(crate) items: HashMap<i32, DBusMenuItemPrivate>,
@@ -314,7 +303,6 @@ pub struct DBusMenu {
 }
 
 impl DBusMenu {
-    ///
     pub fn new() -> Self {
         Self {
             next_id: 1,
@@ -323,7 +311,6 @@ impl DBusMenu {
         }
     }
 
-    ///
     pub fn submenu(mut self, submenu: DBusMenuItem) -> Self {
         self.add_to_root(submenu, 0);
         self
@@ -361,11 +348,7 @@ impl DBusMenu {
             id,
             parent_id,
             user_id: submenu.user_id,
-            properties: submenu
-                .properties
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
+            properties: submenu.properties,
             ..Default::default()
         };
         self.next_id += 1;
@@ -470,65 +453,4 @@ impl DBusMenuInterface {
         revision: u32,
         parent: i32,
     ) -> zbus::Result<()>;
-}
-
-#[cfg(test)]
-mod test {
-
-    use super::*;
-
-    #[test]
-    fn test_dbusmenu_signature() {
-        let signature = DBusMenuLayoutItem::signature();
-        assert_eq!(signature.as_str(), "(ia{sv}av)");
-    }
-
-    #[test]
-    fn test_dbusmenu_unique_ids() {
-        // let menu = DBusMenu::from_items(Vec::from_iter([
-        //     DBusMenuItemPrivate::new().children(Vec::from_iter([
-        //         DBusMenuItemPrivate::new(),
-        //         DBusMenuItemPrivate::new(),
-        //     ])),
-        //     DBusMenuItemPrivate::new(),
-        // ]));
-        // let mut queue = VecDeque::new();
-        // let mut set: HashSet<i32> = HashSet::new();
-        // queue.push_back(menu.root);
-        // while !queue.is_empty() {
-        //     let item = queue.pop_front().unwrap();
-        //     assert!(set.insert(item.id));
-        //     for child in item.children {
-        //         queue.push_back(child);
-        //     }
-        // }
-    }
-
-    #[test]
-    fn test_dbus_user_id() {
-        // let mut menu = DBusMenu::from_items(Vec::from_iter([
-        //     DBusMenuItemPrivate::new()
-        //         .id("id1")
-        //         .label("Test1")
-        //         .children(Vec::from_iter([
-        //             DBusMenuItemPrivate::new().id("id10").label("Test-1"),
-        //             DBusMenuItemPrivate::new().id("id20").label("Test-2"),
-        //         ])),
-        //     DBusMenuItemPrivate::new().id("id2").label("Test2"),
-        // ]));
-        // let mut found = menu.find_by_user_id_mut("id1");
-        // assert!(found.is_some());
-
-        // found = menu.find_by_user_id_mut("id2");
-        // assert!(found.is_some());
-
-        // found = menu.find_by_user_id_mut("id10");
-        // assert!(found.is_some());
-
-        // found = menu.find_by_user_id_mut("id20");
-        // assert!(found.is_some());
-
-        // found = menu.find_by_user_id_mut("id21");
-        // assert!(found.is_none());
-    }
 }

@@ -62,14 +62,11 @@ impl<'a> StatusNotifierWatcher<'a> {
     }
 
     async fn registered_status_notifier_items(&self) -> zbus::Result<Vec<String>> {
-        Ok(self.0.get_property("RegisteredStatusNotifierItems").await?)
+        self.0.get_property("RegisteredStatusNotifierItems").await
     }
 
     async fn is_status_notifier_host_registered(&self) -> zbus::Result<bool> {
-        Ok(self
-            .0
-            .get_property("IsStatusNotifierHostRegistered")
-            .await?)
+        self.0.get_property("IsStatusNotifierHostRegistered").await
     }
 
     async fn receive_status_notifier_item_registered(
@@ -317,15 +314,10 @@ impl StatusNotifierItemOptions {
 
 #[derive(Debug)]
 pub enum StatusNotifierItemEvents {
-    ///
     Activate(i32, i32),
-    ///
     SecondaryActivate(i32, i32),
-    ///
     Scroll(i32, String),
-    ///
     XdgActivationToken(String),
-    ///
     MenuEvent(DBusMenuEvents),
 }
 

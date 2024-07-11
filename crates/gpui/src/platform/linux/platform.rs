@@ -131,49 +131,49 @@ impl LinuxCommon {
 
         (common, main_receiver)
     }
+}
 
-    fn create_submenu(&mut self, menu_item: TrayMenuItem) -> DBusMenuItem {
-        match menu_item {
-            TrayMenuItem::Separator { label } => {
-                let mut this = DBusMenuItem::new();
-                this.set_type(dbus::dbusmenu::MenuType::Separator);
-                if let Some(label) = label {
-                    this.set_label(label);
-                }
-                this
+fn create_tray_submenu(menu_item: TrayMenuItem) -> DBusMenuItem {
+    match menu_item {
+        TrayMenuItem::Separator { label } => {
+            let mut this = DBusMenuItem::new();
+            this.set_type(dbus::dbusmenu::MenuType::Separator);
+            if let Some(label) = label {
+                this.set_label(label);
             }
-            TrayMenuItem::Submenu {
-                id,
-                label,
-                icon,
-                toggle_type,
-                children,
-                ..
-            } => {
-                let mut this = DBusMenuItem::new();
-                this.set_id(id).set_label(label);
-                if let Some(TrayIcon::Name(name)) = icon {
-                    this.set_icon(dbus::dbusmenu::Icon::Name(name.to_owned()));
-                }
-                if let Some(toggle_type) = toggle_type {
-                    match toggle_type {
-                        TrayToggleType::Checkbox(state) => {
-                            this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Checkmark);
-                            this.set_toggle_state(state as i32);
-                        }
-                        TrayToggleType::Radio(state) => {
-                            this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Radio);
-                            this.set_toggle_state(state as i32);
-                        }
+            this
+        }
+        TrayMenuItem::Submenu {
+            id,
+            label,
+            icon,
+            toggle_type,
+            children,
+            ..
+        } => {
+            let mut this = DBusMenuItem::new();
+            this.set_id(id).set_label(label);
+            if let Some(TrayIcon::Name(name)) = icon {
+                this.set_icon(dbus::dbusmenu::Icon::Name(name.to_owned()));
+            }
+            if let Some(toggle_type) = toggle_type {
+                match toggle_type {
+                    TrayToggleType::Checkbox(state) => {
+                        this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Checkmark);
+                        this.set_toggle_state(state as i32);
+                    }
+                    TrayToggleType::Radio(state) => {
+                        this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Radio);
+                        this.set_toggle_state(state as i32);
                     }
                 }
-                let mut submenus = Vec::default();
-                for child in children {
-                    submenus.push(self.create_submenu(child));
-                }
-                this.set_children(submenus);
-                this
             }
+            let mut submenus = Vec::default();
+            for child in children {
+                submenus.push(create_tray_submenu(child));
+            }
+            this.set_children(submenus);
+            this
         }
     }
 }
@@ -455,16 +455,13 @@ impl<P: LinuxClient + 'static> Platform for P {
                     .description(item.description),
             );
         let mut menu: Option<DBusMenu> = None;
-        self.with_common(|common| {
-            if item.submenus.is_empty() {
-                return;
-            }
+        if !item.submenus.is_empty() {
             let mut dbus_menu = DBusMenu::new();
             for submenu in item.submenus {
-                dbus_menu = dbus_menu.submenu(common.create_submenu(submenu));
+                dbus_menu = dbus_menu.submenu(create_tray_submenu(submenu));
             }
-            menu = Some(dbus_menu);
-        });
+            menu = Some(dbus_menu)
+        }
         self.set_tray_item(options, menu);
     }
 

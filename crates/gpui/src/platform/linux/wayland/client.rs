@@ -640,10 +640,10 @@ impl LinuxClient for WaylandClient {
                                     StatusNotifierItemEvents::Scroll(delta, orientation) => {
                                         match orientation.as_str() {
                                             "Vertical" => tray_event(TrayEvent::Scroll {
-                                                scroll_detal: Point::new(delta, 0),
+                                                scroll_detal: Point::new(0, delta),
                                             }),
                                             "Horizontal" => tray_event(TrayEvent::Scroll {
-                                                scroll_detal: Point::new(0, delta),
+                                                scroll_detal: Point::new(delta, 0),
                                             }),
                                             _ => {}
                                         }

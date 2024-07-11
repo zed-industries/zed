@@ -118,12 +118,12 @@ pub enum TrayEvent {
     },
     /// Scroll
     Scroll {
-        /// Direction Scrolled
+        /// Direction Scrolled.
         scroll_detal: Point<i32>,
     },
-    /// Menu or submenu left click
+    /// Menu or submenu left click.
     MenuClick {
-        ///
+        /// ID of the clicked menu.
         id: String,
     },
 }
