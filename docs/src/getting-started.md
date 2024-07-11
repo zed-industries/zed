@@ -8,6 +8,18 @@ Welcome to Zed! We are excited to have you. Here is a jumping-off point to getti
 
 You can obtain the stable builds via the [download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview) After the first manual installation, Zed will periodically check for and install updates automatically for you.
 
+You can also install Zed stable via Homebrew:
+
+```sh
+brew install --cask zed
+```
+
+As well as Zed preview:
+
+```sh
+brew install --cask zed@preview
+```
+
 ### Linux
 
 For most people, the easiest way to install Zed is through our installation script:
