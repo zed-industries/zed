@@ -143,7 +143,6 @@ pub struct ProjectSearchView {
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
-    query_editor_was_focused: bool,
     included_files_editor: View<Editor>,
     excluded_files_editor: View<Editor>,
     filters_enabled: bool,
@@ -714,7 +713,6 @@ impl ProjectSearchView {
             search_options: options,
             panels_with_errors: HashSet::default(),
             active_match_index: None,
-            query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
             filters_enabled,
@@ -989,7 +987,6 @@ impl ProjectSearchView {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&SelectAll, cx);
         });
-        self.query_editor_was_focused = true;
         let editor_handle = self.query_editor.focus_handle(cx);
         cx.focus(&editor_handle);
     }
@@ -1004,7 +1001,6 @@ impl ProjectSearchView {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
-        self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
         cx.focus(&results_handle);
     }
