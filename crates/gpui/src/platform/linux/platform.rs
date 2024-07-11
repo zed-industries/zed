@@ -26,7 +26,6 @@ use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use collections::{HashMap, VecDeque};
-use copypasta::ClipboardProvider;
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;

@@ -77,13 +77,12 @@ use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
+    get_xkb_compose_state, open_uri_internal, read_fd, reveal_path_internal,
 };
 use crate::platform::PlatformWindow;
 use crate::{
     point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    TrayEvent, DOUBLE_CLICK_INTERVAL, SCROLL_LINES, SCROLL_LINES,
+    TrayEvent, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,

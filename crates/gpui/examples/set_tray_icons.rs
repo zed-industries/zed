@@ -26,7 +26,7 @@ fn main() {
             .tooltip("My Tooltip")
             .description("Little description")
             .on_event({
-                let show_window = false;
+                let mut show_window = false;
                 move |event, app| match event {
                     TrayEvent::LeftClick { .. } => {
                         app.dispatch_action(&Quit);
@@ -40,6 +40,7 @@ fn main() {
                             }
                             show_window ^= true;
                         }
+                        _ => {}
                     },
                     _ => {}
                 }
