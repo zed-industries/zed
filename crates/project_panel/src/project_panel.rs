@@ -2293,7 +2293,7 @@ impl ProjectPanel {
                 .right_0()
                 .top_0()
                 .bottom_0()
-                .w_3()
+                .w(px(12.))
                 .cursor_default()
                 .child(ProjectPanelScrollbar::new(
                     percentage as f32..end_offset as f32,
