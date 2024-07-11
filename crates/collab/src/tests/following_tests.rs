@@ -194,7 +194,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx);
+        workspace.unfollow(peer_id_a, cx).unwrap();
     });
 
     // All clients see that clients B is following client A.
@@ -398,7 +398,7 @@ async fn test_basic_following(
 
     // After unfollowing, client B stops receiving updates from client A.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx)
+        workspace.unfollow(peer_id_a, cx).unwrap()
     });
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a2, cx)

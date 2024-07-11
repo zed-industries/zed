@@ -531,12 +531,12 @@ impl<T: Item> ItemHandle for View<T> {
                     };
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        let leader_id = workspace.leader_for_pane(&pane);
+                        let leader_id = item.leader_peer_id(cx);
                         let follow_event = item.to_follow_event(event);
                         if leader_id.is_some()
                             && matches!(follow_event, Some(FollowEvent::Unfollow))
                         {
-                            workspace.unfollow(&pane, cx);
+                            workspace.unfollow(leader_id.unwrap(), cx);
                         }
 
                         if item.focus_handle(cx).contains_focused(cx) {
@@ -780,6 +780,7 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<PeerId>;
     fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup>;
 }
 
@@ -787,6 +788,7 @@ pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId>;
     fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
+    fn leader_peer_id(&self, cx: &WindowContext) -> Option<PeerId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -821,6 +823,10 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
+    }
+
+    fn leader_peer_id(&self, cx: &WindowContext) -> Option<PeerId> {
+        self.read(cx).leader_peer_id(cx)
     }
 
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {

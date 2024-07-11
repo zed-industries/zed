@@ -2257,6 +2257,10 @@ impl FollowableItem for ContextEditor {
         })
     }
 
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<proto::PeerId> {
+        self.editor.read(cx).leader_peer_id(cx)
+    }
+
     fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<item::Dedup> {
         if existing.context.read(cx).id() == self.context.read(cx).id() {
             Some(item::Dedup::KeepExisting)

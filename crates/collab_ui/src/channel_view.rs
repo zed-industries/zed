@@ -565,6 +565,10 @@ impl FollowableItem for ChannelView {
         })
     }
 
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<PeerId> {
+        self.editor.read(cx).leader_peer_id(cx)
+    }
+
     fn is_project_item(&self, _cx: &WindowContext) -> bool {
         false
     }
