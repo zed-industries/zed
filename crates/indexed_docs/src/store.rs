@@ -57,6 +57,7 @@ pub struct IndexedDocsStore {
     provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     indexing_tasks_by_package:
         RwLock<HashMap<PackageName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+    latest_errors_by_package: RwLock<HashMap<PackageName, Arc<str>>>,
 }
 
 impl IndexedDocsStore {
@@ -86,7 +87,12 @@ impl IndexedDocsStore {
             database_future,
             provider,
             indexing_tasks_by_package: RwLock::new(HashMap::default()),
+            latest_errors_by_package: RwLock::new(HashMap::default()),
         }
+    }
+
+    pub fn latest_error_for_package(&self, package: &PackageName) -> Option<Arc<str>> {
+        self.latest_errors_by_package.read().get(package).cloned()
     }
 
     /// Returns whether the package with the given name is currently being indexed.
@@ -125,16 +131,31 @@ impl IndexedDocsStore {
                         }
                     });
 
-                    let index_task = async {
-                        let database = this
-                            .database_future
-                            .clone()
-                            .await
-                            .map_err(|err| anyhow!(err))?;
-                        this.provider.index(package, database).await
+                    let index_task = {
+                        let package = package.clone();
+                        async {
+                            let database = this
+                                .database_future
+                                .clone()
+                                .await
+                                .map_err(|err| anyhow!(err))?;
+                            this.provider.index(package, database).await
+                        }
                     };
 
-                    index_task.await.map_err(Arc::new)
+                    let result = index_task.await.map_err(Arc::new);
+                    match &result {
+                        Ok(_) => {
+                            this.latest_errors_by_package.write().remove(&package);
+                        }
+                        Err(err) => {
+                            this.latest_errors_by_package
+                                .write()
+                                .insert(package, err.to_string().into());
+                        }
+                    }
+
+                    result
                 }
             })
             .shared();

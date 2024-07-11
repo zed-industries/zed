@@ -158,6 +158,11 @@ impl RustdocProvider for LocalProvider {
     ) -> Result<Option<String>> {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
         local_cargo_doc_path.push(crate_name.as_ref());
+
+        if !self.fs.is_dir(&local_cargo_doc_path).await {
+            bail!("docs directory for '{crate_name}' does not exist. run `cargo doc`");
+        }
+
         if let Some(item) = item {
             local_cargo_doc_path.push(item.url_path());
         } else {
