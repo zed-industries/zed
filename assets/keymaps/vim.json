@@ -456,7 +456,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == insert && VimWaiting",;
+    "context": "Editor && vim_mode == insert && VimWaiting",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore"
