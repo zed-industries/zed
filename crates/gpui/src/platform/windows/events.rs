@@ -82,7 +82,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -1050,12 +1050,17 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     Some(1)
 }
 
-fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_system_settings_changed(
+    handle: HWND,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
     // mouse double click
     lock.click_state.system_update();
+    // window size offset
+    lock.size_offset.udpate(handle).log_err();
     Some(0)
 }
 
