@@ -6978,15 +6978,14 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 }
 
 #[gpui::test]
-async fn test_handle_input_for_show_signature_help_auto_signature_help_false(
-    cx: &mut gpui::TestAppContext,
-) {
+async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
                 settings.auto_signature_help = Some(false);
+                settings.show_signature_help_after_edits = Some(false);
             });
         });
     });
@@ -7064,6 +7063,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_false(
         buffer.set_language(Some(language), cx);
     });
 
+    // Ensure that signature_help is not called when no signature help is enabled.
     cx.set_state(
         &r#"
             fn main() {
@@ -7072,7 +7072,6 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_false(
         "#
         .unindent(),
     );
-
     cx.update_editor(|view, cx| {
         view.handle_input("(", cx);
     });
@@ -7084,10 +7083,111 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_false(
         "
         .unindent(),
     );
-
     cx.editor(|editor, _| {
-        // Ensure that signature_help is not called.
         assert!(editor.signature_help_state.task().is_none());
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+
+    // Ensure that signature_help is called when enabled afte edits
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(false);
+                settings.show_signature_help_after_edits = Some(true);
+            });
+        });
+    });
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        editor.signature_help_state = SignatureHelpState::default();
+    });
+
+    // Ensure that signature_help is called when auto signature help override is enabled
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(true);
+                settings.show_signature_help_after_edits = Some(false);
+            });
+        });
+    });
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
     });
 }
 

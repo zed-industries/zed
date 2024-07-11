@@ -2,7 +2,7 @@ use crate::signature_help::popover::SignatureHelpPopover;
 use crate::signature_help::SignatureHelpHiddenBy;
 use gpui::Task;
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct SignatureHelpState {
     task: Option<Task<()>>,
     popover: Option<SignatureHelpPopover>,
@@ -11,15 +11,6 @@ pub struct SignatureHelpState {
 }
 
 impl SignatureHelpState {
-    pub fn new() -> Self {
-        Self {
-            task: None,
-            popover: None,
-            hidden_by: None,
-            backspace_pressed: false,
-        }
-    }
-
     pub fn set_task(&mut self, task: Task<()>) {
         self.task = Some(task);
         self.hidden_by = None;

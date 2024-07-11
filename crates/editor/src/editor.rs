@@ -1824,7 +1824,7 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
-            signature_help_state: SignatureHelpState::new(),
+            signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
