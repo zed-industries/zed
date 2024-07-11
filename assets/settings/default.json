@@ -397,7 +397,13 @@
       // 3. "gpt-4-turbo-preview"
       // 4. "gpt-4o"
       "default_model": "gpt-4o"
-    }
+    },
+    // Whether to enable the /auto command in the assistant panel, which infers context.
+    // Enabling this also enables indexing all the files in the project to generate
+    // metadata used in context inference. The first time a project is indexed, indexing
+    // can take a long time and use a lot of system resources. Later indexing is incremental
+    // and much faster.
+    "infer_context": false
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

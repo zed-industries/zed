@@ -225,6 +225,7 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub provider: AssistantProvider,
+    pub infer_context: bool,
 }
 
 /// Assistant panel settings
@@ -282,6 +283,7 @@ impl AssistantSettingsContent {
                         }
                     })
                 },
+                infer_context: None,
             },
         }
     }
@@ -381,6 +383,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             provider: None,
+            infer_context: None,
         })
     }
 }
@@ -412,6 +415,14 @@ pub struct AssistantSettingsContentV1 {
     /// This can either be the internal `zed.dev` service or an external `openai` service,
     /// each with their respective default models and configurations.
     provider: Option<AssistantProviderContent>,
+    /// When using the assistant panel, enable the /auto command to automatically
+    /// infer context. Enabling this will enable background indexing of the project,
+    /// to generate the metadata /auto needs to infer context. The first time a project
+    /// is indexed, the indexing process can take a long time and use a lot of system
+    /// resources. After the first time, later indexing is incremental and much faster.
+    ///
+    /// Default: false
+    infer_context: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -466,6 +477,7 @@ impl Settings for AssistantSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
+            merge(&mut settings.infer_context, value.infer_context);
             if let Some(provider) = value.provider.clone() {
                 match (&mut settings.provider, provider) {
                     (
