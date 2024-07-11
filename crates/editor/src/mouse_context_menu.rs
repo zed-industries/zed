@@ -49,13 +49,11 @@ fn display_ranges<'a>(
         .pending
         .as_ref()
         .map(|pending| &pending.selection);
-    selections.disjoint.iter().chain(pending).map(move |s| {
-        if s.reversed {
-            s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
-        } else {
-            s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
-        }
-    })
+    selections
+        .disjoint
+        .iter()
+        .chain(pending)
+        .map(move |s| s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map))
 }
 
 pub fn deploy_context_menu(
