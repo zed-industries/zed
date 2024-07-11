@@ -128,7 +128,8 @@ impl WindowsWindowState {
         }
     }
 
-    fn window_bounds(&self) -> WindowBounds {
+    // Get the bounds used for saving and bool for if window is maximized
+    fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -137,15 +138,22 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
-        let bounds = calculate_client_rect(
-            placement.rcNormalPosition,
-            self.size_offset,
-            self.scale_factor,
-        );
+        (
+            calculate_client_rect(
+                placement.rcNormalPosition,
+                self.size_offset,
+                self.scale_factor,
+            ),
+            placement.showCmd == SW_SHOWMAXIMIZED.0 as u32,
+        )
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        let (bounds, maximized) = self.calculate_window_bounds();
 
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+        } else if maximized {
             WindowBounds::Maximized(bounds)
         } else {
             WindowBounds::Windowed(bounds)
@@ -547,10 +555,6 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 let mut lock = state_ptr.state.borrow_mut();
-                lock.fullscreen_restore_bounds = Bounds {
-                    origin: lock.origin,
-                    size: lock.logical_size,
-                };
                 let StyleAndBounds {
                     style,
                     x,
@@ -560,6 +564,8 @@ impl PlatformWindow for WindowsWindow {
                 } = if let Some(state) = lock.fullscreen.take() {
                     state
                 } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
                     let style =
                         WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
