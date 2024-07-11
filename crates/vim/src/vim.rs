@@ -76,6 +76,7 @@ struct SelectRegister(String);
 actions!(
     vim,
     [
+        ClearOperators,
         Tab,
         Enter,
         Object,
@@ -87,7 +88,7 @@ actions!(
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode, ClearOperators]);
+actions!(workspace, [ToggleVimMode]);
 
 impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
