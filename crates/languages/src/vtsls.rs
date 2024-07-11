@@ -5,7 +5,9 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
+use project::project_settings::ProjectSettings;
 use serde_json::{json, Value};
+use settings::Settings;
 use std::{
     any::Any,
     ffi::OsString,
@@ -47,10 +49,11 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
+const SERVER_NAME: &'static str = "vtsls";
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("vtsls".into())
+        LanguageServerName(SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
@@ -218,8 +221,17 @@ impl LspAdapter for VtslsLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        _cx: &mut AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Value> {
+        let override_options = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(SERVER_NAME)
+                .and_then(|s| s.initialization_options.clone())
+        })?;
+        if let Some(options) = override_options {
+            return Ok(options);
+        }
         let tsdk_path = Self::tsdk_path(&adapter).await;
         Ok(json!({
             "typescript": {
