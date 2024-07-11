@@ -865,13 +865,13 @@ struct StyleAndBounds {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-struct WindowSizeOffset {
+pub(crate) struct WindowSizeOffset {
     width_offset: i32,
     height_offset: i32,
 }
 
 impl WindowSizeOffset {
-    pub fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+    pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
         let window_rect = unsafe {
             let mut rect = std::mem::zeroed();
             GetWindowRect(hwnd, &mut rect)?;
