@@ -1,4 +1,4 @@
-use gpui::{canvas, fill, point, Bounds, Hsla};
+use gpui::{canvas, fill, point, Bounds, Hsla, Path};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -141,46 +141,41 @@ impl RenderOnce for TreeBranch {
         let thickness = px(1.);
 
         let has_start_gap = matches!(self.segment, TreeBranchSegment::LeafStart | TreeBranchSegment::ContinuousStart);
-        // The start of a tree has a small gap before the first segment
         let gap_before_start = px(4.);
 
         let has_end_gap = matches!(self.segment, TreeBranchSegment::LeafEnd | TreeBranchSegment::ContinuousEnd);
-        // The last segment of a tree should only be half the height
-        // of the other segments, ending at the leaf.
         let last_segment_height = self.height / 2.;
 
         canvas(
             |_, _| {},
             move |bounds, _, cx| {
                 let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
-                let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
-                let right = bounds.right();
-                let top = bounds.top();
-
-                // Vertical line
-                let top = if has_start_gap { top + gap_before_start } else { top };
-                let bottom = if self.overdraw {
-                    bounds.bottom() + self.overdraw_length
-                } else if has_end_gap {
-                    start_y
+                let start_y = bounds.top();
+                let end_y = if has_end_gap {
+                    start_y + last_segment_height
                 } else {
                     bounds.bottom()
                 };
-                cx.paint_quad(fill(
-                    Bounds::from_corners(
-                        point(start_x, top),
-                        point(start_x + thickness, bottom),
-                    ),
-                    self.color,
-                ));
 
-                // Horizontal line
+                let mut path = Path::new(point(start_x, start_y));
+
+                // Vertical line
+                path.line_to(point(start_x, end_y));
+
+                // Horizontal line for LeafStart and LeafEnd
                 if matches!(self.segment, TreeBranchSegment::LeafStart | TreeBranchSegment::LeafEnd) {
-                    cx.paint_quad(fill(
-                        Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
-                        self.color,
-                    ));
+                    let mid_y = (start_y + end_y) / 2.;
+                    let curve_radius = px(3.);
+                    let ctrl_point = point(start_x + curve_radius / 2., mid_y - curve_radius / 2.);
+                    let end_point = point(start_x + curve_radius, mid_y);
+
+                    path.line_to(point(start_x, mid_y));
+                    path.curve_to(end_point, ctrl_point);
+                    path.line_to(point(bounds.right(), mid_y));
                 }
+
+                // Draw the path
+                cx.paint_path(path, self.color);
             },
         )
         .w(self.width)
