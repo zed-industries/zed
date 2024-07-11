@@ -11,6 +11,7 @@ pub mod terminals;
 #[cfg(test)]
 mod project_tests;
 pub mod search_history;
+mod yarn;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
@@ -116,6 +117,7 @@ use util::{
     NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
+use yarn::YarnPathStore;
 
 pub use fs::*;
 pub use language::Location;
@@ -231,6 +233,7 @@ pub struct Project {
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
+    yarn: Model<YarnPathStore>,
 }
 
 pub enum LanguageServerToQuery {
@@ -709,6 +712,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_model_request_handler(Self::handle_signature_help);
     }
 
     pub fn local(
@@ -727,6 +731,7 @@ impl Project {
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let yarn = YarnPathStore::new(fs.clone(), cx);
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -752,6 +757,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
+                yarn,
                 snippets,
                 languages,
                 client,
@@ -852,6 +858,7 @@ impl Project {
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let yarn = YarnPathStore::new(fs.clone(), cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -890,6 +897,7 @@ impl Project {
                 languages,
                 user_store: user_store.clone(),
                 snippets,
+                yarn,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -2162,23 +2170,51 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        mut abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         cx.spawn(move |this, mut cx| async move {
+            // Escape percent-encoded string.
+            let current_scheme = abs_path.scheme().to_owned();
+            let _ = abs_path.set_scheme("file");
+
             let abs_path = abs_path
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
-            let (worktree, relative_path) = if let Some(result) =
-                this.update(&mut cx, |this, cx| this.find_local_worktree(&abs_path, cx))?
-            {
-                result
+            let p = abs_path.clone();
+            let yarn_worktree = this
+                .update(&mut cx, move |this, cx| {
+                    this.yarn.update(cx, |_, cx| {
+                        cx.spawn(|this, mut cx| async move {
+                            let t = this
+                                .update(&mut cx, |this, cx| {
+                                    this.process_path(&p, &current_scheme, cx)
+                                })
+                                .ok()?;
+                            t.await
+                        })
+                    })
+                })?
+                .await;
+            let (worktree_root_target, known_relative_path) =
+                if let Some((zip_root, relative_path)) = yarn_worktree {
+                    (zip_root, Some(relative_path))
+                } else {
+                    (Arc::<Path>::from(abs_path.as_path()), None)
+                };
+            let (worktree, relative_path) = if let Some(result) = this
+                .update(&mut cx, |this, cx| {
+                    this.find_local_worktree(&worktree_root_target, cx)
+                })? {
+                let relative_path =
+                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                (result.0, relative_path)
             } else {
                 let worktree = this
                     .update(&mut cx, |this, cx| {
-                        this.create_local_worktree(&abs_path, false, cx)
+                        this.create_local_worktree(&worktree_root_target, false, cx)
                     })?
                     .await?;
                 this.update(&mut cx, |this, cx| {
@@ -2188,12 +2224,17 @@ impl Project {
                     );
                 })
                 .ok();
-                (worktree, PathBuf::new())
+                let worktree_root = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                let relative_path = if let Some(known_path) = known_relative_path {
+                    known_path
+                } else {
+                    abs_path.strip_prefix(worktree_root)?.into()
+                };
+                (worktree, relative_path)
             };
-
             let project_path = ProjectPath {
                 worktree_id: worktree.update(&mut cx, |worktree, _| worktree.id())?,
-                path: relative_path.into(),
+                path: relative_path,
             };
             this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))?
                 .await
@@ -5778,6 +5819,63 @@ impl Project {
         }
     }
 
+    pub fn signature_help<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<SignatureHelp>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        if self.is_local() {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                buffer,
+                Some(position),
+                |server_capabilities| server_capabilities.signature_help_provider.is_some(),
+                GetSignatureHelp { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move {
+                all_actions_task
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .filter(|help| !help.markdown.is_empty())
+                    .collect::<Vec<_>>()
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let position_anchor = buffer
+                .read(cx)
+                .anchor_at(buffer.read(cx).point_utf16_to_offset(position), Bias::Right);
+            let request = self.client.request(proto::GetSignatureHelp {
+                project_id,
+                position: Some(serialize_anchor(&position_anchor)),
+                buffer_id: buffer.read(cx).remote_id().to_proto(),
+                version: serialize_version(&buffer.read(cx).version()),
+            });
+            let buffer = buffer.clone();
+            cx.spawn(move |project, cx| async move {
+                let Some(response) = request.await.log_err() else {
+                    return Vec::new();
+                };
+                let Some(project) = project.upgrade() else {
+                    return Vec::new();
+                };
+                GetSignatureHelp::response_from_proto(
+                    GetSignatureHelp { position },
+                    response,
+                    project,
+                    buffer,
+                    cx,
+                )
+                .await
+                .log_err()
+                .unwrap_or_default()
+            })
+        } else {
+            Task::ready(Vec::new())
+        }
+    }
+
     fn hover_impl(
         &self,
         buffer: &Model<Buffer>,
@@ -5801,7 +5899,7 @@ impl Project {
                     .await
                     .into_iter()
                     .filter_map(|hover| remove_empty_hover_blocks(hover?))
-                    .collect()
+                    .collect::<Vec<Hover>>()
             })
         } else if let Some(project_id) = self.remote_id() {
             let request_task = self.client().request(proto::MultiLspQuery {
@@ -9849,6 +9947,43 @@ impl Project {
             .collect();
 
         Ok(proto::TaskTemplatesResponse { templates })
+    }
+
+    async fn handle_signature_help(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::GetSignatureHelp>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetSignatureHelpResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let buffer = project.update(&mut cx, |project, _| {
+            project
+                .opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .with_context(|| format!("unknown buffer id {}", envelope.payload.buffer_id))
+        })??;
+        let response = GetSignatureHelp::from_proto(
+            envelope.payload.clone(),
+            project.clone(),
+            buffer.clone(),
+            cx.clone(),
+        )
+        .await?;
+        let help_response = project
+            .update(&mut cx, |project, cx| {
+                project.signature_help(&buffer, response.position, cx)
+            })?
+            .await;
+        project.update(&mut cx, |project, cx| {
+            GetSignatureHelp::response_to_proto(
+                help_response,
+                project,
+                sender_id,
+                &buffer.read(cx).version(),
+                cx,
+            )
+        })
     }
 
     async fn try_resolve_code_action(

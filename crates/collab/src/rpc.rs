@@ -642,7 +642,10 @@ impl Server {
                         app_state.config.openai_api_key.clone(),
                     )
                 })
-            });
+            })
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetSignatureHelp>,
+            ));
 
         Arc::new(server)
     }

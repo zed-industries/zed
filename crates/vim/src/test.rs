@@ -1266,3 +1266,16 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
         Mode::Normal,
     );
 }
+
+#[gpui::test]
+async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(r#"<label for="guests">ˇPočet hostů</label>"#)
+        .await;
+
+    cx.simulate_shared_keystrokes("c t < o escape").await;
+    cx.shared_state()
+        .await
+        .assert_eq(r#"<label for="guests">ˇo</label>"#);
+}

@@ -62,6 +62,7 @@
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
 - [YAML](./languages/yaml.md)
+- [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
 # Developing Zed

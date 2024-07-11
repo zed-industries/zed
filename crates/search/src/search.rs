@@ -5,6 +5,8 @@ use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
+use workspace::notifications::NotificationId;
+use workspace::{Toast, Workspace};
 
 pub mod buffer_search;
 pub mod project_search;
@@ -106,4 +108,22 @@ impl SearchOptions {
                 move |cx| Tooltip::for_action(label.clone(), &*action, cx)
             })
     }
+}
+
+pub(crate) fn show_no_more_matches(cx: &mut WindowContext) {
+    cx.defer(|cx| {
+        struct NotifType();
+        let notification_id = NotificationId::unique::<NotifType>();
+        let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+            return;
+        };
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(notification_id.clone(), "No more matches").autohide(),
+                    cx,
+                );
+            })
+            .ok();
+    });
 }

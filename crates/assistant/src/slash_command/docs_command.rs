@@ -121,6 +121,14 @@ impl SlashCommand for DocsSlashCommand {
             match args {
                 DocsSlashCommandArgs::NoProvider => {
                     let providers = indexed_docs_registry.list_providers();
+                    if providers.is_empty() {
+                        return Ok(vec![ArgumentCompletion {
+                            label: "No available docs providers.".to_string(),
+                            new_text: String::new(),
+                            run_command: false,
+                        }]);
+                    }
+
                     Ok(providers
                         .into_iter()
                         .map(|provider| ArgumentCompletion {
@@ -208,7 +216,7 @@ impl SlashCommand for DocsSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    icon: IconName::FileRust,
+                    icon: IconName::FileDoc,
                     label: format!("docs ({provider}): {path}",).into(),
                 }],
                 run_commands_in_text: false,

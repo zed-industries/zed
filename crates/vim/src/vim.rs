@@ -76,6 +76,7 @@ struct SelectRegister(String);
 actions!(
     vim,
     [
+        ClearOperators,
         Tab,
         Enter,
         Object,
@@ -129,6 +130,9 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator.clone(), cx))
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &ClearOperators, cx| {
+        Vim::update(cx, |vim, cx| vim.clear_operator(cx))
+    });
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
@@ -973,7 +977,7 @@ impl Vim {
             editor.set_cursor_shape(state.cursor_shape(), cx);
             editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
-            editor.set_input_enabled(!state.vim_controlled());
+            editor.set_input_enabled(state.editor_input_enabled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {

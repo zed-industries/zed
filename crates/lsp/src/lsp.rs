@@ -645,7 +645,20 @@ impl LanguageServer {
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: None,
                     }),
-                    ..Default::default()
+                    signature_help: Some(SignatureHelpClientCapabilities {
+                        signature_information: Some(SignatureInformationSettings {
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
+                            parameter_information: Some(ParameterInformationSettings {
+                                label_offset_support: Some(true),
+                            }),
+                            active_parameter_support: Some(true),
+                        }),
+                        ..SignatureHelpClientCapabilities::default()
+                    }),
+                    ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
                     "serverStatusNotification": true,

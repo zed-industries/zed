@@ -1,3 +1,5 @@
+mod signature_help;
+
 use crate::{
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
@@ -6,10 +8,12 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
+use clock::Global;
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, Model};
+use gpui::{AppContext, AsyncAppContext, FontWeight, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind},
+    markdown::{MarkdownHighlight, MarkdownHighlightStyle},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
@@ -22,6 +26,10 @@ use lsp::{
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
+
+pub use signature_help::{
+    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
+};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -118,6 +126,11 @@ pub(crate) struct GetReferences {
 }
 
 pub(crate) struct GetDocumentHighlights {
+    pub position: PointUtf16,
+}
+
+#[derive(Clone)]
+pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
 }
 
@@ -1221,6 +1234,164 @@ impl LspCommand for GetDocumentHighlights {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetSignatureHelp {
+    type Response = Vec<SignatureHelp>;
+    type LspRequest = lsp::SignatureHelpRequest;
+    type ProtoRequest = proto::GetSignatureHelp;
+
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        capabilities.signature_help_provider.is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _cx: &AppContext,
+    ) -> lsp::SignatureHelpParams {
+        let url_result = lsp::Url::from_file_path(path);
+        if url_result.is_err() {
+            log::error!("an invalid file path has been specified");
+        }
+
+        lsp::SignatureHelpParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: url_result.expect("invalid file path"),
+                },
+                position: point_to_lsp(self.position),
+            },
+            context: None,
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::SignatureHelp>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        _: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        Ok(message
+            .into_iter()
+            .filter_map(|message| SignatureHelp::new(message, language.clone()))
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        let offset = buffer.point_utf16_to_offset(self.position);
+        proto::GetSignatureHelp {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(serialize_anchor(&buffer.anchor_after(offset))),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        payload: Self::ProtoRequest,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&payload.version))
+            })?
+            .await
+            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
+        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        Ok(Self {
+            position: payload
+                .position
+                .and_then(deserialize_anchor)
+                .context("invalid position")?
+                .to_point_utf16(&buffer_snapshot),
+        })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut Project,
+        _: PeerId,
+        _: &Global,
+        _: &mut AppContext,
+    ) -> proto::GetSignatureHelpResponse {
+        proto::GetSignatureHelpResponse {
+            entries: response
+                .into_iter()
+                .map(|signature_help| proto::SignatureHelp {
+                    rendered_text: signature_help.markdown,
+                    highlights: signature_help
+                        .highlights
+                        .into_iter()
+                        .filter_map(|(range, highlight)| {
+                            let MarkdownHighlight::Style(highlight) = highlight else {
+                                return None;
+                            };
+
+                            Some(proto::HighlightedRange {
+                                range: Some(proto::Range {
+                                    start: range.start as u64,
+                                    end: range.end as u64,
+                                }),
+                                highlight: Some(proto::MarkdownHighlight {
+                                    italic: highlight.italic,
+                                    underline: highlight.underline,
+                                    strikethrough: highlight.strikethrough,
+                                    weight: highlight.weight.0,
+                                }),
+                            })
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        response: proto::GetSignatureHelpResponse,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        Ok(response
+            .entries
+            .into_iter()
+            .map(|proto_entry| SignatureHelp {
+                markdown: proto_entry.rendered_text,
+                highlights: proto_entry
+                    .highlights
+                    .into_iter()
+                    .filter_map(|highlight| {
+                        let proto_highlight = highlight.highlight?;
+                        let range = highlight.range?;
+                        Some((
+                            range.start as usize..range.end as usize,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: proto_highlight.italic,
+                                underline: proto_highlight.underline,
+                                strikethrough: proto_highlight.strikethrough,
+                                weight: FontWeight(proto_highlight.weight),
+                            }),
+                        ))
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
