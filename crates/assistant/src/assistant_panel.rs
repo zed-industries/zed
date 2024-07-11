@@ -883,8 +883,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.pane.read(cx).active_item()
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
     }
 
     fn id_proto() -> Option<proto::PanelId> {

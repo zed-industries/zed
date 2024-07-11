@@ -25,7 +25,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelId},
     item::Item,
     pane,
     ui::IconName,
@@ -775,6 +775,14 @@ impl Panel for TerminalPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn id_proto() -> Option<PanelId> {
+        Some(PanelId::TerminalPanel)
+    }
+
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
     }
 }
 

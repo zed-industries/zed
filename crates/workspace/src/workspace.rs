@@ -15,7 +15,7 @@ mod workspace_settings;
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
-    proto::{self, ErrorCode, PeerId},
+    proto::{self, ErrorCode, PanelId, PeerId},
     ChannelId, Client, DevServerProjectId, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
@@ -1999,6 +1999,31 @@ impl Workspace {
         });
     }
 
+    pub fn activate_panel_for_proto_id(
+        &mut self,
+        panel_id: PanelId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Arc<dyn PanelHandle>> {
+        let mut panel = None;
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_proto_id(panel_id) {
+                panel = dock.update(cx, |dock, cx| {
+                    dock.activate_panel(panel_index, cx);
+                    dock.set_open(true, cx);
+                    dock.active_panel().cloned()
+                });
+                break;
+            }
+        }
+
+        if panel.is_some() {
+            cx.notify();
+            self.serialize_workspace(cx);
+        }
+
+        panel
+    }
+
     /// Focus or unfocus the given panel type, depending on the given callback.
     fn focus_or_unfocus_panel<T: Panel>(
         &mut self,
@@ -2056,13 +2081,9 @@ impl Workspace {
     }
 
     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-            let dock = dock.read(cx);
-            if let Some(panel) = dock.panel::<T>() {
-                return Some(panel);
-            }
-        }
-        None
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+            .iter()
+            .find_map(|dock| dock.read(cx).panel::<T>())
     }
 
     fn dismiss_zoomed_items_to_reveal(
@@ -3328,10 +3349,12 @@ impl Workspace {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
-                    if let Some(item) = panel.active_item(cx) {
-                        active_item = Some(item);
-                        panel_id = panel.id_proto();
-                        break;
+                    if let Some(pane) = panel.pane(cx) {
+                        if let Some(item) = pane.read(cx).active_item() {
+                            active_item = Some(item);
+                            panel_id = panel.id_proto();
+                            break;
+                        }
                     }
                 }
             }
@@ -3412,25 +3435,24 @@ impl Workspace {
 
         let (panel_id, item) = item_to_activate?;
 
-        // TODO, activate the item in the given panel
-
-        let pane_was_focused = state.pane.read(cx).has_focus(cx);
-        if let Some(index) = state
-            .pane
-            .update(cx, |pane, _| pane.index_for_item(item.as_ref()))
-        {
-            state
-                .pane
-                .update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+        let pane = if let Some(panel_id) = panel_id {
+            self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?
         } else {
-            state.pane.update(cx, |pane, cx| {
-                pane.add_item(item.boxed_clone(), false, false, None, cx)
-            });
-        }
+            state.pane.clone()
+        };
 
-        if pane_was_focused {
-            state.pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-        }
+        pane.update(cx, |pane, cx| {
+            let pane_was_focused = pane.has_focus(cx);
+            if let Some(index) = pane.index_for_item(item.as_ref()) {
+                pane.activate_item(index, false, false, cx);
+            } else {
+                pane.add_item(item.boxed_clone(), false, false, None, cx)
+            }
+
+            if pane_was_focused {
+                pane.focus_active_item(cx)
+            }
+        });
 
         None
     }

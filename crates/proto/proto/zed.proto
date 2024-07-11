@@ -1621,6 +1621,7 @@ message UpdateActiveView {
 
 enum PanelId {
     AssistantPanel = 0;
+    TerminalPanel = 1;
 }
 
 message UpdateView {
