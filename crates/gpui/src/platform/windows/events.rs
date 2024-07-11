@@ -804,7 +804,7 @@ fn handle_hit_test_msg(
     if !state_ptr.is_movable {
         return None;
     }
-    if state_ptr.hide_title_bar {
+    if !state_ptr.hide_title_bar {
         return None;
     }
 
