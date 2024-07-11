@@ -3,13 +3,13 @@ use crate::{
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
     ToggleReplace, ToggleWholeWord,
 };
-use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     actions::SelectAll,
     items::active_match_index,
     scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
+    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
+    MAX_TAB_TITLE_LEN,
 };
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
@@ -144,7 +144,6 @@ pub struct ProjectSearchView {
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
-    query_editor_was_focused: bool,
     included_files_editor: View<Editor>,
     excluded_files_editor: View<Editor>,
     filters_enabled: bool,
@@ -592,9 +591,7 @@ impl ProjectSearchView {
         }
 
         self.results_editor.update(cx, |editor, cx| {
-            for item in &match_ranges {
-                editor.replace(item, &query, cx);
-            }
+            editor.replace_all(&mut match_ranges.iter(), &query, cx);
         });
 
         self.model.update(cx, |model, _cx| {
@@ -717,7 +714,6 @@ impl ProjectSearchView {
             search_options: options,
             panels_with_errors: HashSet::default(),
             active_match_index: None,
-            query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
             filters_enabled,
@@ -876,7 +872,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-                    vec![]
+                    PathMatcher::default()
                 }
             };
         let excluded_files =
@@ -894,7 +890,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-                    vec![]
+                    PathMatcher::default()
                 }
             };
 
@@ -960,20 +956,29 @@ impl ProjectSearchView {
         query
     }
 
-    fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
-        text.split(',')
+    fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
+        let queries = text
+            .split(',')
             .map(str::trim)
             .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
-            .map(|maybe_glob_str| {
-                PathMatcher::new(maybe_glob_str)
-                    .with_context(|| format!("parsing {maybe_glob_str} as path matcher"))
-            })
-            .collect()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Ok(PathMatcher::new(&queries)?)
     }
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
+
+            if !EditorSettings::get_global(cx).search_wrap {
+                if (direction == Direction::Next && index + 1 >= match_ranges.len())
+                    || (direction == Direction::Prev && index == 0)
+                {
+                    crate::show_no_more_matches(cx);
+                    return;
+                }
+            }
+
             let new_index = self.results_editor.update(cx, |editor, cx| {
                 editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });
@@ -993,7 +998,6 @@ impl ProjectSearchView {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&SelectAll, cx);
         });
-        self.query_editor_was_focused = true;
         let editor_handle = self.query_editor.focus_handle(cx);
         cx.focus(&editor_handle);
     }
@@ -1008,7 +1012,6 @@ impl ProjectSearchView {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
-        self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
         cx.focus(&results_handle);
     }
@@ -1462,9 +1465,9 @@ impl Render for ProjectSearchBar {
             )
             .when(limit_reached, |this| {
                 this.child(
-                    div()
-                        .child(Label::new("Search limit reached").color(Color::Warning))
-                        .ml_2(),
+                    Label::new("Search limit reached")
+                        .ml_2()
+                        .color(Color::Warning),
                 )
             });
 

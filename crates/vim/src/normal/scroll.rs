@@ -69,6 +69,10 @@ fn scroll_editor(
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
     let old_top_anchor = editor.scroll_manager.anchor().anchor;
 
+    if editor.scroll_hover(amount, cx) {
+        return;
+    }
+
     editor.scroll_screen(amount, cx);
     if should_move_cursor {
         let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {

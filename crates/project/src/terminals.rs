@@ -337,22 +337,10 @@ fn prepare_ssh_shell(
         "exec $SHELL -l".to_string()
     };
 
-    let (port_forward, local_dev_env) =
-        if env::var("ZED_RPC_URL").as_deref() == Ok("http://localhost:8080/rpc") {
-            (
-                "-R 8080:localhost:8080",
-                "export ZED_RPC_URL=http://localhost:8080/rpc;",
-            )
-        } else {
-            ("", "")
-        };
-
     let commands = if let Some(path) = path {
-        // I've found that `ssh -t dev sh -c 'cd; cd /tmp; pwd'` gives /tmp
-        // but `ssh -t dev sh -c 'cd /tmp; pwd'` gives /root
-        format!("cd {path}; {local_dev_env} {to_run}")
+        format!("cd {path}; {to_run}")
     } else {
-        format!("cd; {local_dev_env} {to_run}")
+        format!("cd; {to_run}")
     };
     let shell_invocation = &format!("sh -c {}", shlex::try_quote(&commands)?);
 
@@ -361,10 +349,9 @@ fn prepare_ssh_shell(
     // be run instead.
     write!(
         &mut ssh_file,
-        "#!/bin/sh\nexec {} \"$@\" {} {} {}",
+        "#!/bin/sh\nexec {} \"$@\" {} {}",
         real_ssh.to_string_lossy(),
         if spawn_task.is_none() { "-t" } else { "" },
-        port_forward,
         shlex::try_quote(shell_invocation)?,
     )?;
 

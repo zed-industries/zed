@@ -1,5 +1,6 @@
 use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
+use util::ResultExt;
 use workspace::Workspace;
 
 pub mod feedback_modal;
@@ -38,25 +39,38 @@ pub fn init(cx: &mut AppContext) {
         feedback_modal::FeedbackModal::register(workspace, cx);
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                let specs = SystemSpecs::new(&cx).to_string();
+                let specs = SystemSpecs::new(&cx);
 
-                let prompt = cx.prompt(
-                    PromptLevel::Info,
-                    "Copied into clipboard",
-                    Some(&specs),
-                    &["OK"],
-                );
-                cx.spawn(|_, _cx| async move {
-                    prompt.await.ok();
+                cx.spawn(|_, mut cx| async move {
+                    let specs = specs.await.to_string();
+
+                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new(specs.clone())))
+                        .log_err();
+
+                    cx.prompt(
+                        PromptLevel::Info,
+                        "Copied into clipboard",
+                        Some(&specs),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
                 })
                 .detach();
-                cx.write_to_clipboard(ClipboardItem::new(specs.clone()));
             })
             .register_action(|_, _: &RequestFeature, cx| {
                 cx.open_url(request_feature_url());
             })
             .register_action(move |_, _: &FileBugReport, cx| {
-                cx.open_url(&file_bug_report_url(&SystemSpecs::new(&cx)));
+                let specs = SystemSpecs::new(&cx);
+                cx.spawn(|_, mut cx| async move {
+                    let specs = specs.await;
+                    cx.update(|cx| {
+                        cx.open_url(&file_bug_report_url(&specs));
+                    })
+                    .log_err();
+                })
+                .detach();
             })
             .register_action(move |_, _: &OpenZedRepo, cx| {
                 cx.open_url(zed_repo_url());

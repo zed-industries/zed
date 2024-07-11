@@ -39,6 +39,7 @@ impl EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
+            assets::Assets.load_test_fonts(cx);
             language::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
@@ -175,6 +176,7 @@ impl EditorLspTestContext {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     }],
                     disabled_scopes_by_bracket_ix: Default::default(),

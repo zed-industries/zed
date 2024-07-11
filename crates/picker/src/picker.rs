@@ -103,6 +103,19 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
 
+    fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
+        v_flex()
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .h_9()
+                    .px_4()
+                    .child(editor.clone()),
+            )
+            .child(Divider::horizontal())
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -236,7 +249,12 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
     ///
     /// If some effect is bound to `selected_index_changed`, it will be executed.
-    fn set_selected_index(&mut self, ix: usize, scroll_to_index: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_selected_index(
+        &mut self,
+        ix: usize,
+        scroll_to_index: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, cx);
         let current_index = self.delegate.selected_index();
@@ -282,7 +300,6 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(count - 1, cx);
             self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }
@@ -292,7 +309,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, false, cx);
+        self.set_selected_index(new_index, true, cx);
         cx.notify();
     }
 
@@ -520,6 +537,16 @@ impl<D: PickerDelegate> Picker<D> {
                 .into_any_element(),
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn logical_scroll_top_index(&self) -> usize {
+        match &self.element_container {
+            ElementContainer::List(state) => state.logical_scroll_top().item_ix,
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.logical_scroll_top_index()
+            }
+        }
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -547,16 +574,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::use_selected_query))
             .on_action(cx.listener(Self::confirm_input))
             .child(match &self.head {
-                Head::Editor(editor) => v_flex()
-                    .child(
-                        h_flex()
-                            .overflow_hidden()
-                            .flex_none()
-                            .h_9()
-                            .px_4()
-                            .child(editor.clone()),
-                    )
-                    .child(Divider::horizontal()),
+                Head::Editor(editor) => self.delegate.render_editor(&editor.clone(), cx),
                 Head::Empty(empty_head) => div().child(empty_head.clone()),
             })
             .when(self.delegate.match_count() > 0, |el| {

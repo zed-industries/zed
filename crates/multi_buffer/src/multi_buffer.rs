@@ -77,6 +77,9 @@ pub enum Event {
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
     },
+    ExcerptsExpanded {
+        ids: Vec<ExcerptId>,
+    },
     ExcerptsEdited {
         ids: Vec<ExcerptId>,
     },
@@ -91,9 +94,9 @@ pub enum Event {
     DiffUpdated {
         buffer: Model<Buffer>,
     },
-    LanguageChanged,
+    LanguageChanged(BufferId),
     CapabilityChanged,
-    Reparsed,
+    Reparsed(BufferId),
     Saved,
     FileHandleChanged,
     Closed,
@@ -149,11 +152,7 @@ pub trait ToPointUtf16: 'static + fmt::Debug {
 struct BufferState {
     buffer: Model<Buffer>,
     last_version: clock::Global,
-    last_parse_count: usize,
-    last_selections_update_count: usize,
-    last_diagnostics_update_count: usize,
-    last_file_update_count: usize,
-    last_git_diff_update_count: usize,
+    last_non_text_state_update_count: usize,
     excerpts: Vec<Locator>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -164,10 +163,8 @@ pub struct MultiBufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    parse_count: usize,
-    diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
-    git_diff_update_count: usize,
+    non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
@@ -393,11 +390,7 @@ impl MultiBuffer {
                 BufferState {
                     buffer: buffer_state.buffer.clone(),
                     last_version: buffer_state.last_version.clone(),
-                    last_parse_count: buffer_state.last_parse_count,
-                    last_selections_update_count: buffer_state.last_selections_update_count,
-                    last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
-                    last_file_update_count: buffer_state.last_file_update_count,
-                    last_git_diff_update_count: buffer_state.last_git_diff_update_count,
+                    last_non_text_state_update_count: buffer_state.last_non_text_state_update_count,
                     excerpts: buffer_state.excerpts.clone(),
                     _subscriptions: [
                         new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
@@ -535,9 +528,13 @@ impl MultiBuffer {
         });
 
         if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, autoindent_mode, cx);
             });
+            cx.emit(Event::ExcerptsEdited {
+                ids: self.excerpt_ids(),
+            });
+            return;
         }
 
         let original_indent_columns = match &mut autoindent_mode {
@@ -784,6 +781,68 @@ impl MultiBuffer {
         } else {
             None
         }
+    }
+
+    pub fn edited_ranges_for_transaction<D>(
+        &self,
+        transaction_id: TransactionId,
+        cx: &AppContext,
+    ) -> Vec<Range<D>>
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+    {
+        if let Some(buffer) = self.as_singleton() {
+            return buffer
+                .read(cx)
+                .edited_ranges_for_transaction_id(transaction_id)
+                .collect::<Vec<_>>();
+        }
+
+        let Some(transaction) = self.history.transaction(transaction_id) else {
+            return Vec::new();
+        };
+
+        let mut ranges = Vec::new();
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
+
+        for (buffer_id, buffer_transaction) in &transaction.buffer_transactions {
+            let Some(buffer_state) = buffers.get(&buffer_id) else {
+                continue;
+            };
+
+            let buffer = buffer_state.buffer.read(cx);
+            for range in buffer.edited_ranges_for_transaction_id::<D>(*buffer_transaction) {
+                for excerpt_id in &buffer_state.excerpts {
+                    cursor.seek(excerpt_id, Bias::Left, &());
+                    if let Some(excerpt) = cursor.item() {
+                        if excerpt.locator == *excerpt_id {
+                            let excerpt_buffer_start =
+                                excerpt.range.context.start.summary::<D>(buffer);
+                            let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+                            let excerpt_range = excerpt_buffer_start.clone()..excerpt_buffer_end;
+                            if excerpt_range.contains(&range.start)
+                                && excerpt_range.contains(&range.end)
+                            {
+                                let excerpt_start = D::from_text_summary(&cursor.start().text);
+
+                                let mut start = excerpt_start.clone();
+                                start.add_assign(&(range.start - excerpt_buffer_start.clone()));
+                                let mut end = excerpt_start;
+                                end.add_assign(&(range.end - excerpt_buffer_start));
+
+                                ranges.push(start..end);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ranges.sort_by_key(|range| range.start.clone());
+        ranges
     }
 
     pub fn merge_transactions(
@@ -1053,12 +1112,12 @@ impl MultiBuffer {
                     for range in ranges.by_ref().take(range_count) {
                         let start = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.start,
                         };
                         let end = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.end,
                         };
                         if tx.send(start..end).await.is_err() {
@@ -1175,11 +1234,7 @@ impl MultiBuffer {
         let mut buffers = self.buffers.borrow_mut();
         let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
             last_version: buffer_snapshot.version().clone(),
-            last_parse_count: buffer_snapshot.parse_count(),
-            last_selections_update_count: buffer_snapshot.selections_update_count(),
-            last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
-            last_file_update_count: buffer_snapshot.file_update_count(),
-            last_git_diff_update_count: buffer_snapshot.git_diff_update_count(),
+            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
             excerpts: Default::default(),
             _subscriptions: [
                 cx.observe(&buffer, |_, _, cx| cx.notify()),
@@ -1574,8 +1629,8 @@ impl MultiBuffer {
             language::Event::Reloaded => Event::Reloaded,
             language::Event::DiffBaseChanged => Event::DiffBaseChanged,
             language::Event::DiffUpdated => Event::DiffUpdated { buffer },
-            language::Event::LanguageChanged => Event::LanguageChanged,
-            language::Event::Reparsed => Event::Reparsed,
+            language::Event::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
+            language::Event::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             language::Event::Closed => Event::Closed,
             language::Event::CapabilityChanged => {
@@ -1666,8 +1721,9 @@ impl MultiBuffer {
         }
         self.sync(cx);
 
+        let ids = ids.into_iter().collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
-        let locators = snapshot.excerpt_locators_for_ids(ids);
+        let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
         let mut edits = Vec::<Edit<usize>>::new();
@@ -1746,15 +1802,14 @@ impl MultiBuffer {
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
         });
+        cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
     }
 
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
-        let mut reparsed = false;
-        let mut diagnostics_updated = false;
-        let mut git_diff_updated = false;
+        let mut non_text_state_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
         let mut edited = false;
@@ -1762,34 +1817,14 @@ impl MultiBuffer {
         for buffer_state in buffers.values_mut() {
             let buffer = buffer_state.buffer.read(cx);
             let version = buffer.version();
-            let parse_count = buffer.parse_count();
-            let selections_update_count = buffer.selections_update_count();
-            let diagnostics_update_count = buffer.diagnostics_update_count();
-            let file_update_count = buffer.file_update_count();
-            let git_diff_update_count = buffer.git_diff_update_count();
+            let non_text_state_update_count = buffer.non_text_state_update_count();
 
             let buffer_edited = version.changed_since(&buffer_state.last_version);
-            let buffer_reparsed = parse_count > buffer_state.last_parse_count;
-            let buffer_selections_updated =
-                selections_update_count > buffer_state.last_selections_update_count;
-            let buffer_diagnostics_updated =
-                diagnostics_update_count > buffer_state.last_diagnostics_update_count;
-            let buffer_file_updated = file_update_count > buffer_state.last_file_update_count;
-            let buffer_git_diff_updated =
-                git_diff_update_count > buffer_state.last_git_diff_update_count;
-            if buffer_edited
-                || buffer_reparsed
-                || buffer_selections_updated
-                || buffer_diagnostics_updated
-                || buffer_file_updated
-                || buffer_git_diff_updated
-            {
+            let buffer_non_text_state_updated =
+                non_text_state_update_count > buffer_state.last_non_text_state_update_count;
+            if buffer_edited || buffer_non_text_state_updated {
                 buffer_state.last_version = version;
-                buffer_state.last_parse_count = parse_count;
-                buffer_state.last_selections_update_count = selections_update_count;
-                buffer_state.last_diagnostics_update_count = diagnostics_update_count;
-                buffer_state.last_file_update_count = file_update_count;
-                buffer_state.last_git_diff_update_count = git_diff_update_count;
+                buffer_state.last_non_text_state_update_count = non_text_state_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
@@ -1799,23 +1834,15 @@ impl MultiBuffer {
             }
 
             edited |= buffer_edited;
-            reparsed |= buffer_reparsed;
-            diagnostics_updated |= buffer_diagnostics_updated;
-            git_diff_updated |= buffer_git_diff_updated;
+            non_text_state_updated |= buffer_non_text_state_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
         }
         if edited {
             snapshot.edit_count += 1;
         }
-        if reparsed {
-            snapshot.parse_count += 1;
-        }
-        if diagnostics_updated {
-            snapshot.diagnostics_update_count += 1;
-        }
-        if git_diff_updated {
-            snapshot.git_diff_update_count += 1;
+        if non_text_state_updated {
+            snapshot.non_text_state_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
         snapshot.has_conflict = has_conflict;
@@ -3127,8 +3154,8 @@ impl MultiBufferSnapshot {
         self.edit_count
     }
 
-    pub fn parse_count(&self) -> usize {
-        self.parse_count
+    pub fn non_text_state_update_count(&self) -> usize {
+        self.non_text_state_update_count
     }
 
     /// Returns the smallest enclosing bracket ranges containing the given range or
@@ -3339,14 +3366,6 @@ impl MultiBufferSnapshot {
                     })
             })
             .collect()
-    }
-
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count
-    }
-
-    pub fn git_diff_update_count(&self) -> usize {
-        self.git_diff_update_count
     }
 
     pub fn trailing_excerpt_update_count(&self) -> usize {
@@ -3740,9 +3759,48 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn remote_selections_in_range<'a>(
+    /// Returns excerpts overlapping the given ranges. If range spans multiple excerpts returns one range for each excerpt
+    pub fn excerpts_in_ranges(
+        &self,
+        ranges: impl IntoIterator<Item = Range<Anchor>>,
+    ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
+        let mut ranges = ranges.into_iter().map(|range| range.to_offset(self));
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.next(&());
+        let mut current_range = ranges.next();
+        iter::from_fn(move || {
+            let range = current_range.clone()?;
+            if range.start >= cursor.end(&()) {
+                cursor.seek_forward(&range.start, Bias::Right, &());
+                if range.start == self.len() {
+                    cursor.prev(&());
+                }
+            }
+
+            let excerpt = cursor.item()?;
+            let range_start_in_excerpt = cmp::max(range.start, *cursor.start());
+            let range_end_in_excerpt = if excerpt.has_trailing_newline {
+                cmp::min(range.end, cursor.end(&()) - 1)
+            } else {
+                cmp::min(range.end, cursor.end(&()))
+            };
+            let buffer_range = MultiBufferExcerpt::new(excerpt, *cursor.start())
+                .map_range_to_buffer(range_start_in_excerpt..range_end_in_excerpt);
+
+            if range.end > cursor.end(&()) {
+                cursor.next(&());
+            } else {
+                current_range = ranges.next();
+            }
+
+            Some((excerpt.id, &excerpt.buffer, buffer_range))
+        })
+    }
+
+    pub fn selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
+        include_local: bool,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         let start_locator = self.excerpt_locator_for_id(range.start.excerpt_id);
@@ -3761,7 +3819,7 @@ impl MultiBufferSnapshot {
 
                 excerpt
                     .buffer
-                    .remote_selections_in_range(query_range)
+                    .selections_in_range(query_range, include_local)
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
                             let mut start = Anchor {
@@ -3905,6 +3963,17 @@ impl History {
         } else {
             None
         }
+    }
+
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.undo_stack
+            .iter()
+            .find(|transaction| transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter()
+                    .find(|transaction| transaction.id == transaction_id)
+            })
     }
 
     fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
@@ -5999,6 +6068,15 @@ mod tests {
             multibuffer.end_transaction_at(now, cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
+            // Verify edited ranges for transaction 1
+            assert_eq!(
+                multibuffer.edited_ranges_for_transaction(transaction_1, cx),
+                &[
+                    Point::new(0, 0)..Point::new(0, 2),
+                    Point::new(1, 0)..Point::new(1, 2)
+                ]
+            );
+
             // Edit buffer 1 through the multibuffer
             now += 2 * group_interval;
             multibuffer.start_transaction_at(now, cx);
@@ -6075,5 +6153,416 @@ mod tests {
             multibuffer.redo(cx);
             assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
         });
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_no_ranges(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            );
+        });
+
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+
+        let mut excerpts = snapshot.excerpts_in_ranges(iter::from_fn(|| None));
+
+        assert!(excerpts.next().is_none());
+    }
+
+    fn validate_excerpts(
+        actual: &Vec<(ExcerptId, BufferId, Range<Anchor>)>,
+        expected: &Vec<(ExcerptId, BufferId, Range<Anchor>)>,
+    ) {
+        assert_eq!(actual.len(), expected.len());
+
+        actual
+            .into_iter()
+            .zip(expected)
+            .map(|(actual, expected)| {
+                assert_eq!(actual.0, expected.0);
+                assert_eq!(actual.1, expected.1);
+                assert_eq!(actual.2.start, expected.2.start);
+                assert_eq!(actual.2.end, expected.2.end);
+            })
+            .collect_vec();
+    }
+
+    fn map_range_from_excerpt(
+        snapshot: &MultiBufferSnapshot,
+        excerpt_id: ExcerptId,
+        excerpt_buffer: &BufferSnapshot,
+        range: Range<usize>,
+    ) -> Range<Anchor> {
+        snapshot
+            .anchor_in_excerpt(excerpt_id, excerpt_buffer.anchor_before(range.start))
+            .unwrap()
+            ..snapshot
+                .anchor_in_excerpt(excerpt_id, excerpt_buffer.anchor_after(range.end))
+                .unwrap()
+    }
+
+    fn make_expected_excerpt_info(
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut AppContext,
+        excerpt_id: ExcerptId,
+        buffer: &Model<Buffer>,
+        range: Range<usize>,
+    ) -> (ExcerptId, BufferId, Range<Anchor>) {
+        (
+            excerpt_id,
+            buffer.read(cx).remote_id(),
+            map_range_from_excerpt(&snapshot, excerpt_id, &buffer.read(cx).snapshot(), range),
+        )
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_range_inside_the_excerpt(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let buffer_len = buffer_1.read(cx).len();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let mut expected_excerpt_id = ExcerptId(0);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            expected_excerpt_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            );
+        });
+
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+
+        let range = snapshot
+            .anchor_in_excerpt(expected_excerpt_id, buffer_1.read(cx).anchor_before(1))
+            .unwrap()
+            ..snapshot
+                .anchor_in_excerpt(
+                    expected_excerpt_id,
+                    buffer_1.read(cx).anchor_after(buffer_len / 2),
+                )
+                .unwrap();
+
+        let expected_excerpts = vec![make_expected_excerpt_info(
+            &snapshot,
+            cx,
+            expected_excerpt_id,
+            &buffer_1,
+            1..(buffer_len / 2),
+        )];
+
+        let excerpts = snapshot
+            .excerpts_in_ranges(vec![range.clone()].into_iter())
+            .map(|(excerpt_id, buffer, actual_range)| {
+                (
+                    excerpt_id,
+                    buffer.remote_id(),
+                    map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                )
+            })
+            .collect_vec();
+
+        validate_excerpts(&excerpts, &expected_excerpts);
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_range_crosses_excerpts_boundary(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let buffer_len = buffer_1.read(cx).len();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let mut excerpt_1_id = ExcerptId(0);
+        let mut excerpt_2_id = ExcerptId(0);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            excerpt_1_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            excerpt_2_id = multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        let expected_range = snapshot
+            .anchor_in_excerpt(
+                excerpt_1_id,
+                buffer_1.read(cx).anchor_before(buffer_len / 2),
+            )
+            .unwrap()
+            ..snapshot
+                .anchor_in_excerpt(excerpt_2_id, buffer_2.read(cx).anchor_after(buffer_len / 2))
+                .unwrap();
+
+        let expected_excerpts = vec![
+            make_expected_excerpt_info(
+                &snapshot,
+                cx,
+                excerpt_1_id,
+                &buffer_1,
+                (buffer_len / 2)..buffer_len,
+            ),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_2_id, &buffer_2, 0..buffer_len / 2),
+        ];
+
+        let excerpts = snapshot
+            .excerpts_in_ranges(vec![expected_range.clone()].into_iter())
+            .map(|(excerpt_id, buffer, actual_range)| {
+                (
+                    excerpt_id,
+                    buffer.remote_id(),
+                    map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                )
+            })
+            .collect_vec();
+
+        validate_excerpts(&excerpts, &expected_excerpts);
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_range_encloses_excerpt(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'r'), cx));
+        let buffer_len = buffer_1.read(cx).len();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let mut excerpt_1_id = ExcerptId(0);
+        let mut excerpt_2_id = ExcerptId(0);
+        let mut excerpt_3_id = ExcerptId(0);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            excerpt_1_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            excerpt_2_id = multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            excerpt_3_id = multibuffer.push_excerpts(
+                buffer_3.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_3.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        let expected_range = snapshot
+            .anchor_in_excerpt(
+                excerpt_1_id,
+                buffer_1.read(cx).anchor_before(buffer_len / 2),
+            )
+            .unwrap()
+            ..snapshot
+                .anchor_in_excerpt(excerpt_3_id, buffer_3.read(cx).anchor_after(buffer_len / 2))
+                .unwrap();
+
+        let expected_excerpts = vec![
+            make_expected_excerpt_info(
+                &snapshot,
+                cx,
+                excerpt_1_id,
+                &buffer_1,
+                (buffer_len / 2)..buffer_len,
+            ),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_2_id, &buffer_2, 0..buffer_len),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_3_id, &buffer_3, 0..buffer_len / 2),
+        ];
+
+        let excerpts = snapshot
+            .excerpts_in_ranges(vec![expected_range.clone()].into_iter())
+            .map(|(excerpt_id, buffer, actual_range)| {
+                (
+                    excerpt_id,
+                    buffer.remote_id(),
+                    map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                )
+            })
+            .collect_vec();
+
+        validate_excerpts(&excerpts, &expected_excerpts);
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_multiple_ranges(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let buffer_len = buffer_1.read(cx).len();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let mut excerpt_1_id = ExcerptId(0);
+        let mut excerpt_2_id = ExcerptId(0);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            excerpt_1_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            excerpt_2_id = multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        let ranges = vec![
+            1..(buffer_len / 4),
+            (buffer_len / 3)..(buffer_len / 2),
+            (buffer_len / 4 * 3)..(buffer_len),
+        ];
+
+        let expected_excerpts = ranges
+            .iter()
+            .map(|range| {
+                make_expected_excerpt_info(&snapshot, cx, excerpt_1_id, &buffer_1, range.clone())
+            })
+            .collect_vec();
+
+        let ranges = ranges.into_iter().map(|range| {
+            map_range_from_excerpt(
+                &snapshot,
+                excerpt_1_id,
+                &buffer_1.read(cx).snapshot(),
+                range,
+            )
+        });
+
+        let excerpts = snapshot
+            .excerpts_in_ranges(ranges)
+            .map(|(excerpt_id, buffer, actual_range)| {
+                (
+                    excerpt_id,
+                    buffer.remote_id(),
+                    map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                )
+            })
+            .collect_vec();
+
+        validate_excerpts(&excerpts, &expected_excerpts);
+    }
+
+    #[gpui::test]
+    fn test_excerpts_in_ranges_range_ends_at_excerpt_end(cx: &mut AppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+        let buffer_len = buffer_1.read(cx).len();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let mut excerpt_1_id = ExcerptId(0);
+        let mut excerpt_2_id = ExcerptId(0);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            excerpt_1_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+            excerpt_2_id = multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer_2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            )[0];
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        let ranges = [0..buffer_len, (buffer_len / 3)..(buffer_len / 2)];
+
+        let expected_excerpts = vec![
+            make_expected_excerpt_info(&snapshot, cx, excerpt_1_id, &buffer_1, ranges[0].clone()),
+            make_expected_excerpt_info(&snapshot, cx, excerpt_2_id, &buffer_2, ranges[1].clone()),
+        ];
+
+        let ranges = [
+            map_range_from_excerpt(
+                &snapshot,
+                excerpt_1_id,
+                &buffer_1.read(cx).snapshot(),
+                ranges[0].clone(),
+            ),
+            map_range_from_excerpt(
+                &snapshot,
+                excerpt_2_id,
+                &buffer_2.read(cx).snapshot(),
+                ranges[1].clone(),
+            ),
+        ];
+
+        let excerpts = snapshot
+            .excerpts_in_ranges(ranges.into_iter())
+            .map(|(excerpt_id, buffer, actual_range)| {
+                (
+                    excerpt_id,
+                    buffer.remote_id(),
+                    map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                )
+            })
+            .collect_vec();
+
+        validate_excerpts(&excerpts, &expected_excerpts);
     }
 }

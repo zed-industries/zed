@@ -161,7 +161,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
 
@@ -277,11 +277,7 @@ impl TestServer {
             node_runtime: FakeNodeRuntime::new(),
         });
 
-        let os_keymap = if cfg!(target_os = "linux") {
-            "keymaps/default-linux.json"
-        } else {
-            "keymaps/default-macos.json"
-        };
+        let os_keymap = "keymaps/default-macos.json";
 
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -298,6 +294,8 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
+            assistant::FakeCompletionProvider::setup_test(cx);
+            assistant::context_store::init(&client);
         });
 
         client
@@ -327,7 +325,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
         let (dev_server_id, _) = split_dev_server_token(&access_token).unwrap();

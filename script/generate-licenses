@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+CARGO_ABOUT_VERSION="0.6.1"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 
 > $OUTPUT_FILE
@@ -14,7 +15,12 @@ cat assets/icons/LICENSES >> $OUTPUT_FILE
 
 echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 
-[[ "$(cargo about --version)" == "cargo-about 0.6.1" ]] || cargo install cargo-about@0.6.1
+if ! cargo install --list | grep "cargo-about v$CARGO_ABOUT_VERSION" > /dev/null; then
+  echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."
+  cargo install "cargo-about@$CARGO_ABOUT_VERSION"
+else
+  echo "cargo-about@$CARGO_ABOUT_VERSION is already installed."
+fi
 
 echo "Generating cargo licenses"
 cargo about generate --fail -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md >> $OUTPUT_FILE

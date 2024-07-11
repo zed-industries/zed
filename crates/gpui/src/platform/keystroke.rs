@@ -94,6 +94,27 @@ impl Keystroke {
             }
         }
 
+        //Allow for the user to specify a keystroke modifier as the key itself
+        //This sets the `key` to the modifier, and disables the modifier
+        if key.is_none() {
+            if shift {
+                key = Some("shift".to_string());
+                shift = false;
+            } else if control {
+                key = Some("control".to_string());
+                control = false;
+            } else if alt {
+                key = Some("alt".to_string());
+                alt = false;
+            } else if platform {
+                key = Some("platform".to_string());
+                platform = false;
+            } else if function {
+                key = Some("function".to_string());
+                function = false;
+            }
+        }
+
         let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
 
         Ok(Keystroke {
@@ -107,6 +128,17 @@ impl Keystroke {
             key,
             ime_key,
         })
+    }
+
+    /// Returns true if this keystroke left
+    /// the ime system in an incomplete state.
+    pub fn is_ime_in_progress(&self) -> bool {
+        self.ime_key.is_none()
+            && (is_printable_key(&self.key) || self.key.is_empty())
+            && !(self.modifiers.platform
+                || self.modifiers.control
+                || self.modifiers.function
+                || self.modifiers.alt)
     }
 
     /// Returns a new keystroke with the ime_key filled.
@@ -123,9 +155,7 @@ impl Keystroke {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end"
-                | "delete" | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6"
-                | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => None,
+                key if !is_printable_key(key) => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())
@@ -136,6 +166,15 @@ impl Keystroke {
             }
         }
         self
+    }
+}
+
+fn is_printable_key(key: &str) -> bool {
+    match key {
+        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
+        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
+        | "f10" | "f11" | "f12" => false,
+        _ => true,
     }
 }
 
@@ -168,6 +207,10 @@ impl std::fmt::Display for Keystroke {
             "right" => '→',
             "tab" => '⇥',
             "escape" => '⎋',
+            "shift" => '⇧',
+            "control" => '⌃',
+            "alt" => '⌥',
+            "platform" => '⌘',
             key => {
                 if key.len() == 1 {
                     key.chars().next().unwrap().to_ascii_uppercase()
@@ -221,6 +264,15 @@ impl Modifiers {
         {
             return self.control;
         }
+    }
+
+    /// How many modifier keys are pressed
+    pub fn number_of_modifiers(&self) -> u8 {
+        self.control as u8
+            + self.alt as u8
+            + self.shift as u8
+            + self.platform as u8
+            + self.function as u8
     }
 
     /// helper method for Modifiers with no modifiers
@@ -292,6 +344,15 @@ impl Modifiers {
         Modifiers {
             shift: true,
             platform: true,
+            ..Default::default()
+        }
+    }
+
+    /// helper method for Modifiers with command + shift
+    pub fn control_shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            control: true,
             ..Default::default()
         }
     }

@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, View, VisualContext};
+use gpui::{Context, SemanticVersion, View, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -19,7 +19,7 @@ impl VimTestContext {
             search::init(cx);
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             crate::init(cx);
         });

@@ -48,7 +48,6 @@ pub struct SyntaxMapMatches<'a> {
 
 #[derive(Debug)]
 pub struct SyntaxMapCapture<'a> {
-    pub depth: usize,
     pub node: Node<'a>,
     pub index: u32,
     pub grammar_index: usize,
@@ -886,7 +885,9 @@ impl<'a> SyntaxMapCaptures<'a> {
 
             // TODO - add a Tree-sitter API to remove the need for this.
             let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
+                    query_cursor.deref_mut(),
+                )
             };
 
             cursor.set_byte_range(range.clone());
@@ -933,7 +934,6 @@ impl<'a> SyntaxMapCaptures<'a> {
         let layer = self.layers[..self.active_layer_count].first()?;
         let capture = layer.next_capture?;
         Some(SyntaxMapCapture {
-            depth: layer.depth,
             grammar_index: layer.grammar_index,
             index: capture.index,
             node: capture.node,
@@ -1004,7 +1004,9 @@ impl<'a> SyntaxMapMatches<'a> {
 
             // TODO - add a Tree-sitter API to remove the need for this.
             let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
+                    query_cursor.deref_mut(),
+                )
             };
 
             cursor.set_byte_range(range.clone());
@@ -1205,7 +1207,7 @@ fn get_injections(
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
-    combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
+    combined_injection_ranges: &mut HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)>,
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
@@ -1221,7 +1223,7 @@ fn get_injections(
                 .now_or_never()
                 .and_then(|language| language.ok())
             {
-                combined_injection_ranges.insert(language, Vec::new());
+                combined_injection_ranges.insert(language.id, (language, Vec::new()));
             }
         }
     }
@@ -1274,8 +1276,9 @@ fn get_injections(
                 if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
-                            .entry(language.clone())
-                            .or_default()
+                            .entry(language.id)
+                            .or_insert_with(|| (language.clone(), vec![]))
+                            .1
                             .extend(content_ranges);
                     } else {
                         queue.push(ParseStep {
@@ -1301,7 +1304,7 @@ fn get_injections(
         }
     }
 
-    for (language, mut included_ranges) in combined_injection_ranges.drain() {
+    for (_, (language, mut included_ranges)) in combined_injection_ranges.drain() {
         included_ranges.sort_unstable_by(|a, b| {
             Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
         });

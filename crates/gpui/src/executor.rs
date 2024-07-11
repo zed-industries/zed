@@ -13,7 +13,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::TryFutureExt;
 use waker_fn::waker_fn;
@@ -25,14 +25,16 @@ use rand::rngs::StdRng;
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -312,6 +314,14 @@ impl BackgroundExecutor {
         for task in spawned {
             task.await;
         }
+    }
+
+    /// Get the current time.
+    ///
+    /// Calling this instead of `std::time::Instant::now` allows the use
+    /// of fake timers in tests.
+    pub fn now(&self) -> Instant {
+        self.dispatcher.now()
     }
 
     /// Returns a task that will complete after the given duration.

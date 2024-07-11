@@ -38,6 +38,7 @@ lsp.workspace = true
 menu.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 project.workspace = true
 serde.workspace = true
 settings.workspace = true

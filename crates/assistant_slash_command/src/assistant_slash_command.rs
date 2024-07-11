@@ -1,17 +1,28 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
+use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use workspace::Workspace;
+use workspace::{ui::IconName, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
+}
+
+#[derive(Debug)]
+pub struct ArgumentCompletion {
+    /// The label to display for this completion.
+    pub label: String,
+    /// The new text that should be inserted into the command when this completion is accepted.
+    pub new_text: String,
+    /// Whether the command should be run when accepting this completion.
+    pub run_command: bool,
 }
 
 pub trait SlashCommand: 'static + Send + Sync {
@@ -22,12 +33,12 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn description(&self) -> String;
     fn menu_text(&self) -> String;
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         cancel: Arc<AtomicBool>,
-        workspace: WeakView<Workspace>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
+    ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn run(
         self: Arc<Self>,
@@ -49,13 +60,16 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Default)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
+    pub run_commands_in_text: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
-    pub render_placeholder: RenderFoldPlaceholder,
+    pub icon: IconName,
+    pub label: SharedString,
 }

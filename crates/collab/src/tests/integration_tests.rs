@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
+use assistant::ContextStore;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -1378,7 +1379,7 @@ async fn test_unshare_project(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
     project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1403,7 +1404,7 @@ async fn test_unshare_project(
         .unwrap();
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
 
@@ -1415,7 +1416,7 @@ async fn test_unshare_project(
     let project_c2 = client_c.build_dev_server_project(project_id, cx_c).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
     project_c2
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
@@ -1522,7 +1523,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
-        assert!(worktree.as_local().unwrap().is_shared());
+        assert!(worktree.has_update_observer());
         worktree.id()
     });
     let (worktree_a2, _) = project_a1
@@ -1534,7 +1535,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1567,9 +1568,7 @@ async fn test_project_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    worktree_a1.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared())
-    });
+    worktree_a1.read_with(cx_a, |tree, _| assert!(tree.has_update_observer()));
 
     // While client A is disconnected, add and remove files from client A's project.
     client_a
@@ -1611,7 +1610,7 @@ async fn test_project_reconnect(
         .await;
 
     let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
-        assert!(!tree.as_local().unwrap().is_shared());
+        assert!(!tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1634,7 +1633,7 @@ async fn test_project_reconnect(
 
     project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
-        assert!(worktree_a1.read(cx).as_local().unwrap().is_shared());
+        assert!(worktree_a1.read(cx).has_update_observer());
         assert_eq!(
             worktree_a1
                 .read(cx)
@@ -1652,7 +1651,7 @@ async fn test_project_reconnect(
                 "subdir2/i.txt"
             ]
         );
-        assert!(worktree_a3.read(cx).as_local().unwrap().is_shared());
+        assert!(worktree_a3.read(cx).has_update_observer());
         assert_eq!(
             worktree_a3
                 .read(cx)
@@ -1733,7 +1732,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     project_a1.update(cx_a, |project, cx| {
@@ -3022,7 +3021,6 @@ async fn test_fs_operations(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
-
     let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
 
     let entry = project_b
@@ -3031,6 +3029,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3059,6 +3058,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3087,6 +3087,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3115,20 +3116,25 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
+
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
+
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
         })
         .await
         .unwrap()
+        .to_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -4767,7 +4773,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4797,7 +4803,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
@@ -4825,7 +4831,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4842,7 +4848,7 @@ async fn test_references(
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
     });
 }
@@ -4899,7 +4905,15 @@ async fn test_project_search(
     let mut results = HashMap::default();
     let mut search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
-            SearchQuery::text("world", false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "world",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
             cx,
         )
     });
@@ -6434,5 +6448,125 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_context_collaboration_with_reconnect(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a.fs().insert_tree("/a", Default::default()).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+
+    // Client A sees that a guest has joined.
+    executor.run_until_parked();
+
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+    project_b.read_with(cx_b, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+
+    let context_store_a = cx_a
+        .update(|cx| ContextStore::new(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let context_store_b = cx_b
+        .update(|cx| ContextStore::new(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client A creates a new context.
+    let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
+    executor.run_until_parked();
+
+    // Client B retrieves host's contexts and joins one.
+    let context_b = context_store_b
+        .update(cx_b, |store, cx| {
+            let host_contexts = store.host_contexts().to_vec();
+            assert_eq!(host_contexts.len(), 1);
+            store.open_remote_context(host_contexts[0].id.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // Host and guest make changes
+    context_a.update(cx_a, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Host change\n")], None, cx)
+        })
+    });
+    context_b.update(cx_b, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Guest change\n")], None, cx)
+        })
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Guest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest change\nHost change\n"
+    );
+
+    // Disconnect client A and make some changes while disconnected.
+    server.disconnect_client(client_a.peer_id().unwrap());
+    server.forbid_connections();
+    context_a.update(cx_a, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Host offline change\n")], None, cx)
+        })
+    });
+    context_b.update(cx_b, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Guest offline change\n")], None, cx)
+        })
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Host offline change\nGuest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nGuest change\nHost change\n"
+    );
+
+    // Allow client A to reconnect and verify that contexts converge.
+    server.allow_connections();
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
+    );
+
+    // Client A disconnects without being able to reconnect. Context B becomes readonly.
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    context_b.read_with(cx_b, |context, cx| {
+        assert!(context.buffer().read(cx).read_only());
     });
 }

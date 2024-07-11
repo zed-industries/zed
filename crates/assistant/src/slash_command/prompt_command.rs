@@ -1,22 +1,14 @@
 use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct PromptSlashCommand {
-    store: Arc<PromptStore>,
-}
-
-impl PromptSlashCommand {
-    pub fn new(store: Arc<PromptStore>) -> Self {
-        Self { store }
-    }
-}
+pub(crate) struct PromptSlashCommand;
 
 impl SlashCommand for PromptSlashCommand {
     fn name(&self) -> String {
@@ -36,18 +28,25 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
-        let store = self.store.clone();
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
-            let prompts = store.search(query).await;
+            let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
-                .filter_map(|prompt| Some(prompt.title?.to_string()))
+                .filter_map(|prompt| {
+                    let prompt_title = prompt.title?.to_string();
+                    Some(ArgumentCompletion {
+                        label: prompt_title.clone(),
+                        new_text: prompt_title,
+                        run_command: true,
+                    })
+                })
                 .collect())
         })
     }
@@ -63,11 +62,12 @@ impl SlashCommand for PromptSlashCommand {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
-        let store = self.store.clone();
+        let store = PromptStore::global(cx);
         let title = SharedString::from(title.to_string());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {
+                let store = store.await?;
                 let prompt_id = store
                     .id_for_title(&title)
                     .with_context(|| format!("no prompt found with title {:?}", title))?;
@@ -76,41 +76,20 @@ impl SlashCommand for PromptSlashCommand {
             }
         });
         cx.foreground_executor().spawn(async move {
-            let prompt = prompt.await?;
+            let mut prompt = prompt.await?;
+            if prompt.is_empty() {
+                prompt.push('\n');
+            }
             let range = 0..prompt.len();
             Ok(SlashCommandOutput {
                 text: prompt,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            id,
-                            unfold,
-                            title: title.clone(),
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::Library,
+                    label: title,
                 }],
+                run_commands_in_text: true,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-pub struct PromptPlaceholder {
-    pub title: SharedString,
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for PromptPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::Library))
-            .child(Label::new(self.title))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

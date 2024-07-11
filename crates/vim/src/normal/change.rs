@@ -1,8 +1,8 @@
 use crate::{
     motion::{self, Motion},
+    normal::yank::copy_selections_content,
     object::Object,
     state::Mode,
-    utils::copy_selections_content,
     Vim,
 };
 use editor::{

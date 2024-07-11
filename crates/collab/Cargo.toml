@@ -71,6 +71,7 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+assistant = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
 audio.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -96,6 +97,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true }
 release_channel.workspace = true
 dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
@@ -107,4 +109,5 @@ theme.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }
 headless.workspace = true

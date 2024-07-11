@@ -24,6 +24,7 @@ async_zip.workspace = true
 futures.workspace = true
 http.workspace = true
 log.workspace = true
+paths.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,9 +1,9 @@
-use crate::count_open_ai_tokens;
 use crate::{
     assistant_settings::AnthropicModel, CompletionProvider, LanguageModel, LanguageModelRequest,
     Role,
 };
-use anthropic::{stream_completion, Request, RequestMessage, Role as AnthropicRole};
+use crate::{count_open_ai_tokens, LanguageModelCompletionProvider, LanguageModelRequestMessage};
+use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -26,50 +26,22 @@ pub struct AnthropicCompletionProvider {
     settings_version: usize,
 }
 
-impl AnthropicCompletionProvider {
-    pub fn new(
-        model: AnthropicModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) -> Self {
-        Self {
-            api_key: None,
-            api_url,
-            model,
-            http_client,
-            low_speed_timeout,
-            settings_version,
-        }
-    }
-
-    pub fn update(
-        &mut self,
-        model: AnthropicModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) {
-        self.model = model;
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
-    }
-
-    pub fn available_models(&self) -> impl Iterator<Item = AnthropicModel> {
+impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
+    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         AnthropicModel::iter()
+            .map(LanguageModel::Anthropic)
+            .collect()
     }
 
-    pub fn settings_version(&self) -> usize {
+    fn settings_version(&self) -> usize {
         self.settings_version
     }
 
-    pub fn is_authenticated(&self) -> bool {
+    fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
 
-    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
@@ -85,36 +57,36 @@ impl AnthropicCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::Anthropic(provider) = provider {
+                    provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                         provider.api_key = Some(api_key);
-                    }
+                    });
                 })
             })
         }
     }
 
-    pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         let delete_credentials = cx.delete_credentials(&self.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::Anthropic(provider) = provider {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = None;
-                }
+                });
             })
         })
     }
 
-    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|cx| AuthenticationPrompt::new(self.api_url.clone(), cx))
             .into()
     }
 
-    pub fn model(&self) -> AnthropicModel {
-        self.model.clone()
+    fn model(&self) -> LanguageModel {
+        LanguageModel::Anthropic(self.model.clone())
     }
 
-    pub fn count_tokens(
+    fn count_tokens(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
@@ -122,7 +94,7 @@ impl AnthropicCompletionProvider {
         count_open_ai_tokens(request, cx.background_executor())
     }
 
-    pub fn complete(
+    fn complete(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -167,58 +139,121 @@ impl AnthropicCompletionProvider {
         .boxed()
     }
 
-    fn to_anthropic_request(&self, request: LanguageModelRequest) -> Request {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+impl AnthropicCompletionProvider {
+    pub fn new(
+        model: AnthropicModel,
+        api_url: String,
+        http_client: Arc<dyn HttpClient>,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) -> Self {
+        Self {
+            api_key: None,
+            api_url,
+            model,
+            http_client,
+            low_speed_timeout,
+            settings_version,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        model: AnthropicModel,
+        api_url: String,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) {
+        self.model = model;
+        self.api_url = api_url;
+        self.low_speed_timeout = low_speed_timeout;
+        self.settings_version = settings_version;
+    }
+
+    fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
+        preprocess_anthropic_request(&mut request);
+
         let model = match request.model {
             LanguageModel::Anthropic(model) => model,
-            _ => self.model(),
+            _ => self.model.clone(),
         };
 
         let mut system_message = String::new();
-
-        let mut messages: Vec<RequestMessage> = Vec::new();
-        for message in request.messages {
-            if message.content.is_empty() {
-                continue;
-            }
-
-            match message.role {
-                Role::User | Role::Assistant => {
-                    let role = match message.role {
-                        Role::User => AnthropicRole::User,
-                        Role::Assistant => AnthropicRole::Assistant,
-                        _ => unreachable!(),
-                    };
-
-                    if let Some(last_message) = messages.last_mut() {
-                        if last_message.role == role {
-                            last_message.content.push_str("\n\n");
-                            last_message.content.push_str(&message.content);
-                            continue;
-                        }
-                    }
-
-                    messages.push(RequestMessage {
-                        role,
-                        content: message.content,
-                    });
-                }
-                Role::System => {
-                    if !system_message.is_empty() {
-                        system_message.push_str("\n\n");
-                    }
-                    system_message.push_str(&message.content);
-                }
-            }
+        if request
+            .messages
+            .first()
+            .map_or(false, |message| message.role == Role::System)
+        {
+            system_message = request.messages.remove(0).content;
         }
 
         Request {
             model,
-            messages,
+            messages: request
+                .messages
+                .iter()
+                .map(|msg| RequestMessage {
+                    role: match msg.role {
+                        Role::User => anthropic::Role::User,
+                        Role::Assistant => anthropic::Role::Assistant,
+                        Role::System => unreachable!("filtered out by preprocess_request"),
+                    },
+                    content: msg.content.clone(),
+                })
+                .collect(),
             stream: true,
             system: system_message,
             max_tokens: 4092,
         }
     }
+}
+
+pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
+    let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
+    let mut system_message = String::new();
+
+    for message in request.messages.drain(..) {
+        if message.content.is_empty() {
+            continue;
+        }
+
+        match message.role {
+            Role::User | Role::Assistant => {
+                if let Some(last_message) = new_messages.last_mut() {
+                    if last_message.role == message.role {
+                        last_message.content.push_str("\n\n");
+                        last_message.content.push_str(&message.content);
+                        continue;
+                    }
+                }
+
+                new_messages.push(message);
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.content);
+            }
+        }
+    }
+
+    if !system_message.is_empty() {
+        new_messages.insert(
+            0,
+            LanguageModelRequestMessage {
+                role: Role::System,
+                content: system_message,
+            },
+        );
+    }
+
+    request.messages = new_messages;
 }
 
 struct AuthenticationPrompt {
@@ -251,9 +286,9 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::Anthropic(provider) = provider {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
-                }
+                });
             })
         })
         .detach_and_log_err(cx);
@@ -322,7 +357,7 @@ impl Render for AuthenticationPrompt {
                 h_flex()
                     .gap_2()
                     .child(Label::new("Click on").size(LabelSize::Small))
-                    .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                    .child(Icon::new(IconName::ZedAssistant).size(IconSize::XSmall))
                     .child(
                         Label::new("in the status bar to close this panel.").size(LabelSize::Small),
                     ),

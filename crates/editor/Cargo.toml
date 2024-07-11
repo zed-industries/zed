@@ -30,6 +30,7 @@ test-support = [
 [dependencies]
 aho-corasick = "1.1"
 anyhow.workspace = true
+assets.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
@@ -48,6 +49,7 @@ lazy_static.workspace = true
 linkify.workspace = true
 log.workspace = true
 lsp.workspace = true
+markdown.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true

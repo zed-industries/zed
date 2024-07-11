@@ -4,7 +4,7 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{Context, TestAppContext, VisualTestContext};
+use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{
     tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
 };
@@ -105,7 +105,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         language::init(cx);
         client::init_settings(cx);
         Project::init_settings(cx);

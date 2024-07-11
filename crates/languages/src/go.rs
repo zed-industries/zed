@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 use http::github::latest_github_release;
 pub use language::*;
 use lazy_static::lazy_static;
@@ -78,12 +78,12 @@ impl super::LspAdapter for GoLspAdapter {
                 .and_then(|s| s.binary.clone())
         });
 
-        if let Ok(Some(BinarySettings {
-            path: Some(path),
-            arguments,
-        })) = configured_binary
-        {
-            Some(LanguageServerBinary {
+        match configured_binary {
+            Ok(Some(BinarySettings {
+                path: Some(path),
+                arguments,
+                ..
+            })) => Some(LanguageServerBinary {
                 path: path.into(),
                 arguments: arguments
                     .unwrap_or_default()
@@ -91,15 +91,20 @@ impl super::LspAdapter for GoLspAdapter {
                     .map(|arg| arg.into())
                     .collect(),
                 env: None,
-            })
-        } else {
-            let env = delegate.shell_env().await;
-            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-            Some(LanguageServerBinary {
-                path,
-                arguments: server_binary_arguments(),
-                env: Some(env),
-            })
+            }),
+            Ok(Some(BinarySettings {
+                path_lookup: Some(false),
+                ..
+            })) => None,
+            _ => {
+                let env = delegate.shell_env().await;
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+                Some(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                    env: Some(env),
+                })
+            }
         }
     }
 
@@ -496,7 +501,11 @@ impl ContextProvider for GoContextProvider {
         ))
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn language::File>>,
+        _: &AppContext,
+    ) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
@@ -509,7 +518,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-run".into(),
-                    VariableName::Symbol.template_value(),
+                    format!("'^{}$'", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 ..TaskTemplate::default()
@@ -540,7 +549,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "^{}$/^{}$",
+                        "'^{}$/^{}$'",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -561,7 +570,7 @@ impl ContextProvider for GoContextProvider {
                     "-benchmem".into(),
                     "-run=^$".into(),
                     "-bench".into(),
-                    format!("^{}$", VariableName::Symbol.template_value()),
+                    format!("'^{}$'", VariableName::Symbol.template_value()),
                 ],
                 tags: vec!["go-benchmark".to_owned()],
                 ..TaskTemplate::default()

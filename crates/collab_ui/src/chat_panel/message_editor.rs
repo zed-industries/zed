@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use channel::{ChannelChat, ChannelStore, MessageParams};
 use client::{UserId, UserStore};
 use collections::HashSet;
@@ -25,8 +25,15 @@ use crate::panel_settings::MessageEditorSettings;
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
+    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+        "@[-_\\w]+",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default()
+    )
+    .unwrap();
 }
 
 pub struct MessageEditor {
@@ -46,6 +53,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
@@ -132,7 +140,7 @@ impl MessageEditor {
 
         let markdown = language_registry.language_for_name("Markdown");
         cx.spawn(|_, mut cx| async move {
-            let markdown = markdown.await?;
+            let markdown = markdown.await.context("failed to load Markdown language")?;
             buffer.update(&mut cx, |buffer, cx| {
                 buffer.set_language(Some(markdown), cx)
             })

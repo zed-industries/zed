@@ -29,7 +29,8 @@ fn main() {
         }]);
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| SetMenus {})
-        });
+        })
+        .unwrap();
     });
 }
 

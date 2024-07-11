@@ -1,3 +1,7 @@
+{"Put":{"state":"ˇ one\n two \nthree"}}
+{"Key":"g"}
+{"Key":"_"}
+{"Get":{"state":" onˇe\n two \nthree","mode":"Normal"}}
 {"Put":{"state":"ˇ one \n two \nthree"}}
 {"Key":"g"}
 {"Key":"_"}

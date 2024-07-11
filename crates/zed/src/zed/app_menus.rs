@@ -9,14 +9,14 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Zed",
             items: vec![
-                MenuItem::action("About Zed…", super::About),
+                MenuItem::action("About Zed…", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
                     name: "Preferences",
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", super::OpenKeymap),
+                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
@@ -104,9 +104,9 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "View",
             items: vec![
-                MenuItem::action("Zoom In", super::IncreaseBufferFontSize),
-                MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
-                MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
+                MenuItem::action("Zoom In", zed_actions::IncreaseBufferFontSize),
+                MenuItem::action("Zoom Out", zed_actions::DecreaseBufferFontSize),
+                MenuItem::action("Reset Zoom", zed_actions::ResetBufferFontSize),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
                 MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
@@ -123,6 +123,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 }),
                 MenuItem::separator(),
                 MenuItem::action("Project Panel", project_panel::ToggleFocus),
+                MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
                 MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
                 MenuItem::separator(),
@@ -138,10 +139,10 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("Command Palette...", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("Go to File...", file_finder::Toggle::default()),
+                MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
-                MenuItem::action("Go to Symbol in Editor...", outline::Toggle),
-                MenuItem::action("Go to Line/Column...", go_to_line::Toggle),
+                MenuItem::action("Go to Symbol in Editor...", editor::actions::ToggleOutline),
+                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
@@ -162,8 +163,8 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Help",
             items: vec![
-                MenuItem::action("View Telemetry", super::OpenTelemetryLog),
-                MenuItem::action("View Dependency Licenses", super::OpenLicenses),
+                MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
+                MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::action("Give Feedback...", feedback::GiveFeedback),
                 MenuItem::separator(),

@@ -59,10 +59,6 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        return Err(anyhow::anyhow!("neither DISPLAY, nor WAYLAND_DISPLAY found. You can still run zed for remote development with --dev-server-token."));
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
     }
@@ -71,13 +67,21 @@ impl LinuxClient for HeadlessClient {
         &self,
         _handle: AnyWindowHandle,
         _params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
-        unimplemented!()
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        Err(anyhow::anyhow!(
+            "neither DISPLAY nor WAYLAND_DISPLAY is set. You can run in headless mode"
+        ))
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        "headless"
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, _uri: &str) {}
+
+    fn reveal_path(&self, _path: std::path::PathBuf) {}
 
     fn write_to_primary(&self, _item: crate::ClipboardItem) {}
 

@@ -151,7 +151,7 @@ impl AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        Ok(lock.open_window(options, build_root_view))
+        lock.open_window(options, build_root_view)
     }
 
     /// Schedule a future to be polled in the background.

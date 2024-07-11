@@ -2,11 +2,12 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_0_7;
+use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
 use super::{wasm_engine, WasmState};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
@@ -19,6 +20,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
+    zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
@@ -47,10 +49,9 @@ pub fn is_supported_wasm_api_version(
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
 pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
-    let max_version = if release_channel == ReleaseChannel::Dev {
-        latest::MAX_VERSION
-    } else {
-        since_v0_0_6::MAX_VERSION
+    let max_version = match release_channel {
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_0_6::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -256,19 +257,54 @@ impl Extension {
         }
     }
 
+    pub async fn call_complete_slash_command_argument(
+        &self,
+        store: &mut Store<WasmState>,
+        command: &SlashCommand,
+        query: &str,
+    ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_complete_slash_command_argument(store, command, query)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
+        }
+    }
+
     pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         argument: Option<&str>,
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> Result<Result<Option<String>, String>> {
+    ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V007(ext) => {
                 ext.call_run_slash_command(store, command, argument, resource)
                     .await
             }
-            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(None)),
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`run_slash_command` not available prior to v0.0.7"))
+            }
+        }
+    }
+
+    pub async fn call_index_docs(
+        &self,
+        store: &mut Store<WasmState>,
+        provider: &str,
+        package_name: &str,
+        database: Resource<Arc<IndexedDocsDatabase>>,
+    ) -> Result<Result<(), String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_index_docs(store, provider, package_name, database)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`index_docs` not available prior to v0.0.7"))
+            }
         }
     }
 }

@@ -84,7 +84,9 @@ impl<T: Copy + Ord> Selection<T> {
         }
         self.goal = new_goal;
     }
+}
 
+impl<T: Copy> Selection<T> {
     pub fn range(&self) -> Range<T> {
         self.start..self.end
     }

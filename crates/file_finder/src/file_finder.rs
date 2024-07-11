@@ -7,9 +7,9 @@ use collections::{BTreeSet, HashMap};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
@@ -30,13 +30,6 @@ use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
-impl_actions!(file_finder, [Toggle]);
-
-#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
-pub struct Toggle {
-    #[serde(default)]
-    pub separate_history: bool,
-}
 
 impl ModalView for FileFinder {}
 
@@ -52,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
 
 impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, action: &Toggle, cx| {
+        workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, action.separate_history, cx);
                 return;
@@ -483,7 +476,7 @@ impl FileFinderDelegate {
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
                     include_root_name,
-                    directories_only: false,
+                    candidates: project::Candidates::Files,
                 }
             })
             .collect::<Vec<_>>();
@@ -800,17 +793,18 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
-                Ok::<_, std::convert::Infallible>(FileSearchQuery {
-                    raw_query: raw_query.to_owned(),
-                    file_query_end: if path_like_str == raw_query {
-                        None
-                    } else {
-                        Some(path_like_str.len())
-                    },
+            let query =
+                PathLikeWithPosition::parse_str(&raw_query, |normalized_query, path_like_str| {
+                    Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                        raw_query: normalized_query.to_owned(),
+                        file_query_end: if path_like_str == raw_query {
+                            None
+                        } else {
+                            Some(path_like_str.len())
+                        },
+                    })
                 })
-            })
-            .expect("infallible");
+                .expect("infallible");
 
             if Path::new(query.path_like.path_query()).is_absolute() {
                 self.lookup_absolute_path(query, cx)

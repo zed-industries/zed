@@ -1,14 +1,8 @@
 [
   {
-    "label": "test $ZED_SYMBOL",
-    "command": "ruby",
-    "args": ["-Itest", "$ZED_FILE", "--name", "\"/$ZED_SYMBOL/\""],
-    "tags": ["minitest-test"]
-  },
-  {
-    "label": "rspec $ZED_SYMBOL",
+    "label": "rspec $ZED_RELATIVE_FILE:$ZED_ROW",
     "command": "./bin/rspec",
-    "args": ["\"$ZED_FILE:$ZED_ROW\""],
+    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["rspec-test"]
   }
 ]

@@ -4,7 +4,7 @@ description = "Haskell support."
 version = "0.1.0"
 schema_version = 1
 authors = [
-    "Pseudomata <pseudomata@proton.me>",
+    "Pocæus <github@pocaeus.com>",
     "Lei <45155667+leifu1128@users.noreply.github.com>"
 ]
 repository = "https://github.com/zed-industries/zed"

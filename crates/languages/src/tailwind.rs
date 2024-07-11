@@ -18,6 +18,9 @@ use std::{
 };
 use util::{maybe, ResultExt};
 
+#[cfg(target_os = "windows")]
+const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
+#[cfg(not(target_os = "windows"))]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -108,11 +111,39 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: server_binary_arguments(&server_path),
-        })
+        #[cfg(target_os = "windows")]
+        {
+            let mut env_path = vec![self
+                .node
+                .binary_path()
+                .await?
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf()];
+
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+                env_path.append(&mut paths);
+            }
+
+            let env_path = std::env::join_paths(env_path)?;
+            let mut env = HashMap::default();
+            env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
+
+            Ok(LanguageServerBinary {
+                path: "powershell.exe".into(),
+                env: Some(env),
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(LanguageServerBinary {
+                path: self.node.binary_path().await?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -158,26 +189,25 @@ impl LspAdapter for TailwindLspAdapter {
                 .unwrap_or_default()
         })?;
 
-        // We need to set this to null if it's not set, because tailwindcss-languageserver
-        // will check whether it's an object and if it is (even if it's empty) it will
-        // ignore the `userLanguages` from the initialization options.
-        let include_languages = tailwind_user_settings
-            .get("includeLanguages")
-            .cloned()
-            .unwrap_or(Value::Null);
-
-        let experimental = tailwind_user_settings
-            .get("experimental")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-
-        Ok(json!({
+        let mut configuration = json!({
             "tailwindCSS": {
                 "emmetCompletions": true,
-                "includeLanguages": include_languages,
-                "experimental": experimental,
             }
-        }))
+        });
+
+        if let Some(experimental) = tailwind_user_settings.get("experimental").cloned() {
+            configuration["tailwindCSS"]["experimental"] = experimental;
+        }
+
+        if let Some(class_attributes) = tailwind_user_settings.get("classAttributes").cloned() {
+            configuration["tailwindCSS"]["classAttributes"] = class_attributes;
+        }
+
+        if let Some(include_languages) = tailwind_user_settings.get("includeLanguages").cloned() {
+            configuration["tailwindCSS"]["includeLanguages"] = include_languages;
+        }
+
+        Ok(configuration)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

@@ -39,8 +39,9 @@ pub struct SearchOptions {
     pub case: bool,
     pub word: bool,
     pub regex: bool,
-    /// Specifies whether the item supports search & replace.
+    /// Specifies whether the  supports search & replace.
     pub replacement: bool,
+    pub selection: bool,
 }
 
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
@@ -52,14 +53,17 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             word: true,
             regex: true,
             replacement: true,
+            selection: true,
         }
     }
 
     fn search_bar_visibility_changed(&mut self, _visible: bool, _cx: &mut ViewContext<Self>) {}
 
     fn has_filtered_search_ranges(&mut self) -> bool {
-        false
+        Self::supported_options().selection
     }
+
+    fn toggle_filtered_search_ranges(&mut self, _enabled: bool, _cx: &mut ViewContext<Self>) {}
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>);
@@ -67,6 +71,16 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     fn activate_match(&mut self, index: usize, matches: &[Self::Match], cx: &mut ViewContext<Self>);
     fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>);
     fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>);
+    fn replace_all(
+        &mut self,
+        matches: &mut dyn Iterator<Item = &Self::Match>,
+        query: &SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        for item in matches {
+            self.replace(item, query, cx);
+        }
+    }
     fn match_index_for_direction(
         &mut self,
         matches: &[Self::Match],
@@ -119,6 +133,12 @@ pub trait SearchableItemHandle: ItemHandle {
         _: &SearchQuery,
         _: &mut WindowContext,
     );
+    fn replace_all(
+        &self,
+        matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
+        query: &SearchQuery,
+        cx: &mut WindowContext,
+    );
     fn match_index_for_direction(
         &self,
         matches: &AnyVec<dyn Send>,
@@ -138,6 +158,8 @@ pub trait SearchableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Option<usize>;
     fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext);
+
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut WindowContext);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
@@ -235,9 +257,26 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         self.update(cx, |this, cx| this.replace(mat, query, cx))
     }
 
+    fn replace_all(
+        &self,
+        matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
+        query: &SearchQuery,
+        cx: &mut WindowContext,
+    ) {
+        self.update(cx, |this, cx| {
+            this.replace_all(&mut matches.map(|m| m.downcast_ref().unwrap()), query, cx);
+        })
+    }
+
     fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| {
             this.search_bar_visibility_changed(visible, cx)
+        });
+    }
+
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| {
+            this.toggle_filtered_search_ranges(enabled, cx)
         });
     }
 }

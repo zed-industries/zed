@@ -28,7 +28,8 @@ pub use settings::*;
 pub use styles::*;
 
 use gpui::{
-    AppContext, AssetSource, Hsla, SharedString, WindowAppearance, WindowBackgroundAppearance,
+    px, AppContext, AssetSource, Hsla, Pixels, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 
@@ -37,6 +38,9 @@ pub enum Appearance {
     Light,
     Dark,
 }
+
+pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
+pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
 
 impl Appearance {
     pub fn is_light(&self) -> bool {
@@ -84,7 +88,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         if buffer_font_size != prev_buffer_font_size {
             prev_buffer_font_size = buffer_font_size;
-            reset_font_size(cx);
+            reset_buffer_font_size(cx);
         }
     })
     .detach();

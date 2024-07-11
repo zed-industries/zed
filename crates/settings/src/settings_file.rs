@@ -4,7 +4,7 @@ use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, UpdateGlobal};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
@@ -38,7 +38,7 @@ pub fn watch_config_file(
     let (tx, rx) = mpsc::unbounded();
     executor
         .spawn(async move {
-            let events = fs.watch(&path, Duration::from_millis(100)).await;
+            let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
             futures::pin_mut!(events);
 
             let contents = fs.load(&path).await.unwrap_or_default();
@@ -92,7 +92,7 @@ pub fn handle_settings_file_changes(
 }
 
 async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
-    match fs.load(&paths::SETTINGS).await {
+    match fs.load(paths::settings_file()).await {
         result @ Ok(_) => result,
         Err(err) => {
             if let Some(e) = err.downcast_ref::<std::io::Error>() {
@@ -115,7 +115,7 @@ pub fn update_settings_file<T: Settings>(
         let new_text = cx.read_global(|store: &SettingsStore, _cx| {
             store.new_text_for_update::<T>(old_text, update)
         })?;
-        let initial_path = paths::SETTINGS.as_path();
+        let initial_path = paths::settings_file().as_path();
         if fs.is_file(initial_path).await {
             let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
                 format!("Failed to canonicalize settings path {:?}", initial_path)

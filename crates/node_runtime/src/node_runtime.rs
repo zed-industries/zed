@@ -1,6 +1,7 @@
 mod archive;
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
@@ -138,7 +139,7 @@ impl RealNodeRuntime {
         };
 
         let folder_name = format!("node-{VERSION}-{os}-{arch}");
-        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
+        let node_containing_dir = paths::support_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(NODE_PATH);
         let npm_file = node_dir.join(NPM_PATH);

@@ -11,6 +11,7 @@ use language::SelectionGoal;
 
 use crate::{
     motion::{self, Motion},
+    state::Mode,
     Vim,
 };
 
@@ -29,41 +30,32 @@ pub fn create_mark(vim: &mut Vim, text: Arc<str>, tail: bool, cx: &mut WindowCon
     vim.clear_operator(cx);
 }
 
-pub fn create_mark_after(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
-    let Some(anchors) = vim.update_active_editor(cx, |_, editor, cx| {
+pub fn create_visual_marks(vim: &mut Vim, mode: Mode, cx: &mut WindowContext) {
+    let mut starts = vec![];
+    let mut ends = vec![];
+    let mut reversed = vec![];
+
+    vim.update_active_editor(cx, |_, editor, cx| {
         let (map, selections) = editor.selections.all_display(cx);
-        selections
-            .into_iter()
-            .map(|selection| {
-                let point = movement::saturating_right(&map, selection.tail());
+        for selection in selections {
+            let end = movement::saturating_left(&map, selection.end);
+            ends.push(
                 map.buffer_snapshot
-                    .anchor_before(point.to_offset(&map, Bias::Left))
-            })
-            .collect::<Vec<_>>()
-    }) else {
-        return;
-    };
-
-    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
-    vim.clear_operator(cx);
-}
-
-pub fn create_mark_before(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
-    let Some(anchors) = vim.update_active_editor(cx, |_, editor, cx| {
-        let (map, selections) = editor.selections.all_display(cx);
-        selections
-            .into_iter()
-            .map(|selection| {
-                let point = movement::saturating_left(&map, selection.head());
+                    .anchor_before(end.to_offset(&map, Bias::Left)),
+            );
+            starts.push(
                 map.buffer_snapshot
-                    .anchor_before(point.to_offset(&map, Bias::Left))
-            })
-            .collect::<Vec<_>>()
-    }) else {
-        return;
-    };
+                    .anchor_after(selection.start.to_offset(&map, Bias::Right)),
+            );
+            reversed.push(selection.reversed)
+        }
+    });
 
-    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
+    vim.update_state(|state| {
+        state.marks.insert("<".to_string(), starts);
+        state.marks.insert(">".to_string(), ends);
+        state.stored_visual_mode.replace((mode, reversed));
+    });
     vim.clear_operator(cx);
 }
 

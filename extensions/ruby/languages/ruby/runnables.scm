@@ -10,16 +10,16 @@
           (constant) @run
           (scope_resolution scope: (constant) name: (constant) @run)
         ]
-        (superclass (scope_resolution) @superclass (#match? @superclass "(::IntegrationTest|::TestCase|::SystemTestCase)$"))
-    ) @minitest-test
+        (superclass (scope_resolution) @superclass (#match? @superclass "(::IntegrationTest|::TestCase|::SystemTestCase|Minitest::Test)$"))
+    ) @_minitest-test
     (#set! tag minitest-test)
 )
 
 (
     (call
         method: (identifier) @run (#eq? @run "test")
-        arguments: (argument_list (string (string_content) @name))
-    ) @minitest-test
+        arguments: (argument_list (string (string_content) @_name))
+    ) @_minitest-test
     (#set! tag minitest-test)
 )
 
@@ -27,7 +27,7 @@
 (
     (method
         name: (identifier) @run (#match? @run "^test_")
-    ) @minitest-test
+    ) @_minitest-test
     (#set! tag minitest-test)
 )
 
@@ -35,27 +35,17 @@
 (
     (class
         name: (constant) @run (superclass) @superclass (#match? @superclass "(ApplicationSystemTestCase)$")
-    ) @minitest-test
+    ) @_minitest-test
     (#set! tag minitest-test)
 )
 
 ; RSpec
-
-; Example groups with literals
-(
-    (call
-       method: (identifier) @run (#any-of? @run "describe" "context")
-       arguments: (argument_list . (_) @name)
-    ) @rspec-test
-    (#set! tag rspec-test)
-)
-
 ; Examples
 (
     (call
-        method: (identifier) @run (#any-of? @run "it" "its" "specify")
-        arguments: (argument_list (string (string_content) @name))
-    ) @rspec-test
+       method: (identifier) @run (#any-of? @run "describe" "context" "it" "its" "specify")
+       arguments: (argument_list . (_) @_name)
+    ) @_rspec-test
     (#set! tag rspec-test)
 )
 
@@ -63,8 +53,8 @@
 (
     (call
         method: (identifier) @run (#any-of? @run "it" "its" "specify")
-        block: (_) @name
+        block: (_) @_name
         !arguments
-    ) @rspec-test
+    ) @_rspec-test
     (#set! tag rspec-test)
 )

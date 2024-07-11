@@ -263,9 +263,23 @@ impl ThemeRegistry {
 
     pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
         let reader = fs.open_sync(theme_path).await?;
-        let theme = serde_json_lenient::from_reader(reader)?;
+        let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
 
-        Ok(theme)
+        for theme in &theme_family.themes {
+            if theme
+                .style
+                .colors
+                .deprecated_scrollbar_thumb_background
+                .is_some()
+            {
+                log::warn!(
+                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
+                    theme_name = theme.name
+                )
+            }
+        }
+
+        Ok(theme_family)
     }
 
     /// Loads the user theme from the specified path and adds it to the registry.

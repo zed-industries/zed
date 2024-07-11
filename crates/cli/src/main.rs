@@ -3,10 +3,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use parking_lot::Mutex;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
@@ -54,7 +56,7 @@ struct Args {
 fn parse_path_with_position(
     argument_str: &str,
 ) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
-    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+    PathLikeWithPosition::parse_str(argument_str, |_, path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
 }
@@ -123,26 +125,34 @@ fn main() -> Result<()> {
         None
     };
 
-    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
-        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-        let (tx, rx) = (handshake.requests, handshake.responses);
-        tx.send(CliRequest::Open {
-            paths,
-            wait: args.wait,
-            open_new_workspace,
-            dev_server_token: args.dev_server_token,
-        })?;
+    let exit_status = Arc::new(Mutex::new(None));
 
-        while let Ok(response) = rx.recv() {
-            match response {
-                CliResponse::Ping => {}
-                CliResponse::Stdout { message } => println!("{message}"),
-                CliResponse::Stderr { message } => eprintln!("{message}"),
-                CliResponse::Exit { status } => std::process::exit(status),
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
+        let exit_status = exit_status.clone();
+        move || {
+            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+            let (tx, rx) = (handshake.requests, handshake.responses);
+            tx.send(CliRequest::Open {
+                paths,
+                wait: args.wait,
+                open_new_workspace,
+                dev_server_token: args.dev_server_token,
+            })?;
+
+            while let Ok(response) = rx.recv() {
+                match response {
+                    CliResponse::Ping => {}
+                    CliResponse::Stdout { message } => println!("{message}"),
+                    CliResponse::Stderr { message } => eprintln!("{message}"),
+                    CliResponse::Exit { status } => {
+                        exit_status.lock().replace(status);
+                        return Ok(());
+                    }
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     });
 
     if args.foreground {
@@ -152,6 +162,9 @@ fn main() -> Result<()> {
         sender.join().unwrap()?;
     }
 
+    if let Some(exit_status) = exit_status.lock().take() {
+        std::process::exit(exit_status);
+    }
     Ok(())
 }
 
@@ -161,10 +174,7 @@ mod linux {
         env,
         ffi::OsString,
         io,
-        os::{
-            linux::net::SocketAddrExt,
-            unix::net::{SocketAddr, UnixDatagram},
-        },
+        os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
         thread,
@@ -186,22 +196,24 @@ mod linux {
     impl Detect {
         pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
             let path = if let Some(path) = path {
-                path.to_path_buf().canonicalize()
+                path.to_path_buf().canonicalize()?
             } else {
                 let cli = env::current_exe()?;
                 let dir = cli
                     .parent()
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                match dir.join("zed").canonicalize() {
-                    Ok(path) => Ok(path),
-                    // development builds have Zed capitalized
-                    Err(e) => match dir.join("Zed").canonicalize() {
-                        Ok(path) => Ok(path),
-                        Err(_) => Err(e),
-                    },
-                }
-            }?;
+                // libexec is the standard, lib/zed is for Arch (and other non-libexec distros),
+                // ./zed is for the target directory in development builds.
+                let possible_locations =
+                    ["../libexec/zed-editor", "../lib/zed/zed-editor", "./zed"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .ok_or_else(|| {
+                        anyhow!("could not find any of: {}", possible_locations.join(", "))
+                    })?
+            };
 
             Ok(App(path))
         }
@@ -222,12 +234,9 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let uid: u32 = unsafe { libc::getuid() };
-            let sock_addr =
-                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
-
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
-            if sock.connect_addr(&sock_addr).is_err() {
+            if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;
@@ -254,10 +263,8 @@ mod linux {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if std::env::var("ZED_KEEP_FD").is_err() {
-                        if let Err(_) = fork::close_fd() {
-                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
-                        }
+                    if let Err(_) = fork::close_fd() {
+                        eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
                         exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
@@ -315,7 +322,7 @@ mod flatpak {
         if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
-            args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
+            args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
             args.push(
                 format!(
                     "--env={EXTRA_LIB_ENV_NAME}={}",
@@ -333,7 +340,7 @@ mod flatpak {
 
             if !is_app_location_set {
                 args.push("--zed".into());
-                args.push(flatpak_dir.join("bin").join("zed-app").into());
+                args.push(flatpak_dir.join("libexec").join("zed-editor").into());
             }
 
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
@@ -347,8 +354,8 @@ mod flatpak {
             && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
         {
             if args.zed.is_none() {
-                args.zed = Some("/app/bin/zed-app".into());
-                env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
+                args.zed = Some("/app/libexec/zed-editor".into());
+                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
             }
         }
         args

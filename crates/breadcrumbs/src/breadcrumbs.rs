@@ -72,7 +72,7 @@ impl Render for Breadcrumbs {
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-            Label::new("›").color(Color::Muted).into_any_element()
+            Label::new("›").color(Color::Placeholder).into_any_element()
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
@@ -83,13 +83,19 @@ impl Render for Breadcrumbs {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
                     .child(breadcrumbs_stack)
-                    .style(ButtonStyle::Subtle)
+                    .style(ButtonStyle::Transparent)
                     .on_click(move |_, cx| {
                         if let Some(editor) = editor.upgrade() {
-                            outline::toggle(editor, &outline::Toggle, cx)
+                            outline::toggle(editor, &editor::actions::ToggleOutline, cx)
                         }
                     })
-                    .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
+                    .tooltip(|cx| {
+                        Tooltip::for_action(
+                            "Show symbol outline",
+                            &editor::actions::ToggleOutline,
+                            cx,
+                        )
+                    }),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.

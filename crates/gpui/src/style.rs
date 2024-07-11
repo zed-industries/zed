@@ -1,4 +1,8 @@
-use std::{iter, mem, ops::Range};
+use std::{
+    hash::{Hash, Hasher},
+    iter, mem,
+    ops::Range,
+};
 
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
@@ -208,6 +212,8 @@ impl Default for TextStyle {
             // todo(linux) make this configurable or choose better default
             font_family: if cfg!(target_os = "linux") {
                 "FreeMono".into()
+            } else if cfg!(target_os = "windows") {
+                "Segoe UI".into()
             } else {
                 "Helvetica".into()
             },
@@ -318,6 +324,20 @@ pub struct HighlightStyle {
 }
 
 impl Eq for HighlightStyle {}
+
+impl Hash for HighlightStyle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.color.hash(state);
+        self.font_weight.hash(state);
+        self.font_style.hash(state);
+        self.background_color.hash(state);
+        self.underline.hash(state);
+        self.strikethrough.hash(state);
+        state.write_u32(u32::from_be_bytes(
+            self.fade_out.map(|f| f.to_be_bytes()).unwrap_or_default(),
+        ));
+    }
+}
 
 impl Style {
     /// Returns true if the style is visible and the background is opaque.
@@ -549,7 +569,7 @@ impl Default for Style {
 }
 
 /// The properties that can be applied to an underline.
-#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[refineable(Debug)]
 pub struct UnderlineStyle {
     /// The thickness of the underline.
@@ -563,7 +583,7 @@ pub struct UnderlineStyle {
 }
 
 /// The properties that can be applied to a strikethrough.
-#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[refineable(Debug)]
 pub struct StrikethroughStyle {
     /// The thickness of the strikethrough.
