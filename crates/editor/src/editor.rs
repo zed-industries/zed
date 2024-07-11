@@ -1228,6 +1228,8 @@ impl CompletionsMenu {
                                 None
                             };
 
+                        let color = completion.color().unwrap_or(gpui::transparent_black());
+
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
@@ -1243,6 +1245,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
+                                .start_slot(div().size_4().bg(color).rounded(px(2.)))
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )

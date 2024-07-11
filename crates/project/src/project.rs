@@ -1,4 +1,5 @@
 pub mod buffer_store;
+mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
@@ -26,6 +27,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
+use color_extractor::ColorExtractor;
 use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{
@@ -36,7 +38,7 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
@@ -47,7 +49,9 @@ use language::{
     Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
+use lsp::{
+    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+};
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
@@ -337,6 +341,15 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext) -> bool>>,
+}
+
+impl Completion {
+    pub fn color(&self) -> Option<Hsla> {
+        match self.lsp_completion.kind {
+            Some(CompletionItemKind::COLOR) => ColorExtractor::extract(&self.lsp_completion),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for Completion {
