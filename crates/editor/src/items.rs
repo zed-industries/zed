@@ -903,7 +903,7 @@ impl Item for Editor {
                                 cx,
                             );
                         }
-                        language::Event::Edited => {
+                        language::Event::Edited if this.can_serialize_content(cx) => {
                             let workspace_id = *workspace_id;
                             let item_id = cx.view().item_id().as_u64() as ItemId;
                             this.serialize_unsaved_buffer_debounce.lock().fire_new(
@@ -1058,12 +1058,14 @@ impl Item for Editor {
         }
     }
 
-    fn can_serialize(&self, cx: &AppContext) -> bool {
-        // TODO: Here we could check a setting.
-        self.buffer().read(cx).as_singleton().is_some()
+    fn can_serialize_content(&self, cx: &AppContext) -> bool {
+        let workspace_can_deserialize = self.workspace().map_or(false, |workspace| {
+            workspace.read(cx).can_deserialize_content(cx)
+        });
+        workspace_can_deserialize && self.buffer().read(cx).as_singleton().is_some()
     }
 
-    fn serialize(
+    fn serialize_content(
         &self,
         workspace: &mut Workspace,
         item_id: ItemId,
@@ -1105,7 +1107,7 @@ impl Item for Editor {
         })
     }
 
-    fn delete_serialized(
+    fn delete_serialized_content(
         &self,
         workspace: &mut Workspace,
         item_id: ItemId,
@@ -1115,7 +1117,6 @@ impl Item for Editor {
             return Task::ready(Ok(()));
         };
 
-        println!("deleting serialized content of item {:?}", item_id);
         cx.spawn(|cx| async move {
             cx.background_executor()
                 .spawn(DB.delete_contents(workspace_id, item_id))

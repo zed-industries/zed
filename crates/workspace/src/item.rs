@@ -262,15 +262,20 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn can_serialize(&self, _: &AppContext) -> bool {
+    fn can_serialize_content(&self, _: &AppContext) -> bool {
         false
     }
 
-    fn serialize(&self, _: &mut Workspace, _: ItemId, _: &mut WindowContext) -> Task<Result<()>> {
+    fn serialize_content(
+        &self,
+        _: &mut Workspace,
+        _: ItemId,
+        _: &mut WindowContext,
+    ) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
-    fn delete_serialized(
+    fn delete_serialized_content(
         &self,
         _: &mut Workspace,
         _: ItemId,
@@ -350,9 +355,13 @@ pub trait ItemHandle: 'static + Send {
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
 
-    fn can_serialize(&self, cx: &AppContext) -> bool;
-    fn serialize(&self, workspace: &mut Workspace, cx: &mut WindowContext) -> Task<Result<()>>;
-    fn delete_serialized(
+    fn can_serialize_content(&self, cx: &AppContext) -> bool;
+    fn serialize_content(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
+    fn delete_serialized_content(
         &self,
         workspace: &mut Workspace,
         cx: &mut WindowContext,
@@ -748,27 +757,29 @@ impl<T: Item> ItemHandle for View<T> {
         Box::new(self.downgrade())
     }
 
-    fn can_serialize(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_serialize(cx)
+    fn can_serialize_content(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_serialize_content(cx)
     }
 
-    fn serialize(
-        &self,
-        workspace: &mut Workspace,
-        cx: &mut WindowContext,
-    ) -> Task<anyhow::Result<()>> {
-        let item_id = self.entity_id().as_u64() as ItemId;
-        self.update(cx, |item, cx| item.serialize(workspace, item_id, cx))
-    }
-
-    fn delete_serialized(
+    fn serialize_content(
         &self,
         workspace: &mut Workspace,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
         let item_id = self.entity_id().as_u64() as ItemId;
         self.update(cx, |item, cx| {
-            item.delete_serialized(workspace, item_id, cx)
+            item.serialize_content(workspace, item_id, cx)
+        })
+    }
+
+    fn delete_serialized_content(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Task<anyhow::Result<()>> {
+        let item_id = self.entity_id().as_u64() as ItemId;
+        self.update(cx, |item, cx| {
+            item.delete_serialized_content(workspace, item_id, cx)
         })
     }
 }

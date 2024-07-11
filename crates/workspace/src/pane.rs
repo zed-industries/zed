@@ -1502,19 +1502,20 @@ impl Pane {
         item: &dyn ItemHandle,
         cx: &mut AsyncWindowContext,
     ) -> Option<Task<Result<()>>> {
-        pane.update(cx, |pane, cx| {
-            if item.can_serialize(cx) {
-                let task = pane
-                    .workspace
-                    .update(cx, |workspace, cx| item.delete_serialized(workspace, cx))
-                    .ok()?;
-                Some(task)
-            } else {
-                None
-            }
-        })
-        .ok()
-        .flatten()
+        let task = pane.update(cx, |pane, cx| {
+            pane.workspace.update(cx, |workspace, cx| {
+                if item.can_serialize_content(cx) {
+                    Some(item.delete_serialized_content(workspace, cx))
+                } else {
+                    None
+                }
+            })
+        });
+        if let Ok(Ok(task)) = task {
+            task
+        } else {
+            None
+        }
     }
 
     pub fn autosave_item(

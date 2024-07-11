@@ -1531,8 +1531,8 @@ impl Workspace {
                         let mut remaining_dirty_items = Vec::new();
                         let mut serialize_tasks = Vec::new();
                         for (pane, item) in dirty_items {
-                            if item.can_serialize(cx) {
-                                serialize_tasks.push(item.serialize(workspace, cx));
+                            if item.can_serialize_content(cx) {
+                                serialize_tasks.push(item.serialize_content(workspace, cx));
                             } else {
                                 remaining_dirty_items.push((pane, item));
                             }
@@ -3751,6 +3751,7 @@ impl Workspace {
         };
 
         // don't save workspace state for the empty workspace.
+        println!("location: {:?}", location);
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
@@ -3767,6 +3768,13 @@ impl Workspace {
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
+    }
+
+    pub fn can_deserialize_content(&self, cx: &AppContext) -> bool {
+        // We only want to serialize content of workspace items if the workspace itself
+        // can also deserialize them again
+        self.local_paths(cx)
+            .map_or(false, |local_paths| !local_paths.is_empty())
     }
 
     pub(crate) fn load_workspace(
