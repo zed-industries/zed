@@ -441,6 +441,9 @@ impl Platform for WindowsPlatform {
     }
 
     // todo(windows)
+    fn set_tray_item(&self, item: TrayItem) {}
+
+    // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
     fn set_dock_menu(&self, menus: Vec<MenuItem>, keymap: &Keymap) {}
 

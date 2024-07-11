@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
     Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    TrayItem, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -727,6 +727,8 @@ impl Platform for MacPlatform {
             }
         }
     }
+
+    fn set_tray_item(&self, item: TrayItem) {}
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         unsafe {

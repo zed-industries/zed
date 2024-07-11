@@ -2,14 +2,17 @@ use crate::{AppContext, MouseButton, Point};
 
 /// An icon displayed in a tray menu
 pub enum TrayIcon<'a> {
-    /// Name of the icon
+    /// Name of the icon, this is platform dependent.
     Name(&'a str),
-}
-
-impl<'a> Default for TrayIcon<'a> {
-    fn default() -> Self {
-        Self::Name("")
-    }
+    /// Icon image
+    Image {
+        /// Width of the image
+        width: u32,
+        /// Height of the image
+        height: u32,
+        /// ARGB32 representation of the image
+        bytes: Vec<u8>,
+    },
 }
 
 /// Input type
@@ -126,7 +129,6 @@ pub enum TrayEvent {
 }
 
 /// A tray item.
-#[derive(Default)]
 pub struct TrayItem<'a> {
     pub(crate) icon: TrayIcon<'a>,
     pub(crate) title: String,
@@ -139,7 +141,14 @@ pub struct TrayItem<'a> {
 impl<'a> TrayItem<'a> {
     /// Creates a new default tray item
     pub fn new() -> Self {
-        TrayItem::default()
+        Self {
+            icon: TrayIcon::Name(""),
+            title: String::default(),
+            tooltip: String::default(),
+            description: String::default(),
+            submenus: Vec::default(),
+            event: None,
+        }
     }
 
     /// Sets the tray displayed icon.

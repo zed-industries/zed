@@ -25,6 +25,16 @@ pub struct Pixmap {
     bytes: Vec<u8>,
 }
 
+impl Pixmap {
+    pub fn new(width: i32, height: i32, bytes: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            bytes,
+        }
+    }
+}
+
 impl From<Pixmap> for Structure<'_> {
     fn from(value: Pixmap) -> Self {
         StructureBuilder::new()
@@ -226,33 +236,28 @@ pub struct DBusMenuItem {
 }
 
 impl DBusMenuItem {
-    ///
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    ///
-    pub fn set_id(&mut self, id: impl Into<String>) -> &mut Self {
+    pub(crate) fn set_id(&mut self, id: impl Into<String>) -> &mut Self {
         self.user_id = Some(id.into());
         self
     }
 
-    ///
-    pub fn set_type(&mut self, menu_type: MenuType) -> &mut Self {
+    pub(crate) fn set_type(&mut self, menu_type: MenuType) -> &mut Self {
         self.properties
             .insert(MENU_PROPERTY_TYPE, MenuProperty::Type(menu_type));
         self
     }
 
-    ///
-    pub fn set_label(&mut self, label: impl Into<String>) -> &mut Self {
+    pub(crate) fn set_label(&mut self, label: impl Into<String>) -> &mut Self {
         self.properties
             .insert(MENU_PROPERTY_LABEL, MenuProperty::Label(label.into()));
         self
     }
 
-    ///
-    pub fn set_enabled(&mut self, enabled: bool) -> &mut Self {
+    pub(crate) fn set_enabled(&mut self, enabled: bool) -> &mut Self {
         match enabled {
             true => self.properties.remove(MENU_PROPERTY_ENABLED),
             false => self
@@ -262,8 +267,7 @@ impl DBusMenuItem {
         self
     }
 
-    ///
-    pub fn set_visible(&mut self, visible: bool) -> &mut Self {
+    pub(crate) fn set_visible(&mut self, visible: bool) -> &mut Self {
         match visible {
             true => self.properties.remove(MENU_PROPERTY_VISIBLE),
             false => self
@@ -273,8 +277,7 @@ impl DBusMenuItem {
         self
     }
 
-    ///
-    pub fn set_icon(&mut self, icon: Icon) -> &mut Self {
+    pub(crate) fn set_icon(&mut self, icon: Icon) -> &mut Self {
         match icon {
             Icon::Name(_) | Icon::Bytes(_) => self
                 .properties
@@ -284,8 +287,7 @@ impl DBusMenuItem {
         self
     }
 
-    ///
-    pub fn set_toggle_type(&mut self, toggle_type: MenuToggleType) -> &mut Self {
+    pub(crate) fn set_toggle_type(&mut self, toggle_type: MenuToggleType) -> &mut Self {
         self.properties.insert(
             MENU_PROPERTY_TOGGLE_TYPE,
             MenuProperty::ToggleType(toggle_type),
@@ -293,15 +295,13 @@ impl DBusMenuItem {
         self
     }
 
-    ///
-    pub fn set_toggle_state(&mut self, state: i32) -> &mut Self {
+    pub(crate) fn set_toggle_state(&mut self, state: i32) -> &mut Self {
         self.properties
             .insert(MENU_PROPERTY_TOGGLE_TYPE, MenuProperty::ToggleState(state));
         self
     }
 
-    ///
-    pub fn set_children(&mut self, mut children: Vec<DBusMenuItem>) {
+    pub(crate) fn set_children(&mut self, mut children: Vec<DBusMenuItem>) {
         self.children = children;
     }
 }

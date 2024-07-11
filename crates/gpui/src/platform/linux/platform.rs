@@ -47,7 +47,7 @@ use crate::{
 };
 
 use super::dbus;
-use super::dbus::dbusmenu::{DBusMenu, DBusMenuItem};
+use super::dbus::dbusmenu::{DBusMenu, DBusMenuItem, Pixmap};
 use super::dbus::status_notifier::{StatusNotifierItem, StatusNotifierItemOptions, ToolTip};
 use super::x11::X11Client;
 
@@ -436,6 +436,15 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn set_tray_item(&self, item: TrayItem) {
         let icon = match item.icon {
             TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
+            TrayIcon::Image {
+                width,
+                height,
+                bytes,
+            } => dbus::dbusmenu::Icon::Pixmaps(Vec::from_iter([Pixmap::new(
+                width as i32,
+                height as i32,
+                bytes,
+            )])),
         };
         let mut options = StatusNotifierItemOptions::new()
             .title(item.title)
