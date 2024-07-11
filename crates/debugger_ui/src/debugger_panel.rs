@@ -360,13 +360,13 @@ impl DebugPanel {
                         .read(cx)
                         .items()
                         .filter_map(|item| item.downcast::<DebugPanelItem>())
-                        .find(|item| {
+                        .any(|item| {
                             let item = item.read(cx);
 
                             item.client().id() == client_id && item.thread_id() == thread_id
                         });
 
-                    if let None = existing_item {
+                    if existing_item {
                         let debug_panel = cx.view().clone();
                         this.pane.update(cx, |this, cx| {
                             let tab = cx.new_view(|cx| {
