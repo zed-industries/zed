@@ -83,10 +83,11 @@ impl SlashCommand for AutoCommand {
                 commands
             );
 
-            // The commands come back without the slash prefix and without trailing newlines.
             for command in commands {
                 prompt.push('/');
-                prompt.push_str(&command);
+                prompt.push_str(&command.name);
+                prompt.push(' ');
+                prompt.push_str(&command.arg);
                 prompt.push('\n');
             }
 
@@ -121,6 +122,12 @@ fn summaries_prompt(summaries: &[FileSummary], original_prompt: &str) -> String 
 /// The slash commands that the model is told about, and which we look for in the inference response.
 const SUPPORTED_SLASH_COMMANDS: &[&str] = &["search", "file"];
 
+#[derive(Debug, Clone)]
+struct CommandToRun {
+    name: String,
+    arg: String,
+}
+
 /// Given the pre-indexed file summaries for this project, as well as the original prompt
 /// string passed to `/auto`, get a list of slash commands to run, along with their arguments.
 ///
@@ -134,12 +141,7 @@ async fn commands_for_summaries(
     summaries: &[FileSummary],
     original_prompt: &str,
     cx: &AsyncAppContext,
-) -> Result<Vec<String>> {
-    log::info!(
-        "Inferring prompt context using {} file summaries",
-        summaries.len()
-    );
-
+) -> Result<Vec<CommandToRun>> {
     if summaries.is_empty() {
         return Ok(Vec::new());
     }
@@ -158,6 +160,11 @@ async fn commands_for_summaries(
         if current_summaries.is_empty() {
             continue;
         }
+
+        log::info!(
+            "Inferring prompt context using {} file summaries",
+            current_summaries.len()
+        );
 
         let request = LanguageModelRequest {
             model: model.clone(),
@@ -182,19 +189,38 @@ async fn commands_for_summaries(
                 accumulated_response.push_str(&chunk?);
             }
 
-            for line in accumulated_response.split('\n').map(|line| line.trim()) {
-                if !line.is_empty() {
-                    if SUPPORTED_SLASH_COMMANDS
-                        .iter()
-                        .any(|command| line.starts_with(command))
+            for line in accumulated_response.split('\n') {
+                if let Some(first_space) = line.find(' ') {
+                    let command = &line[..first_space].trim();
+                    let arg = &line[first_space..].trim();
+
+                    // Don't return empty or duplicate or duplicate commands
+                    if !command.is_empty()
+                        && !final_response
+                            .iter()
+                            .any(|cmd: &CommandToRun| cmd.name == *command && cmd.arg == *arg)
                     {
-                        final_response.push(line.to_string());
-                    } else {
-                        log::warn!(
-                            "Context inference returned an unrecognized slash-commend line: {:?}",
-                            line
-                        )
+                        if SUPPORTED_SLASH_COMMANDS
+                            .iter()
+                            .any(|supported| command == supported)
+                        {
+                            final_response.push(CommandToRun {
+                                name: command.to_string(),
+                                arg: arg.to_string(),
+                            });
+                        } else {
+                            log::warn!(
+                                "Context inference returned an unrecognized slash-commend line: {:?}",
+                                line
+                            );
+                        }
                     }
+                } else if !line.trim().is_empty() {
+                    // All slash-commands currently supported in context inference need a space for the argument.
+                    log::warn!(
+                        "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash-command): {:?}",
+                        line
+                    );
                 }
             }
         } else if current_summaries.len() == 1 {
@@ -208,6 +234,9 @@ async fn commands_for_summaries(
             stack.push((left, accumulated_response));
         }
     }
+
+    // Sort the commands by name (reversed just so that /search appears before /file)
+    final_response.sort_by(|cmd1, cmd2| cmd1.name.cmp(&cmd2.name).reverse());
 
     Ok(final_response)
 }
