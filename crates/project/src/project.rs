@@ -11479,9 +11479,9 @@ impl ProjectLspAdapterDelegate {
         })
     }
 
-    async fn load_shell_env(&self, load_direnv: &DirenvSettings) {
+    async fn load_shell_env(&self) {
         let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = load_shell_environment(&worktree_abs_path, &load_direnv)
+        let shell_env = load_shell_environment(&worktree_abs_path, &self.load_direnv)
             .await
             .with_context(|| {
                 format!("failed to determine load login shell environment in {worktree_abs_path:?}")
@@ -11513,14 +11513,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
-        self.load_shell_env(&self.load_direnv).await;
+        self.load_shell_env().await;
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-        self.load_shell_env(&self.load_direnv).await;
+        self.load_shell_env().await;
         let shell_path = self
             .shell_env
             .lock()
