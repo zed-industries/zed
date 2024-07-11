@@ -4921,8 +4921,6 @@ impl Editor {
 
                 let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-                let text = &completion.text.to_string();
-
                 self.insert_internal(cx, |buffer, selections, cx| {
                     buffer.edit(
                         selections.iter().map(|s| {
@@ -4930,9 +4928,9 @@ impl Editor {
                             let edit_end = display_map.next_line_boundary(s.start).0;
                             match truncation_mode {
                                 Some(TruncationMode::EndOfLine) => {
-                                    ((s.start..edit_end), text.clone())
+                                    ((s.start..edit_end), partial_completion.clone())
                                 }
-                                None => ((s.start..s.end), text.clone()),
+                                None => ((s.start..s.end), partial_completion.clone()),
                             }
                         }),
                         None,
