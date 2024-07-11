@@ -152,6 +152,16 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 `integer` values between `100` and `900`
 
+## Buffer Line Height
+
+- Description: The default line height for text in the editor.
+- Setting: `buffer_line_height`
+- Default: `"comfortable"`
+
+**Options**
+
+`"standard"`, `"comfortable"` or `{"custom": float}` (`1` is very compact, `2` very loose)
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
