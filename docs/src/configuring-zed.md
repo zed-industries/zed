@@ -909,7 +909,8 @@ Settings-related hint updates are not debounced.
 ```json
 "journal": {
   "path": "~",
-  "hour_format": "hour12"
+  "hour_format": "hour12",
+  "entry_format": "journal/%Y/%m/%d.md",
 }
 ```
 
@@ -921,7 +922,7 @@ Settings-related hint updates are not debounced.
 
 **Options**
 
-`string` values
+1. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the journal will default to this platform's home directory.
 
 ### Hour Format
 
@@ -946,6 +947,20 @@ Settings-related hint updates are not debounced.
   "hour_format": "hour24"
 }
 ```
+
+### Entry Format
+
+- Description: The format for structuring journal entries.
+- Setting: `entry_format`
+- Default: `journal/%Y/%m/%d.md`
+
+
+**Options**
+
+1. See the [`chrono::format::strftime` module](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)  on the supported escape sequences.
+
+2. If value is not properly configured, it will fallback to default `entry_format`
+
 
 ## Languages
 

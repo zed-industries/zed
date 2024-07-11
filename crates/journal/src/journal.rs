@@ -26,7 +26,7 @@ pub struct JournalSettings {
     ///
     /// Default: hour12
     pub hour_format: Option<HourFormat>,
-    /// The entry format for storing journal entries.
+    /// The format for structuring journal entries.
     /// Default: "journal/%Y/%m/%d.md"
     pub entry_format: Option<String>,
 }
