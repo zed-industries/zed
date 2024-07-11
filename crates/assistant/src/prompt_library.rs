@@ -766,6 +766,7 @@ impl PromptLibrary {
             .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
+            .px_1()
             .w_1_3()
             .overflow_x_hidden()
             .child(
