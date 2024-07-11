@@ -16,7 +16,75 @@ impl RuffExtension {
         if let Some(path) = worktree.which("ruff") {
             return Ok(path);
         }
-        unreachable!();
+
+        zed::set_language_server_installation_status(
+            &language_server_id,
+            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+        );
+        let release = zed::latest_github_release(
+            "astral-sh/ruff",
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
+
+        let (platform, arch) = zed::current_platform();
+
+        let asset_stem = format!(
+            "ruff-{arch}-{os}",
+            arch = match arch {
+                zed::Architecture::Aarch64 => "aarch64",
+                zed::Architecture::X86 => "x86",
+                zed::Architecture::X8664 => "x86_64",
+            },
+            os = match platform {
+                zed::Os::Mac => "apple-darwin",
+                zed::Os::Linux => "unknown-linux-gnu",
+                zed::Os::Windows => "pc-windows-msvc",
+            }
+        );
+        let asset_name = format!(
+            "{asset_stem}.{suffix}",
+            suffix = match platform {
+                zed::Os::Windows => "zip",
+                _ => "tar.gz",
+            }
+        );
+
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
+
+        let version_dir = format!("ruff-{}", release.version);
+        let binary_path = format!("{version_dir}/{asset_stem}/ruff");
+
+        if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+            zed::set_language_server_installation_status(
+                &language_server_id,
+                &zed::LanguageServerInstallationStatus::Downloading,
+            );
+            let file_kind = match platform {
+                zed::Os::Windows => zed::DownloadedFileType::Zip,
+                _ => zed::DownloadedFileType::GzipTar,
+            };
+            zed::download_file(&asset.download_url, &version_dir, file_kind)
+                .map_err(|e| format!("failed to download file: {e}"))?;
+
+            let entries =
+                fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
+                if entry.file_name().to_str() != Some(&version_dir) {
+                    fs::remove_dir_all(&entry.path()).ok();
+                }
+            }
+        }
+
+        self.cached_binary_path = Some(binary_path.clone());
+        Ok(binary_path)
     }
 }
 

@@ -6,6 +6,6 @@ schema_version = 1
 authors = []
 repository = "https://github.com/zed-industries/zed"
 
-[language_servers.ruff-language-server]
+[language_servers.ruff]
 name = "Ruff"
 languages = ["Python"]
