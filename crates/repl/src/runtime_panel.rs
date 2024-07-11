@@ -12,6 +12,7 @@ use gpui::{
     FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
 };
 use language::{Language, Point};
+use multi_buffer::MultiBufferRow;
 use project::Fs;
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
@@ -176,8 +177,11 @@ impl RuntimePanel {
 
             let cursor_row = multi_buffer_snapshot.offset_to_point(cursor).row;
             let start_offset = multi_buffer_snapshot.point_to_offset(Point::new(cursor_row, 0));
-            let end_point = multi_buffer_snapshot
-                .clip_point(Point::new(cursor_row, u32::MAX), editor::Bias::Left);
+
+            let end_point = Point::new(
+                cursor_row,
+                multi_buffer_snapshot.line_len(MultiBufferRow(cursor_row)),
+            );
             let end_offset = start_offset.saturating_add(end_point.column as usize);
 
             // Create a range from the start to the end of the line
