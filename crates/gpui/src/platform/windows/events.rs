@@ -1059,7 +1059,7 @@ fn handle_system_settings_changed(
     lock.system_settings.mouse_wheel_settings.update();
     // mouse double click
     lock.click_state.system_update();
-    // window size offset
+    // window border offset
     lock.border_offset.udpate(handle).log_err();
     Some(0)
 }
