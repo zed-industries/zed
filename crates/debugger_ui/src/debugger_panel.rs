@@ -441,8 +441,11 @@ impl DebugPanel {
         let restart_args = event.clone().and_then(|e| e.restart);
         let client = this.debug_client_by_id(*client_id, cx);
 
-        cx.spawn(|_, _| async move {
+        cx.spawn(|this, mut cx| async move {
             let should_restart = restart_args.is_some();
+
+            this.update(&mut cx, |_, cx| Self::remove_highlights(client.clone(), cx))?
+                .await?;
 
             client
                 .request::<Disconnect>(DisconnectArguments {
