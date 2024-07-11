@@ -91,15 +91,6 @@ impl DebugPanel {
         })
     }
 
-    fn debug_client(&self, cx: &mut ViewContext<Self>) -> Option<Arc<DebugAdapterClient>> {
-        self.workspace
-            .update(cx, |this, cx| {
-                this.project().read(cx).running_debug_adapters().next()
-            })
-            .ok()
-            .flatten()
-    }
-
     fn debug_client_by_id(
         &self,
         client_id: DebugAdapterClientId,
