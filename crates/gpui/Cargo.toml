@@ -95,7 +95,7 @@ cocoa.workspace = true
 core-foundation.workspace = true
 core-foundation-sys = "0.8"
 core-graphics = "0.23"
-core-text = { version = "20.1" }
+core-text = "20.1"
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
