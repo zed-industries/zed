@@ -2163,6 +2163,10 @@ impl Editor {
 
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
+
+        // Disrupt blink for immediate user feedback that the cursor shape has changed
+        self.blink_manager.update(cx, BlinkManager::show_cursor);
+
         cx.notify();
     }
 
