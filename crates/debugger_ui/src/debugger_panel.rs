@@ -540,16 +540,10 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
-            // .capture_action(cx.listener(Self::handle_continue_action))
-            // .capture_action(cx.listener(Self::handle_step_over_action))
-            // .capture_action(cx.listener(Self::handle_step_in_action))
-            // .capture_action(cx.listener(Self::handle_step_out_action))
-            // .capture_action(cx.listener(Self::handle_restart_action))
-            // .capture_action(cx.listener(Self::handle_pause_action))
             .size_full()
             .child(self.pane.clone())
             .into_any()
