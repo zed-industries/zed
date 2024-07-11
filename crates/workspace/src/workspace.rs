@@ -1538,7 +1538,7 @@ impl Workspace {
             .panes
             .iter()
             .flat_map(|pane| {
-                pane.read(cx).items().filter_map(|item| {
+                pane.read(cx).items().iter().filter_map(|item| {
                     if item.is_dirty(cx) {
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
@@ -1973,9 +1973,7 @@ impl Workspace {
     }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
-
-        for dock in docks {
+        for dock in self.docks() {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, cx);
             });
@@ -1984,6 +1982,10 @@ impl Workspace {
         cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
+    }
+
+    fn docks(&self) -> [&View<Dock>; 3] {
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
     /// Transfer focus to the panel of the given type.
@@ -2008,7 +2010,7 @@ impl Workspace {
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, cx| {
@@ -2046,7 +2048,7 @@ impl Workspace {
 
     /// Open the panel of the given type
     pub fn open_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
@@ -2057,7 +2059,7 @@ impl Workspace {
     }
 
     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.docks() {
             let dock = dock.read(cx);
             if let Some(panel) = dock.panel::<T>() {
                 return Some(panel);
@@ -2080,7 +2082,7 @@ impl Workspace {
 
         // If another dock is zoomed, hide it.
         let mut focus_center = false;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.docks() {
             dock.update(cx, |dock, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
@@ -2739,6 +2741,7 @@ impl Workspace {
         let Some((item_ix, item_handle)) = source
             .read(cx)
             .items()
+            .iter()
             .enumerate()
             .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
         else {
@@ -3203,17 +3206,38 @@ impl Workspace {
         let id = ViewId::from_proto(id)?;
         let panel_id = view.panel_id.and_then(|id| proto::PanelId::from_i32(id));
 
-        let existing_item = pane.update(cx, |pane, cx| {
-            let client = this.read(cx).client().clone();
-            pane.items().find_map(|item| {
-                let item = item.to_followable_item_handle(cx)?;
-                if item.remote_id(&client, cx) == Some(id) {
-                    Some(item)
-                } else {
-                    None
+        let existing_item = if let Some(panel_id) = panel_id {
+            this.update(cx, |this, cx| {
+                let client = this.client().clone();
+                for dock in this.docks() {
+                    if let Some(panel_ix) = dock.read(cx).panel_index_for_remote_id(panel_id) {
+                        let panel = dock.read(cx).panel_for_index(panel_ix)?;
+                        return panel.items(cx).iter().find_map(|item| {
+                            let item = item.to_followable_item_handle(cx)?;
+                            if item.remote_id(&client, cx) == Some(id) {
+                                Some(item)
+                            } else {
+                                None
+                            }
+                        });
+                    }
                 }
-            })
-        })?;
+                None
+            })?
+        } else {
+            pane.update(cx, |pane, cx| {
+                let client = this.read(cx).client().clone();
+                pane.items().iter().find_map(|item| {
+                    let item = item.to_followable_item_handle(cx)?;
+                    if item.remote_id(&client, cx) == Some(id) {
+                        Some(item)
+                    } else {
+                        None
+                    }
+                })
+            })?
+        };
+
         let item = if let Some(existing_item) = existing_item {
             existing_item
         } else {
@@ -3232,33 +3256,22 @@ impl Workspace {
                 ));
             };
 
-            let mut new_item = task.await?;
-            pane.update(cx, |pane, cx| {
-                let mut item_ix_to_remove = None;
-                for (ix, item) in pane.items().enumerate() {
-                    if let Some(item) = item.to_followable_item_handle(cx) {
-                        match new_item.dedup(item.as_ref(), cx) {
-                            Some(item::Dedup::KeepExisting) => {
-                                new_item =
-                                    item.boxed_clone().to_followable_item_handle(cx).unwrap();
-                                break;
-                            }
-                            Some(item::Dedup::ReplaceExisting) => {
-                                item_ix_to_remove = Some(ix);
-                                break;
-                            }
-                            None => {}
+            let new_item = task.await?;
+            if let Some(panel_id) = panel_id {
+                this.update(cx, |this, cx| {
+                    for dock in this.docks() {
+                        if let Some(panel_ix) = dock.read(cx).panel_index_for_remote_id(panel_id) {
+                            return dock.update(cx, |dock, cx| {
+                                let panel = dock.panel_for_index(panel_ix).unwrap();
+                                panel.dedup(new_item, cx)
+                            });
                         }
                     }
-                }
-
-                if let Some(ix) = item_ix_to_remove {
-                    pane.remove_item(ix, false, false, cx);
-                    pane.add_item(new_item.boxed_clone(), false, false, Some(ix), cx);
-                }
-            })?;
-
-            new_item
+                    new_item
+                })?
+            } else {
+                pane.update(cx, |pane, cx| pane.dedup(new_item, cx))?
+            }
         };
 
         this.update(cx, |this, cx| {
@@ -3330,12 +3343,12 @@ impl Workspace {
     ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
         let mut active_item = None;
         let mut panel_id = None;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.docks() {
             if dock.focus_handle(cx).contains_focused(cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
                     if let Some(item) = panel.active_item(cx) {
                         active_item = Some(item);
-                        panel_id = panel.id_proto();
+                        panel_id = panel.remote_id();
                         break;
                     }
                 }
@@ -3378,7 +3391,6 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(leader_id)?;
-        let mut items_to_activate = Vec::new();
 
         let leader_in_this_app;
         let leader_in_this_project;
@@ -3397,42 +3409,79 @@ impl Workspace {
             }
         };
 
+        let mut panel_items_to_activate = Vec::new();
+        let mut pane_items_to_activate = Vec::new();
         for (pane, state) in &self.follower_states {
             if state.leader_id != leader_id {
                 continue;
             }
+
+            let transfer_focus = pane.read(cx).has_focus(cx)
+                || self
+                    .docks()
+                    .iter()
+                    .any(|dock| dock.read(cx).leader_peer_id(cx) == Some(leader_id));
+
             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
                 if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
                     if leader_in_this_project || !item.view.is_project_item(cx) {
-                        items_to_activate.push((
-                            pane.clone(),
-                            item.location,
-                            item.view.boxed_clone(),
-                        ));
+                        if let Some(panel_id) = item.location {
+                            if *pane == self.active_pane {
+                                panel_items_to_activate.push((
+                                    panel_id,
+                                    FollowableItemHandle::boxed_clone(item.view.as_ref()),
+                                    transfer_focus,
+                                ));
+                            }
+                        } else {
+                            pane_items_to_activate.push((
+                                pane.clone(),
+                                ItemHandle::boxed_clone(item.view.as_ref()),
+                                transfer_focus,
+                            ));
+                        }
                     }
                 }
                 continue;
             }
 
             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-                items_to_activate.push((pane.clone(), None, Box::new(shared_screen)));
+                pane_items_to_activate.push((
+                    pane.clone(),
+                    Box::new(shared_screen),
+                    transfer_focus,
+                ));
             }
         }
 
-        for (pane, panel_id, item) in items_to_activate {
-            // TODO, activate the item in the given panel
+        for (pane, item, transfer_focus) in pane_items_to_activate {
+            pane.update(cx, |pane, cx| {
+                if let Some(index) = pane.index_for_item(item.as_ref()) {
+                    pane.activate_item(index, false, false, cx);
+                } else {
+                    pane.add_item(item.boxed_clone(), false, false, None, cx);
+                }
 
-            let pane_was_focused = pane.read(cx).has_focus(cx);
-            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-            } else {
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(item.boxed_clone(), false, false, None, cx)
-                });
-            }
+                if transfer_focus {
+                    pane.focus_active_item(cx);
+                }
+            });
+        }
 
-            if pane_was_focused {
-                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+        for (panel_id, item, transfer_focus) in panel_items_to_activate {
+            for dock in self.docks() {
+                if let Some(panel_index) = dock.read(cx).panel_index_for_remote_id(panel_id) {
+                    dock.update(cx, |dock, cx| {
+                        dock.activate_panel(panel_index, cx);
+                        dock.set_open(true, cx);
+                        let panel = dock.panel_for_index(panel_index).unwrap();
+                        panel.leader_updated(item, cx);
+                        if transfer_focus {
+                            panel.focus_handle(cx).focus(cx);
+                        }
+                    });
+                    break;
+                }
             }
         }
 
@@ -3578,6 +3627,7 @@ impl Workspace {
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
                     pane.items()
+                        .iter()
                         .filter_map(|item_handle| {
                             Some(SerializedItem {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),

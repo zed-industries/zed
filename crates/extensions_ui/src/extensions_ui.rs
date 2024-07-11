@@ -41,6 +41,7 @@ pub fn init(cx: &mut AppContext) {
                     .active_pane()
                     .read(cx)
                     .items()
+                    .iter()
                     .find_map(|item| item.downcast::<ExtensionsPage>());
 
                 if let Some(existing) = existing {

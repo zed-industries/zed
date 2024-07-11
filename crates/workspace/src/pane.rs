@@ -1,7 +1,7 @@
 use crate::{
     item::{
-        ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
-        WeakItemHandle,
+        self, ClosePosition, FollowableItemHandle, Item, ItemHandle, ItemSettings,
+        PreviewTabsSettings, TabContentParams, WeakItemHandle,
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -452,6 +452,7 @@ impl Pane {
         if let Some(alternative) = alternative {
             let existing = self
                 .items()
+                .iter()
                 .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, cx);
@@ -859,12 +860,42 @@ impl Pane {
         cx.emit(Event::AddItem { item });
     }
 
+    pub fn dedup(
+        &mut self,
+        new_item: Box<dyn FollowableItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> Box<dyn FollowableItemHandle> {
+        for (ix, item) in self.items().iter().enumerate() {
+            if let Some(item) = item.to_followable_item_handle(cx) {
+                match new_item.dedup(item.as_ref(), cx) {
+                    Some(item::Dedup::KeepExisting) => {
+                        return item.to_followable_item_handle(cx).unwrap();
+                    }
+                    Some(item::Dedup::ReplaceExisting) => {
+                        self.remove_item(ix, false, false, cx);
+                        self.add_item(
+                            ItemHandle::boxed_clone(new_item.as_ref()),
+                            false,
+                            false,
+                            Some(ix),
+                            cx,
+                        );
+                        return new_item;
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        new_item
+    }
+
     pub fn items_len(&self) -> usize {
         self.items.len()
     }
 
-    pub fn items(&self) -> impl DoubleEndedIterator<Item = &Box<dyn ItemHandle>> {
-        self.items.iter()
+    pub fn items(&self) -> &[Box<dyn ItemHandle>] {
+        &self.items
     }
 
     pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = View<T>> {
@@ -1040,6 +1071,7 @@ impl Pane {
     ) -> Option<Task<Result<()>>> {
         let item_ids: Vec<_> = self
             .items()
+            .iter()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.item_id())
             .collect();
@@ -1067,6 +1099,7 @@ impl Pane {
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
             .items()
+            .iter()
             .take_while(|item| item.item_id() != item_id)
             .map(|item| item.item_id())
             .collect();
@@ -1094,6 +1127,7 @@ impl Pane {
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
             .items()
+            .iter()
             .rev()
             .take_while(|item| item.item_id() != item_id)
             .map(|item| item.item_id())
@@ -1527,13 +1561,14 @@ impl Pane {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Pane>,
     ) -> Option<()> {
-        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-                Some((i, item.item_id()))
-            } else {
-                None
-            }
-        })?;
+        let (item_index_to_delete, item_id) =
+            self.items().iter().enumerate().find_map(|(i, item)| {
+                if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                    Some((i, item.item_id()))
+                } else {
+                    None
+                }
+            })?;
 
         self.remove_item(item_index_to_delete, false, true, cx);
         self.nav_history.remove_item(item_id);

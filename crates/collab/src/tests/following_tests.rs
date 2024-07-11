@@ -601,6 +601,7 @@ async fn test_following_tab_order(
     let pane_paths = |pane: &View<workspace::Pane>, cx: &mut VisualTestContext| {
         pane.update(cx, |pane, cx| {
             pane.items()
+                .iter()
                 .map(|item| {
                     item.project_path(cx)
                         .unwrap()
@@ -1829,6 +1830,7 @@ fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Ve
                     leader,
                     items: pane
                         .items()
+                        .iter()
                         .enumerate()
                         .map(|(ix, item)| {
                             (

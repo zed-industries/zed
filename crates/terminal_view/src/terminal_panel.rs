@@ -456,6 +456,7 @@ impl TerminalPanel {
         self.pane
             .read(cx)
             .items()
+            .iter()
             .enumerate()
             .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
             .filter_map(|(index, terminal_view)| {
@@ -545,6 +546,7 @@ impl TerminalPanel {
             .pane
             .read(cx)
             .items()
+            .iter()
             .filter_map(|item| {
                 let terminal_view = item.act_as::<TerminalView>(cx)?;
                 if terminal_view.read(cx).terminal().read(cx).task().is_some() {

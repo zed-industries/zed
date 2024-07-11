@@ -1,8 +1,9 @@
-use crate::item::ItemHandle;
+use crate::item::{FollowableItemHandle, ItemHandle};
 use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event};
-use client::proto;
+use call::ActiveCall;
+use client::proto::{self, PeerId};
 use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
@@ -49,8 +50,25 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn active_item(&self, _cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
         None
     }
-    fn id_proto() -> Option<proto::PanelId> {
+    fn items<'a>(&'a self, _cx: &'a AppContext) -> &'a [Box<dyn ItemHandle>] {
+        &[]
+    }
+    fn remote_id() -> Option<proto::PanelId> {
         None
+    }
+    fn leader_updated(
+        &mut self,
+        _view: Box<dyn FollowableItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) {
+        unimplemented!("leader_updated was not implemented")
+    }
+    fn dedup(
+        &mut self,
+        _view: Box<dyn FollowableItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Box<dyn FollowableItemHandle> {
+        unimplemented!("dedup was not implemented")
     }
 }
 
@@ -64,7 +82,14 @@ pub trait PanelHandle: Send + Sync {
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn active_item(&self, cx: &WindowContext) -> Option<Box<dyn ItemHandle>>;
-    fn id_proto(&self) -> Option<proto::PanelId>;
+    fn items<'a>(&'a self, cx: &'a WindowContext) -> &'a [Box<dyn ItemHandle>];
+    fn dedup(
+        &self,
+        item: Box<dyn FollowableItemHandle>,
+        cx: &mut WindowContext,
+    ) -> Box<dyn FollowableItemHandle>;
+    fn remote_id(&self) -> Option<proto::PanelId>;
+    fn leader_updated(&self, view: Box<dyn FollowableItemHandle>, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
@@ -115,8 +140,24 @@ where
         self.read(cx).active_item(cx)
     }
 
-    fn id_proto(&self) -> Option<proto::PanelId> {
-        T::id_proto()
+    fn items<'a>(&'a self, cx: &'a WindowContext) -> &'a [Box<dyn ItemHandle>] {
+        self.read(cx).items(cx)
+    }
+
+    fn remote_id(&self) -> Option<proto::PanelId> {
+        T::remote_id()
+    }
+
+    fn leader_updated(&self, view: Box<dyn FollowableItemHandle>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.leader_updated(view, cx))
+    }
+
+    fn dedup(
+        &self,
+        item: Box<dyn FollowableItemHandle>,
+        cx: &mut WindowContext,
+    ) -> Box<dyn FollowableItemHandle> {
+        self.update(cx, |this, cx| this.dedup(item, cx))
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
@@ -298,6 +339,11 @@ impl Dock {
             .find_map(|entry| entry.panel.to_any().clone().downcast().ok())
     }
 
+    pub fn panel_for_index(&self, index: usize) -> Option<&dyn PanelHandle> {
+        let entry = self.panel_entries.get(index)?;
+        Some(entry.panel.as_ref())
+    }
+
     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
         self.panel_entries
             .iter()
@@ -312,6 +358,12 @@ impl Dock {
         self.panel_entries
             .iter()
             .position(|entry| entry.panel.persistent_name() == ui_name)
+    }
+
+    pub fn panel_index_for_remote_id(&self, remote_id: proto::PanelId) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.remote_id() == Some(remote_id))
     }
 
     pub fn active_panel_index(&self) -> usize {
@@ -526,6 +578,17 @@ impl Dock {
         Some(&self.panel_entries.get(self.active_panel_index)?.panel)
     }
 
+    pub fn leader_peer_id(&self, cx: &WindowContext) -> Option<PeerId> {
+        if self.focus_handle.contains_focused(cx) {
+            let panel = self.active_panel()?;
+            let item = panel.active_item(cx)?;
+            let view = item.to_followable_item_handle(cx)?;
+            view.leader_peer_id(cx)
+        } else {
+            None
+        }
+    }
+
     fn visible_entry(&self) -> Option<&PanelEntry> {
         if self.is_open {
             self.panel_entries.get(self.active_panel_index)
@@ -645,6 +708,26 @@ impl Render for Dock {
                 }
             };
 
+            let leader_border = self.leader_peer_id(cx).and_then(|peer_id| {
+                let room = ActiveCall::try_global(cx)?.read(cx).room()?.read(cx);
+                let leader = room.remote_participant_for_peer_id(peer_id)?;
+                let mut leader_color = cx
+                    .theme()
+                    .players()
+                    .color_for_participant(leader.participant_index.0)
+                    .cursor;
+                leader_color.fade_out(0.3);
+                Some(
+                    div()
+                        .absolute()
+                        .size_full()
+                        .left_0()
+                        .top_0()
+                        .border_2()
+                        .border_color(leader_color),
+                )
+            });
+
             div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle)
@@ -674,6 +757,7 @@ impl Render for Dock {
                                 .cached(StyleRefinement::default().v_flex().size_full()),
                         ),
                 )
+                .children(leader_border)
                 .when(self.resizeable, |this| this.child(create_resize_handle()))
         } else {
             div()

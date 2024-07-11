@@ -1545,6 +1545,7 @@ mod tests {
             );
             let pane_entries = pane
                 .items()
+                .iter()
                 .map(|i| i.project_path(cx).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(pane_entries, &[file1, file2, file3]);
@@ -1879,7 +1880,7 @@ mod tests {
         cx.read(|cx| {
                 let pane = workspace.read(cx).active_pane().read(cx);
                 let mut opened_buffer_paths = pane
-                    .items()
+                    .items().iter()
                     .map(|i| {
                         i.project_path(cx)
                             .expect("all excluded files that got open should have a path")

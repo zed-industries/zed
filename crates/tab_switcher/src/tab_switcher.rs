@@ -194,7 +194,8 @@ impl TabSwitcherDelegate {
             },
         );
 
-        let items: Vec<Box<dyn ItemHandle>> = pane.items().map(|item| item.boxed_clone()).collect();
+        let items: Vec<Box<dyn ItemHandle>> =
+            pane.items().iter().map(|item| item.boxed_clone()).collect();
         items
             .iter()
             .enumerate()

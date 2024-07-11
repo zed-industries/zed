@@ -757,6 +757,7 @@ impl ProjectSearchView {
             .active_pane()
             .read(cx)
             .items()
+            .iter()
             .find_map(|item| item.downcast::<ProjectSearchView>());
 
         Self::existing_or_new_search(workspace, existing, action, cx);

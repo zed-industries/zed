@@ -6243,10 +6243,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
@@ -6264,10 +6261,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
@@ -6283,10 +6277,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(pane.can_navigate_forward());
@@ -6322,10 +6313,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(pane.can_navigate_forward());
@@ -6333,7 +6321,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Close permanent tab
     pane.update(cx, |pane, cx| {
-        let id = pane.items().nth(0).unwrap().item_id();
+        let id = pane.items()[0].item_id();
         pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
     })
     .await
@@ -6342,10 +6330,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[0].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(pane.can_navigate_forward());
@@ -6361,10 +6346,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[0].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(pane.can_navigate_forward());
@@ -6390,10 +6372,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[0].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(pane.can_navigate_forward());
@@ -6403,10 +6382,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
@@ -6428,10 +6404,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_2.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[0].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
@@ -6441,10 +6414,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
-        assert_eq!(
-            pane.preview_item_id(),
-            Some(pane.items().nth(1).unwrap().item_id())
-        );
+        assert_eq!(pane.preview_item_id(), Some(pane.items()[1].item_id()));
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());

@@ -59,7 +59,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::{self, BreadcrumbText, FollowableItem, Item, ItemHandle},
+    item::{self, BreadcrumbText, FollowableItem, FollowableItemHandle, Item, ItemHandle},
     pane,
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -581,9 +581,10 @@ impl AssistantPanel {
         });
 
         let editor = cx.new_view(|cx| {
-            let mut editor = ContextEditor::for_context(
+            let mut editor = ContextEditor::new(
                 context,
                 self.fs.clone(),
+                self.project.clone(),
                 workspace,
                 lsp_adapter_delegate,
                 cx,
@@ -630,6 +631,7 @@ impl AssistantPanel {
             .pane
             .read(cx)
             .items()
+            .iter()
             .position(|item| item.downcast::<ContextHistory>().is_some());
 
         if let Some(history_item_ix) = history_item_ix {
@@ -682,7 +684,7 @@ impl AssistantPanel {
         path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let existing_context = self.pane.read(cx).items().find_map(|item| {
+        let existing_context = self.pane.read(cx).items().iter().find_map(|item| {
             item.downcast::<ContextEditor>()
                 .filter(|editor| editor.read(cx).context.read(cx).path() == Some(&path))
         });
@@ -697,6 +699,7 @@ impl AssistantPanel {
             .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
+        let project = self.project.clone();
 
         let lsp_adapter_delegate = workspace
             .update(cx, |workspace, cx| {
@@ -712,7 +715,7 @@ impl AssistantPanel {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
-                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                    ContextEditor::new(context, fs, project, workspace, lsp_adapter_delegate, cx)
                 });
                 this.show_context(editor, cx);
                 anyhow::Ok(())
@@ -726,7 +729,7 @@ impl AssistantPanel {
         id: ContextId,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<View<ContextEditor>>> {
-        let existing_context = self.pane.read(cx).items().find_map(|item| {
+        let existing_context = self.pane.read(cx).items().iter().find_map(|item| {
             item.downcast::<ContextEditor>()
                 .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
         });
@@ -743,6 +746,7 @@ impl AssistantPanel {
             .context_store
             .update(cx, |store, cx| store.open_remote_context(id, cx));
         let fs = self.fs.clone();
+        let project = self.project.clone();
         let workspace = self.workspace.clone();
 
         let lsp_adapter_delegate = workspace
@@ -759,7 +763,7 @@ impl AssistantPanel {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
-                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                    ContextEditor::new(context, fs, project, workspace, lsp_adapter_delegate, cx)
                 });
                 this.show_context(editor.clone(), cx);
                 anyhow::Ok(editor)
@@ -887,8 +891,31 @@ impl Panel for AssistantPanel {
         self.pane.read(cx).active_item()
     }
 
-    fn id_proto() -> Option<proto::PanelId> {
+    fn items<'a>(&'a self, cx: &'a AppContext) -> &'a [Box<dyn ItemHandle>] {
+        self.pane.read(cx).items()
+    }
+
+    fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
+    }
+
+    fn leader_updated(&mut self, view: Box<dyn FollowableItemHandle>, cx: &mut ViewContext<Self>) {
+        let item = ItemHandle::boxed_clone(view.as_ref());
+        self.pane.update(cx, |pane, cx| {
+            if let Some(index) = pane.index_for_item(item.as_ref()) {
+                pane.activate_item(index, false, false, cx);
+            } else {
+                pane.add_item(item, false, false, None, cx)
+            }
+        });
+    }
+
+    fn dedup(
+        &mut self,
+        view: Box<dyn FollowableItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> Box<dyn FollowableItemHandle> {
+        self.pane.update(cx, |pane, cx| pane.dedup(view, cx))
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
@@ -946,9 +973,10 @@ pub struct ContextEditor {
 impl ContextEditor {
     const MAX_TAB_TITLE_LEN: usize = 16;
 
-    fn for_context(
+    fn new(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
+        project: Model<Project>,
         workspace: View<Workspace>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ViewContext<Self>,
@@ -968,6 +996,7 @@ impl ContextEditor {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
+            editor.set_collaboration_hub(Box::new(project));
             editor
         });
 
@@ -2255,6 +2284,10 @@ impl FollowableItem for ContextEditor {
         self.editor.update(cx, |editor, cx| {
             editor.set_leader_peer_id(leader_peer_id, cx)
         })
+    }
+
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<proto::PeerId> {
+        self.editor.read(cx).leader_peer_id(cx)
     }
 
     fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<item::Dedup> {

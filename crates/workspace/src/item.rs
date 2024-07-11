@@ -780,13 +780,16 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<PeerId>;
     fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
+    fn boxed_clone(&self) -> Box<dyn FollowableItemHandle>;
     fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId>;
     fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<PeerId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -806,6 +809,10 @@ pub trait FollowableItemHandle: ItemHandle {
 }
 
 impl<T: FollowableItem> FollowableItemHandle for View<T> {
+    fn boxed_clone(&self) -> Box<dyn FollowableItemHandle> {
+        Box::new(self.clone())
+    }
+
     fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
@@ -821,6 +828,10 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
+    }
+
+    fn leader_peer_id(&self, cx: &AppContext) -> Option<PeerId> {
+        self.read(cx).leader_peer_id(cx)
     }
 
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {

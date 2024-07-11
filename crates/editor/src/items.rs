@@ -162,6 +162,10 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
+    fn leader_peer_id(&self, _cx: &AppContext) -> Option<PeerId> {
+        self.leader_peer_id.clone()
+    }
+
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
         if buffer
