@@ -36,5 +36,8 @@ util.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[build-dependencies]
+toml.workspace = true
+
 [dev-dependencies]
 rand.workspace = true

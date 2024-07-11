@@ -10747,6 +10747,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror",
+ "toml 0.8.10",
  "util",
  "windows 0.57.0",
 ]
