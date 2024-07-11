@@ -23,6 +23,7 @@ mod tab;
 mod tab_bar;
 mod tool_strip;
 mod tooltip;
+mod tree_branch;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -52,6 +53,7 @@ pub use tab::*;
 pub use tab_bar::*;
 pub use tool_strip::*;
 pub use tooltip::*;
+pub use tree_branch::*;
 
 #[cfg(feature = "stories")]
 pub use stories::*;

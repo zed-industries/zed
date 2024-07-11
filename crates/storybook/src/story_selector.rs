@@ -38,6 +38,7 @@ pub enum ComponentStory {
     Text,
     ToggleButton,
     ToolStrip,
+    TreeBranch,
     ViewportUnits,
     WithRemSize,
 }
@@ -72,6 +73,7 @@ impl ComponentStory {
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
+            Self::TreeBranch => cx.new_view(|_| ui::TreeBranchStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
