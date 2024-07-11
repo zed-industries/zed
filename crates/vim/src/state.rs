@@ -269,44 +269,62 @@ impl EditorState {
             context.add("VimControl");
         }
 
-        if self.active_operator().is_none() && self.pre_count.is_some()
-            || self.active_operator().is_some() && self.post_count.is_some()
+        let active_operator = self.active_operator();
+
+        if active_operator.is_none() && self.pre_count.is_some()
+            || active_operator.is_some() && self.post_count.is_some()
         {
             context.add("VimCount");
         }
 
-        let mut mode = match self.mode {
+        let mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
-        }
-        .to_owned();
+        };
 
-        let active_operator = self.active_operator();
-
-        if let Some(active_operator) = active_operator.clone() {
-            mode += "_operator";
-            for context_flag in active_operator.context_flags().into_iter() {
-                context.add(*context_flag);
-            }
-        }
-        context.set("vim_mode", mode);
-
-        context.set(
-            "vim_operator",
-            active_operator
-                .clone()
-                .map(|op| op.id())
-                .unwrap_or_else(|| "none"),
-        );
-
-        if self.mode == Mode::Replace
-            || (matches!(active_operator, Some(Operator::AddSurrounds { .. }))
-                && self.mode.is_visual())
-        {
+        if self.mode == Mode::Replace {
             context.add("VimWaiting");
         }
+
+        if let Some(active_operator) = active_operator.clone() {
+            context.set("vim_mode", format!("{}_operator", mode));
+            context.set("vim_operator", active_operator.id());
+
+            match active_operator {
+                Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => {
+                    context.add("VimObject")
+                }
+                Operator::AddSurrounds { target } => {
+                    if target.is_some() || self.mode.is_visual() {
+                        context.add("VimWaiting");
+                    }
+                }
+                Operator::FindForward { .. }
+                | Operator::Mark
+                | Operator::Jump { .. }
+                | Operator::FindBackward { .. }
+                | Operator::Register
+                | Operator::RecordRegister
+                | Operator::ReplayRegister
+                | Operator::Replace
+                | Operator::ChangeSurrounds { .. }
+                | Operator::DeleteSurrounds => context.add("VimWaiting"),
+                Operator::Change
+                | Operator::Delete
+                | Operator::Yank
+                | Operator::Indent
+                | Operator::Outdent
+                | Operator::Lowercase
+                | Operator::Uppercase
+                | Operator::OppositeCase => {}
+            }
+        } else {
+            context.set("vim_mode", mode);
+            context.set("vim_operator", "none");
+        }
+
         context
     }
 }
@@ -338,24 +356,6 @@ impl Operator {
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
-        }
-    }
-
-    pub fn context_flags(&self) -> &'static [&'static str] {
-        match self {
-            Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => &["VimObject"],
-            Operator::FindForward { .. }
-            | Operator::Mark
-            | Operator::Jump { .. }
-            | Operator::FindBackward { .. }
-            | Operator::Register
-            | Operator::RecordRegister
-            | Operator::ReplayRegister
-            | Operator::Replace
-            | Operator::AddSurrounds { target: Some(_) }
-            | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds => &["VimWaiting"],
-            _ => &[],
         }
     }
 }
