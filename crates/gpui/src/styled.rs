@@ -190,6 +190,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the element to align flex items along the baseline of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#baseline)
+    fn items_baseline(mut self) -> Self {
+        self.style().align_items = Some(AlignItems::Baseline);
+        self
+    }
+
     /// Sets the element to justify flex items against the start of the container's main axis.
     /// [Docs](https://tailwindcss.com/docs/justify-content#start)
     fn justify_start(mut self) -> Self {
