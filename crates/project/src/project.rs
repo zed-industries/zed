@@ -5801,7 +5801,7 @@ impl Project {
                     .await
                     .into_iter()
                     .filter_map(|hover| remove_empty_hover_blocks(hover?))
-                    .collect()
+                    .collect::<Vec<Hover>>()
             })
         } else if let Some(project_id) = self.remote_id() {
             let request_task = self.client().request(proto::MultiLspQuery {

@@ -268,7 +268,7 @@ impl WindowsWindow {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
-                WS_EX_OVERLAPPEDWINDOW,
+                WS_EX_APPWINDOW,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };

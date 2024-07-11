@@ -3740,6 +3740,9 @@ impl EditorElement {
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
+                        if editor.hover_state.focused(cx) {
+                            return;
+                        }
                         if event.pressed_button == Some(MouseButton::Left)
                             || event.pressed_button == Some(MouseButton::Middle)
                         {

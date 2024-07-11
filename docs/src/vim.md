@@ -241,6 +241,16 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 
 ## Settings
 
+Vim mode is not enabled by default. To enable Vim mode, you need to add the following configuration to your settings file:
+
+```json
+{
+  "vim_mode": true
+}
+```
+
+Alternatively, you can enable Vim mode by running the `toggle vim mode` command from the command palette.
+
 Some vim settings are available to modify the default vim behavior:
 
 ```json
