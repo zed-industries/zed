@@ -8,7 +8,7 @@ use crate::{
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
     InteractiveText, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString,
-    Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task,
+    Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task, TextStyle,
     TextStyleRefinement, View, ViewContext, WeakView,
 };
 use itertools::Itertools;
@@ -302,8 +302,6 @@ fn show_hover(
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 println!("{:?}", local_diagnostic);
                 println!("{:?}", primary_diagnostic);
-                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
-
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
                         format!("{source}: {}", local_diagnostic.diagnostic.message)
@@ -311,16 +309,53 @@ fn show_hover(
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
 
-                let parsed_content = parse_blocks(
-                    &[HoverBlock {
-                        text,
-                        kind: HoverBlockKind::PlainText,
-                    }],
-                    &language_registry,
-                    None,
-                    &mut cx,
-                )
-                .await;
+                let parsed_content = cx
+                    .new_view(|cx| {
+                        let status_colors = cx.theme().status();
+
+                        struct DiagnosticColors {
+                            pub background: Hsla,
+                            pub border: Hsla,
+                        }
+                        let diagnostic_colors = match local_diagnostic.diagnostic.severity {
+                            DiagnosticSeverity::ERROR => DiagnosticColors {
+                                background: status_colors.error_background,
+                                border: status_colors.error_border,
+                            },
+                            DiagnosticSeverity::WARNING => DiagnosticColors {
+                                background: status_colors.warning_background,
+                                border: status_colors.warning_border,
+                            },
+                            DiagnosticSeverity::INFORMATION => DiagnosticColors {
+                                background: status_colors.info_background,
+                                border: status_colors.info_border,
+                            },
+                            DiagnosticSeverity::HINT => DiagnosticColors {
+                                background: status_colors.hint_background,
+                                border: status_colors.hint_border,
+                            },
+                            _ => DiagnosticColors {
+                                background: status_colors.ignored_background,
+                                border: status_colors.ignored_border,
+                            },
+                        };
+                        let settings = ThemeSettings::get_global(cx);
+                        let markdown_style = MarkdownStyle {
+                            base_text_style: TextStyle {
+                                font_family: settings.buffer_font.family.clone(),
+                                font_size: settings.buffer_font_size.into(),
+                                color: cx.theme().colors().editor_foreground,
+                                background_color: Some(diagnostic_colors.background),
+                                ..Default::default()
+                            },
+                            selection_background_color: { cx.theme().players().local().selection },
+                            ..Default::default()
+                        };
+
+                        Markdown::new(text, markdown_style.clone(), None, cx, None)
+                    })
+                    .ok();
+
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     primary_diagnostic,
@@ -630,36 +665,6 @@ impl DiagnosticPopover {
         max_size: Size<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
-        let status_colors = cx.theme().status();
-
-        struct DiagnosticColors {
-            pub background: Hsla,
-            pub border: Hsla,
-        }
-
-        let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
-            DiagnosticSeverity::ERROR => DiagnosticColors {
-                background: status_colors.error_background,
-                border: status_colors.error_border,
-            },
-            DiagnosticSeverity::WARNING => DiagnosticColors {
-                background: status_colors.warning_background,
-                border: status_colors.warning_border,
-            },
-            DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                background: status_colors.info_background,
-                border: status_colors.info_border,
-            },
-            DiagnosticSeverity::HINT => DiagnosticColors {
-                background: status_colors.hint_background,
-                border: status_colors.hint_border,
-            },
-            _ => DiagnosticColors {
-                background: status_colors.ignored_background,
-                border: status_colors.ignored_border,
-            },
-        };
-
         let mut d = div()
             .id("diagnostic")
             .block()
@@ -684,12 +689,12 @@ impl DiagnosticPopover {
                 div()
                     .id("diagnostic-inner")
                     .overflow_y_scroll()
-                    .px_2()
-                    .py_1()
-                    .bg(diagnostic_colors.background)
+                    // .px_2()
+                    // .py_1()
                     .text_color(style.text.color)
                     .border_1()
-                    .border_color(diagnostic_colors.border)
+                    // .bg(diagnostic_colors.background)
+                    // .border_color(diagnostic_colors.border)
                     .rounded_lg(), // .child(SharedString::from(text))
                                    // .child(InteractiveText::new(
                                    //     "diagnostic-text",
