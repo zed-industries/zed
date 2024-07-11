@@ -35,7 +35,7 @@ pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
-    pub size_offset: WindowSizeOffset,
+    pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -83,8 +83,7 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
-        let size_offset = WindowSizeOffset::default();
-        println!("Size: {:#?}", size_offset);
+        let border_offset = WindowBorderOffset::default();
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -97,7 +96,7 @@ impl WindowsWindowState {
             origin,
             logical_size,
             fullscreen_restore_bounds,
-            size_offset,
+            border_offset,
             scale_factor,
             callbacks,
             input_handler,
@@ -141,7 +140,7 @@ impl WindowsWindowState {
         (
             calculate_client_rect(
                 placement.rcNormalPosition,
-                self.size_offset,
+                self.border_offset,
                 self.scale_factor,
             ),
             placement.showCmd == SW_SHOWMAXIMIZED.0 as u32,
@@ -328,8 +327,8 @@ impl WindowsWindow {
                 display.default_bounds()
             };
             let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.size_offset.udpate(raw_hwnd).unwrap();
-            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.size_offset);
+            lock.border_offset.udpate(raw_hwnd).unwrap();
+            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         drop(lock);
@@ -867,12 +866,12 @@ struct StyleAndBounds {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct WindowSizeOffset {
+pub(crate) struct WindowBorderOffset {
     width_offset: i32,
     height_offset: i32,
 }
 
-impl WindowSizeOffset {
+impl WindowBorderOffset {
     pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
         let window_rect = unsafe {
             let mut rect = std::mem::zeroed();
@@ -986,17 +985,17 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     };
 }
 
-fn calcualte_window_rect(bounds: Bounds<DevicePixels>, size_offset: WindowSizeOffset) -> RECT {
+fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
     let mut rect = RECT {
         left: bounds.left().0,
         top: bounds.top().0,
         right: bounds.right().0,
         bottom: bounds.bottom().0,
     };
-    let left_offset = size_offset.width_offset / 2;
-    let top_offset = size_offset.height_offset / 2;
-    let right_offset = size_offset.width_offset - left_offset;
-    let bottom_offet = size_offset.height_offset - top_offset;
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
     rect.left -= left_offset;
     rect.top -= top_offset;
     rect.right += right_offset;
@@ -1006,13 +1005,13 @@ fn calcualte_window_rect(bounds: Bounds<DevicePixels>, size_offset: WindowSizeOf
 
 fn calculate_client_rect(
     rect: RECT,
-    size_offset: WindowSizeOffset,
+    border_offset: WindowBorderOffset,
     scale_factor: f32,
 ) -> Bounds<Pixels> {
-    let left_offset = size_offset.width_offset / 2;
-    let top_offset = size_offset.height_offset / 2;
-    let right_offset = size_offset.width_offset - left_offset;
-    let bottom_offet = size_offset.height_offset - top_offset;
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
     let left = rect.left + left_offset;
     let top = rect.top + top_offset;
     let right = rect.right - right_offset;

@@ -1060,7 +1060,7 @@ fn handle_system_settings_changed(
     // mouse double click
     lock.click_state.system_update();
     // window size offset
-    lock.size_offset.udpate(handle).log_err();
+    lock.border_offset.udpate(handle).log_err();
     Some(0)
 }
 
