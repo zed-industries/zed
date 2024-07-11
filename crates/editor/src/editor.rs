@@ -2359,9 +2359,7 @@ impl Editor {
                 drop(context_menu);
             }
 
-            if !self.hover_state.focused(cx) {
-                hide_hover(self, cx);
-            }
+            hide_hover(self, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2864,10 +2862,8 @@ impl Editor {
             return true;
         }
 
-        if !self.hover_state.focused(cx) {
-            if hide_hover(self, cx) {
-                return true;
-            }
+        if hide_hover(self, cx) {
+            return true;
         }
 
         if self.hide_context_menu(cx).is_some() {

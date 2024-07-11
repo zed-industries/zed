@@ -423,9 +423,7 @@ pub fn update_inlay_link_and_hover_points(
         editor.hide_hovered_link(cx)
     }
     if !hover_updated {
-        if !editor.hover_state.focused(cx) {
-            hover_popover::hover_at(editor, None, cx);
-        }
+        hover_popover::hover_at(editor, None, cx);
     }
 }
 
