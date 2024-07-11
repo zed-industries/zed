@@ -6,9 +6,10 @@ use crate::{
     EditorStyle, Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
+    div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
+    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, View,
+    ViewContext, WeakView,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -394,7 +395,7 @@ async fn parse_blocks(
             let settings = ThemeSettings::get_global(cx);
             let buffer_font_family = settings.buffer_font.family.clone();
             let mut base_style = cx.text_style();
-            base_style.refine(&gpui::TextStyleRefinement {
+            base_style.refine(&TextStyleRefinement {
                 font_family: Some(buffer_font_family.clone()),
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
@@ -402,18 +403,18 @@ async fn parse_blocks(
 
             let markdown_style = MarkdownStyle {
                 base_text_style: base_style,
-                code_block: gpui::StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
-                inline_code: gpui::TextStyleRefinement {
+                code_block: StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
+                inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
                 block_quote_border_color: Color::Muted.color(cx),
-                block_quote: gpui::TextStyleRefinement {
+                block_quote: TextStyleRefinement {
                     color: Some(Color::Muted.color(cx)),
                     ..Default::default()
                 },
-                link: gpui::TextStyleRefinement {
+                link: TextStyleRefinement {
                     color: Some(cx.theme().colors().editor_foreground),
                     underline: Some(gpui::UnderlineStyle {
                         thickness: px(1.),
@@ -425,6 +426,11 @@ async fn parse_blocks(
                 syntax: cx.theme().syntax().clone(),
                 selection_background_color: { cx.theme().players().local().selection },
                 break_style: Default::default(),
+                heading: StyleRefinement::default()
+                    .font_weight(FontWeight::BOLD)
+                    .text_xl()
+                    .mt(rems(1.))
+                    .mb_2(),
             };
 
             Markdown::new(

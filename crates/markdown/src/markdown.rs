@@ -29,6 +29,7 @@ pub struct MarkdownStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub break_style: StyleRefinement,
+    pub heading: StyleRefinement,
 }
 
 impl Default for MarkdownStyle {
@@ -44,6 +45,7 @@ impl Default for MarkdownStyle {
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             break_style: Default::default(),
+            heading: Default::default(),
         }
     }
 }
@@ -545,6 +547,7 @@ impl Element for MarkdownElement {
                                 pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
                                 _ => heading,
                             };
+                            heading.style().refine(&self.style.heading);
                             builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
