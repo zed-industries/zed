@@ -3795,16 +3795,19 @@ impl Workspace {
                 center_group = Some((group, active_pane))
             }
 
-            let mut items_by_project_path = cx.update(|cx| {
-                center_items
+            let mut items_by_project_path = HashMap::default();
+            let mut item_ids = Vec::default();
+            cx.update(|cx| {
+                for item in center_items
                     .unwrap_or_default()
                     .into_iter()
-                    .filter_map(|item| {
-                        let item = item?;
-                        let project_path = item.project_path(cx)?;
-                        Some((project_path, item))
-                    })
-                    .collect::<HashMap<_, _>>()
+                    .filter_map(|item| item)
+                {
+                    item_ids.push(item.item_id().as_u64() as ItemId);
+                    if let Some(project_path) = item.project_path(cx) {
+                        items_by_project_path.insert(project_path, item);
+                    }
+                }
             })?;
 
             let opened_items = paths_to_open
@@ -3849,6 +3852,16 @@ impl Workspace {
                 cx.notify();
             })?;
 
+            // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
+            // after loading the items, we might have different items and in order to avoid
+            // the database filling up, we delete items that haven't been loaded now.
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.delete_unloaded_items(item_ids, cx)
+                })?
+                .await
+                .context("cleaning unloaded workspace items from database failed")?;
+
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace
                 .update(&mut cx, |workspace, cx| {
@@ -3856,9 +3869,23 @@ impl Workspace {
                 })
                 .ok();
 
-            // TODO: Start background task to delete all editor_contents
-
             Ok(opened_items)
+        })
+    }
+
+    fn delete_unloaded_items(
+        &self,
+        loaded_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(database_id) = self.database_id() else {
+            return Task::ready(Ok(()));
+        };
+
+        cx.spawn(|_| async move {
+            persistence::DB
+                .delete_unloaded_items(database_id, loaded_items)
+                .await
         })
     }
 

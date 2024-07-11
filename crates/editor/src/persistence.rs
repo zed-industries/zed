@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
@@ -105,22 +104,6 @@ impl EditorDb {
         }
     }
 
-    //TODO pass Vec<ItemId> instead of String, unsure how to do that with sqlez
-    pub fn delete_outdated_contents(
-        &self,
-        workspace: WorkspaceId,
-        item_ids: Vec<ItemId>,
-    ) -> Result<()> {
-        let ids_string = item_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-
-        let query = format!("DELETE FROM editor_contents WHERE workspace_id = {workspace:?} AND item_id NOT IN ({ids_string})");
-        self.exec(&query).unwrap()()
-    }
-
     // Returns the scroll top row, and offset
     query! {
         pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f32, f32)>> {
@@ -147,31 +130,3 @@ impl EditorDb {
         }
     }
 }
-
-// pub struct BufferVersion(pub clock::Global);
-
-// impl StaticColumnCount for BufferVersion {}
-
-// impl Bind for BufferVersion {
-//     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-//         let data: Vec<u32> = self.0.clone().into();
-//         statement.bind(&bincode::serialize(&data)?, start_index)
-//     }
-// }
-
-// impl Column for BufferVersion {
-//     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-//         let version_blob = statement.column_blob(start_index)?;
-
-//         let version: Vec<u32> = if version_blob.is_empty() {
-//             Default::default()
-//         } else {
-//             bincode::deserialize(version_blob).context("Bincode deserialization of paths failed")?
-//         };
-
-//         Ok((
-//             BufferVersion(clock::Global::from(version.as_slice())),
-//             start_index + 1,
-//         ))
-//     }
-// }
