@@ -127,7 +127,7 @@ impl WindowsWindowState {
         }
     }
 
-    // Calculate the bounds used for saving and bool for if window is maximized
+    // Calculate the bounds used for saving and whether the window is maximized.
     fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -1008,6 +1008,13 @@ fn calculate_client_rect(
     border_offset: WindowBorderOffset,
     scale_factor: f32,
 ) -> Bounds<Pixels> {
+    // NOTE:
+    // The reason that not using `AdjustWindowRectEx()` here is
+    // that the size reported by this function is incorrect.
+    // You can test it, and there are similar discussions online.
+    // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
+    //
+    // So we manually calculate these values here.
     let left_offset = border_offset.width_offset / 2;
     let top_offset = border_offset.height_offset / 2;
     let right_offset = border_offset.width_offset - left_offset;
