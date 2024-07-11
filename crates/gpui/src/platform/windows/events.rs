@@ -136,7 +136,6 @@ fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     let height = lparam.hiword().max(1) as i32;
     let mut lock = state_ptr.state.borrow_mut();
     let new_size = size(DevicePixels(width), DevicePixels(height));
-    println!("new size: {:#?}", new_size);
     let scale_factor = lock.scale_factor;
     lock.renderer.update_drawable_size(new_size);
     let new_size = new_size.to_pixels(scale_factor);
@@ -664,7 +663,7 @@ fn handle_calc_client_size(
         requested_client_rect[0].top += frame_y + padding;
     } else {
         // Magic number that calculates the width of the border
-        requested_client_rect[0].top += 2;
+        requested_client_rect[0].top += frame_y - 3;
     }
 
     Some(0)
