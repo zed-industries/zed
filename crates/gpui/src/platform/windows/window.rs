@@ -128,7 +128,7 @@ impl WindowsWindowState {
         }
     }
 
-    // Get the bounds used for saving and bool for if window is maximized
+    // Calculate the bounds used for saving and bool for if window is maximized
     fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
