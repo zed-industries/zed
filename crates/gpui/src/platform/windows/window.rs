@@ -323,10 +323,7 @@ impl WindowsWindow {
                 display.default_bounds()
             };
             let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            placement.rcNormalPosition.left = bounds.left().0;
-            placement.rcNormalPosition.right = bounds.right().0;
-            placement.rcNormalPosition.top = bounds.top().0;
-            placement.rcNormalPosition.bottom = bounds.bottom().0;
+            placement.rcNormalPosition = calcualte_window_position(bounds, raw_hwnd).unwrap();
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
@@ -956,6 +953,38 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
         RegisterDragDrop(window_handle, &drag_drop_handler)
             .expect("unable to register drag-drop event")
     };
+}
+
+fn calcualte_window_position(bounds: Bounds<DevicePixels>, hwnd: HWND) -> anyhow::Result<RECT> {
+    let mut rect = RECT {
+        left: bounds.left().0,
+        top: bounds.top().0,
+        right: bounds.right().0,
+        bottom: bounds.bottom().0,
+    };
+    let window_rect = unsafe {
+        let mut rect = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rect)?;
+        rect
+    };
+    let client_rect = unsafe {
+        let mut rect = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rect)?;
+        rect
+    };
+    let width_offset =
+        (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+    let height_offset =
+        (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+    let left_offset = width_offset / 2;
+    let top_offset = height_offset / 2;
+    let right_offset = width_offset - left_offset;
+    let bottom_offet = height_offset - top_offset;
+    rect.left -= left_offset;
+    rect.top -= top_offset;
+    rect.right += right_offset;
+    rect.bottom += bottom_offet;
+    Ok(rect)
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew

@@ -8664,6 +8664,7 @@ dependencies = [
  "image",
  "language",
  "log",
+ "multi_buffer",
  "project",
  "runtimelib",
  "schemars",
@@ -10737,6 +10738,7 @@ dependencies = [
  "gpui",
  "libc",
  "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_derive",
@@ -13865,7 +13867,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

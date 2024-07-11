@@ -24,6 +24,7 @@ futures.workspace = true
 image.workspace = true
 language.workspace = true
 log.workspace = true
+multi_buffer.workspace = true
 project.workspace = true
 runtimelib.workspace = true
 schemars.workspace = true
