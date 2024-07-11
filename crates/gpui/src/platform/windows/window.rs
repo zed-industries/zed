@@ -300,10 +300,6 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                // rect.left,
-                // rect.top,
-                // rect.right - rect.left,
-                // rect.bottom - rect.top,
                 None,
                 None,
                 hinstance,
@@ -327,35 +323,7 @@ impl WindowsWindow {
                 display.default_bounds()
             };
             let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            let mut rect = RECT {
-                left: bounds.left().0,
-                top: bounds.top().0,
-                right: bounds.right().0,
-                bottom: bounds.bottom().0,
-            };
-            let mut window_rect = std::mem::zeroed();
-            GetWindowRect(raw_hwnd, &mut window_rect).unwrap();
-            println!("window rect: {:#?}", window_rect);
-            let mut client_rect = std::mem::zeroed();
-            GetClientRect(raw_hwnd, &mut client_rect).unwrap();
-            println!("client rect: {:#?}", client_rect);
-            let width_offset =
-                (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
-            let height_offset =
-                (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
-            let left_offset = width_offset / 2;
-            let top_offset = height_offset / 2;
-            let right_offset = width_offset - left_offset;
-            let bottom_offet = height_offset - top_offset;
-            // placement.rcNormalPosition.left = bounds.left().0;
-            // placement.rcNormalPosition.right = bounds.right().0;
-            // placement.rcNormalPosition.top = bounds.top().0;
-            // placement.rcNormalPosition.bottom = bounds.bottom().0;
-            rect.left -= left_offset;
-            rect.top -= top_offset;
-            rect.right += right_offset;
-            rect.bottom += bottom_offet;
-            placement.rcNormalPosition = rect;
+            placement.rcNormalPosition = calcualte_window_position(bounds, raw_hwnd).unwrap();
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
