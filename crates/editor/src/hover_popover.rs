@@ -428,9 +428,9 @@ async fn parse_blocks(
                 break_style: Default::default(),
                 heading: StyleRefinement::default()
                     .font_weight(FontWeight::BOLD)
-                    .text_xl()
+                    .text_base()
                     .mt(rems(1.))
-                    .mb_2(),
+                    .mb_0(),
             };
 
             Markdown::new(

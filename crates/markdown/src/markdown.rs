@@ -548,6 +548,9 @@ impl Element for MarkdownElement {
                                 _ => heading,
                             };
                             heading.style().refine(&self.style.heading);
+                            builder.push_text_style(
+                                self.style.heading.text_style().clone().unwrap_or_default(),
+                            );
                             builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
@@ -625,6 +628,7 @@ impl Element for MarkdownElement {
                                 builder.push_text_style(self.style.link.clone())
                             }
                         }
+                        MarkdownTag::MetadataBlock(_) => {}
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
                 }
@@ -632,7 +636,10 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
                     }
-                    MarkdownTagEnd::Heading(_) => builder.pop_div(),
+                    MarkdownTagEnd::Heading(_) => {
+                        builder.pop_div();
+                        builder.pop_text_style()
+                    }
                     MarkdownTagEnd::BlockQuote => {
                         builder.pop_text_style();
                         builder.pop_div()
