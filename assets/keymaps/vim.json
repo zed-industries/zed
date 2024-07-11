@@ -197,6 +197,12 @@
     }
   },
   {
+    "context": "VimControl && VimCount",
+    "bindings": {
+      "0": ["vim::Number", 0]
+    }
+  },
+  {
     "context": "vim_mode == normal",
     "bindings": {
       "escape": "editor::Cancel",
@@ -246,102 +252,6 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPrevHunk",
       "g c c": "vim::ToggleComments"
-    }
-  },
-  {
-    "context": "vim_mode == visual",
-    "bindings": {}
-  },
-  {
-    "context": "VimCount && vim_mode != insert",
-    "bindings": {
-      "0": ["vim::Number", 0]
-    }
-  },
-  {
-    "context": "vim_operator == c",
-    "bindings": {
-      "c": "vim::CurrentLine",
-      "d": "editor::Rename", // zed specific
-      "s": ["vim::PushOperator", { "ChangeSurrounds": {} }]
-    }
-  },
-  {
-    "context": "vim_operator == d",
-    "bindings": {
-      "d": "vim::CurrentLine",
-      "s": ["vim::PushOperator", "DeleteSurrounds"]
-    }
-  },
-  {
-    "context": "vim_operator == gu",
-    "bindings": {
-      "g u": "vim::CurrentLine",
-      "u": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_operator == gU",
-    "bindings": {
-      "g shift-u": "vim::CurrentLine",
-      "shift-u": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_operator == g~",
-    "bindings": {
-      "g ~": "vim::CurrentLine",
-      "~": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_operator == y",
-    "bindings": {
-      "y": "vim::CurrentLine",
-      "s": ["vim::PushOperator", { "AddSurrounds": {} }]
-    }
-  },
-  {
-    "context": "vim_operator == ys",
-    "bindings": {
-      "s": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_operator == >",
-    "bindings": {
-      ">": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_operator == <",
-    "bindings": {
-      "<": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "vim_mode != waiting && (vim_operator == a || vim_operator == i || vim_operator == cs)",
-    "bindings": {
-      "w": "vim::Word",
-      "shift-w": ["vim::Word", { "ignorePunctuation": true }],
-      "t": "vim::Tag",
-      "s": "vim::Sentence",
-      "p": "vim::Paragraph",
-      "'": "vim::Quotes",
-      "`": "vim::BackQuotes",
-      "\"": "vim::DoubleQuotes",
-      "|": "vim::VerticalBars",
-      "(": "vim::Parentheses",
-      ")": "vim::Parentheses",
-      "b": "vim::Parentheses",
-      "[": "vim::SquareBrackets",
-      "]": "vim::SquareBrackets",
-      "{": "vim::CurlyBrackets",
-      "}": "vim::CurlyBrackets",
-      "shift-b": "vim::CurlyBrackets",
-      "<": "vim::AngleBrackets",
-      ">": "vim::AngleBrackets",
-      "a": "vim::Argument"
     }
   },
   {
@@ -408,14 +318,6 @@
     }
   },
   {
-    "context": "vim_mode == insert_operator || vim_mode == replace_operator || vim_mode == visual_operator",
-    "bindings": {
-      "escape": "vim::ClearOperators",
-      "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
-    }
-  },
-  {
     "context": "vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",
@@ -431,6 +333,100 @@
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter"
+    }
+  },
+  {
+    "context": "vim_mode == insert_operator || vim_mode == replace_operator || vim_mode == visual_operator",
+    "bindings": {
+      "escape": "vim::ClearOperators",
+      "ctrl-c": "vim::ClearOperators",
+      "ctrl-[": "vim::ClearOperators"
+    }
+  },
+  {
+    "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "bindings": {
+      "w": "vim::Word",
+      "shift-w": ["vim::Word", { "ignorePunctuation": true }],
+      "t": "vim::Tag",
+      "s": "vim::Sentence",
+      "p": "vim::Paragraph",
+      "'": "vim::Quotes",
+      "`": "vim::BackQuotes",
+      "\"": "vim::DoubleQuotes",
+      "|": "vim::VerticalBars",
+      "(": "vim::Parentheses",
+      ")": "vim::Parentheses",
+      "b": "vim::Parentheses",
+      "[": "vim::SquareBrackets",
+      "]": "vim::SquareBrackets",
+      "{": "vim::CurlyBrackets",
+      "}": "vim::CurlyBrackets",
+      "shift-b": "vim::CurlyBrackets",
+      "<": "vim::AngleBrackets",
+      ">": "vim::AngleBrackets",
+      "a": "vim::Argument"
+    }
+  },
+  {
+    "context": "vim_operator == c",
+    "bindings": {
+      "c": "vim::CurrentLine",
+      "d": "editor::Rename", // zed specific
+      "s": ["vim::PushOperator", { "ChangeSurrounds": {} }]
+    }
+  },
+  {
+    "context": "vim_operator == d",
+    "bindings": {
+      "d": "vim::CurrentLine",
+      "s": ["vim::PushOperator", "DeleteSurrounds"]
+    }
+  },
+  {
+    "context": "vim_operator == gu",
+    "bindings": {
+      "g u": "vim::CurrentLine",
+      "u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gU",
+    "bindings": {
+      "g shift-u": "vim::CurrentLine",
+      "shift-u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == g~",
+    "bindings": {
+      "g ~": "vim::CurrentLine",
+      "~": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == y",
+    "bindings": {
+      "y": "vim::CurrentLine",
+      "s": ["vim::PushOperator", { "AddSurrounds": {} }]
+    }
+  },
+  {
+    "context": "vim_operator == ys",
+    "bindings": {
+      "s": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == >",
+    "bindings": {
+      ">": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == <",
+    "bindings": {
+      "<": "vim::CurrentLine"
     }
   },
   {

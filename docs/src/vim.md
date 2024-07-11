@@ -90,13 +90,13 @@ For vim-specific shortcuts, you may find the following template a good place to 
 ```json
 [
   {
-    "context": "Editor && (vim_mode == normal || vim_mode == visual) && !VimWaiting && !menu",
+    "context": "VimControl && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in normal & visual mode
     }
   },
   {
-    "context": "Editor && vim_mode == normal && !VimWaiting && !menu",
+    "context": "vim_mode == normal && !menu",
     "bindings": {
       // put key-bindings here if you want them to work only in normal mode
       // "down": ["workspace::SendKeystrokes", "4 j"]
@@ -104,13 +104,13 @@ For vim-specific shortcuts, you may find the following template a good place to 
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting && !menu",
+    "context": "vim_mode == visual && !menu",
     "bindings": {
       // visual, visual line & visual block modes
     }
   },
   {
-    "context": "Editor && vim_mode == insert && !menu",
+    "context": "vim_mode == insert && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in insert mode
       // e.g.
@@ -155,7 +155,7 @@ that you can't live without. You can restore them to their defaults by copying t
 
 ```
 {
-  "context": "Editor && !VimWaiting && !menu",
+  "context": "Editor && !menu",
   "bindings": {
     "ctrl-c": "editor::Copy",          // vim default: return to normal mode
     "ctrl-x": "editor::Cut",           // vim default: increment
@@ -304,7 +304,7 @@ Subword motion is not enabled by default. To enable it, add these bindings to yo
 
 ```json
   {
-    "context": "Editor && VimControl && !VimWaiting && !menu",
+    "context": "VimControl && !menu",
     "bindings": {
       "w": "vim::NextSubwordStart",
       "b": "vim::PreviousSubwordStart",
@@ -318,7 +318,7 @@ Surrounding the selection in visual mode is also not enabled by default (`shift-
 
 ```json
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
+    "context": "vim_mode == visual",
     "bindings": {
       "shift-s": [
         "vim::PushOperator",

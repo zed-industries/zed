@@ -263,14 +263,6 @@ impl EditorState {
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
 
-        let active_operator = self.active_operator();
-
-        if active_operator.is_none() && self.pre_count.is_some()
-            || active_operator.is_some() && self.post_count.is_some()
-        {
-            context.add("VimCount");
-        }
-
         let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
@@ -281,13 +273,20 @@ impl EditorState {
 
         let mut operator_id = "none";
 
-        if let Some(active_operator) = active_operator.clone() {
+        let active_operator = self.active_operator();
+        if active_operator.is_none() && self.pre_count.is_some()
+            || active_operator.is_some() && self.post_count.is_some()
+        {
+            context.add("VimCount");
+        }
+
+        if let Some(active_operator) = active_operator {
             if active_operator.is_waiting(self.mode) {
                 mode = "waiting".to_owned();
             } else {
                 mode = format!("{}_operator", mode);
+                operator_id = active_operator.id();
             }
-            operator_id = active_operator.id();
         }
 
         if mode != "waiting" && mode != "insert" && mode != "replace" {
