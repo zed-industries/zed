@@ -53,8 +53,8 @@ impl LinuxClient for HeadlessClient {
 
     fn set_tray_item(
         &self,
-        options: crate::platform::linux::dbus::status_notifier::StatusNotifierItemOptions,
-        menu: Option<crate::platform::linux::dbus::dbusmenu::DBusMenu>,
+        _options: crate::platform::linux::dbus::status_notifier::StatusNotifierItemOptions,
+        _menu: Option<crate::platform::linux::dbus::dbusmenu::DBusMenu>,
     ) {
     }
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {

@@ -6,7 +6,7 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle, RegistrationToken};
+use calloop::{EventLoop, LoopHandle};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
@@ -187,7 +187,6 @@ pub struct Output {
 }
 
 pub(crate) struct WaylandClientState {
-    tray_item_token: Option<RegistrationToken>,
     serial_tracker: SerialTracker,
     globals: Globals,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
@@ -494,7 +493,6 @@ impl WaylandClient {
             .unwrap();
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
-            tray_item_token: None,
             serial_tracker: SerialTracker::new(),
             globals,
             wl_seat: seat,
@@ -611,10 +609,10 @@ impl LinuxClient for WaylandClient {
                     let item = StatusNotifierItem::new(1, options, menu).await.log_err();
                     if let Some(item) = item {
                         let mut state = state.borrow_mut();
-                        if let Some(token) = state.tray_item_token {
+                        if let Some(token) = state.common.tray_item_token {
                             state.loop_handle.remove(token);
                         }
-                        state.tray_item_token = state
+                        state.common.tray_item_token = state
                             .loop_handle
                             .insert_source(item, |event, _, client| {
                                 let client = client.get_client();

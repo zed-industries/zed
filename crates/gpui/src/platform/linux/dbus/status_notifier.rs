@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use super::dbusmenu::{
-    DBusMenu, DBusMenuEvents, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
+    DBusMenu, DBusMenuEvents, DBusMenuInterface, DBusMenuRemovedProperties,
     DBusMenuUpdatedProperties, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
 };
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
@@ -296,7 +296,7 @@ impl StatusNotifierItemOptions {
         self
     }
 
-    /// Icon dislayed when `Status` is `Status::NeedsAttention`
+    /// Icon displayed when `Status` is `Status::NeedsAttention`
     pub fn attention(mut self, attention: Attention) -> Self {
         self.attention = attention;
         self

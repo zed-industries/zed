@@ -26,12 +26,16 @@ use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
 
+use crate::platform::linux::dbus::dbusmenu::{DBusMenu, DBusMenuEvents};
+use crate::platform::linux::dbus::status_notifier::{
+    StatusNotifierItem, StatusNotifierItemEvents, StatusNotifierItemOptions,
+};
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    PlatformInput, Point, ScrollDelta, Size, TouchPhase, TrayEvent, WindowParams, X11Window,
 };
 
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
@@ -1030,11 +1034,59 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn set_tray_item(
-        &self,
-        options: crate::platform::linux::dbus::status_notifier::StatusNotifierItemOptions,
-        menu: Option<crate::platform::linux::dbus::dbusmenu::DBusMenu>,
-    ) {
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: Option<DBusMenu>) {
+        self.0
+            .borrow()
+            .common
+            .foreground_executor
+            .spawn({
+                let state = self.0.clone();
+                async move {
+                    let item = StatusNotifierItem::new(1, options, menu).await.log_err();
+                    if let Some(item) = item {
+                        let mut state = state.borrow_mut();
+                        if let Some(token) = state.common.tray_item_token {
+                            state.loop_handle.remove(token);
+                        }
+                        state.common.tray_item_token = state
+                            .loop_handle
+                            .insert_source(item, |event, _, client| {
+                                let Some(mut tray_event) =
+                                    client.0.borrow_mut().common.callbacks.tray_event.take()
+                                else {
+                                    return;
+                                };
+                                match event {
+                                    StatusNotifierItemEvents::Activate(x, y) => {
+                                        tray_event(TrayEvent::LeftClick {
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::SecondaryActivate(x, y) => {
+                                        tray_event(TrayEvent::MiddleClick {
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::XdgActivationToken(_token) => {
+                                        // Should we ignore this?
+                                    }
+                                    StatusNotifierItemEvents::Scroll(_delta, _orientation) => {
+                                        tray_event(TrayEvent::Scroll);
+                                    }
+                                    StatusNotifierItemEvents::MenuEvent(event) => match event {
+                                        DBusMenuEvents::MenuClick(id) => {
+                                            tray_event(TrayEvent::MenuClick { id });
+                                        }
+                                    },
+                                }
+                                client.0.borrow_mut().common.callbacks.tray_event =
+                                    Some(tray_event);
+                            })
+                            .log_err();
+                    }
+                }
+            })
+            .detach();
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

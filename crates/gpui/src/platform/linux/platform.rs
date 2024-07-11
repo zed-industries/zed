@@ -24,7 +24,7 @@ use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriR
 use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
-use calloop::{EventLoop, LoopHandle, LoopSignal};
+use calloop::{EventLoop, LoopHandle, LoopSignal, RegistrationToken};
 use collections::{HashMap, VecDeque};
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
@@ -103,7 +103,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
-    pub(crate) tray_actions: HashMap<String, Box<dyn Action>>,
+    pub(crate) tray_item_token: Option<RegistrationToken>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
@@ -125,7 +125,7 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
-            tray_actions: HashMap::default(),
+            tray_item_token: None,
             menus: Vec::new(),
         };
 
