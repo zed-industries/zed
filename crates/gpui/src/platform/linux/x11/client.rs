@@ -34,8 +34,9 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, Size, TouchPhase, TrayEvent, WindowParams, X11Window,
+    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, TrayEvent, WindowParams,
+    X11Window,
 };
 
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
@@ -1058,20 +1059,30 @@ impl LinuxClient for X11Client {
                                 };
                                 match event {
                                     StatusNotifierItemEvents::Activate(x, y) => {
-                                        tray_event(TrayEvent::LeftClick {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Left,
                                             position: Point::new(x, y),
                                         });
                                     }
                                     StatusNotifierItemEvents::SecondaryActivate(x, y) => {
-                                        tray_event(TrayEvent::MiddleClick {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Middle,
                                             position: Point::new(x, y),
                                         });
                                     }
                                     StatusNotifierItemEvents::XdgActivationToken(_token) => {
                                         // Should we ignore this?
                                     }
-                                    StatusNotifierItemEvents::Scroll(_delta, _orientation) => {
-                                        tray_event(TrayEvent::Scroll);
+                                    StatusNotifierItemEvents::Scroll(delta, orientation) => {
+                                        match orientation.as_str() {
+                                            "Vertical" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(delta, 0),
+                                            }),
+                                            "Horizontal" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(0, delta),
+                                            }),
+                                            _ => {}
+                                        }
                                     }
                                     StatusNotifierItemEvents::MenuEvent(event) => match event {
                                         DBusMenuEvents::MenuClick(id) => {

@@ -1151,7 +1151,7 @@ impl AppContext {
                 .contains_key(&action.as_any().type_id())
     }
 
-    ///
+    /// Sets a single tray item in the System tray. This will replace any existing tray item.
     pub fn set_tray_item(&mut self, mut item: TrayItem) {
         if let Some(mut fun) = item.event.take() {
             self.platform.on_tray_event(Box::new({

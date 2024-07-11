@@ -1,8 +1,8 @@
-use crate::{AppContext, Point};
+use crate::{AppContext, MouseButton, Point};
 
-///
+/// An icon displayed in a tray menu
 pub enum TrayIcon<'a> {
-    ///
+    /// Name of the icon
     Name(&'a str),
 }
 
@@ -12,115 +12,167 @@ impl<'a> Default for TrayIcon<'a> {
     }
 }
 
-///
+/// Input type
 pub enum TrayToggleType {
-    ///
+    /// Checkbox
     Checkbox(bool),
-    ///
+    /// Radio
     Radio(bool),
 }
 
-///
+/// Item used to describe a System tray context menu.
 pub enum TrayMenuItem<'a> {
-    /// This item usually represents a line dividing submenus.
+    /// This item represents a line dividing submenus.
     /// Some desktop environments can display a label on top of the separator.
     Separator {
         /// Text displayed on top of the separator.
         label: Option<&'a str>,
     },
-    ///
+    /// This item represents a menu
     Submenu {
-        ///
+        /// ID of the menu item.
         id: &'a str,
-        ///
+        /// Text displayed in the menu.
         label: &'a str,
-        ///
+        /// Icon displayed with the label.
         icon: Option<TrayIcon<'a>>,
-        ///
+        /// Type of the input.
         toggle_type: Option<TrayToggleType>,
-        ///
+        /// Recursive menu item.
         children: Vec<TrayMenuItem<'a>>,
     },
 }
 
-///
+impl<'a> TrayMenuItem<'a> {
+    /// Create a separator with no label
+    pub fn separator() -> Self {
+        Self::Separator { label: None }
+    }
+
+    /// Create a separator with a label
+    pub fn labeled_separator(label: &'a str) -> Self {
+        Self::Separator { label: Some(label) }
+    }
+
+    /// Creates a menu item with a label, icon and submenus.
+    pub fn icon_menu(
+        id: &'a str,
+        label: &'a str,
+        icon: TrayIcon<'a>,
+        children: Vec<TrayMenuItem<'a>>,
+    ) -> Self {
+        Self::Submenu {
+            id,
+            label,
+            icon: Some(icon),
+            toggle_type: None,
+            children,
+        }
+    }
+
+    /// Creates a menu item with a label and submenus.
+    pub fn menu(id: &'a str, label: &'a str, children: Vec<TrayMenuItem<'a>>) -> Self {
+        Self::Submenu {
+            id,
+            label,
+            icon: None,
+            toggle_type: None,
+            children,
+        }
+    }
+
+    /// Creates a checkbox with a label.
+    pub fn checkbox(id: &'a str, label: &'a str, checked: bool) -> Self {
+        Self::Submenu {
+            id,
+            label,
+            icon: None,
+            toggle_type: Some(TrayToggleType::Checkbox(checked)),
+            children: Vec::default(),
+        }
+    }
+
+    /// Creates a radio button with a label.
+    pub fn radio(id: &'a str, label: &'a str, checked: bool) -> Self {
+        Self::Submenu {
+            id,
+            label,
+            icon: None,
+            toggle_type: Some(TrayToggleType::Radio(checked)),
+            children: Vec::default(),
+        }
+    }
+}
+
+/// Events triggered by user action
 pub enum TrayEvent {
-    ///
-    LeftClick {
-        ///
+    /// Represents a user click.
+    TrayClick {
+        /// A mouse button could be left, right or middle click.
+        button: MouseButton,
+        /// Position of the click.
         position: Point<i32>,
     },
-    ///
-    RightClick {
-        ///
-        position: Point<i32>,
+    /// Scroll
+    Scroll {
+        /// Direction Scrolled
+        scroll_detal: Point<i32>,
     },
-    ///
-    MiddleClick {
-        ///
-        position: Point<i32>,
-    },
-    ///
-    Scroll,
-    ///
+    /// Menu or submenu left click
     MenuClick {
         ///
         id: String,
     },
 }
 
-///
+/// A tray item.
 #[derive(Default)]
 pub struct TrayItem<'a> {
-    /// Icon displayed
-    pub icon: TrayIcon<'a>,
-    /// Smaller icon displayed on top of the main icon.
-    /// Some desktops environments support this feature.
-    #[cfg(target_os = "linux")]
-    pub overlay: Option<TrayIcon<'a>>,
-    /// Title of this item.
-    pub title: String,
-    /// Text displayed when a mouse is hovered.
-    pub tooltip: String,
-    /// Detailed text displayed with a tooltip.
-    pub description: String,
-    ///
-    pub submenus: Vec<TrayMenuItem<'a>>,
-    ///
-    pub event: Option<Box<dyn FnMut(TrayEvent, &mut AppContext)>>,
+    pub(crate) icon: TrayIcon<'a>,
+    pub(crate) title: String,
+    pub(crate) tooltip: String,
+    pub(crate) description: String,
+    pub(crate) submenus: Vec<TrayMenuItem<'a>>,
+    pub(crate) event: Option<Box<dyn FnMut(TrayEvent, &mut AppContext)>>,
 }
 
 impl<'a> TrayItem<'a> {
-    ///
+    /// Creates a new default tray item
     pub fn new() -> Self {
         TrayItem::default()
     }
 
-    ///
+    /// Sets the tray displayed icon.
     pub fn icon(mut self, icon: TrayIcon<'a>) -> Self {
         self.icon = icon;
         self
     }
 
-    ///
+    /// Sets the tray title.
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
         self
     }
 
-    ///
+    /// Sets the text shown when hovered.
     pub fn tooltip(mut self, header: impl Into<String>) -> Self {
         self.tooltip = header.into();
         self
     }
 
-    ///
+    /// Sets a detailed text displayed together with a tooltip.
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
     }
 
-    ///
+    /// Adds a submenu to the tray item
+    pub fn submenu(mut self, submenu: TrayMenuItem<'a>) -> Self {
+        self.submenus.push(submenu);
+        self
+    }
+
+    /// Sets a function to be called when an event happens with a tray item.
     pub fn on_event(mut self, event: impl FnMut(TrayEvent, &mut AppContext) + 'static) -> Self {
         self.event = Some(Box::new(event));
         self

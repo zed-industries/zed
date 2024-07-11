@@ -25,14 +25,20 @@ fn main() {
             .title("Testing")
             .tooltip("My Tooltip")
             .description("Little description")
+            .submenu(TrayMenuItem::menu("Quit", "Quit", Vec::default()))
+            .submenu(TrayMenuItem::menu("Window", "Test", Vec::default()))
             .on_event({
                 let mut show_window = false;
                 move |event, app| match event {
-                    TrayEvent::LeftClick { .. } => {
-                        app.dispatch_action(&Quit);
-                    }
+                    TrayEvent::TrayClick { button, .. } => match button {
+                        MouseButton::Left => {
+                            app.dispatch_action(&Quit);
+                        }
+                        _ => {}
+                    },
                     TrayEvent::MenuClick { id } => match id.as_str() {
-                        "window" => {
+                        "Quit" => app.dispatch_action(&Quit),
+                        "Window" => {
                             if show_window {
                                 app.activate(true);
                             } else {
