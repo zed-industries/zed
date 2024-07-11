@@ -32,7 +32,7 @@ use workspace::{
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    workspace::FollowableViewRegistry::register(cx)
+    workspace::FollowableViewRegistry::register::<ChannelView>(cx)
 }
 
 pub struct ChannelView {
