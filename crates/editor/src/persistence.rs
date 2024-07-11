@@ -67,14 +67,6 @@ impl EditorDb {
     }
 
     query! {
-        pub fn get_contents_metadata(workspace: WorkspaceId) -> Result<Vec<(ItemId, WorkspaceId)>> {
-            SELECT item_id, workspace_id
-            FROM editor_contents
-            WHERE workspace_id = ?
-        }
-    }
-
-    query! {
         pub fn get_contents(item_id: ItemId, workspace: WorkspaceId) -> Result<Option<String>> {
             SELECT contents
             FROM editor_contents
