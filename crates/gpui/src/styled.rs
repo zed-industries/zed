@@ -190,21 +190,6 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the element to justify flex items along the container's main axis
-    /// such that there is an equal amount of space between each item.
-    /// [Docs](https://tailwindcss.com/docs/justify-content#space-between)
-    fn justify_between(mut self) -> Self {
-        self.style().justify_content = Some(JustifyContent::SpaceBetween);
-        self
-    }
-
-    /// Sets the element to justify flex items along the center of the container's main axis.
-    /// [Docs](https://tailwindcss.com/docs/justify-content#center)
-    fn justify_center(mut self) -> Self {
-        self.style().justify_content = Some(JustifyContent::Center);
-        self
-    }
-
     /// Sets the element to justify flex items against the start of the container's main axis.
     /// [Docs](https://tailwindcss.com/docs/justify-content#start)
     fn justify_start(mut self) -> Self {
@@ -216,6 +201,21 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/justify-content#end)
     fn justify_end(mut self) -> Self {
         self.style().justify_content = Some(JustifyContent::End);
+        self
+    }
+
+    /// Sets the element to justify flex items along the center of the container's main axis.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#center)
+    fn justify_center(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::Center);
+        self
+    }
+
+    /// Sets the element to justify flex items along the container's main axis
+    /// such that there is an equal amount of space between each item.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-between)
+    fn justify_between(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::SpaceBetween);
         self
     }
 
