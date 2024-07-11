@@ -156,7 +156,7 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 - Description: The default line height for text in the editor.
 - Setting: `buffer_line_height`
-- Default: `"standard"`
+- Default: `"comfortable"`
 
 **Options**
 
