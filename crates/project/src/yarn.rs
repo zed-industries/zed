@@ -6,6 +6,7 @@
 //! for .zip handling, we unpack the contents into the temp directory (yes, this is bad, against the spirit of Yarn and what-not)
 
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -68,8 +69,24 @@ impl YarnPathStore {
         protocol: &str,
         cx: &ModelContext<Self>,
     ) -> Task<Option<(Arc<Path>, Arc<Path>)>> {
+        let mut is_zip = protocol.eq("zip");
+
+        let path: &Path = if let Some(non_zip_part) = path
+            .as_os_str()
+            .as_encoded_bytes()
+            .strip_prefix("/zip:".as_bytes())
+        {
+            // typescript-language-server prepends the paths with zip:, which is messy.
+            is_zip = true;
+            Path::new(OsStr::new(
+                std::str::from_utf8(non_zip_part).expect("Invalid UTF-8"),
+            ))
+        } else {
+            path
+        };
+
         let as_virtual = resolve_virtual(&path);
-        let Some(path) = as_virtual.or_else(|| protocol.eq("zip").then(|| Arc::from(path))) else {
+        let Some(path) = as_virtual.or_else(|| is_zip.then(|| Arc::from(path))) else {
             return Task::ready(None);
         };
         if let Some(zip_file) = zip_path(&path) {
@@ -96,7 +113,6 @@ impl YarnPathStore {
                 };
                 // Rebase zip-path onto new temp path.
                 let as_relative = path.strip_prefix(zip_file).ok()?.into();
-
                 Some((zip_root.into(), as_relative))
             })
         } else {
