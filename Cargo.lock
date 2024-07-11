@@ -10737,6 +10737,7 @@ dependencies = [
  "gpui",
  "libc",
  "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_derive",
@@ -10747,7 +10748,6 @@ dependencies = [
  "task",
  "theme",
  "thiserror",
- "toml 0.8.10",
  "util",
  "windows 0.57.0",
 ]

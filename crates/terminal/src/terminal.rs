@@ -310,6 +310,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        cx: &mut AppContext,
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
@@ -328,7 +329,7 @@ impl TerminalBuilder {
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),
-            env!("ZED_VERSION").to_string(),
+            release_channel::AppVersion::global(cx).to_string(),
         );
 
         let pty_options = {

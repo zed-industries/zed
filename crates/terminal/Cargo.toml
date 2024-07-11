@@ -32,12 +32,10 @@ smol.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
+release_channel.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-
-[build-dependencies]
-toml.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
