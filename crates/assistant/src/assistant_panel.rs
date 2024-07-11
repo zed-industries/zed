@@ -883,6 +883,14 @@ impl Panel for AssistantPanel {
         }
     }
 
+    fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.pane.read(cx).active_item()
+    }
+
+    fn id_proto() -> Option<proto::PanelId> {
+        Some(proto::PanelId::AssistantPanel)
+    }
+
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {

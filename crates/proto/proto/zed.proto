@@ -1619,6 +1619,10 @@ message UpdateActiveView {
     View view = 3;
 }
 
+enum PanelId {
+    AssistantPanel = 0;
+}
+
 message UpdateView {
     ViewId id = 1;
     optional PeerId leader_id = 2;
@@ -1641,6 +1645,7 @@ message UpdateView {
 message View {
     ViewId id = 1;
     optional PeerId leader_id = 2;
+    optional PanelId panel_id = 6;
 
     oneof variant {
         Editor editor = 3;

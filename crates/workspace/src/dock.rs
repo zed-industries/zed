@@ -1,6 +1,8 @@
+use crate::item::ItemHandle;
 use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event};
+use client::proto;
 use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
@@ -44,6 +46,12 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn active_item(&self, _cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        None
+    }
+    fn id_proto() -> Option<proto::PanelId> {
+        None
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -55,6 +63,8 @@ pub trait PanelHandle: Send + Sync {
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
+    fn active_item(&self, cx: &WindowContext) -> Option<Box<dyn ItemHandle>>;
+    fn id_proto(&self) -> Option<proto::PanelId>;
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
@@ -99,6 +109,14 @@ where
 
     fn set_active(&self, active: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_active(active, cx))
+    }
+
+    fn active_item(&self, cx: &WindowContext) -> Option<Box<dyn ItemHandle>> {
+        self.read(cx).active_item(cx)
+    }
+
+    fn id_proto(&self) -> Option<proto::PanelId> {
+        T::id_proto()
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {

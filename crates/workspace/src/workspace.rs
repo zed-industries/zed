@@ -646,7 +646,12 @@ pub struct ViewId {
 struct FollowerState {
     leader_id: PeerId,
     active_view_id: Option<ViewId>,
-    items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
+    items_by_leader_view_id: HashMap<ViewId, FollowerView>,
+}
+
+struct FollowerView {
+    view: Box<dyn FollowableItemHandle>,
+    location: Option<proto::PanelId>,
 }
 
 impl Workspace {
@@ -2797,7 +2802,7 @@ impl Workspace {
         self.follower_states.retain(|_, state| {
             if state.leader_id == peer_id {
                 for item in state.items_by_leader_view_id.values() {
-                    item.set_leader_peer_id(None, cx);
+                    item.view.set_leader_peer_id(None, cx);
                 }
                 false
             } else {
@@ -2944,7 +2949,7 @@ impl Workspace {
         let state = self.follower_states.remove(pane)?;
         let leader_id = state.leader_id;
         for (_, item) in state.items_by_leader_view_id {
-            item.set_leader_peer_id(None, cx);
+            item.view.set_leader_peer_id(None, cx);
         }
 
         if self
@@ -3069,7 +3074,8 @@ impl Workspace {
         follower_project_id: Option<u64>,
         cx: &mut ViewContext<Self>,
     ) -> Option<proto::View> {
-        let item = self.active_item(cx)?;
+        let (item, panel_id) = self.active_item_for_followers(cx);
+        let item = item?;
         let leader_id = self
             .pane_for(&*item)
             .and_then(|pane| self.leader_for_pane(&pane));
@@ -3089,6 +3095,7 @@ impl Workspace {
             id: Some(id.to_proto()),
             leader_id,
             variant: Some(variant),
+            panel_id: panel_id.map(|id| id as i32),
         })
     }
 
@@ -3164,7 +3171,11 @@ impl Workspace {
                         if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
-                                tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
+                                tasks.push(item.view.apply_update_proto(
+                                    &project,
+                                    variant.clone(),
+                                    cx,
+                                ));
                             }
                         }
                     }
@@ -3190,6 +3201,7 @@ impl Workspace {
             return Err(anyhow!("no id for view"));
         };
         let id = ViewId::from_proto(id)?;
+        let panel_id = view.panel_id.and_then(|id| proto::PanelId::from_i32(id));
 
         let existing_item = pane.update(cx, |pane, cx| {
             let client = this.read(cx).client().clone();
@@ -3252,7 +3264,13 @@ impl Workspace {
         this.update(cx, |this, cx| {
             let state = this.follower_states.get_mut(&pane)?;
             item.set_leader_peer_id(Some(leader_id), cx);
-            state.items_by_leader_view_id.insert(id, item);
+            state.items_by_leader_view_id.insert(
+                id,
+                FollowerView {
+                    view: item,
+                    location: panel_id,
+                },
+            );
 
             Some(())
         })?;
@@ -3264,7 +3282,9 @@ impl Workspace {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if cx.is_window_active() {
-            if let Some(item) = self.active_item(cx) {
+            let (active_item, panel_id) = self.active_item_for_followers(cx);
+
+            if let Some(item) = active_item {
                 if item.focus_handle(cx).contains_focused(cx) {
                     let leader_id = self
                         .pane_for(&*item)
@@ -3281,6 +3301,7 @@ impl Workspace {
                                     id: Some(id.clone()),
                                     leader_id,
                                     variant: Some(variant),
+                                    panel_id: panel_id.map(|id| id as i32),
                                 });
 
                                 is_project_item = item.is_project_item(cx);
@@ -3301,6 +3322,30 @@ impl Workspace {
                 cx,
             );
         }
+    }
+
+    fn active_item_for_followers(
+        &self,
+        cx: &mut WindowContext,
+    ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
+        let mut active_item = None;
+        let mut panel_id = None;
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            if dock.focus_handle(cx).contains_focused(cx) {
+                if let Some(panel) = dock.read(cx).active_panel() {
+                    if let Some(item) = panel.active_item(cx) {
+                        active_item = Some(item);
+                        panel_id = panel.id_proto();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if active_item.is_none() {
+            active_item = self.active_pane().read(cx).active_item();
+        }
+        (active_item, panel_id)
     }
 
     fn update_followers(
@@ -3358,19 +3403,25 @@ impl Workspace {
             }
             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
                 if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                    if leader_in_this_project || !item.is_project_item(cx) {
-                        items_to_activate.push((pane.clone(), item.boxed_clone()));
+                    if leader_in_this_project || !item.view.is_project_item(cx) {
+                        items_to_activate.push((
+                            pane.clone(),
+                            item.location,
+                            item.view.boxed_clone(),
+                        ));
                     }
                 }
                 continue;
             }
 
             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-                items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+                items_to_activate.push((pane.clone(), None, Box::new(shared_screen)));
             }
         }
 
-        for (pane, item) in items_to_activate {
+        for (pane, panel_id, item) in items_to_activate {
+            // TODO, activate the item in the given panel
+
             let pane_was_focused = pane.read(cx).has_focus(cx);
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
