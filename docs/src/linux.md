@@ -47,8 +47,8 @@ If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This 
 Download the `.tar.gz` file:
 
 * [zed-linux-x86_64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz) ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
-* [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz)
- ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
+* [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-aarch64.tar.gz)
+ ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-aarch64.tar.gz))
 
 Then ensure that the `zed` binary in the tarball is on your path. The easiest way is to unpack the tarball and create a symlink:
 
@@ -114,4 +114,4 @@ All of these features are provided by XDG desktop portals, specifically:
 - `org.freedesktop.portal.OpenURI`
 - `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
 
-Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this. 
+Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this.
