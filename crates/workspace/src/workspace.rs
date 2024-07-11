@@ -1525,27 +1525,49 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn(|workspace, mut cx| async move {
-            // Override save mode and display "Save all files" prompt
-            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-                let answer = workspace.update(&mut cx, |_, cx| {
-                    let (prompt, detail) = Pane::file_names_for_prompt(
-                        &mut dirty_items.iter().map(|(_, handle)| handle),
-                        dirty_items.len(),
-                        cx,
-                    );
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        &prompt,
-                        Some(&detail),
-                        &["Save all", "Discard all", "Cancel"],
-                    )
-                })?;
-                match answer.await.log_err() {
-                    Some(0) => save_intent = SaveIntent::SaveAll,
-                    Some(1) => save_intent = SaveIntent::Skip,
-                    _ => {}
+            let dirty_items = if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let (serialize_tasks, remaining_dirty_items) =
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let mut remaining_dirty_items = Vec::new();
+                        let mut serialize_tasks = Vec::new();
+                        for (pane, item) in dirty_items {
+                            if item.can_serialize(cx) {
+                                serialize_tasks.push(item.serialize(workspace, cx));
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                        (serialize_tasks, remaining_dirty_items)
+                    })?;
+
+                futures::future::try_join_all(serialize_tasks).await?;
+
+                if remaining_dirty_items.len() > 1 {
+                    let answer = workspace.update(&mut cx, |_, cx| {
+                        let (prompt, detail) = Pane::file_names_for_prompt(
+                            &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
+                            remaining_dirty_items.len(),
+                            cx,
+                        );
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            Some(&detail),
+                            &["Save all", "Discard all", "Cancel"],
+                        )
+                    })?;
+                    match answer.await.log_err() {
+                        Some(0) => save_intent = SaveIntent::SaveAll,
+                        Some(1) => save_intent = SaveIntent::Skip,
+                        _ => {}
+                    }
                 }
-            }
+
+                remaining_dirty_items
+            } else {
+                dirty_items
+            };
+
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.update(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;

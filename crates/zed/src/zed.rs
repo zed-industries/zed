@@ -575,18 +575,18 @@ fn quit(_: &Quit, cx: &mut AppContext) {
         // changes are persisted
 
         // If the user cancels any save prompt, then keep the app open.
-        // for window in workspace_windows {
-        //     if let Some(should_close) = window
-        //         .update(&mut cx, |workspace, cx| {
-        //             workspace.prepare_to_close(true, cx)
-        //         })
-        //         .log_err()
-        //     {
-        //         if !should_close.await? {
-        //             return Ok(());
-        //         }
-        //     }
-        // }
+        for window in workspace_windows {
+            if let Some(should_close) = window
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })
+                .log_err()
+            {
+                if !should_close.await? {
+                    return Ok(());
+                }
+            }
+        }
         cx.update(|cx| cx.quit())?;
         anyhow::Ok(())
     })

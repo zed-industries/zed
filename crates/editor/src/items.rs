@@ -1057,6 +1057,53 @@ impl Item for Editor {
             (None, None) => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
         }
     }
+
+    fn can_serialize(&self, cx: &AppContext) -> bool {
+        // TODO: Here we could check a setting.
+        self.buffer().read(cx).as_singleton().is_some()
+    }
+
+    fn serialize(
+        &self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(workspace_id) = workspace.database_id() else {
+            return Task::ready(Ok(()));
+        };
+
+        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+            return Task::ready(Ok(()));
+        };
+
+        let path = buffer
+            .read(cx)
+            .file()
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx));
+
+        let snapshot = buffer.read(cx).snapshot();
+
+        cx.spawn(|cx| async move {
+            if let Some(path) = path {
+                cx.background_executor()
+                    .spawn(async move { DB.save_path(item_id, workspace_id, path.clone()).await })
+                    .await
+                    .context("failed to save path of buffer")?
+            }
+
+            cx.background_executor()
+                .spawn(async move {
+                    let contents = snapshot.text();
+                    DB.save_contents(item_id, workspace_id, contents).await
+                })
+                .await
+                .context("failed to save contents of buffer")?;
+
+            Ok(())
+        })
+    }
 }
 
 impl ProjectItem for Editor {

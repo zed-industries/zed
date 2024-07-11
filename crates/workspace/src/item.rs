@@ -261,6 +261,14 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
+
+    fn can_serialize(&self, _: &AppContext) -> bool {
+        false
+    }
+
+    fn serialize(&self, _: &mut Workspace, _: ItemId, _: &mut WindowContext) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
 }
 
 pub trait ItemHandle: 'static + Send {
@@ -332,6 +340,9 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
+
+    fn can_serialize(&self, cx: &AppContext) -> bool;
+    fn serialize(&self, workspace: &mut Workspace, cx: &mut WindowContext) -> Task<Result<()>>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -721,6 +732,19 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle> {
         Box::new(self.downgrade())
+    }
+
+    fn can_serialize(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_serialize(cx)
+    }
+
+    fn serialize(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Task<anyhow::Result<()>> {
+        let item_id = self.entity_id().as_u64() as ItemId;
+        self.update(cx, |item, cx| item.serialize(workspace, item_id, cx))
     }
 }
 
