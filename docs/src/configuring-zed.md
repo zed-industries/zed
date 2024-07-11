@@ -1454,7 +1454,7 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 "theme": {
-  "mode": "dark",
+  "mode": "system",
   "dark": "One Dark",
   "light": "One Light"
 },
@@ -1464,7 +1464,7 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 - Description: Specify theme mode.
 - Setting: `mode`
-- Default: `dark`
+- Default: `system`
 
 **Options**
 
