@@ -661,9 +661,6 @@ fn handle_calc_client_size(
 
     if state_ptr.state.borrow().is_maximized() {
         requested_client_rect[0].top += frame_y + padding;
-    } else {
-        // Magic number that calculates the width of the border
-        requested_client_rect[0].top += frame_y - 3;
     }
 
     Some(0)
