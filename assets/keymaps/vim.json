@@ -336,7 +336,7 @@
     }
   },
   {
-    "context": "vim_mode == insert_operator || vim_mode == replace_operator || vim_mode == visual_operator",
+    "context": "vim_mode == operator",
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",

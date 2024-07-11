@@ -284,7 +284,7 @@ impl EditorState {
             if active_operator.is_waiting(self.mode) {
                 mode = "waiting".to_owned();
             } else {
-                mode = format!("{}_operator", mode);
+                mode = "operator".to_owned();
                 operator_id = active_operator.id();
             }
         }
