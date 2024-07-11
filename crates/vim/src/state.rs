@@ -284,12 +284,7 @@ impl EditorState {
             Mode::Replace => "replace",
         };
 
-        if self.mode == Mode::Replace {
-            context.add("VimWaiting");
-        }
-
         if let Some(active_operator) = active_operator.clone() {
-            context.set("vim_mode", format!("{}_operator", mode));
             context.set("vim_operator", active_operator.id());
 
             match active_operator {
@@ -298,7 +293,7 @@ impl EditorState {
                 }
                 Operator::AddSurrounds { target } => {
                     if target.is_some() || self.mode.is_visual() {
-                        context.add("VimWaiting");
+                        context.set("vim_mode", "waiting");
                     }
                 }
                 Operator::FindForward { .. }
@@ -310,7 +305,7 @@ impl EditorState {
                 | Operator::ReplayRegister
                 | Operator::Replace
                 | Operator::ChangeSurrounds { .. }
-                | Operator::DeleteSurrounds => context.add("VimWaiting"),
+                | Operator::DeleteSurrounds => context.set("vim_mode", "waiting"),
                 Operator::Change
                 | Operator::Delete
                 | Operator::Yank
@@ -318,7 +313,7 @@ impl EditorState {
                 | Operator::Outdent
                 | Operator::Lowercase
                 | Operator::Uppercase
-                | Operator::OppositeCase => {}
+                | Operator::OppositeCase => context.set("vim_mode", format!("{}_operator", mode)),
             }
         } else {
             context.set("vim_mode", mode);

@@ -6,7 +6,7 @@
     }
   },
   {
-    "context": "Editor && VimControl && !VimWaiting && !menu",
+    "context": "Editor && VimControl && (vim_mode != waiting && vim_mode != replace) && !menu",
     "bindings": {
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
@@ -437,11 +437,13 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
-      "backspace": "vim::UndoReplace"
+      "backspace": "vim::UndoReplace",
+      "tab": "vim::Tab",
+      "enter": "vim::Enter"
     }
   },
   {
-    "context": "Editor && VimWaiting",
+    "context": "Editor && vim_mode == waiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter"
