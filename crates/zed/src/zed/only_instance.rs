@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use nix::unistd::Uid;
+
 use release_channel::ReleaseChannel;
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
@@ -13,14 +15,21 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_millis(35);
 const SEND_TIMEOUT: Duration = Duration::from_millis(20);
 
 fn address() -> SocketAddr {
+    // These port numbers have a 10 port offset between each release channel
+    // to avoid conflicts between different users. This means that only up to
+    // 10 users can run Zed on the same machine at the same time.
     let port = match *release_channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => 43737,
-        ReleaseChannel::Preview => 43738,
-        ReleaseChannel::Stable => 43739,
-        ReleaseChannel::Nightly => 43740,
+        ReleaseChannel::Preview => 43747,
+        ReleaseChannel::Stable => 43757,
+        ReleaseChannel::Nightly => 43767,
     };
+    let user_id = Uid::current().as_raw() as u16;
+    let user_port = port + user_id;
 
-    SocketAddr::V4(SocketAddrV4::new(LOCALHOST, port))
+    let channel_name = &release_channel::RELEASE_CHANNEL_NAME;
+    println!("Using port: {user_port} for release channel {:?}, port={port} user_id={user_id}", channel_name);
+    SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
 }
 
 fn instance_handshake() -> &'static str {
