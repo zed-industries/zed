@@ -441,7 +441,7 @@ impl Platform for WindowsPlatform {
     }
 
     // todo(windows)
-    fn set_tray_item(&self, item: TrayItem) {}
+    fn set_tray_item(&self, _item: TrayItem) {}
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
@@ -458,6 +458,9 @@ impl Platform for WindowsPlatform {
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
     }
+
+    // todo(windows)
+    fn on_tray_event(&self, _callback: Box<dyn FnMut(TrayEvent)>) {}
 
     fn app_path(&self) -> Result<PathBuf> {
         Ok(std::env::current_exe()?)

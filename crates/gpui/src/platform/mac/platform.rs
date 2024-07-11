@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
     Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    TrayItem, WindowAppearance, WindowParams,
+    TrayEvent, TrayItem, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -717,6 +717,8 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
+    fn on_tray_event(&self, _callback: Box<dyn FnMut(TrayEvent)>) {}
+
     fn app_path(&self) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
@@ -728,7 +730,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_tray_item(&self, item: TrayItem) {}
+    fn set_tray_item(&self, _item: TrayItem) {}
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         unsafe {
