@@ -148,11 +148,10 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {
-    let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
+    let expanded_path = shellexpand::full(path)
         .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf());
-
-    return expanded_journal_dir;
+        .map(|dir| Path::new(dir.as_ref()).to_path_buf());
+    expanded_path.or_else(|| dirs::home_dir())
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {
@@ -270,6 +269,15 @@ mod tests {
             let path = "/custom/path";
             let expanded_dir = journal_dir(path).unwrap();
             let expected_dir = Path::new("/custom/path");
+
+            assert_eq!(expanded_dir, expected_dir);
+        }
+
+        #[test]
+        fn test_journal_dir_with_invalid_env_var() {
+            let path = "/$var";
+            let expanded_dir = journal_dir(path).unwrap();
+            let expected_dir = dirs::home_dir().unwrap();
 
             assert_eq!(expanded_dir, expected_dir);
         }
