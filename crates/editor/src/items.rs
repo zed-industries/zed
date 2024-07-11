@@ -1104,6 +1104,25 @@ impl Item for Editor {
             Ok(())
         })
     }
+
+    fn delete_serialized(
+        &self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(workspace_id) = workspace.database_id() else {
+            return Task::ready(Ok(()));
+        };
+
+        println!("deleting serialized content of item {:?}", item_id);
+        cx.spawn(|cx| async move {
+            cx.background_executor()
+                .spawn(DB.delete_contents(workspace_id, item_id))
+                .await
+                .context("failed to save contents of buffer")
+        })
+    }
 }
 
 impl ProjectItem for Editor {

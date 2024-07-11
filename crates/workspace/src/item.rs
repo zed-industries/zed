@@ -269,6 +269,15 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn serialize(&self, _: &mut Workspace, _: ItemId, _: &mut WindowContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
+
+    fn delete_serialized(
+        &self,
+        _: &mut Workspace,
+        _: ItemId,
+        _: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
 }
 
 pub trait ItemHandle: 'static + Send {
@@ -343,6 +352,11 @@ pub trait ItemHandle: 'static + Send {
 
     fn can_serialize(&self, cx: &AppContext) -> bool;
     fn serialize(&self, workspace: &mut Workspace, cx: &mut WindowContext) -> Task<Result<()>>;
+    fn delete_serialized(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -745,6 +759,17 @@ impl<T: Item> ItemHandle for View<T> {
     ) -> Task<anyhow::Result<()>> {
         let item_id = self.entity_id().as_u64() as ItemId;
         self.update(cx, |item, cx| item.serialize(workspace, item_id, cx))
+    }
+
+    fn delete_serialized(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Task<anyhow::Result<()>> {
+        let item_id = self.entity_id().as_u64() as ItemId;
+        self.update(cx, |item, cx| {
+            item.delete_serialized(workspace, item_id, cx)
+        })
     }
 }
 

@@ -1370,6 +1370,9 @@ impl Pane {
                 "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
         if save_intent == SaveIntent::Skip {
+            if let Some(deletion_task) = Self::delete_serialized_content(pane, item, cx) {
+                deletion_task.await.map(|_| true)?;
+            }
             return Ok(true);
         }
 
@@ -1452,8 +1455,16 @@ impl Pane {
                         })?;
                         match answer {
                             Ok(0) => {}
-                            Ok(1) => return Ok(true), // Don't save this file
-                            _ => return Ok(false),    // Cancel
+                            Ok(1) => {
+                                // Don't save this file
+                                if let Some(deletion_task) =
+                                    Self::delete_serialized_content(pane, item, cx)
+                                {
+                                    deletion_task.await.map(|_| true)?;
+                                }
+                                return Ok(true);
+                            }
+                            _ => return Ok(false), // Cancel
                         }
                     } else {
                         return Ok(false);
@@ -1477,12 +1488,33 @@ impl Pane {
                 }
             }
         }
+
         Ok(true)
     }
 
     fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
         let is_deleted = item.project_entry_ids(cx).is_empty();
         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
+    }
+
+    fn delete_serialized_content(
+        pane: &WeakView<Pane>,
+        item: &dyn ItemHandle,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<Task<Result<()>>> {
+        pane.update(cx, |pane, cx| {
+            if item.can_serialize(cx) {
+                let task = pane
+                    .workspace
+                    .update(cx, |workspace, cx| item.delete_serialized(workspace, cx))
+                    .ok()?;
+                Some(task)
+            } else {
+                None
+            }
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn autosave_item(
