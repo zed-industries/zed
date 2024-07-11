@@ -39,8 +39,10 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
+mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 pub(crate) use actions::*;
@@ -154,6 +156,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
+use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -501,6 +504,8 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    signature_help_state: SignatureHelpState,
+    auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1819,6 +1824,8 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            signature_help_state: SignatureHelpState::default(),
+            auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -2411,6 +2418,15 @@ impl Editor {
                 self.request_autoscroll(autoscroll, cx);
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
+
+            if self.should_open_signature_help_automatically(
+                &old_cursor_position,
+                self.signature_help_state.backspace_pressed(),
+                cx,
+            ) {
+                self.show_signature_help(&ShowSignatureHelp, cx);
+            }
+            self.signature_help_state.set_backspace_pressed(false);
         }
 
         result
@@ -2866,6 +2882,10 @@ impl Editor {
             return true;
         }
 
+        if self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape) {
+            return true;
+        }
+
         if self.hide_context_menu(cx).is_some() {
             return true;
         }
@@ -2942,7 +2962,7 @@ impl Editor {
         }
 
         let selections = self.selections.all_adjusted(cx);
-        let mut brace_inserted = false;
+        let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         let mut new_selections = Vec::with_capacity(selections.len());
@@ -3004,6 +3024,7 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
@@ -3021,7 +3042,7 @@ impl Editor {
                                     selection.range(),
                                     format!("{}{}", text, bracket_pair.end).into(),
                                 ));
-                                brace_inserted = true;
+                                bracket_inserted = true;
                                 continue;
                             }
                         }
@@ -3067,7 +3088,7 @@ impl Editor {
                             selection.end..selection.end,
                             bracket_pair.end.as_str().into(),
                         ));
-                        brace_inserted = true;
+                        bracket_inserted = true;
                         new_selections.push((
                             Selection {
                                 id: selection.id,
@@ -3224,12 +3245,20 @@ impl Editor {
                 s.select(new_selections)
             });
 
-            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if !bracket_inserted && EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
                     on_type_format_task.detach_and_log_err(cx);
                 }
+            }
+
+            let editor_settings = EditorSettings::get_global(cx);
+            if bracket_inserted
+                && (editor_settings.auto_signature_help
+                    || editor_settings.show_signature_help_after_edits)
+            {
+                this.show_signature_help(&ShowSignatureHelp, cx);
             }
 
             let trigger_in_words = !had_active_inline_completion;
@@ -4305,6 +4334,14 @@ impl Editor {
             true,
             cx,
         );
+
+        let editor_settings = EditorSettings::get_global(cx);
+        if editor_settings.show_signature_help_after_edits || editor_settings.auto_signature_help {
+            // After the code completion is finished, users often want to know what signatures are needed.
+            // so we should automatically call signature_help
+            self.show_signature_help(&ShowSignatureHelp, cx);
+        }
+
         Some(cx.foreground_executor().spawn(async move {
             apply_edits.await?;
             Ok(())
@@ -5328,6 +5365,7 @@ impl Editor {
                 }
             }
 
+            this.signature_help_state.set_backspace_pressed(true);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
             let empty_str: Arc<str> = Arc::from("");

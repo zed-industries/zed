@@ -26,6 +26,8 @@ pub struct EditorSettings {
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
+    pub auto_signature_help: bool,
+    pub show_signature_help_after_edits: bool,
     #[serde(default)]
     pub jupyter: Jupyter,
 }
@@ -233,6 +235,16 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub search_wrap: Option<bool>,
+
+    /// Whether to automatically show a signature help pop-up or not.
+    ///
+    /// Default: false
+    pub auto_signature_help: Option<bool>,
+
+    /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
+    ///
+    /// Default: true
+    pub show_signature_help_after_edits: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<Jupyter>,

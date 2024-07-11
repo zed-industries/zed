@@ -709,6 +709,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_model_request_handler(Self::handle_signature_help);
     }
 
     pub fn local(
@@ -5778,6 +5779,63 @@ impl Project {
         }
     }
 
+    pub fn signature_help<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<SignatureHelp>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        if self.is_local() {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                buffer,
+                Some(position),
+                |server_capabilities| server_capabilities.signature_help_provider.is_some(),
+                GetSignatureHelp { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move {
+                all_actions_task
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .filter(|help| !help.markdown.is_empty())
+                    .collect::<Vec<_>>()
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let position_anchor = buffer
+                .read(cx)
+                .anchor_at(buffer.read(cx).point_utf16_to_offset(position), Bias::Right);
+            let request = self.client.request(proto::GetSignatureHelp {
+                project_id,
+                position: Some(serialize_anchor(&position_anchor)),
+                buffer_id: buffer.read(cx).remote_id().to_proto(),
+                version: serialize_version(&buffer.read(cx).version()),
+            });
+            let buffer = buffer.clone();
+            cx.spawn(move |project, cx| async move {
+                let Some(response) = request.await.log_err() else {
+                    return Vec::new();
+                };
+                let Some(project) = project.upgrade() else {
+                    return Vec::new();
+                };
+                GetSignatureHelp::response_from_proto(
+                    GetSignatureHelp { position },
+                    response,
+                    project,
+                    buffer,
+                    cx,
+                )
+                .await
+                .log_err()
+                .unwrap_or_default()
+            })
+        } else {
+            Task::ready(Vec::new())
+        }
+    }
+
     fn hover_impl(
         &self,
         buffer: &Model<Buffer>,
@@ -9849,6 +9907,43 @@ impl Project {
             .collect();
 
         Ok(proto::TaskTemplatesResponse { templates })
+    }
+
+    async fn handle_signature_help(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::GetSignatureHelp>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetSignatureHelpResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let buffer = project.update(&mut cx, |project, _| {
+            project
+                .opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .with_context(|| format!("unknown buffer id {}", envelope.payload.buffer_id))
+        })??;
+        let response = GetSignatureHelp::from_proto(
+            envelope.payload.clone(),
+            project.clone(),
+            buffer.clone(),
+            cx.clone(),
+        )
+        .await?;
+        let help_response = project
+            .update(&mut cx, |project, cx| {
+                project.signature_help(&buffer, response.position, cx)
+            })?
+            .await;
+        project.update(&mut cx, |project, cx| {
+            GetSignatureHelp::response_to_proto(
+                help_response,
+                project,
+                sender_id,
+                &buffer.read(cx).version(),
+                cx,
+            )
+        })
     }
 
     async fn try_resolve_code_action(
