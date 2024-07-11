@@ -5,24 +5,26 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, Hover, RangeToAnchorExt,
 };
-use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
-    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, ScrollHandle, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView,
+    div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
+    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, View,
+    ViewContext, WeakView,
 };
-use language::{markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
-
+use itertools::Itertools;
+use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
+use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
-use smol::stream::StreamExt;
+use std::rc::Rc;
+use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
+use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
-
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -40,12 +42,29 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContext<Editor>) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
+        if show_keyboard_hover(editor, cx) {
+            return;
+        }
         if let Some(anchor) = anchor {
             show_hover(editor, anchor, false, cx);
         } else {
             hide_hover(editor, cx);
         }
     }
+}
+
+pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+    let info_popovers = editor.hover_state.info_popovers.clone();
+    for p in info_popovers {
+        let keyboard_grace = p.keyboard_grace.borrow();
+        if *keyboard_grace {
+            if let Some(anchor) = p.anchor {
+                show_hover(editor, anchor, false, cx);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 pub struct InlayHover {
@@ -113,12 +132,14 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 
                 let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
 
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
                     scroll_handle: ScrollHandle::new(),
+                    keyboard_grace: Rc::new(RefCell::new(false)),
+                    anchor: None,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -291,39 +312,40 @@ fn show_hover(
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(hovers_response.len());
-            let mut info_popover_tasks = hovers_response
-                .into_iter()
-                .map(|hover_result| async {
-                    // Create symbol range of anchors for highlighting and filtering of future requests.
-                    let range = hover_result
-                        .range
-                        .and_then(|range| {
-                            let start = snapshot
-                                .buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, range.start)?;
-                            let end = snapshot
-                                .buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, range.end)?;
+            let mut info_popover_tasks = Vec::with_capacity(hovers_response.len());
 
-                            Some(start..end)
-                        })
-                        .unwrap_or_else(|| anchor..anchor);
+            for hover_result in hovers_response {
+                // Create symbol range of anchors for highlighting and filtering of future requests.
+                let range = hover_result
+                    .range
+                    .and_then(|range| {
+                        let start = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id, range.start)?;
+                        let end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id, range.end)?;
 
-                    let blocks = hover_result.contents;
-                    let language = hover_result.language;
-                    let parsed_content = parse_blocks(&blocks, &language_registry, language).await;
+                        Some(start..end)
+                    })
+                    .unwrap_or_else(|| anchor..anchor);
 
-                    (
-                        range.clone(),
-                        InfoPopover {
-                            symbol_range: RangeInEditor::Text(range),
-                            parsed_content,
-                            scroll_handle: ScrollHandle::new(),
-                        },
-                    )
-                })
-                .collect::<FuturesUnordered<_>>();
-            while let Some((highlight_range, info_popover)) = info_popover_tasks.next().await {
+                let blocks = hover_result.contents;
+                let language = hover_result.language;
+                let parsed_content =
+                    parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                info_popover_tasks.push((
+                    range.clone(),
+                    InfoPopover {
+                        symbol_range: RangeInEditor::Text(range),
+                        parsed_content,
+                        scroll_handle: ScrollHandle::new(),
+                        keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                        anchor: Some(anchor),
+                    },
+                ));
+            }
+            for (highlight_range, info_popover) in info_popover_tasks {
                 hover_highlights.push(highlight_range);
                 info_popovers.push(info_popover);
             }
@@ -357,72 +379,81 @@ async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> markdown::ParsedMarkdown {
-    let mut text = String::new();
-    let mut highlights = Vec::new();
-    let mut region_ranges = Vec::new();
-    let mut regions = Vec::new();
+    cx: &mut AsyncWindowContext,
+) -> Option<View<Markdown>> {
+    let fallback_language_name = if let Some(ref l) = language {
+        let l = Arc::clone(l);
+        Some(l.lsp_id().clone())
+    } else {
+        None
+    };
 
-    for block in blocks {
-        match &block.kind {
-            HoverBlockKind::PlainText => {
-                markdown::new_paragraph(&mut text, &mut Vec::new());
-                text.push_str(&block.text.replace("\\n", "\n"));
+    let combined_text = blocks
+        .iter()
+        .map(|block| match &block.kind {
+            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
+                Cow::Borrowed(block.text.trim())
             }
-
-            HoverBlockKind::Markdown => {
-                markdown::parse_markdown_block(
-                    &block.text.replace("\\n", "\n"),
-                    language_registry,
-                    language.clone(),
-                    &mut text,
-                    &mut highlights,
-                    &mut region_ranges,
-                    &mut regions,
-                )
-                .await
+            project::HoverBlockKind::Code { language } => {
+                Cow::Owned(format!("```{}\n{}\n```", language, block.text.trim()))
             }
+        })
+        .join("\n\n");
 
-            HoverBlockKind::Code { language } => {
-                if let Some(language) = language_registry
-                    .language_for_name(language)
-                    .now_or_never()
-                    .and_then(Result::ok)
-                {
-                    markdown::highlight_code(&mut text, &mut highlights, &block.text, &language);
-                } else {
-                    text.push_str(&block.text);
-                }
-            }
-        }
-    }
+    let rendered_block = cx
+        .new_view(|cx| {
+            let settings = ThemeSettings::get_global(cx);
+            let buffer_font_family = settings.buffer_font.family.clone();
+            let mut base_style = cx.text_style();
+            base_style.refine(&TextStyleRefinement {
+                font_family: Some(buffer_font_family.clone()),
+                color: Some(cx.theme().colors().editor_foreground),
+                ..Default::default()
+            });
 
-    let leading_space = text.chars().take_while(|c| c.is_whitespace()).count();
-    if leading_space > 0 {
-        highlights = highlights
-            .into_iter()
-            .map(|(range, style)| {
-                (
-                    range.start.saturating_sub(leading_space)
-                        ..range.end.saturating_sub(leading_space),
-                    style,
-                )
-            })
-            .collect();
-        region_ranges = region_ranges
-            .into_iter()
-            .map(|range| {
-                range.start.saturating_sub(leading_space)..range.end.saturating_sub(leading_space)
-            })
-            .collect();
-    }
+            let markdown_style = MarkdownStyle {
+                base_text_style: base_style,
+                code_block: StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
+                inline_code: TextStyleRefinement {
+                    background_color: Some(cx.theme().colors().background),
+                    ..Default::default()
+                },
+                rule_color: Color::Muted.color(cx),
+                block_quote_border_color: Color::Muted.color(cx),
+                block_quote: TextStyleRefinement {
+                    color: Some(Color::Muted.color(cx)),
+                    ..Default::default()
+                },
+                link: TextStyleRefinement {
+                    color: Some(cx.theme().colors().editor_foreground),
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                syntax: cx.theme().syntax().clone(),
+                selection_background_color: { cx.theme().players().local().selection },
+                break_style: Default::default(),
+                heading: StyleRefinement::default()
+                    .font_weight(FontWeight::BOLD)
+                    .text_base()
+                    .mt(rems(1.))
+                    .mb_0(),
+            };
 
-    ParsedMarkdown {
-        text: text.trim().to_string(),
-        highlights,
-        region_ranges,
-        regions,
-    }
+            Markdown::new(
+                combined_text,
+                markdown_style.clone(),
+                Some(language_registry.clone()),
+                cx,
+                fallback_language_name,
+            )
+        })
+        .ok();
+
+    rendered_block
 }
 
 #[derive(Default, Debug)]
@@ -444,7 +475,7 @@ impl HoverState {
         style: &EditorStyle,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -482,29 +513,39 @@ impl HoverState {
             elements.push(diagnostic_popover.render(style, max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(style, max_size, workspace.clone(), cx));
+            elements.push(info_popover.render(max_size, cx));
         }
 
         Some((point, elements))
     }
+
+    pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
+        let mut hover_popover_is_focused = false;
+        for info_popover in &self.info_popovers {
+            for markdown_view in &info_popover.parsed_content {
+                if markdown_view.focus_handle(cx).is_focused(cx) {
+                    hover_popover_is_focused = true;
+                }
+            }
+        }
+        return hover_popover_is_focused;
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
+
 pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
-    pub parsed_content: ParsedMarkdown,
+    pub parsed_content: Option<View<Markdown>>,
     pub scroll_handle: ScrollHandle,
+    pub keyboard_grace: Rc<RefCell<bool>>,
+    pub anchor: Option<Anchor>,
 }
 
 impl InfoPopover {
-    pub fn render(
-        &mut self,
-        style: &EditorStyle,
-        max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement {
-        div()
+    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+        let keyboard_grace = Rc::clone(&self.keyboard_grace);
+        let mut d = div()
             .id("info_popover")
             .elevation_2(cx)
             .overflow_y_scroll()
@@ -514,15 +555,17 @@ impl InfoPopover {
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(div().p_2().child(crate::render_parsed_markdown(
-                "content",
-                &self.parsed_content,
-                style,
-                workspace,
-                cx,
-            )))
-            .into_any_element()
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                let mut keyboard_grace = keyboard_grace.borrow_mut();
+                *keyboard_grace = false;
+                cx.stop_propagation();
+            })
+            .p_2();
+
+        if let Some(markdown) = &self.parsed_content {
+            d = d.child(markdown.clone());
+        }
+        d.into_any_element()
     }
 
     pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
@@ -642,17 +685,33 @@ mod tests {
         InlayId, PointForPosition,
     };
     use collections::BTreeSet;
-    use gpui::{FontWeight, HighlightStyle, UnderlineStyle};
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
-    use project::{HoverBlock, HoverBlockKind};
+    use markdown::parser::MarkdownEvent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
-    use unindent::Unindent;
-    use util::test::marked_text_ranges;
+
+    impl InfoPopover {
+        fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
+            let mut rendered_text = String::new();
+            if let Some(parsed_content) = self.parsed_content.clone() {
+                let markdown = parsed_content.read(cx);
+                let text = markdown.parsed_markdown().source().to_string();
+                let data = markdown.parsed_markdown().events();
+                let slice = data;
+
+                for (range, event) in slice.iter() {
+                    if [MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
+                        rendered_text.push_str(&text[range.clone()])
+                    }
+                }
+            }
+            rendered_text
+        }
+    }
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover_with_autocomplete_popover(
@@ -736,7 +795,7 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         requests.next().await;
 
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -744,14 +803,13 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
-            assert_eq!(rendered.text, "some basic docs".to_string())
+                .get_rendered_text(cx);
+            assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
         // check that the completion menu is still visible and that there still has only been 1 completion request
@@ -777,7 +835,7 @@ mod tests {
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
         //verify the information popover is still visible and unchanged
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -785,14 +843,14 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
-            assert_eq!(rendered.text, "some basic docs".to_string())
+                .get_rendered_text(cx);
+
+            assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
         // Mouse moved with no hover response dismisses
@@ -870,7 +928,7 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         requests.next().await;
 
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -878,14 +936,14 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
-            assert_eq!(rendered.text, "some basic docs".to_string())
+                .get_rendered_text(cx);
+
+            assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
         // Mouse moved with no hover response dismisses
@@ -931,34 +989,49 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: "some other basic docs".to_string(),
-                }),
-                range: Some(symbol_range),
-            }))
-        })
-        .next()
-        .await;
+
+        cx.editor(|editor, _cx| {
+            assert!(!editor.hover_state.visible());
+
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                0,
+                "Expected no hovers but got but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+        });
+
+        let mut requests =
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: "some other basic docs".to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
+            });
+
+        requests.next().await;
+        cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
-            assert_eq!(rendered.text, "some other basic docs".to_string())
+                .get_rendered_text(cx);
+
+            assert_eq!(rendered_text, "some other basic docs".to_string())
         });
     }
 
@@ -998,24 +1071,25 @@ mod tests {
         })
         .next()
         .await;
+        cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
+                .get_rendered_text(cx);
+
             assert_eq!(
-                rendered.text,
+                rendered_text,
                 "regular text for hover to show".to_string(),
                 "No empty string hovers should be shown"
             );
@@ -1063,24 +1137,25 @@ mod tests {
         .next()
         .await;
 
+        cx.dispatch_action(Hover);
+
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let rendered = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content;
+                .get_rendered_text(cx);
+
             assert_eq!(
-                rendered.text,
-                code_str.trim(),
+                rendered_text, code_str,
                 "Should not have extra line breaks at end of rendered hover"
             );
         });
@@ -1154,153 +1229,6 @@ mod tests {
         cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
         });
-    }
-
-    #[gpui::test]
-    fn test_render_blocks(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-
-        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
-        let editor = cx.add_window(|cx| Editor::single_line(cx));
-        editor
-            .update(cx, |editor, _cx| {
-                let style = editor.style.clone().unwrap();
-
-                struct Row {
-                    blocks: Vec<HoverBlock>,
-                    expected_marked_text: String,
-                    expected_styles: Vec<HighlightStyle>,
-                }
-
-                let rows = &[
-                    // Strong emphasis
-                    Row {
-                        blocks: vec![HoverBlock {
-                            text: "one **two** three".to_string(),
-                            kind: HoverBlockKind::Markdown,
-                        }],
-                        expected_marked_text: "one «two» three".to_string(),
-                        expected_styles: vec![HighlightStyle {
-                            font_weight: Some(FontWeight::BOLD),
-                            ..Default::default()
-                        }],
-                    },
-                    // Links
-                    Row {
-                        blocks: vec![HoverBlock {
-                            text: "one [two](https://the-url) three".to_string(),
-                            kind: HoverBlockKind::Markdown,
-                        }],
-                        expected_marked_text: "one «two» three".to_string(),
-                        expected_styles: vec![HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }],
-                    },
-                    // Lists
-                    Row {
-                        blocks: vec![HoverBlock {
-                            text: "
-                            lists:
-                            * one
-                                - a
-                                - b
-                            * two
-                                - [c](https://the-url)
-                                - d"
-                            .unindent(),
-                            kind: HoverBlockKind::Markdown,
-                        }],
-                        expected_marked_text: "
-                        lists:
-                        - one
-                          - a
-                          - b
-                        - two
-                          - «c»
-                          - d"
-                        .unindent(),
-                        expected_styles: vec![HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }],
-                    },
-                    // Multi-paragraph list items
-                    Row {
-                        blocks: vec![HoverBlock {
-                            text: "
-                            * one two
-                              three
-
-                            * four five
-                                * six seven
-                                  eight
-
-                                  nine
-                                * ten
-                            * six"
-                                .unindent(),
-                            kind: HoverBlockKind::Markdown,
-                        }],
-                        expected_marked_text: "
-                        - one two three
-                        - four five
-                          - six seven eight
-
-                            nine
-                          - ten
-                        - six"
-                            .unindent(),
-                        expected_styles: vec![HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }],
-                    },
-                ];
-
-                for Row {
-                    blocks,
-                    expected_marked_text,
-                    expected_styles,
-                } in &rows[0..]
-                {
-                    let rendered = smol::block_on(parse_blocks(&blocks, &languages, None));
-
-                    let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
-                    let expected_highlights = ranges
-                        .into_iter()
-                        .zip(expected_styles.iter().cloned())
-                        .collect::<Vec<_>>();
-                    assert_eq!(
-                        rendered.text, expected_text,
-                        "wrong text for input {blocks:?}"
-                    );
-
-                    let rendered_highlights: Vec<_> = rendered
-                        .highlights
-                        .iter()
-                        .filter_map(|(range, highlight)| {
-                            let highlight = highlight.to_highlight_style(&style.syntax)?;
-                            Some((range.clone(), highlight))
-                        })
-                        .collect();
-
-                    assert_eq!(
-                        rendered_highlights, expected_highlights,
-                        "wrong highlights for input {blocks:?}"
-                    );
-                }
-            })
-            .unwrap();
     }
 
     #[gpui::test]
@@ -1546,9 +1474,8 @@ mod tests {
                 "Popover range should match the new type label part"
             );
             assert_eq!(
-                popover.parsed_content.text,
-                format!("A tooltip for `{new_type_label}`"),
-                "Rendered text should not anyhow alter backticks"
+                popover.get_rendered_text(cx),
+                format!("A tooltip for {new_type_label}"),
             );
         });
 
@@ -1602,7 +1529,7 @@ mod tests {
                 "Popover range should match the struct label part"
             );
             assert_eq!(
-                popover.parsed_content.text,
+                popover.get_rendered_text(cx),
                 format!("A tooltip for {struct_label}"),
                 "Rendered markdown element should remove backticks from text"
             );

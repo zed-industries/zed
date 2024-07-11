@@ -47,7 +47,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
+  // (On macOS) You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
@@ -267,6 +267,8 @@
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
+  // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
+  "search_wrap": true,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //

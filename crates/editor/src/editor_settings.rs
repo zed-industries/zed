@@ -25,6 +25,7 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    pub search_wrap: bool,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     #[serde(default)]
@@ -230,6 +231,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+    /// Whether the editor search results will loop
+    ///
+    /// Default: true
+    pub search_wrap: Option<bool>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///

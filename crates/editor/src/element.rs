@@ -710,18 +710,24 @@ impl EditorElement {
         let Some(hub) = editor.collaboration_hub() else {
             return;
         };
-        let range = DisplayPoint::new(point.row(), point.column().saturating_sub(1))
-            ..DisplayPoint::new(
+        let start = snapshot.display_snapshot.clip_point(
+            DisplayPoint::new(point.row(), point.column().saturating_sub(1)),
+            Bias::Left,
+        );
+        let end = snapshot.display_snapshot.clip_point(
+            DisplayPoint::new(
                 point.row(),
                 (point.column() + 1).min(snapshot.line_len(point.row())),
-            );
+            ),
+            Bias::Right,
+        );
 
         let range = snapshot
             .buffer_snapshot
-            .anchor_at(range.start.to_point(&snapshot.display_snapshot), Bias::Left)
+            .anchor_at(start.to_point(&snapshot.display_snapshot), Bias::Left)
             ..snapshot
                 .buffer_snapshot
-                .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
+                .anchor_at(end.to_point(&snapshot.display_snapshot), Bias::Right);
 
         let Some(selection) = snapshot.remote_selections_in_range(&range, hub, cx).next() else {
             return;
@@ -3800,6 +3806,9 @@ impl EditorElement {
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
+                        if editor.hover_state.focused(cx) {
+                            return;
+                        }
                         if event.pressed_button == Some(MouseButton::Left)
                             || event.pressed_button == Some(MouseButton::Middle)
                         {
