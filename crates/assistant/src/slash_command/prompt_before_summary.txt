@@ -13,10 +13,16 @@ details of the file.
 
 ## search
 
-This action's parameter is a string to search for across
-the project. It will tell you which files this string
+This action's parameter is a string to do a semantic search for
+across the files in the project. (You will have a JSON summary
+of all the files in the project.) It will tell you which files this string
 (or similar strings; it is a semantic search) appear in,
 as well as some context of the lines surrounding each result.
+It's very important that you only use this action when you think
+that searching across the specific files in this project for the query
+in question will be useful. For example, don't use this command to search
+for queries you might put into a general Web search engine, because those
+will be too general to give useful results in this project-specific search.
 
 ---
 
