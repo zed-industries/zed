@@ -8,7 +8,8 @@ use editor::{
     actions::SelectAll,
     items::active_match_index,
     scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
+    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
+    MAX_TAB_TITLE_LEN,
 };
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
@@ -968,6 +969,16 @@ impl ProjectSearchView {
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
+
+            if !EditorSettings::get_global(cx).search_wrap {
+                if (direction == Direction::Next && index + 1 >= match_ranges.len())
+                    || (direction == Direction::Prev && index == 0)
+                {
+                    crate::show_no_more_matches(cx);
+                    return;
+                }
+            }
+
             let new_index = self.results_editor.update(cx, |editor, cx| {
                 editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });

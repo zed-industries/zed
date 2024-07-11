@@ -262,6 +262,8 @@
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
+  // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
+  "search_wrap": true,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //

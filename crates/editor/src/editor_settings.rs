@@ -25,6 +25,7 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    pub search_wrap: bool,
     #[serde(default)]
     pub jupyter: Jupyter,
 }
@@ -228,6 +229,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+    /// Whether the editor search results will loop
+    ///
+    /// Default: true
+    pub search_wrap: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<Jupyter>,
