@@ -12,6 +12,8 @@
       "down": "vim::Down",
       "enter": "vim::NextLineStart",
       "ctrl-m": "vim::NextLineStart",
+      "+": "vim::NextLineStart",
+      "-": "vim::PreviousLineStart",
       "tab": "vim::Tab",
       "shift-tab": "vim::Tab",
       "k": "vim::Up",
@@ -192,7 +194,6 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "-": "pane::RevealInProjectPanel",
       "ctrl-6": "pane::AlternateFile"
     }
   },
