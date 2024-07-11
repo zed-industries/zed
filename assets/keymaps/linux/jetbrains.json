@@ -63,7 +63,7 @@
     "bindings": {
       "ctrl-shift-n": "file_finder::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
-      "shift shift": "command_palette::Toggle",
+      // "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
       "alt-1": "workspace::ToggleLeftDock",
       "ctrl-e": "tab_switcher::Toggle",
