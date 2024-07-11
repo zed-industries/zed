@@ -313,7 +313,6 @@ impl WindowsWindow {
         let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
         register_drag_drop(state_ptr.clone());
 
-        let mut lock = state_ptr.state.borrow_mut();
         unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -326,12 +325,13 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
+            let mut lock = state_ptr.state.borrow_mut();
             let bounds = bounds.to_device_pixels(lock.scale_factor);
             lock.border_offset.udpate(raw_hwnd).unwrap();
             placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
+            drop(lock);
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
-        drop(lock);
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
         Self(state_ptr)
