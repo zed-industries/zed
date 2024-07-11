@@ -18,8 +18,8 @@ use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
-use std::cell::RefCell;
 use std::rc::Rc;
+use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent, Tooltip};
@@ -388,7 +388,17 @@ async fn parse_blocks(
         None
     };
 
-    let combined_text = blocks.iter().map(|block| block.text.trim()).join("\n\n");
+    let combined_text = blocks
+        .iter()
+        .map(|block| match &block.kind {
+            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
+                Cow::Borrowed(block.text.trim())
+            }
+            project::HoverBlockKind::Code { language } => {
+                Cow::Owned(format!("```{}\n{}\n```", language, block.text.trim()))
+            }
+        })
+        .join("\n\n");
 
     let rendered_block = cx
         .new_view(|cx| {
