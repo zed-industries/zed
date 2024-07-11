@@ -22,11 +22,11 @@ use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 
 pub struct Session {
-    editor: WeakView<Editor>,
-    kernel: Kernel,
+    pub editor: WeakView<Editor>,
+    pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    messaging_task: Task<()>,
-    kernel_specification: KernelSpecification,
+    pub messaging_task: Task<()>,
+    pub kernel_specification: KernelSpecification,
 }
 
 struct EditorBlock {
@@ -310,7 +310,7 @@ impl Session {
         }
     }
 
-    fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
                 self.send(InterruptRequest {}.into(), cx).ok();
@@ -322,7 +322,7 @@ impl Session {
         }
     }
 
-    fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {

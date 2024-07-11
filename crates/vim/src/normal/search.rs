@@ -526,14 +526,15 @@ fn parse_replace_all(query: &str) -> Replacement {
 mod test {
     use std::time::Duration;
 
-    use editor::{display_map::DisplayRow, DisplayPoint};
-    use indoc::indoc;
-    use search::BufferSearchBar;
-
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
+    use editor::EditorSettings;
+    use editor::{display_map::DisplayRow, DisplayPoint};
+    use indoc::indoc;
+    use search::BufferSearchBar;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -557,6 +558,44 @@ mod test {
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes("2 *");
+        cx.run_until_parked();
+        cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("g *");
+        cx.run_until_parked();
+        cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("n");
+        cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("g #");
+        cx.run_until_parked();
+        cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_move_to_next_with_no_search_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
+        });
+
+        cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("#");
+        cx.run_until_parked();
+        cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
+
+        cx.simulate_keystrokes("3 *");
         cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
@@ -649,6 +688,27 @@ mod test {
         cx.assert_editor_state("«oneˇ» two one");
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
+
+        // check that searching with unable search wrap
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
+        });
+        cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("/ c c enter");
+
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+
+        // n to go to next/N to go to previous
+        cx.simulate_keystrokes("n");
+        cx.assert_state("aa\nbb\ncc\nˇcc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("shift-n");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+
+        // ?<enter> to go to previous
+        cx.simulate_keystrokes("? enter");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("? enter");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
     }
 
     #[gpui::test]

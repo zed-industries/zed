@@ -7,11 +7,22 @@ use std::ops::Range;
 pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut events = Vec::new();
     let mut within_link = false;
+    let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+        if within_metadata {
+            if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
+                pulldown_event
+            {
+                within_metadata = false;
+            }
+            continue;
+        }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
-                if let pulldown_cmark::Tag::Link { .. } = tag {
-                    within_link = true;
+                match tag {
+                    pulldown_cmark::Tag::Link { .. } => within_link = true,
+                    pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
+                    _ => {}
                 }
                 events.push((range, MarkdownEvent::Start(tag.into())))
             }

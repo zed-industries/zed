@@ -211,6 +211,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -238,6 +239,7 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    hovered: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -451,6 +453,7 @@ impl X11WindowState {
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
                     ],
                 }],
@@ -507,6 +510,7 @@ impl X11WindowState {
             atoms: *atoms,
             input_handler: None,
             active: false,
+            hovered: false,
             fullscreen: false,
             maximized_vertical: false,
             maximized_horizontal: false,
@@ -777,6 +781,15 @@ impl X11WindowStatePtr {
                 state.hidden = true;
             }
         }
+
+        let hovered_window = self
+            .xcb_connection
+            .query_pointer(state.x_root_window)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .child;
+        self.set_hovered(hovered_window == self.x_window);
     }
 
     pub fn close(&self) {
@@ -912,8 +925,14 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_active(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+            fun(focus);
+        }
+    }
+
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hovered_status_change {
             fun(focus);
         }
     }
@@ -1046,6 +1065,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().active
     }
 
+    fn is_hovered(&self) -> bool {
+        self.0.state.borrow().hovered
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0
             .xcb_connection
@@ -1160,6 +1183,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hovered_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {

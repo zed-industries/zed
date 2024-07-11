@@ -57,6 +57,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
+    pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
 }
 
@@ -212,6 +213,7 @@ impl WindowsWindowStatePtr {
             hwnd,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
+            is_movable: context.is_movable,
             executor: context.executor.clone(),
         })
     }
@@ -235,6 +237,7 @@ struct WindowCreateContext {
     hide_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
+    is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
 }
@@ -261,7 +264,14 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
+        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+        } else {
+            (
+                WS_EX_APPWINDOW,
+                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+            )
+        };
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -275,13 +285,14 @@ impl WindowsWindow {
             hide_title_bar,
             display,
             transparent: true,
+            is_movable: params.is_movable,
             executor,
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_APPWINDOW,
+                dwexstyle,
                 classname,
                 &windowname,
                 dwstyle,
@@ -503,6 +514,11 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
+    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
@@ -603,6 +619,8 @@ impl PlatformWindow for WindowsWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
+
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);

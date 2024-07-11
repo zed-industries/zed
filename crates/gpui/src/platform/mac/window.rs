@@ -940,6 +940,11 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -1060,6 +1065,8 @@ impl PlatformWindow for MacWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
+
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.as_ref().lock().resize_callback = Some(callback);
