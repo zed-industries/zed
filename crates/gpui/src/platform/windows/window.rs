@@ -137,18 +137,11 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
-        let physical_size = size(
-            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+        let bounds = calculate_client_rect(
+            placement.rcNormalPosition,
+            self.size_offset,
+            self.scale_factor,
         );
-        let bounds = Bounds {
-            origin: logical_point(
-                placement.rcNormalPosition.left as f32,
-                placement.rcNormalPosition.top as f32,
-                self.scale_factor,
-            ),
-            size: physical_size.to_pixels(self.scale_factor),
-        };
 
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
@@ -333,7 +326,7 @@ impl WindowsWindow {
                 .udpate(raw_hwnd)
                 .unwrap();
             let size_offset = state_ptr.state.borrow().size_offset;
-            placement.rcNormalPosition = calcualte_window_position(bounds, size_offset);
+            placement.rcNormalPosition = calcualte_window_rect(bounds, size_offset);
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
@@ -991,24 +984,42 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     };
 }
 
-fn calcualte_window_position(bounds: Bounds<DevicePixels>, size_offset: WindowSizeOffset) -> RECT {
+fn calcualte_window_rect(bounds: Bounds<DevicePixels>, size_offset: WindowSizeOffset) -> RECT {
     let mut rect = RECT {
         left: bounds.left().0,
         top: bounds.top().0,
         right: bounds.right().0,
         bottom: bounds.bottom().0,
     };
-    let width_offset = size_offset.width_offset;
-    let height_offset = size_offset.height_offset;
-    let left_offset = width_offset / 2;
-    let top_offset = height_offset / 2;
-    let right_offset = width_offset - left_offset;
-    let bottom_offet = height_offset - top_offset;
+    let left_offset = size_offset.width_offset / 2;
+    let top_offset = size_offset.height_offset / 2;
+    let right_offset = size_offset.width_offset - left_offset;
+    let bottom_offet = size_offset.height_offset - top_offset;
     rect.left -= left_offset;
     rect.top -= top_offset;
     rect.right += right_offset;
     rect.bottom += bottom_offet;
     rect
+}
+
+fn calculate_client_rect(
+    rect: RECT,
+    size_offset: WindowSizeOffset,
+    scale_factor: f32,
+) -> Bounds<Pixels> {
+    let left_offset = size_offset.width_offset / 2;
+    let top_offset = size_offset.height_offset / 2;
+    let right_offset = size_offset.width_offset - left_offset;
+    let bottom_offet = size_offset.height_offset - top_offset;
+    let left = rect.left + left_offset;
+    let top = rect.top + top_offset;
+    let right = rect.right - right_offset;
+    let bottom = rect.bottom - bottom_offet;
+    let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
+    Bounds {
+        origin: logical_point(left as f32, top as f32, scale_factor),
+        size: physical_size.to_pixels(scale_factor),
+    }
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
