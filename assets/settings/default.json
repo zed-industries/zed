@@ -47,7 +47,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
+  // (On macOS) You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
