@@ -268,6 +268,8 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Redo selection                   | Editor     | `⌘ + Shift + U`                 |
 | Rename                           | Editor     | `F2`                            |
 | Reveal in File Manager           | Editor     | `Alt + ⌘ + R`                   |
+| Toggle hunk diff                 | Editor     | `⌘ + '`                         |
+| Expand all hunk diffs            | Editor     | `⌘ + "`                         |
 | Revert selected hunks            | Editor     | `⌘ + Alt + Z`                   |
 | Select all                       | Editor     | `⌘ + A`                         |
 | Select all matches               | Editor     | `⌘ + Shift + L`                 |
