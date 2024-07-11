@@ -1,14 +1,11 @@
 use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
-use crate::{
-    completion_provider, CompletionProvider, LanguageModel, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
-};
+use crate::{CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role};
 use anyhow::{anyhow, Result};
-use futures::future::BoxFuture;
 use futures::StreamExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
+use serde::{Deserialize, Serialize};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::WindowContext;
 use workspace::Workspace;
@@ -58,58 +55,42 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("missing prompt")));
         };
 
-        let mut wip_action: String = String::new();
-        let provider = CompletionProvider::global(cx);
-        for summary in summaries(SUMMARY.to_string(), provider, cx).await? {
-            let prompt = format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{SUMMARY}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{argument}");
-            let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: prompt,
-                }],
-                stop: vec![],
-                temperature: 1.0,
-            };
+        // to_string() is needed so it can live long enough to be used in cx.spawn
+        let original_prompt = argument.to_string();
+        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
+            let summaries: Vec<FileSummary> = serde_json::from_str(SUMMARY).unwrap_or_else(|_| {
+                // Since we generate the JSON ourselves, this parsing should never fail. If it does, that's a bug.
+                log::error!("JSON parsing of project file summaries failed");
 
-            let stream = provider.complete(request);
-            let task: Task<Result<String>> = cx.spawn(|_cx| async move {
-                let mut actions_text = String::new();
-                let stream_completion = async {
-                    let mut messages = stream.await?;
-
-                    while let Some(message) = messages.next().await {
-                        let text = message?;
-
-                        chunked_line(&mut wip_action, &text, |line| {
-                            actions_text.push('/');
-                            actions_text.push_str(line);
-                            actions_text.push('\n');
-                        });
-
-                        smol::future::yield_now().await;
-                    }
-
-                    anyhow::Ok(())
-                };
-
-                stream_completion.await?;
-
-                Ok(actions_text)
+                // Handle this gracefully by not including any summaries. Assistant results
+                // will be worse than if we actually had summaries, but we won't block the user.
+                Vec::new()
             });
-        }
+
+            response_for_summaries(&summaries, &original_prompt, &cx).await
+        });
 
         // As a convenience, append /auto's argument to the end of the prompt
         // so you don't have to write it again.
-        let argument = argument.to_string();
+        let prompt_suffix = argument.to_string();
 
         cx.background_executor().spawn(async move {
-            let mut text = task.await?;
+            let response = task.await?;
+            let mut prompt = String::new();
 
-            text.push_str(&argument);
+            log::info!("Translating this response into slash-commands: {response}");
+
+            for command in response.split('\n') {
+                prompt.push('/');
+                prompt.push_str(command);
+                prompt.push('\n');
+            }
+
+            prompt.push('\n');
+            prompt.push_str(&prompt_suffix);
 
             Ok(SlashCommandOutput {
-                text,
+                text: prompt,
                 sections: Vec::new(),
                 run_commands_in_text: true,
             })
@@ -119,97 +100,81 @@ impl SlashCommand for AutoCommand {
 
 const PROMPT_INSTRUCTIONS_BEFORE_SUMMARY: &str = include_str!("prompt_before_summary.txt");
 const PROMPT_INSTRUCTIONS_AFTER_SUMMARY: &str = include_str!("prompt_after_summary.txt");
-const SUMMARY: &str =
-    include_str!("/Users/rtfeldman/code/summarize-dir/zed-output/combined_summaries.xml");
+const SUMMARY: &str = include_str!("/Users/rtfeldman/code/summarize-dir/combined_summaries.json");
 
-const OPENING_CONTEXT_TAG: &str = "<context>";
-const CLOSING_CONTEXT_TAG: &str = "</context>";
+#[derive(Serialize, Deserialize)]
+struct FileSummary {
+    filename: String,
+    summary: String,
+}
 
-async fn summaries(
-    full_summary: String,
-    provider: &CompletionProvider,
-    cx: &AppContext,
-) -> Result<Vec<String>> {
-    let model = provider.model();
+fn summaries_prompt(summaries: &[FileSummary], original_prompt: &str) -> String {
+    let json_summaries = serde_json::to_string(summaries).unwrap();
+
+    format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{json_summaries}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{original_prompt}")
+}
+
+async fn response_for_summaries(
+    summaries: &[FileSummary],
+    original_prompt: &str,
+    cx: &AsyncAppContext,
+) -> Result<String> {
+    log::info!(
+        "Inferring prompt context using {} file summaries",
+        summaries.len()
+    );
+
+    if summaries.is_empty() {
+        return Ok(String::new());
+    }
+
+    let model = cx.update(|cx| CompletionProvider::global(cx).model())?;
     let max_token_count = model.max_token_count();
-    let tokens_needed = |content: String| {
+    let mut stack = vec![(summaries, String::new())];
+    let mut final_response = String::new();
+
+    while let Some((current_summaries, mut accumulated_response)) = stack.pop() {
+        // The split can result in one slice being empty and the other having one element.
+        // Whenever that happens, skip the empty one.
+        if current_summaries.is_empty() {
+            continue;
+        }
+
         let request = LanguageModelRequest {
             model: model.clone(),
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
-                content,
+                content: summaries_prompt(&current_summaries, original_prompt),
             }],
             stop: Vec::new(),
             temperature: 1.0,
         };
 
-        provider.count_tokens(request, cx)
-    };
-    let full_summary_tokens = tokens_needed(full_summary.to_string()).await?;
+        let token_count = cx
+            .update(|cx| CompletionProvider::global(cx).count_tokens(request.clone(), cx))?
+            .await?;
 
-    // If the full summary is under the max token count, we're done!
-    if full_summary_tokens <= max_token_count {
-        Ok(vec![full_summary])
-    } else {
-        let mut answer = Vec::new();
-        let mut chunk = String::new();
+        if token_count < max_token_count {
+            let mut response_chunks = cx
+                .update(|cx| CompletionProvider::global(cx).complete(request))?
+                .await?;
 
-        // Split up the request into smaller chunks, each of which fits .
-        for context in full_summary.trim().split(OPENING_CONTEXT_TAG) {
-            let context = context.trim();
-
-            if context.ends_with(CLOSING_CONTEXT_TAG) {
-                let candidate_chunk = format!("{chunk}{OPENING_CONTEXT_TAG}{context}");
-
-                // In the case of custom model providers, this will do a network request.
-                // That means this will perform one network request per file, which is way too much!
-                // We can address that by changing this algorithm to split the contexts up into chunks
-                // of several context pieces at a time, see if the chunks fit; if they don't,
-                // try a smaller chunk size until they fit, etc. That will be much more complex, but faster.
-                if tokens_needed(candidate_chunk).await? <= max_token_count {
-                    chunk.push_str(OPENING_CONTEXT_TAG);
-                    chunk.push_str(context);
-                } else {
-                    // Adding the current context to the accumulated chunk puts it over the token limit,
-                    // so push what we've accumulated so far to the final list of chunks, and make the
-                    // current context be the beginning of the next accumulated chunk.
-                    if !chunk.is_empty() {
-                        // Don't bother pushing empty chunks.
-                        answer.push(chunk);
-                    }
-
-                    chunk = format!("{OPENING_CONTEXT_TAG}{context}");
-                }
+            while let Some(chunk) = response_chunks.next().await {
+                accumulated_response.push_str(&chunk?);
             }
-        }
 
-        Ok(answer)
-    }
-}
-
-fn chunked_line(wip: &mut String, chunk: &str, mut on_line_end: impl FnMut(&str)) {
-    // The first iteration of the loop should just push to wip
-    // and nothing else. We only push what we encountered in
-    // previous iterations of the loop.
-    //
-    // This correctly handles both the scenario where no
-    // newlines are encountered (the loop will only run once,
-    // and so will only push to wip), as well as the scenario
-    // where the chunk contains at least one newline but
-    // does not end in a newline (the last iteration of the
-    // loop will update wip but will not run anything).
-    let mut is_first_iteration = true;
-
-    for line in chunk.split('\n') {
-        if is_first_iteration {
-            is_first_iteration = false;
+            final_response.push_str(&accumulated_response);
+        } else if current_summaries.len() == 1 {
+            log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
         } else {
-            // Since this isn't the first iteration of the loop, we definitely hit a newline
-            // at the end of the previous iteration! Run the function on whatever wip we have.
-            on_line_end(wip);
-            wip.clear();
+            log::info!(
+                "Context inference using file summaries resulted in a prompt containing {token_count} tokens, which exceeded the model's max of {max_token_count}. Retrying as two separate prompts, each including half the number of summaries.",
+            );
+            let (left, right) = current_summaries.split_at(current_summaries.len() / 2);
+            stack.push((right, accumulated_response.clone()));
+            stack.push((left, accumulated_response));
         }
-
-        wip.push_str(line);
     }
+
+    Ok(final_response)
 }

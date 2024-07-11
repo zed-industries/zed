@@ -139,7 +139,7 @@ impl LanguageModel {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: String,
@@ -160,7 +160,7 @@ impl LanguageModelRequestMessage {
     }
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct LanguageModelRequest {
     pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,

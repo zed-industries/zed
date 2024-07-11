@@ -22,4 +22,4 @@ as well as some context of the lines surrounding each result.
 
 That was the end of the list of actions.
 
-Here is an XML summary of each of the files in my project.:
+Here is a JSON summary of each of the files in my project:
