@@ -228,21 +228,19 @@ impl EditorState {
         }
     }
 
-    pub fn vim_controlled(&self) -> bool {
-        let is_insert_mode = matches!(self.mode, Mode::Insert);
-        if !is_insert_mode {
-            return true;
+    pub fn editor_input_enabled(&self) -> bool {
+        match self.mode {
+            Mode::Insert => {
+                if let Some(operator) = self.operator_stack.last() {
+                    !operator.is_waiting(self.mode)
+                } else {
+                    true
+                }
+            }
+            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                false
+            }
         }
-        matches!(
-            self.operator_stack.last(),
-            Some(Operator::FindForward { .. })
-                | Some(Operator::FindBackward { .. })
-                | Some(Operator::Mark)
-                | Some(Operator::Register)
-                | Some(Operator::RecordRegister)
-                | Some(Operator::ReplayRegister)
-                | Some(Operator::Jump { .. })
-        )
     }
 
     pub fn should_autoindent(&self) -> bool {
@@ -265,10 +263,6 @@ impl EditorState {
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
 
-        if self.vim_controlled() {
-            context.add("VimControl");
-        }
-
         let active_operator = self.active_operator();
 
         if active_operator.is_none() && self.pre_count.is_some()
@@ -277,48 +271,30 @@ impl EditorState {
             context.add("VimCount");
         }
 
-        let mode = match self.mode {
+        let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
-        };
+        }
+        .to_owned();
+
+        let mut operator_id = "none";
 
         if let Some(active_operator) = active_operator.clone() {
-            context.set("vim_operator", active_operator.id());
-
-            match active_operator {
-                Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => {
-                    context.add("VimObject")
-                }
-                Operator::AddSurrounds { target } => {
-                    if target.is_some() || self.mode.is_visual() {
-                        context.set("vim_mode", "waiting");
-                    }
-                }
-                Operator::FindForward { .. }
-                | Operator::Mark
-                | Operator::Jump { .. }
-                | Operator::FindBackward { .. }
-                | Operator::Register
-                | Operator::RecordRegister
-                | Operator::ReplayRegister
-                | Operator::Replace
-                | Operator::ChangeSurrounds { .. }
-                | Operator::DeleteSurrounds => context.set("vim_mode", "waiting"),
-                Operator::Change
-                | Operator::Delete
-                | Operator::Yank
-                | Operator::Indent
-                | Operator::Outdent
-                | Operator::Lowercase
-                | Operator::Uppercase
-                | Operator::OppositeCase => context.set("vim_mode", format!("{}_operator", mode)),
+            if active_operator.is_waiting(self.mode) {
+                mode = "waiting".to_owned();
+            } else {
+                mode = format!("{}_operator", mode);
             }
-        } else {
-            context.set("vim_mode", mode);
-            context.set("vim_operator", "none");
+            operator_id = active_operator.id();
         }
+
+        if mode != "waiting" && mode != "insert" && mode != "replace" {
+            context.add("VimControl");
+        }
+        context.set("vim_mode", mode);
+        context.set("vim_operator", operator_id);
 
         context
     }
@@ -351,6 +327,32 @@ impl Operator {
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
+        }
+    }
+
+    pub fn is_waiting(&self, mode: Mode) -> bool {
+        match self {
+            Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
+            Operator::FindForward { .. }
+            | Operator::Mark
+            | Operator::Jump { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Register
+            | Operator::RecordRegister
+            | Operator::ReplayRegister
+            | Operator::Replace
+            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::DeleteSurrounds => true,
+            Operator::Change
+            | Operator::Delete
+            | Operator::Yank
+            | Operator::Indent
+            | Operator::Outdent
+            | Operator::Lowercase
+            | Operator::Uppercase
+            | Operator::Object { .. }
+            | Operator::ChangeSurrounds { target: None }
+            | Operator::OppositeCase => false,
         }
     }
 }
