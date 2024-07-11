@@ -28,6 +28,18 @@ impl VtslsLspAdapter {
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         VtslsLspAdapter { node }
     }
+    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+        let is_yarn = adapter
+            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .await
+            .is_ok();
+
+        if is_yarn {
+            ".yarn/sdks/typescript/lib"
+        } else {
+            "node_modules/typescript/lib"
+        }
+    }
 }
 
 struct TypeScriptVersions {
@@ -159,11 +171,12 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
+        let tsdk_path = Self::tsdk_path(&adapter).await;
         Ok(Some(json!({
             "typescript": {
-                "tsdk": "node_modules/typescript/lib",
+                "tsdk": tsdk_path,
                 "format": {
                     "enable": true
                 },
@@ -196,22 +209,24 @@ impl LspAdapter for VtslsLspAdapter {
                         "enableServerSideFuzzyMatch": true,
                         "entriesLimit": 5000,
                     }
-                }
+                },
+               "autoUseWorkspaceTsdk": true
             }
         })))
     }
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
+        let tsdk_path = Self::tsdk_path(&adapter).await;
         Ok(json!({
             "typescript": {
                 "suggest": {
                     "completeFunctionCalls": true
                 },
-                "tsdk": "node_modules/typescript/lib",
+                "tsdk": tsdk_path,
                 "format": {
                     "enable": true
                 },
@@ -244,7 +259,8 @@ impl LspAdapter for VtslsLspAdapter {
                         "enableServerSideFuzzyMatch": true,
                         "entriesLimit": 5000,
                     }
-                }
+                },
+                "autoUseWorkspaceTsdk": true
             }
         }))
     }
