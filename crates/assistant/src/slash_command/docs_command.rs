@@ -121,7 +121,7 @@ impl SlashCommand for DocsSlashCommand {
             match args {
                 DocsSlashCommandArgs::NoProvider => {
                     let providers = indexed_docs_registry.list_providers();
-                    if true || providers.is_empty() {
+                    if providers.is_empty() {
                         return Ok(vec![ArgumentCompletion {
                             label: "No available docs providers.".to_string(),
                             new_text: String::new(),
