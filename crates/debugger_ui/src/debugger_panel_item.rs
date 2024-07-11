@@ -1,9 +1,13 @@
+use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
-use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, ThreadEventReason, Variable};
+use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, Variable};
+use editor::Editor;
+use futures::future::try_join_all;
 use gpui::{
     actions, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
-    Subscription, View,
+    Subscription, Task, View, WeakView,
 };
+use std::path::Path;
 use std::sync::Arc;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
@@ -68,16 +72,20 @@ impl DebugPanelItem {
         }
     }
 
+    fn should_skip_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        thread_id: u64,
+    ) -> bool {
+        thread_id != this.thread_id || *client_id != this.client.id()
+    }
+
     fn handle_stopped_event(
         this: &mut Self,
         client_id: &DebugAdapterClientId,
         event: &StoppedEvent,
     ) {
-        if *client_id != this.client.id() {
-            return;
-        }
-
-        if event.thread_id != Some(this.thread_id) {
+        if Self::should_skip_event(this, client_id, event.thread_id.unwrap_or_default()) {
             return;
         }
 
@@ -92,11 +100,7 @@ impl DebugPanelItem {
         event: &ThreadEvent,
         cx: &mut ViewContext<DebugPanelItem>,
     ) {
-        if *client_id != this.client.id() {
-            return;
-        }
-
-        if event.thread_id != this.thread_id {
+        if Self::should_skip_event(this, client_id, event.thread_id) {
             return;
         }
 
@@ -190,10 +194,15 @@ impl DebugPanelItem {
                 let stack_frame = stack_frame.clone();
                 move |this, _, cx| {
                     this.current_stack_frame_id = Some(stack_frame.id);
+
+                    // let client = this.client();
+                    // DebugPanel::go_to_stack_frame(&stack_frame, client, true, cx)
+                    //     .detach_and_log_err(cx);
+
                     // TODO:
                     // this.go_to_stack_frame(&stack_frame, this.client.clone(), false, cx)
                     //     .detach_and_log_err(cx);
-                    cx.notify();
+                    // cx.notify();
                 }
             }))
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
