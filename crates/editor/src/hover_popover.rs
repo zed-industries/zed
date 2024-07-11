@@ -7,16 +7,16 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, View,
-    ViewContext, WeakView,
+    InteractiveText, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString,
+    Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task,
+    TextStyleRefinement, View, ViewContext, WeakView,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, InlayHintLabelPart};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
@@ -299,12 +299,39 @@ fn show_hover(
                     })
             });
 
+            let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
+                println!("{:?}", local_diagnostic);
+                println!("{:?}", primary_diagnostic);
+                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+
+                let text = match local_diagnostic.diagnostic.source {
+                    Some(ref source) => {
+                        format!("{source}: {}", local_diagnostic.diagnostic.message)
+                    }
+                    None => local_diagnostic.diagnostic.message.clone(),
+                };
+
+                let parsed_content = parse_blocks(
+                    &[HoverBlock {
+                        text,
+                        kind: HoverBlockKind::PlainText,
+                    }],
+                    &language_registry,
+                    None,
+                    &mut cx,
+                )
+                .await;
+                Some(DiagnosticPopover {
+                    local_diagnostic,
+                    primary_diagnostic,
+                    parsed_content,
+                })
+            } else {
+                None
+            };
+
             this.update(&mut cx, |this, _| {
-                this.hover_state.diagnostic_popover =
-                    local_diagnostic.map(|local_diagnostic| DiagnosticPopover {
-                        local_diagnostic,
-                        primary_diagnostic,
-                    });
+                this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
             let hovers_response = hover_request.await;
@@ -522,12 +549,20 @@ impl HoverState {
     pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            for markdown_view in &info_popover.parsed_content {
+            if let Some(markdown_view) = &info_popover.parsed_content {
                 if markdown_view.focus_handle(cx).is_focused(cx) {
                     hover_popover_is_focused = true;
                 }
             }
         }
+        if let Some(diagnostic_popover) = &self.diagnostic_popover {
+            if let Some(markdown_view) = &diagnostic_popover.parsed_content {
+                if markdown_view.focus_handle(cx).is_focused(cx) {
+                    hover_popover_is_focused = true;
+                }
+            }
+        }
+        println!("{}", hover_popover_is_focused);
         return hover_popover_is_focused;
     }
 }
@@ -583,6 +618,9 @@ impl InfoPopover {
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
+    pub parsed_content: Option<View<Markdown>>,
+    // pub keyboard_grace: Rc<RefCell<bool>>,
+    // pub anchor: Option<Anchor>,
 }
 
 impl DiagnosticPopover {
@@ -592,11 +630,6 @@ impl DiagnosticPopover {
         max_size: Size<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
-        let text = match &self.local_diagnostic.diagnostic.source {
-            Some(source) => format!("{source}: {}", self.local_diagnostic.diagnostic.message),
-            None => self.local_diagnostic.diagnostic.message.clone(),
-        };
-
         let status_colors = cx.theme().status();
 
         struct DiagnosticColors {
@@ -627,7 +660,7 @@ impl DiagnosticPopover {
             },
         };
 
-        div()
+        let mut d = div()
             .id("diagnostic")
             .block()
             .elevation_2_borderless(cx)
@@ -646,7 +679,7 @@ impl DiagnosticPopover {
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
+            // .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
             .child(
                 div()
                     .id("diagnostic-inner")
@@ -657,10 +690,16 @@ impl DiagnosticPopover {
                     .text_color(style.text.color)
                     .border_1()
                     .border_color(diagnostic_colors.border)
-                    .rounded_lg()
-                    .child(SharedString::from(text)),
-            )
-            .into_any_element()
+                    .rounded_lg(), // .child(SharedString::from(text))
+                                   // .child(InteractiveText::new(
+                                   //     "diagnostic-text",
+                                   //     StyledText::new(SharedString::from(text)),
+                                   // )),
+            );
+        if let Some(markdown) = &self.parsed_content {
+            d = d.child(markdown.clone());
+        }
+        d.into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
