@@ -1154,10 +1154,13 @@ impl LinuxClient for X11Client {
         let cursor = match state.cursor_cache.get(&style) {
             Some(cursor) => *cursor,
             None => {
-                let cursor = state
+                let Some(cursor) = state
                     .cursor_handle
                     .load_cursor(&state.xcb_connection, &style.to_icon_name())
-                    .expect("failed to load cursor");
+                    .log_err()
+                else {
+                    return;
+                };
                 state.cursor_cache.insert(style, cursor);
                 cursor
             }
