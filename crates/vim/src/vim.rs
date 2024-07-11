@@ -173,7 +173,6 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 /// Called whenever an keystroke is typed so vim can observe all actions
 /// and keystrokes accordingly.
 fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
-    dbg!(&keystroke_event);
     if let Some(action) = keystroke_event
         .action
         .as_ref()

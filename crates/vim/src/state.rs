@@ -269,7 +269,7 @@ impl EditorState {
             Mode::Insert => "insert",
             Mode::Replace => "replace",
         }
-        .to_owned();
+        .to_string();
 
         let mut operator_id = "none";
 
@@ -282,9 +282,9 @@ impl EditorState {
 
         if let Some(active_operator) = active_operator {
             if active_operator.is_waiting(self.mode) {
-                mode = "waiting".to_owned();
+                mode = "waiting".to_string();
             } else {
-                mode = "operator".to_owned();
+                mode = "operator".to_string();
                 operator_id = active_operator.id();
             }
         }
