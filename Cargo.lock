@@ -13859,7 +13859,6 @@ dependencies = [
 name = "zed_ruff"
 version = "0.0.1"
 dependencies = [
- "serde_json",
  "zed_extension_api 0.0.6",
 ]
 
