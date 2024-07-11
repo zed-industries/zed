@@ -732,7 +732,10 @@ fn handle_dpi_changed_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let new_dpi = wparam.loword() as f32;
-    state_ptr.state.borrow_mut().scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    lock.border_offset.udpate(handle).log_err();
+    drop(lock);
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
     let width = rect.right - rect.left;
