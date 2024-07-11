@@ -67,27 +67,31 @@ impl SlashCommand for AutoCommand {
                 Vec::new()
             });
 
-            response_for_summaries(&summaries, &original_prompt, &cx).await
+            commands_for_summaries(&summaries, &original_prompt, &cx).await
         });
 
         // As a convenience, append /auto's argument to the end of the prompt
         // so you don't have to write it again.
-        let prompt_suffix = argument.to_string();
+        let original_prompt = argument.to_string();
 
         cx.background_executor().spawn(async move {
-            let response = task.await?;
+            let commands = task.await?;
             let mut prompt = String::new();
 
-            log::info!("Translating this response into slash-commands: {response}");
+            log::info!(
+                "Translating this response into slash-commands: {:?}",
+                commands
+            );
 
-            for command in response.split('\n') {
+            // The commands come back without the slash prefix and without trailing newlines.
+            for command in commands {
                 prompt.push('/');
-                prompt.push_str(command);
+                prompt.push_str(&command);
                 prompt.push('\n');
             }
 
             prompt.push('\n');
-            prompt.push_str(&prompt_suffix);
+            prompt.push_str(&original_prompt);
 
             Ok(SlashCommandOutput {
                 text: prompt,
@@ -114,24 +118,39 @@ fn summaries_prompt(summaries: &[FileSummary], original_prompt: &str) -> String 
     format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{json_summaries}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{original_prompt}")
 }
 
-async fn response_for_summaries(
+/// The slash commands that the model is told about, and which we look for in the inference response.
+const SUPPORTED_SLASH_COMMANDS: &[&str] = &["search", "file"];
+
+/// Given the pre-indexed file summaries for this project, as well as the original prompt
+/// string passed to `/auto`, get a list of slash commands to run, along with their arguments.
+///
+/// The prompt's output does not include the slashes (to reduce the chance that it makes a mistake),
+/// so taking one of these returned Strings and turning it into a real slash-command-with-argument
+/// involves prepending a slash to it.
+///
+/// This function will validate that each of the returned lines begins with one of SUPPORTED_SLASH_COMMANDS.
+/// Any other lines it encounters will be discarded, with a warning logged.
+async fn commands_for_summaries(
     summaries: &[FileSummary],
     original_prompt: &str,
     cx: &AsyncAppContext,
-) -> Result<String> {
+) -> Result<Vec<String>> {
     log::info!(
         "Inferring prompt context using {} file summaries",
         summaries.len()
     );
 
     if summaries.is_empty() {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
 
     let model = cx.update(|cx| CompletionProvider::global(cx).model())?;
     let max_token_count = model.max_token_count();
+
+    // Rather than recursing (which would require this async function use a pinned box),
+    // we use an explicit stack of arguments and answers for when we need to "recurse."
     let mut stack = vec![(summaries, String::new())];
-    let mut final_response = String::new();
+    let mut final_response = Vec::new();
 
     while let Some((current_summaries, mut accumulated_response)) = stack.pop() {
         // The split can result in one slice being empty and the other having one element.
@@ -163,7 +182,21 @@ async fn response_for_summaries(
                 accumulated_response.push_str(&chunk?);
             }
 
-            final_response.push_str(&accumulated_response);
+            for line in accumulated_response.split('\n').map(|line| line.trim()) {
+                if !line.is_empty() {
+                    if SUPPORTED_SLASH_COMMANDS
+                        .iter()
+                        .any(|command| line.starts_with(command))
+                    {
+                        final_response.push(line.to_string());
+                    } else {
+                        log::warn!(
+                            "Context inference returned an unrecognized slash-commend line: {:?}",
+                            line
+                        )
+                    }
+                }
+            }
         } else if current_summaries.len() == 1 {
             log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
         } else {
