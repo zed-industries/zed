@@ -90,10 +90,6 @@ impl EditorBlock {
         })
     }
 
-    fn position(&self) -> Anchor {
-        self.code_range.end
-    }
-
     fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
         self.execution_view.update(cx, |execution_view, cx| {
             execution_view.push_message(&message.content, cx);
