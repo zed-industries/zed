@@ -890,7 +890,7 @@ impl Motion {
                 }
 
                 if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
-                    *selection.end.column_mut() += 1;
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
             Some(selection.start..selection.end)
