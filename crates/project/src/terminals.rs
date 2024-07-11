@@ -167,13 +167,7 @@ impl Project {
             }
         };
 
-        // copy these fields out to release immutable reference to cx
-        let blinking = settings.blinking;
-        let alternate_scroll = settings.alternate_scroll;
-        let max_scroll_history_lines = settings.max_scroll_history_lines;
-
         let terminal = TerminalBuilder::new(
-            cx,
             working_directory
                 .as_ref()
                 .and_then(|cwd| cwd.local_path())
@@ -181,11 +175,12 @@ impl Project {
             spawn_task,
             shell,
             env,
-            Some(blinking),
-            alternate_scroll,
-            max_scroll_history_lines,
+            Some(settings.blinking),
+            settings.alternate_scroll,
+            settings.max_scroll_history_lines,
             window,
             completion_tx,
+            cx,
         )
         .map(|builder| {
             let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));

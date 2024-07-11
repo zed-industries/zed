@@ -310,7 +310,6 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        cx: &mut AppContext,
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
@@ -320,6 +319,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        cx: &mut AppContext,
     ) -> Result<TerminalBuilder> {
         // TODO: Properly set the current locale,
         env.entry("LC_ALL".to_string())
