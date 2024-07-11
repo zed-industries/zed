@@ -42,18 +42,18 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContext<Editor>) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        let old_hover_shown = show_old_hover(editor, cx);
-        if !old_hover_shown {
-            if let Some(anchor) = anchor {
-                show_hover(editor, anchor, false, cx);
-            } else {
-                hide_hover(editor, cx);
-            }
+        if show_keyboard_hover(editor, cx) {
+            return;
+        }
+        if let Some(anchor) = anchor {
+            show_hover(editor, anchor, false, cx);
+        } else {
+            hide_hover(editor, cx);
         }
     }
 }
 
-pub fn show_old_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     let info_popovers = editor.hover_state.info_popovers.clone();
     for p in info_popovers {
         let keyboard_grace = p.keyboard_grace.borrow();
