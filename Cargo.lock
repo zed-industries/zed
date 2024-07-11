@@ -8664,6 +8664,7 @@ dependencies = [
  "image",
  "language",
  "log",
+ "multi_buffer",
  "project",
  "runtimelib",
  "schemars",
