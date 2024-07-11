@@ -340,7 +340,7 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
-                hold: false,
+                hold: !matches!(shell.clone(), Shell::System),
                 env: env.into_iter().collect(),
             }
         };
