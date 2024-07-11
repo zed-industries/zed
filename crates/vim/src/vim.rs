@@ -87,7 +87,7 @@ actions!(
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode]);
+actions!(workspace, [ToggleVimMode, ClearOperators]);
 
 impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
@@ -129,6 +129,10 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator.clone(), cx))
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &ClearOperators, cx| {
+        println!("------ CLEAR OPERATORS! -------");
+        Vim::update(cx, |vim, cx| vim.clear_operator(cx))
+    });
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
@@ -169,6 +173,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 /// Called whenever an keystroke is typed so vim can observe all actions
 /// and keystrokes accordingly.
 fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
+    dbg!(&keystroke_event);
     if let Some(action) = keystroke_event
         .action
         .as_ref()

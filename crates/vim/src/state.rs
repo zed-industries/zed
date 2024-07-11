@@ -264,15 +264,6 @@ impl EditorState {
 
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
-        context.set(
-            "vim_mode",
-            match self.mode {
-                Mode::Normal => "normal",
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
-                Mode::Insert => "insert",
-                Mode::Replace => "replace",
-            },
-        );
 
         if self.vim_controlled() {
             context.add("VimControl");
@@ -284,13 +275,23 @@ impl EditorState {
             context.add("VimCount");
         }
 
+        let mut mode = match self.mode {
+            Mode::Normal => "normal",
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
+            Mode::Insert => "insert",
+            Mode::Replace => "replace",
+        }
+        .to_owned();
+
         let active_operator = self.active_operator();
 
         if let Some(active_operator) = active_operator.clone() {
+            mode += "_operator";
             for context_flag in active_operator.context_flags().into_iter() {
                 context.add(*context_flag);
             }
         }
+        context.set("vim_mode", mode);
 
         context.set(
             "vim_operator",

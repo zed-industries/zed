@@ -203,14 +203,14 @@
   },
   {
     // escape is in its own section so that it cancels a pending count.
-    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel"
     }
   },
   {
-    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
@@ -259,7 +259,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
+    "context": "Editor && vim_mode == visual && !VimWaiting",
     "bindings": {
       "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
@@ -277,19 +277,15 @@
     "context": "Editor && vim_operator == c",
     "bindings": {
       "c": "vim::CurrentLine",
-      "d": "editor::Rename" // zed specific
-    }
-  },
-  {
-    "context": "Editor && vim_mode == normal && vim_operator == c",
-    "bindings": {
+      "d": "editor::Rename", // zed specific
       "s": ["vim::PushOperator", { "ChangeSurrounds": {} }]
     }
   },
   {
     "context": "Editor && vim_operator == d",
     "bindings": {
-      "d": "vim::CurrentLine"
+      "d": "vim::CurrentLine",
+      "s": ["vim::PushOperator", "DeleteSurrounds"]
     }
   },
   {
@@ -314,20 +310,9 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && vim_operator == d",
-    "bindings": {
-      "s": ["vim::PushOperator", "DeleteSurrounds"]
-    }
-  },
-  {
     "context": "Editor && vim_operator == y",
     "bindings": {
-      "y": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "Editor && vim_mode == normal && vim_operator == y",
-    "bindings": {
+      "y": "vim::CurrentLine",
       "s": ["vim::PushOperator", { "AddSurrounds": {} }]
     }
   },
@@ -445,6 +430,14 @@
     }
   },
   {
+    "context": "Editor && (vim_mode == insert_operator || vim_mode == replace_operator || vim_mode = visual_operator)",
+    "bindings": {
+      "escape": "vim::ClearOperators",
+      "ctrl-c": "vim::ClearOperators",
+      "ctrl-[": "vim::ClearOperators"
+    }
+  },
+  {
     "context": "Editor && vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",
@@ -459,13 +452,11 @@
     "context": "Editor && vim_mode != replace && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
-      "enter": "vim::Enter",
-      "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl-[": ["vim::SwitchMode", "Normal"]
+      "enter": "vim::Enter"
     }
   },
   {
-    "context": "Editor && vim_mode == insert && VimWaiting",
+    "context": "Editor && vim_mode == insert && VimWaiting",;
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore"
