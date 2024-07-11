@@ -432,6 +432,7 @@
     "context": "Editor",
     "bindings": {
       "ctrl-j": "editor::JoinLines",
+      "cmd-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",

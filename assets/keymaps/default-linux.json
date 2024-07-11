@@ -397,7 +397,7 @@
     "bindings": {
       "ctrl-shift-k": "editor::DeleteLine",
       "ctrl-shift-d": "editor::DuplicateLineDown",
-      "ctrl-j": "editor::JoinLines",
+      "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
