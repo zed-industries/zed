@@ -1525,7 +1525,7 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn(|workspace, mut cx| async move {
-            let dirty_items = if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+            let dirty_items = if save_intent == SaveIntent::Close && dirty_items.len() > 0 {
                 let (serialize_tasks, remaining_dirty_items) =
                     workspace.update(&mut cx, |workspace, cx| {
                         let mut remaining_dirty_items = Vec::new();
