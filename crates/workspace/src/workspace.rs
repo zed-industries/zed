@@ -643,7 +643,8 @@ pub struct ViewId {
 }
 
 struct FollowerState {
-    pane: View<Pane>,
+    center_pane: View<Pane>,
+    dock_pane: Option<View<Pane>>,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, FollowerView>,
 }
@@ -2856,7 +2857,8 @@ impl Workspace {
         self.follower_states.insert(
             leader_id,
             FollowerState {
-                pane: pane.clone(),
+                center_pane: pane.clone(),
+                dock_pane: None,
                 active_view_id: None,
                 items_by_leader_view_id: Default::default(),
             },
@@ -2963,7 +2965,7 @@ impl Workspace {
 
         // if you're already following, find the right pane and focus it.
         if let Some(follower_state) = self.follower_states.get(&leader_id) {
-            cx.focus_view(&follower_state.pane);
+            cx.focus_view(&follower_state.pane());
             return;
         }
 
@@ -3217,7 +3219,7 @@ impl Workspace {
                 .follower_states
                 .get(&leader_id)
                 .context("stopped following")?;
-            anyhow::Ok(state.pane.clone())
+            anyhow::Ok(state.pane().clone())
         })??;
         let existing_item = pane.update(cx, |pane, cx| {
             let client = this.read(cx).client().clone();
@@ -3388,7 +3390,7 @@ impl Workspace {
 
     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
         self.follower_states.iter().find_map(|(leader_id, state)| {
-            if state.pane == *pane {
+            if state.center_pane == *pane {
                 Some(*leader_id)
             } else {
                 None
@@ -3428,18 +3430,24 @@ impl Workspace {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
             }
-        } else if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, &state.pane, cx)
+        } else if let Some(shared_screen) =
+            self.shared_screen_for_peer(leader_id, &state.center_pane, cx)
         {
             item_to_activate = Some((None, Box::new(shared_screen)));
         }
 
         let (panel_id, item) = item_to_activate?;
 
-        let pane = if let Some(panel_id) = panel_id {
-            self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?
+        let pane;
+        if let Some(panel_id) = panel_id {
+            pane = self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?;
+            let state = self.follower_states.get_mut(&leader_id)?;
+            state.dock_pane = Some(pane.clone());
         } else {
-            state.pane.clone()
-        };
+            pane = state.center_pane.clone();
+            let state = self.follower_states.get_mut(&leader_id)?;
+            state.dock_pane = None;
+        }
 
         pane.update(cx, |pane, cx| {
             let pane_was_focused = pane.has_focus(cx);
@@ -3986,6 +3994,65 @@ impl Workspace {
             .unwrap_or(Self::DEFAULT_PADDING)
             .clamp(0.0, Self::MAX_PADDING)
     }
+
+    fn render_dock(
+        &self,
+        position: DockPosition,
+        dock: &View<Dock>,
+        cx: &WindowContext,
+    ) -> Option<Div> {
+        if self.zoomed_position == Some(position) {
+            return None;
+        }
+
+        let leader_border = dock.read(cx).active_panel().and_then(|panel| {
+            let pane = panel.pane(cx)?;
+            let follower_states = &self.follower_states;
+            leader_border_for_pane(follower_states, &pane, cx)
+        });
+
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .overflow_hidden()
+                .child(dock.clone())
+                .children(leader_border),
+        )
+    }
+}
+
+fn leader_border_for_pane(
+    follower_states: &HashMap<PeerId, FollowerState>,
+    pane: &View<Pane>,
+    cx: &WindowContext,
+) -> Option<Div> {
+    let (leader_id, _follower_state) = follower_states.iter().find_map(|(leader_id, state)| {
+        if state.pane() == pane {
+            Some((*leader_id, state))
+        } else {
+            None
+        }
+    })?;
+
+    let room = ActiveCall::try_global(cx)?.read(cx).room()?.read(cx);
+    let leader = room.remote_participant_for_peer_id(leader_id)?;
+
+    let mut leader_color = cx
+        .theme()
+        .players()
+        .color_for_participant(leader.participant_index.0)
+        .cursor;
+    leader_color.fade_out(0.3);
+    Some(
+        div()
+            .absolute()
+            .size_full()
+            .left_0()
+            .top_0()
+            .border_2()
+            .border_color(leader_color),
+    )
 }
 
 fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
@@ -4222,15 +4289,7 @@ impl Render for Workspace {
                                 .flex_row()
                                 .h_full()
                                 // Left Dock
-                                .children(self.zoomed_position.ne(&Some(DockPosition::Left)).then(
-                                    || {
-                                        div()
-                                            .flex()
-                                            .flex_none()
-                                            .overflow_hidden()
-                                            .child(self.left_dock.clone())
-                                    },
-                                ))
+                                .children(self.render_dock(DockPosition::Left, &self.left_dock, cx))
                                 // Panes
                                 .child(
                                     div()
@@ -4257,24 +4316,18 @@ impl Render for Workspace {
                                                     this.child(p.border_l_1())
                                                 }),
                                         )
-                                        .children(
-                                            self.zoomed_position
-                                                .ne(&Some(DockPosition::Bottom))
-                                                .then(|| self.bottom_dock.clone()),
-                                        ),
+                                        .children(self.render_dock(
+                                            DockPosition::Bottom,
+                                            &self.bottom_dock,
+                                            cx,
+                                        )),
                                 )
                                 // Right Dock
-                                .children(
-                                    self.zoomed_position.ne(&Some(DockPosition::Right)).then(
-                                        || {
-                                            div()
-                                                .flex()
-                                                .flex_none()
-                                                .overflow_hidden()
-                                                .child(self.right_dock.clone())
-                                        },
-                                    ),
-                                ),
+                                .children(self.render_dock(
+                                    DockPosition::Right,
+                                    &self.right_dock,
+                                    cx,
+                                )),
                         )
                         .children(self.zoomed.as_ref().and_then(|view| {
                             let zoomed_view = view.upgrade()?;
@@ -4413,6 +4466,12 @@ impl ViewId {
             creator: Some(self.creator),
             id: self.id,
         }
+    }
+}
+
+impl FollowerState {
+    fn pane(&self) -> &View<Pane> {
+        self.dock_pane.as_ref().unwrap_or(&self.center_pane)
     }
 }
 

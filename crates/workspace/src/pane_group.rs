@@ -183,7 +183,7 @@ impl Member {
                 }
 
                 let follower_state = follower_states.iter().find_map(|(leader_id, state)| {
-                    if state.pane == *pane {
+                    if state.pane() == pane {
                         Some((*leader_id, state))
                     } else {
                         None
