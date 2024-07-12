@@ -168,35 +168,6 @@ impl X11ClientStatePtr {
             state.common.quit_signal.quit();
         }
     }
-}
-
-struct ChannelQuitSignal {
-    tx: Option<oneshot::Sender<()>>,
-    waker: Option<Arc<Waker>>,
-}
-
-impl ChannelQuitSignal {
-    fn new(waker: Option<Arc<Waker>>) -> (Self, oneshot::Receiver<()>) {
-        let (tx, rx) = oneshot::channel::<()>();
-
-        let quit_signal = ChannelQuitSignal {
-            tx: Some(tx),
-            waker,
-        };
-
-        (quit_signal, rx)
-    }
-}
-
-impl QuitSignal for ChannelQuitSignal {
-    fn quit(&mut self) {
-        if let Some(tx) = self.tx.take() {
-            tx.send(()).log_err();
-            if let Some(waker) = self.waker.as_ref() {
-                waker.wake().ok();
-            }
-        }
-    }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
@@ -232,6 +203,35 @@ impl QuitSignal for ChannelQuitSignal {
             .log_err();
         state.ximc = Some(ximc);
         state.xim_handler = Some(xim_handler);
+    }
+}
+
+struct ChannelQuitSignal {
+    tx: Option<oneshot::Sender<()>>,
+    waker: Option<Arc<Waker>>,
+}
+
+impl ChannelQuitSignal {
+    fn new(waker: Option<Arc<Waker>>) -> (Self, oneshot::Receiver<()>) {
+        let (tx, rx) = oneshot::channel::<()>();
+
+        let quit_signal = ChannelQuitSignal {
+            tx: Some(tx),
+            waker,
+        };
+
+        (quit_signal, rx)
+    }
+}
+
+impl QuitSignal for ChannelQuitSignal {
+    fn quit(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            tx.send(()).log_err();
+            if let Some(waker) = self.waker.as_ref() {
+                waker.wake().ok();
+            }
+        }
     }
 }
 
