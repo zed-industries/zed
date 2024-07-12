@@ -268,6 +268,7 @@ impl Vim {
             EditorEvent::Edited { .. } => {
                 Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx))
             }
+            EditorEvent::Rename => Vim::update(cx, |vim, cx| vim.on_rename(cx)),
             _ => {}
         }));
 
@@ -907,6 +908,10 @@ impl Vim {
                 _ => {}
             },
         }
+    }
+
+    fn on_rename(&mut self, cx: &mut WindowContext) {
+        self.update_active_editor(cx, |_, editor, cx| Vim::unhook_vim_settings(editor, cx));
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {

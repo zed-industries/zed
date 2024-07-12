@@ -9561,6 +9561,8 @@ impl Editor {
                         editor: rename_editor,
                         block_id,
                     });
+                    // disable vim mode during Rename
+                    cx.emit(EditorEvent::Rename);
                 })?;
             }
 
@@ -12234,6 +12236,7 @@ pub enum EditorEvent {
     Edited {
         transaction_id: clock::Lamport,
     },
+    Rename,
     Reparsed(BufferId),
     Focused,
     Blurred,
