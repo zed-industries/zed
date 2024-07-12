@@ -9,6 +9,7 @@ pub fn init(cx: &mut AppContext) {
         cx.subscribe(&editor, |_, editor, event: &EditorEvent, cx| match event {
             EditorEvent::Focused => cx.window_context().defer(|cx| focused(editor, cx)),
             EditorEvent::Blurred => cx.window_context().defer(|cx| blurred(editor, cx)),
+            EditorEvent::Renaming => cx.window_context().defer(|cx| renaming(cx)),
             _ => {}
         })
         .detach();
@@ -57,6 +58,16 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
                 editor.set_cursor_shape(language::CursorShape::Hollow, cx);
             }
         });
+    });
+}
+
+fn renaming(cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        if !vim.enabled {
+            return;
+        }
+        // when renaming, we want to switch to insert mode
+        vim.switch_mode(crate::state::Mode::Insert, true, cx);
     });
 }
 

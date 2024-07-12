@@ -9413,6 +9413,8 @@ impl Editor {
         });
         drop(snapshot);
 
+        cx.emit(EditorEvent::Renaming);
+
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
                 Some(range)
@@ -12234,6 +12236,7 @@ pub enum EditorEvent {
     Edited {
         transaction_id: clock::Lamport,
     },
+    Renaming,
     Reparsed(BufferId),
     Focused,
     Blurred,
