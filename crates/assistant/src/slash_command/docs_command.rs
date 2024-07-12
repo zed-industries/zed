@@ -200,46 +200,65 @@ impl SlashCommand for DocsSlashCommand {
         };
 
         let args = DocsSlashCommandArgs::parse(argument);
-        let text = cx.background_executor().spawn({
+        let task = cx.background_executor().spawn({
             let store = args
                 .provider()
                 .ok_or_else(|| anyhow!("no docs provider specified"))
                 .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
-                match args {
+                let (provider, key) = match args {
                     DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
                     DocsSlashCommandArgs::SearchPackageDocs {
                         provider, package, ..
-                    } => {
-                        let store = store?;
-                        let item_docs = store.load(package.clone()).await?;
-
-                        anyhow::Ok((provider, package, item_docs.to_string()))
-                    }
+                    } => (provider, package),
                     DocsSlashCommandArgs::SearchItemDocs {
                         provider,
                         item_path,
                         ..
-                    } => {
-                        let store = store?;
-                        let item_docs = store.load(item_path.clone()).await?;
+                    } => (provider, item_path),
+                };
 
-                        anyhow::Ok((provider, item_path, item_docs.to_string()))
+                let store = store?;
+                let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
+                    let docs = store.load_many_by_prefix(prefix.to_string()).await?;
+
+                    let mut text = String::new();
+                    let mut ranges = Vec::new();
+
+                    for (key, docs) in docs {
+                        let prev_len = text.len();
+
+                        text.push_str(&docs.0);
+                        text.push_str("\n");
+                        ranges.push((key, prev_len..text.len()));
+                        text.push_str("\n");
                     }
-                }
+
+                    (text, ranges)
+                } else {
+                    let item_docs = store.load(key.clone()).await?;
+                    let text = item_docs.to_string();
+                    let range = 0..text.len();
+
+                    (text, vec![(key, range)])
+                };
+
+                anyhow::Ok((provider, text, ranges))
             }
         });
 
         cx.foreground_executor().spawn(async move {
-            let (provider, path, text) = text.await?;
-            let range = 0..text.len();
+            let (provider, text, ranges) = task.await?;
             Ok(SlashCommandOutput {
                 text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
-                    icon: IconName::FileDoc,
-                    label: format!("docs ({provider}): {path}",).into(),
-                }],
+                sections: ranges
+                    .into_iter()
+                    .map(|(key, range)| SlashCommandOutputSection {
+                        range,
+                        icon: IconName::FileDoc,
+                        label: format!("docs ({provider}): {key}",).into(),
+                    })
+                    .collect(),
                 run_commands_in_text: false,
             })
         })
