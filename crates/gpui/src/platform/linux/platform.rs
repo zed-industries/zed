@@ -146,16 +146,12 @@ fn create_tray_submenu(menu_item: TrayMenuItem) -> DBusMenuItem {
         TrayMenuItem::Submenu {
             id,
             label,
-            icon,
             toggle_type,
             children,
             ..
         } => {
             let mut this = DBusMenuItem::new();
             this.set_id(id).set_label(label);
-            if let Some(TrayIcon::Name(name)) = icon {
-                this.set_icon(dbus::dbusmenu::Icon::Name(name.to_owned()));
-            }
             if let Some(toggle_type) = toggle_type {
                 match toggle_type {
                     TrayToggleType::Checkbox(state) => {

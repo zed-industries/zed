@@ -37,8 +37,6 @@ pub enum TrayMenuItem<'a> {
         id: &'a str,
         /// Text displayed in the menu.
         label: &'a str,
-        /// Icon displayed with the label.
-        icon: Option<TrayIcon<'a>>,
         /// Type of the input.
         toggle_type: Option<TrayToggleType>,
         /// Recursive menu item.
@@ -57,28 +55,11 @@ impl<'a> TrayMenuItem<'a> {
         Self::Separator { label: Some(label) }
     }
 
-    /// Creates a menu item with a label, icon and submenus.
-    pub fn icon_menu(
-        id: &'a str,
-        label: &'a str,
-        icon: TrayIcon<'a>,
-        children: Vec<TrayMenuItem<'a>>,
-    ) -> Self {
-        Self::Submenu {
-            id,
-            label,
-            icon: Some(icon),
-            toggle_type: None,
-            children,
-        }
-    }
-
     /// Creates a menu item with a label and submenus.
     pub fn menu(id: &'a str, label: &'a str, children: Vec<TrayMenuItem<'a>>) -> Self {
         Self::Submenu {
             id,
             label,
-            icon: None,
             toggle_type: None,
             children,
         }
@@ -89,7 +70,6 @@ impl<'a> TrayMenuItem<'a> {
         Self::Submenu {
             id,
             label,
-            icon: None,
             toggle_type: Some(TrayToggleType::Checkbox(checked)),
             children: Vec::default(),
         }
@@ -100,7 +80,6 @@ impl<'a> TrayMenuItem<'a> {
         Self::Submenu {
             id,
             label,
-            icon: None,
             toggle_type: Some(TrayToggleType::Radio(checked)),
             children: Vec::default(),
         }

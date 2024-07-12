@@ -21,14 +21,14 @@ fn main() {
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
         cx.on_action(quit);
         let item = TrayItem::new()
-            .icon(TrayIcon::Name("kmail"))
+            .icon(TrayIcon::Name("folder"))
             .title("Testing")
             .tooltip("My Tooltip")
             .description("Little description")
             .submenu(TrayMenuItem::menu("Quit", "Quit", Vec::default()))
             .submenu(TrayMenuItem::menu("Window", "Test", Vec::default()))
             .on_event({
-                let mut show_window = false;
+                let mut show_app = false;
                 move |event, app| match event {
                     TrayEvent::TrayClick { button, .. } => match button {
                         MouseButton::Left => {
@@ -39,12 +39,12 @@ fn main() {
                     TrayEvent::MenuClick { id } => match id.as_str() {
                         "Quit" => app.dispatch_action(&Quit),
                         "Window" => {
-                            if show_window {
+                            if show_app {
                                 app.activate(true);
                             } else {
                                 app.hide();
                             }
-                            show_window ^= true;
+                            show_app ^= true;
                         }
                         _ => {}
                     },
