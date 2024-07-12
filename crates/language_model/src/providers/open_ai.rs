@@ -162,7 +162,6 @@ impl LanguageModel for OpenAiLanguageModel {
     fn complete(
         &self,
         request: LanguageModelRequest,
-        _cx: &mut AppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = self.to_open_ai_request(request);
 

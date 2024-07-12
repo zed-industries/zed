@@ -196,7 +196,6 @@ impl LanguageModel for AnthropicModel {
     fn complete(
         &self,
         request: LanguageModelRequest,
-        _cx: &mut AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_anthropic_request(request);
 

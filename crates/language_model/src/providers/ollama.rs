@@ -181,7 +181,6 @@ impl LanguageModel for OllamaLanguageModel {
     fn complete(
         &self,
         request: LanguageModelRequest,
-        _cx: &mut AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_ollama_request(request);
 

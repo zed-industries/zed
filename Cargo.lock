@@ -5998,6 +5998,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum",
  "theme",
  "tiktoken-rs",

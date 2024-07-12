@@ -194,7 +194,6 @@ impl LanguageModel for CloudLanguageModel {
     fn complete(
         &self,
         mut request: LanguageModelRequest,
-        _cx: &mut AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match CloudModel::from(self.id.0.as_ref()) {
             CloudModel::Claude3Opus
