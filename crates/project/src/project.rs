@@ -11727,7 +11727,6 @@ async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
 ) -> Result<HashMap<String, String>> {
-    // Start by loading the direnv environment
     let direnv_environment = match load_direnv {
         DirenvSettings::ShellHook => None,
         DirenvSettings::Direct => load_direnv_environment(dir).await?,
@@ -11743,6 +11742,11 @@ async fn load_shell_environment(
     // the project directory to get the env in there as if the user
     // `cd`'d into it. We do that because tools like direnv, asdf, ...
     // hook into `cd` and only set up the env after that.
+    //
+    // If the user selects `Direct` for direnv, it would set an environment
+    // variable that later uses to know that it should not run the hook.
+    // We would include in `.envs` call so it is okay to run the hook
+    // even if direnv direct mode is enabled.
     //
     // In certain shells we need to execute additional_command in order to
     // trigger the behavior of direnv, etc.
