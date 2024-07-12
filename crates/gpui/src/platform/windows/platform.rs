@@ -27,7 +27,10 @@ use windows::{
         Security::Credentials::*,
         System::{
             Com::*,
-            DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
+            DataExchange::{
+                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
+                RegisterClipboardFormatW, SetClipboardData,
+            },
             LibraryLoader::*,
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
             Ole::*,
@@ -50,6 +53,8 @@ pub(crate) struct WindowsPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
+    clipboard_hash_format: u32,
+    clipboard_metadata_format: u32,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -98,6 +103,9 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
+        let clipboard_hash_format = unsafe { RegisterClipboardFormatW(CLIPBOARD_HASH_FORMAT) };
+        let clipboard_metadata_format =
+            unsafe { RegisterClipboardFormatW(CLIPBOARD_METADATA_FORMAT) };
 
         Self {
             state,
@@ -106,6 +114,8 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
+            clipboard_hash_format,
+            clipboard_metadata_format,
         }
     }
 
@@ -508,7 +518,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        write_to_clipboard(item);
+        write_to_clipboard(
+            item,
+            self.clipboard_hash_format,
+            self.clipboard_metadata_format,
+        );
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
@@ -685,43 +699,62 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
     Ok(ui_settings.AutoHideScrollBars()?)
 }
 
-fn write_to_clipboard(item: ClipboardItem) {
-    write_to_clipboard_inner(item).log_err();
+fn write_to_clipboard(item: ClipboardItem, hash_format: u32, metadata_format: u32) {
+    write_to_clipboard_inner(item, hash_format, metadata_format).log_err();
     unsafe { CloseClipboard().log_err() };
 }
 
-fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
+fn write_to_clipboard_inner(
+    item: ClipboardItem,
+    hash_format: u32,
+    metadata_format: u32,
+) -> Result<()> {
     unsafe {
         OpenClipboard(None)?;
         EmptyClipboard()?;
         let encode_wide = item.text.encode_utf16().collect_vec();
-        let global = GlobalAlloc(GMEM_MOVEABLE, encode_wide.len() * 2)?;
+        set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
+
+        if let Some(ref metadata) = item.metadata {
+            let hash_result = {
+                let hash = ClipboardItem::text_hash(&item.text);
+                hash.to_ne_bytes()
+            };
+            let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
+            set_data_to_clipboard(encode_wide, hash_format)?;
+
+            let metadata_wide = metadata.encode_utf16().collect_vec();
+            set_data_to_clipboard(&metadata_wide, metadata_format)?;
+        }
+    }
+    Ok(())
+}
+
+fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
         let handle = GlobalLock(global);
-        u_memcpy(handle as _, encode_wide.as_ptr(), encode_wide.len() as _);
+        u_memcpy(handle as _, data.as_ptr(), data.len() as _);
         let _ = GlobalUnlock(global);
-        SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(global.0 as isize))?;
+        SetClipboardData(format, HANDLE(global.0 as isize))?;
     }
     Ok(())
 }
 
 fn read_from_clipboard() -> Result<ClipboardItem> {
     unsafe {
-        let clipboard = OleGetClipboard()?;
-        // read text
-        let format = FORMATETC {
-            cfFormat: CF_UNICODETEXT.0,
-            ptd: std::ptr::null_mut() as _,
-            dwAspect: DVASPECT_CONTENT.0,
-            lindex: -1,
-            tymed: TYMED_HGLOBAL.0 as _,
-        };
-        let data = clipboard.GetData(&format)?;
-        let encode_wide = PCWSTR(GlobalLock(data.u.hGlobal) as *mut u16);
-        let text = String::from_utf16_lossy(encode_wide.as_wide());
-        GlobalUnlock(data.u.hGlobal).log_err();
+        OpenClipboard(None)?;
+        let package = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
+        let text = PCWSTR(package.0 as *const u16);
+        let text = String::from_utf16_lossy(text.as_wide());
+        CloseClipboard()?;
         Ok(ClipboardItem {
             text,
             metadata: None,
         })
     }
 }
+
+// clipboard
+pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("ZedTextHash");
+pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("ZedMetadata");
