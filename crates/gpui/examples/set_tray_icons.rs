@@ -18,7 +18,7 @@ impl Render for SetTrayIcons {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
+        // Register the `quit` function so it can be referenced by the `AppContext::dispatch_action`
         cx.on_action(quit);
         let item = TrayItem::new()
             .icon(TrayIcon::Name("folder"))
