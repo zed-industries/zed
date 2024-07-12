@@ -3,8 +3,8 @@ use crate::{
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
-    ViewId, Workspace, WorkspaceId,
+    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, SerializableItemRegistry,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
 use client::{
@@ -32,6 +32,7 @@ use std::{
 };
 use theme::Theme;
 use ui::Element as _;
+use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -240,9 +241,23 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
 
     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
 
-    fn serialized_item_kind() -> Option<&'static str> {
+    fn show_toolbar(&self) -> bool {
+        true
+    }
+
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
+}
+
+pub trait SerializableItem: Item {
+    fn serialized_item_kind() -> &'static str;
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
 
     fn deserialize(
         _project: Model<Project>,
@@ -250,48 +265,50 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<View<Self>>> {
-        unimplemented!(
-            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
-        )
-    }
-    fn show_toolbar(&self) -> bool {
-        true
-    }
-    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
-        None
-    }
+    ) -> Task<Result<View<Self>>>;
 
-    fn clean_unloaded_items(
-        _workspace_id: WorkspaceId,
-        _loaded_items: Vec<ItemId>,
-        _cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
-    }
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>>;
 
-    fn can_serialize_content(&self, _: &AppContext) -> bool {
-        false
-    }
+    fn should_serialize(&self, event: &Self::Event) -> bool;
+}
 
-    fn serialize_content(
+pub trait SerializableItemHandle: ItemHandle {
+    fn serialized_item_kind(&self) -> &'static str;
+    fn serialize(
         &self,
-        _: &mut Workspace,
-        _: ItemId,
-        _: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        unimplemented!(
-            "serialize_content() must be implemented if can_serialize_content() returns true"
-        )
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<()>>>;
+    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool;
+}
+
+impl<T> SerializableItemHandle for View<T>
+where
+    T: SerializableItem,
+{
+    fn serialized_item_kind(&self) -> &'static str {
+        T::serialized_item_kind()
     }
 
-    fn delete_serialized_content(
+    fn serialize(
         &self,
-        _: &mut Workspace,
-        _: ItemId,
-        _: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        workspace: &mut Workspace,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<()>>> {
+        self.update(cx, |this, cx| {
+            this.serialize(workspace, cx.entity_id().as_u64(), cx)
+        })
+    }
+
+    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool {
+        event
+            .downcast_ref::<T::Event>()
+            .map_or(false, |event| self.read(cx).should_serialize(event))
     }
 }
 
@@ -351,6 +368,10 @@ pub trait ItemHandle: 'static + Send {
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
+    fn to_serializable_item_handle(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>>;
     fn on_release(
         &self,
         cx: &mut AppContext,
@@ -359,23 +380,10 @@ pub trait ItemHandle: 'static + Send {
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
-    fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
-
-    fn can_serialize_content(&self, cx: &AppContext) -> bool;
-    fn serialize_content(
-        &self,
-        workspace: &mut Workspace,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>>;
-    fn delete_serialized_content(
-        &self,
-        workspace: &mut Workspace,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -609,6 +617,43 @@ impl<T: Item> ItemHandle for View<T> {
                         }
                     }
 
+                    if let Some(item) = item.to_serializable_item_handle(cx) {
+                        if item.should_serialize(event, cx) {
+                            // send to channel on workspace
+                            // items_to_serialize.send(item);
+
+                            // workspace.send_netw
+
+                            /*
+
+                            ready_chunks
+
+                            throttle isntead of debounce
+
+                            background_task.spawn({
+
+                            let items_received = vec![];
+
+                            recv().await;
+                            try_recv a bunch to see what needs to be serialized
+
+                            group_by item.item_id()
+
+                            })
+
+                            */
+
+                            // let task = item.seriali
+                            // todo!("");
+                            if let Some(task) = item.serialize(workspace, cx) {
+                                println!("TODO: move all the serialization logic into one spot. publish here to wake up that spot.");
+                                cx.background_executor()
+                                    .spawn(async move { task.await.log_err() })
+                                    .detach();
+                            }
+                        }
+                    }
+
                     T::to_item_events(event, |event| match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
@@ -751,9 +796,9 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
-    fn serialized_item_kind(&self) -> Option<&'static str> {
-        T::serialized_item_kind()
-    }
+    // fn serialized_item_kind(&self) -> Option<&'static str> {
+    //     T::serialized_item_kind()
+    // }
 
     fn show_toolbar(&self, cx: &AppContext) -> bool {
         self.read(cx).show_toolbar()
@@ -767,31 +812,38 @@ impl<T: Item> ItemHandle for View<T> {
         Box::new(self.downgrade())
     }
 
-    fn can_serialize_content(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_serialize_content(cx)
+    fn to_serializable_item_handle(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>> {
+        SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
 
-    fn serialize_content(
-        &self,
-        workspace: &mut Workspace,
-        cx: &mut WindowContext,
-    ) -> Task<anyhow::Result<()>> {
-        let item_id = self.entity_id().as_u64() as ItemId;
-        self.update(cx, |item, cx| {
-            item.serialize_content(workspace, item_id, cx)
-        })
-    }
+    // fn can_serialize_content(&self, cx: &AppContext) -> bool {
+    //     self.read(cx).can_serialize_content(cx)
+    // }
 
-    fn delete_serialized_content(
-        &self,
-        workspace: &mut Workspace,
-        cx: &mut WindowContext,
-    ) -> Task<anyhow::Result<()>> {
-        let item_id = self.entity_id().as_u64() as ItemId;
-        self.update(cx, |item, cx| {
-            item.delete_serialized_content(workspace, item_id, cx)
-        })
-    }
+    // fn serialize_content(
+    //     &self,
+    //     workspace: &mut Workspace,
+    //     cx: &mut WindowContext,
+    // ) -> Task<anyhow::Result<()>> {
+    //     let item_id = self.entity_id().as_u64() as ItemId;
+    //     self.update(cx, |item, cx| {
+    //         item.serialize_content(workspace, item_id, cx)
+    //     })
+    // }
+
+    // fn delete_serialized_content(
+    //     &self,
+    //     workspace: &mut Workspace,
+    //     cx: &mut WindowContext,
+    // ) -> Task<anyhow::Result<()>> {
+    //     let item_id = self.entity_id().as_u64() as ItemId;
+    //     self.update(cx, |item, cx| {
+    //         item.delete_serialized_content(workspace, item_id, cx)
+    //     })
+    // }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyView {
@@ -952,7 +1004,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent, TabContentParams};
+    use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
@@ -1237,9 +1289,11 @@ pub mod test {
             self.is_dirty = false;
             Task::ready(Ok(()))
         }
+    }
 
-        fn serialized_item_kind() -> Option<&'static str> {
-            Some("TestItem")
+    impl SerializableItem for TestItem {
+        fn serialized_item_kind() -> &'static str {
+            "TestItem"
         }
 
         fn deserialize(
@@ -1250,7 +1304,28 @@ pub mod test {
             cx: &mut ViewContext<Pane>,
         ) -> Task<anyhow::Result<View<Self>>> {
             let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
-            Task::Ready(Some(anyhow::Ok(view)))
+            Task::ready(Ok(view))
+        }
+
+        fn cleanup(
+            _workspace_id: WorkspaceId,
+            _alive_items: Vec<ItemId>,
+            _cx: &mut ui::WindowContext,
+        ) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn serialize(
+            &mut self,
+            _workspace: &mut Workspace,
+            _item_id: ItemId,
+            _cx: &mut ViewContext<Self>,
+        ) -> Option<Task<anyhow::Result<()>>> {
+            None
+        }
+
+        fn should_serialize(&self, _event: &Self::Event) -> bool {
+            false
         }
     }
 }

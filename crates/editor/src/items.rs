@@ -19,7 +19,7 @@ use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{ItemSettings, TabContentParams};
+use workspace::item::{ItemSettings, SerializableItem, TabContentParams};
 
 use std::{
     any::TypeId,
@@ -29,7 +29,6 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
-    time::{Duration, Instant},
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
@@ -37,7 +36,7 @@ use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
+    item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ItemId, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
@@ -847,96 +846,8 @@ impl Item for Editor {
         Some(breadcrumbs)
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, _: &mut ViewContext<Self>) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
-        let Some(workspace_id) = workspace.database_id() else {
-            return;
-        };
-
-        let item_id = cx.view().item_id().as_u64() as ItemId;
-
-        fn serialize(
-            buffer: Model<Buffer>,
-            workspace_id: WorkspaceId,
-            item_id: ItemId,
-            cx: &mut AppContext,
-        ) {
-            if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-                let path = file.abs_path(cx);
-
-                cx.background_executor()
-                    .spawn(async move {
-                        DB.save_path(item_id, workspace_id, path.clone())
-                            .await
-                            .log_err()
-                    })
-                    .detach();
-            }
-        }
-
-        fn serialize_edited_buffer(
-            buffer: Model<Buffer>,
-            workspace_id: WorkspaceId,
-            item_id: ItemId,
-            cx: &mut AppContext,
-        ) -> Task<()> {
-            let start = Instant::now();
-            let snapshot = buffer.read(cx).snapshot();
-            cx.background_executor().spawn(async move {
-                let contents = snapshot.text();
-                DB.save_contents(item_id, workspace_id, contents)
-                    .await
-                    .log_err();
-                println!("serialized edited buffer. took: {:?}", start.elapsed());
-            })
-        }
-
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            serialize(buffer.clone(), workspace_id, item_id, cx);
-
-            cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some((_, Some(workspace_id))) = this.workspace.as_ref() {
-                    match event {
-                        language::Event::FileHandleChanged => {
-                            serialize(
-                                buffer,
-                                *workspace_id,
-                                cx.view().item_id().as_u64() as ItemId,
-                                cx,
-                            );
-                        }
-                        language::Event::Edited if this.can_serialize_content(cx) => {
-                            let workspace_id = *workspace_id;
-                            let item_id = cx.view().item_id().as_u64() as ItemId;
-                            this.serialize_unsaved_buffer_debounce.lock().fire_new(
-                                Duration::from_millis(100),
-                                cx,
-                                move |_, cx| {
-                                    serialize_edited_buffer(buffer, workspace_id, item_id, cx)
-                                },
-                            );
-                        }
-                        language::Event::Saved => {
-                            let item_id = cx.view().item_id().as_u64() as ItemId;
-                            cx.background_executor()
-                                .spawn({
-                                    let workspace_id = *workspace_id;
-                                    async move {
-                                        DB.delete_contents(workspace_id, item_id).await.log_err()
-                                    }
-                                })
-                                .detach();
-                        }
-                        _ => {}
-                    }
-                }
-            })
-            .detach();
-        }
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("Editor")
     }
 
     fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
@@ -972,6 +883,20 @@ impl Item for Editor {
             _ => {}
         }
     }
+}
+
+impl SerializableItem for Editor {
+    fn serialized_item_kind() -> &'static str {
+        "Editor"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        cx.spawn(|_| DB.delete_unloaded_items(workspace_id, alive_items))
+    }
 
     fn deserialize(
         project: Model<Project>,
@@ -980,7 +905,6 @@ impl Item for Editor {
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
-        // Look up the path with this key associated, create a self with that path
         let path = match DB
             .get_path(item_id, workspace_id)
             .context("Failed to query editor state")
@@ -1060,86 +984,60 @@ impl Item for Editor {
         }
     }
 
-    fn clean_unloaded_items(
-        workspace_id: WorkspaceId,
-        loaded_items: Vec<ItemId>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        cx.spawn(|_| DB.delete_unloaded_items(workspace_id, loaded_items))
-    }
-
-    fn can_serialize_content(&self, cx: &AppContext) -> bool {
-        // TODO: This is broken because the `workspace.read(cx)` panics when closing Zed
-        // let workspace_can_deserialize = self.workspace().map_or(false, |workspace| {
-        //     workspace.read(cx).can_deserialize_content(cx)
-        // });
-        // workspace_can_deserialize && self.buffer().read(cx).as_singleton().is_some()
-        self.buffer().read(cx).as_singleton().is_some()
-    }
-
-    fn serialize_content(
-        &self,
+    fn serialize(
+        &mut self,
         workspace: &mut Workspace,
         item_id: ItemId,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        let Some(workspace_id) = workspace.database_id() else {
-            return Task::ready(Ok(()));
-        };
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = self.project.clone()?;
+        if project.read(cx).worktrees().next().is_none() {
+            // If we don't have a worktree, we don't serialize, because
+            // if we don't have a worktree, we can't deserialize ourselves.
+            return None;
+        }
 
-        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
-            return Task::ready(Ok(()));
-        };
+        let workspace_id = workspace.database_id()?;
 
-        let start = Instant::now();
+        let buffer = self.buffer().read(cx).as_singleton()?;
+
+        let is_dirty = buffer.read(cx).is_dirty();
         let path = buffer
             .read(cx)
             .file()
             .and_then(|file| file.as_local())
             .map(|file| file.abs_path(cx));
-
         let snapshot = buffer.read(cx).snapshot();
 
-        cx.spawn(|cx| async move {
-            if let Some(path) = path {
-                cx.background_executor()
-                    .spawn(async move { DB.save_path(item_id, workspace_id, path.clone()).await })
-                    .await
-                    .context("failed to save path of buffer")?
-            }
-
+        Some(cx.spawn(|_this, cx| async move {
             cx.background_executor()
                 .spawn(async move {
-                    let contents = snapshot.text();
-                    DB.save_contents(item_id, workspace_id, contents).await
+                    if let Some(path) = path {
+                        DB.save_path(item_id, workspace_id, path.clone())
+                            .await
+                            .context("failed to save path of buffer")?
+                    }
+
+                    if is_dirty {
+                        let contents = snapshot.text();
+                        DB.save_contents(item_id, workspace_id, contents).await
+                    } else {
+                        // TODO: unspice
+                        DB.delete_contents(workspace_id, item_id).await
+                    }
                 })
                 .await
                 .context("failed to save contents of buffer")?;
 
-            println!(
-                "Editor.Item.serialize_content done. took: {:?}",
-                start.elapsed()
-            );
             Ok(())
-        })
+        }))
     }
 
-    fn delete_serialized_content(
-        &self,
-        workspace: &mut Workspace,
-        item_id: ItemId,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        let Some(workspace_id) = workspace.database_id() else {
-            return Task::ready(Ok(()));
-        };
-
-        cx.spawn(|cx| async move {
-            cx.background_executor()
-                .spawn(DB.delete_contents(workspace_id, item_id))
-                .await
-                .context("failed to save contents of buffer")
-        })
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(
+            event,
+            EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+        )
     }
 }
 

@@ -1370,9 +1370,6 @@ impl Pane {
                 "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
         if save_intent == SaveIntent::Skip {
-            if let Some(deletion_task) = Self::delete_serialized_content(pane, item, cx) {
-                deletion_task.await.map(|_| true)?;
-            }
             return Ok(true);
         }
 
@@ -1455,16 +1452,8 @@ impl Pane {
                         })?;
                         match answer {
                             Ok(0) => {}
-                            Ok(1) => {
-                                // Don't save this file
-                                if let Some(deletion_task) =
-                                    Self::delete_serialized_content(pane, item, cx)
-                                {
-                                    deletion_task.await.map(|_| true)?;
-                                }
-                                return Ok(true);
-                            }
-                            _ => return Ok(false), // Cancel
+                            Ok(1) => return Ok(true), // Don't save this file
+                            _ => return Ok(false),    // Cancel
                         }
                     } else {
                         return Ok(false);
@@ -1497,26 +1486,26 @@ impl Pane {
         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
     }
 
-    fn delete_serialized_content(
-        pane: &WeakView<Pane>,
-        item: &dyn ItemHandle,
-        cx: &mut AsyncWindowContext,
-    ) -> Option<Task<Result<()>>> {
-        let task = pane.update(cx, |pane, cx| {
-            pane.workspace.update(cx, |workspace, cx| {
-                if item.can_serialize_content(cx) {
-                    Some(item.delete_serialized_content(workspace, cx))
-                } else {
-                    None
-                }
-            })
-        });
-        if let Ok(Ok(task)) = task {
-            task
-        } else {
-            None
-        }
-    }
+    // fn delete_serialized_content(
+    //     pane: &WeakView<Pane>,
+    //     item: &dyn ItemHandle,
+    //     cx: &mut AsyncWindowContext,
+    // ) -> Option<Task<Result<()>>> {
+    //     let task = pane.update(cx, |pane, cx| {
+    //         pane.workspace.update(cx, |workspace, cx| {
+    //             if item.can_serialize_content(cx) {
+    //                 Some(item.delete_serialized_content(workspace, cx))
+    //             } else {
+    //                 None
+    //             }
+    //         })
+    //     });
+    //     if let Ok(Ok(task)) = task {
+    //         task
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn autosave_item(
         item: &dyn ItemHandle,

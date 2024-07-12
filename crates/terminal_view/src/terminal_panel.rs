@@ -26,7 +26,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::Item,
+    item::SerializableItem,
     pane,
     ui::IconName,
     DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,

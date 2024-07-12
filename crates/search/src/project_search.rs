@@ -16,7 +16,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
     IntoElement, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
     Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WeakView, WhiteSpace, WindowContext,
+    WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -37,7 +37,7 @@ use util::paths::PathMatcher;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    DeploySearch, ItemNavHistory, NewSearch, Pane, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
 };
 
@@ -505,20 +505,6 @@ impl Item for ProjectSearchView {
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        None
-    }
-
-    fn deserialize(
-        _project: Model<Project>,
-        _workspace: WeakView<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
-        _cx: &mut ViewContext<Pane>,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        unimplemented!()
     }
 }
 

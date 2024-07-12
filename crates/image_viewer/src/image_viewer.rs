@@ -11,7 +11,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use workspace::{
-    item::{Item, ProjectItem, TabContentParams},
+    item::{Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
 };
 
@@ -110,29 +110,6 @@ impl Item for ImageView {
         }
     }
 
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some(IMAGE_VIEWER_KIND)
-    }
-
-    fn deserialize(
-        _project: Model<Project>,
-        _workspace: WeakView<Workspace>,
-        workspace_id: WorkspaceId,
-        item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        cx.spawn(|_pane, mut cx| async move {
-            let image_path = IMAGE_VIEWER
-                .get_image_path(item_id, workspace_id)?
-                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
-
-            cx.new_view(|cx| ImageView {
-                path: image_path,
-                focus_handle: cx.focus_handle(),
-            })
-        })
-    }
-
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
@@ -145,6 +122,58 @@ impl Item for ImageView {
             path: self.path.clone(),
             focus_handle: cx.focus_handle(),
         }))
+    }
+}
+
+impl SerializableItem for ImageView {
+    fn serialized_item_kind() -> &'static str {
+        IMAGE_VIEWER_KIND
+    }
+
+    fn deserialize(
+        _project: Model<Project>,
+        _workspace: WeakView<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<gpui::Result<View<Self>>> {
+        cx.spawn(|_pane, mut cx| async move {
+            let image_path = IMAGE_VIEWER
+                .get_image_path(item_id, workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
+
+            cx.new_view(|cx| ImageView {
+                path: image_path,
+                focus_handle: cx.focus_handle(),
+            })
+        })
+    }
+
+    fn cleanup(_: WorkspaceId, _: Vec<ItemId>, _: &mut WindowContext) -> Task<gpui::Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+
+        Some(cx.background_executor().spawn({
+            let image_path = self.path.clone();
+            async move {
+                IMAGE_VIEWER
+                    .save_image_path(item_id, workspace_id, image_path)
+                    .await
+            }
+        }))
+    }
+
+    // TODO: Should we serialize on an "added to workspace" event?
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
     }
 }
 
