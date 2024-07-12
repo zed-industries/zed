@@ -661,7 +661,7 @@ impl Element for TerminalElement {
                     // These are going to be overridden per-cell
                     underline: None,
                     strikethrough: None,
-                    color: theme.colors().text,
+                    color: theme.colors().terminal_foreground,
                 };
 
                 let text_system = cx.text_system();
@@ -1141,7 +1141,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
             NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
             NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
-            NamedColor::Foreground => colors.text,
+            NamedColor::Foreground => colors.terminal_foreground,
             NamedColor::Background => colors.background,
             NamedColor::Cursor => theme.players().local().cursor,
             NamedColor::DimBlack => colors.terminal_ansi_dim_black,
