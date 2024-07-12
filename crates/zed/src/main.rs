@@ -80,7 +80,9 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
 }
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
-    eprintln!("Zed failed to open a window: {e:?}");
+    eprintln!(
+        "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+    );
     #[cfg(not(target_os = "linux"))]
     {
         process::exit(1);
@@ -99,7 +101,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
                 .add_notification(
                     notification_id,
                     Notification::new("Zed failed to launch")
-                        .body(Some(format!("{e:?}").as_str()))
+                        .body(Some(
+                            format!(
+                                "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                            )
+                            .as_str(),
+                        ))
                         .priority(Priority::High)
                         .icon(ashpd::desktop::Icon::with_names(&[
                             "dialog-question-symbolic",
@@ -708,8 +715,8 @@ fn init_logger() {
             Ok(log_file) => {
                 let mut config_builder = ConfigBuilder::new();
 
-                config_builder.set_time_format_str("%Y-%m-%dT%T%:z");
-                config_builder.set_time_to_local(true);
+                config_builder.set_time_format_rfc3339();
+                config_builder.set_time_offset_to_local().log_err();
 
                 #[cfg(target_os = "linux")]
                 {

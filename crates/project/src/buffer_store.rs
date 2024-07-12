@@ -18,6 +18,7 @@ use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
 use worktree::{File, ProjectEntryId, RemoteWorktree, Worktree};
 
+/// A set of open buffers.
 pub struct BufferStore {
     retain_buffers: bool,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
@@ -55,6 +56,12 @@ pub enum BufferStoreEvent {
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
+    /// Creates a buffer store, optionally retaining its buffers.
+    ///
+    /// If `retain_buffers` is `true`, then buffers are owned by the buffer store
+    /// and won't be released unless they are explicitly removed, or `retain_buffers`
+    /// is set to `false` via `set_retain_buffers`. Otherwise, buffers are stored as
+    /// weak handles.
     pub fn new(retain_buffers: bool) -> Self {
         Self {
             retain_buffers,
@@ -353,7 +360,7 @@ impl BufferStore {
         })
     }
 
-    pub fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = buffer.read(cx).replica_id() != 0;
         let open_buffer = if self.retain_buffers {

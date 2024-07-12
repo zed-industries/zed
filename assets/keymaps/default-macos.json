@@ -126,7 +126,8 @@
       "cmd-alt-z": "editor::RevertSelectedHunks",
       "cmd-'": "editor::ToggleHunkDiff",
       "cmd-\"": "editor::ExpandAllHunkDiffs",
-      "cmd-alt-g b": "editor::ToggleGitBlame"
+      "cmd-alt-g b": "editor::ToggleGitBlame",
+      "cmd-i": "editor::ShowSignatureHelp"
     }
   },
   {

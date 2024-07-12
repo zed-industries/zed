@@ -262,7 +262,10 @@ message Envelope {
         OpenContextResponse open_context_response = 213;
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
-        SynchronizeContextsResponse synchronize_contexts_response = 216; // current max
+        SynchronizeContextsResponse synchronize_contexts_response = 216;
+
+        GetSignatureHelp get_signature_help = 217;
+        GetSignatureHelpResponse get_signature_help_response = 218; // current max
     }
 
     reserved 158 to 161;
@@ -932,6 +935,34 @@ message GetCodeActions {
 message GetCodeActionsResponse {
     repeated CodeAction actions = 1;
     repeated VectorClockEntry version = 2;
+}
+
+message GetSignatureHelp {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message GetSignatureHelpResponse {
+    repeated SignatureHelp entries = 1;
+}
+
+message SignatureHelp {
+    string rendered_text = 1;
+    repeated HighlightedRange highlights = 2;
+}
+
+message HighlightedRange {
+    Range range = 1;
+    MarkdownHighlight highlight = 2;
+}
+
+message MarkdownHighlight {
+    bool italic = 1;
+    bool underline = 2;
+    bool strikethrough = 3;
+    float weight = 4;
 }
 
 message GetHover {
