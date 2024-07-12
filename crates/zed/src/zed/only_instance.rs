@@ -13,6 +13,7 @@ const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(10);
 const RECEIVE_TIMEOUT: Duration = Duration::from_millis(35);
 const SEND_TIMEOUT: Duration = Duration::from_millis(20);
+const USER_BLOCK: u16 = 100;
 
 fn address() -> SocketAddr {
     // These port numbers are offset by the user ID to avoid conflicts between
@@ -29,9 +30,9 @@ fn address() -> SocketAddr {
     // stable, and nightly channels, respectively.
     let port = match *release_channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => 43737,
-        ReleaseChannel::Preview => 43837,
-        ReleaseChannel::Stable => 43937,
-        ReleaseChannel::Nightly => 44037,
+        ReleaseChannel::Preview => 43737 + USER_BLOCK,
+        ReleaseChannel::Stable => 43737 + (2 * USER_BLOCK),
+        ReleaseChannel::Nightly => 43737 + (3 * USER_BLOCK),
     };
     let user_id = get_current_uid() as u16;
     let user_port = port + user_id;
