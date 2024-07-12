@@ -104,8 +104,10 @@ impl LanguageModelProvider for AnthropicCompletionProvider {
     }
 
     fn model(&self, id: LanguageModelId, _cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
+        let model = anthropic::Model::from_id(&id.0)?;
+
         Ok(Arc::new(AnthropicModel {
-            id,
+            model,
             api_key: self.api_key.clone(),
             settings: self.settings.clone(),
             http_client: self.http_client.clone(),
@@ -114,7 +116,7 @@ impl LanguageModelProvider for AnthropicCompletionProvider {
 }
 
 pub struct AnthropicModel {
-    id: LanguageModelId,
+    model: anthropic::Model,
     api_key: Option<String>,
     settings: AnthropicSettings,
     http_client: Arc<dyn HttpClient>,
@@ -133,10 +135,8 @@ impl AnthropicModel {
             system_message = request.messages.remove(0).content;
         }
 
-        let model = anthropic::Model::from_id(self.id.0.as_ref()).unwrap(); //TODO
-
         Request {
-            model,
+            model: self.model.clone(),
             messages: request
                 .messages
                 .iter()
