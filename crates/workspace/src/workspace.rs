@@ -74,7 +74,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{atomic::AtomicUsize, Arc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
@@ -433,6 +433,12 @@ struct UnloadedItemsCleaners(
 );
 
 impl Global for UnloadedItemsCleaners {}
+
+impl UnloadedItemsCleaners {
+    pub fn global(cx: &AppContext) -> &Self {
+        cx.global::<Self>()
+    }
+}
 
 pub fn register_unloaded_items_cleaner<I: Item>(cx: &mut AppContext) {
     if let Some(serialized_item_kind) = I::serialized_item_kind() {
@@ -3829,6 +3835,7 @@ impl Workspace {
 
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
+            let mut all_deserialized_items = Vec::default();
             cx.update(|cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
                     if let Some(serialized_item_kind) = item.serialized_item_kind() {
@@ -3839,8 +3846,9 @@ impl Workspace {
                     }
 
                     if let Some(project_path) = item.project_path(cx) {
-                        items_by_project_path.insert(project_path, item);
+                        items_by_project_path.insert(project_path, item.clone());
                     }
+                    all_deserialized_items.push(item);
                 }
             })?;
 
@@ -3891,9 +3899,9 @@ impl Workspace {
             // the database filling up, we delete items that haven't been loaded now.
             let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
                 let database_id = serialized_workspace.id;
-                let mut tasks = vec![];
+                let mut tasks = Vec::with_capacity(item_ids_by_kind.len());
                 for (item_kind, loaded_items) in item_ids_by_kind {
-                    if let Some(clean_up) = cx.global::<UnloadedItemsCleaners>().get(item_kind) {
+                    if let Some(clean_up) = UnloadedItemsCleaners::global(cx).get(item_kind) {
                         let task = clean_up(database_id, loaded_items, cx).log_err();
                         tasks.push(task);
                     }
@@ -3902,6 +3910,16 @@ impl Workspace {
             })?;
 
             futures::future::join_all(clean_up_tasks).await;
+
+            // If the item we loaded is dirty, it's possible that we might have just cleaned it up,
+            // because our IDs aren't stable. In that case, serialize its content again.
+            workspace.update(&mut cx, |workspace, cx| {
+                for item in all_deserialized_items {
+                    if item.is_dirty(cx) && item.can_serialize_content(cx) {
+                        item.serialize_content(workspace, cx).detach();
+                    }
+                }
+            })?;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace

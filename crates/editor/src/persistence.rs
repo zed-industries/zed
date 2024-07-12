@@ -128,7 +128,6 @@ impl EditorDb {
         workspace: WorkspaceId,
         loaded_item_ids: Vec<ItemId>,
     ) -> Result<()> {
-        println!("Editor. delete_unloaded_items: ids: {:?}", loaded_item_ids);
         let ids_string = loaded_item_ids
             .iter()
             .map(|id| id.to_string())

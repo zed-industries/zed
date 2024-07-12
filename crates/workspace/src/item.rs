@@ -280,7 +280,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         _: ItemId,
         _: &mut WindowContext,
     ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        unimplemented!(
+            "serialize_content() must be implemented if can_serialize_content() returns true"
+        )
     }
 
     fn delete_serialized_content(

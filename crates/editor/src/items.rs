@@ -29,7 +29,7 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
@@ -880,12 +880,14 @@ impl Item for Editor {
             item_id: ItemId,
             cx: &mut AppContext,
         ) -> Task<()> {
+            let start = Instant::now();
             let snapshot = buffer.read(cx).snapshot();
             cx.background_executor().spawn(async move {
                 let contents = snapshot.text();
                 DB.save_contents(item_id, workspace_id, contents)
                     .await
                     .log_err();
+                println!("serialized edited buffer. took: {:?}", start.elapsed());
             })
         }
 
@@ -1089,6 +1091,7 @@ impl Item for Editor {
             return Task::ready(Ok(()));
         };
 
+        let start = Instant::now();
         let path = buffer
             .read(cx)
             .file()
@@ -1113,6 +1116,10 @@ impl Item for Editor {
                 .await
                 .context("failed to save contents of buffer")?;
 
+            println!(
+                "Editor.Item.serialize_content done. took: {:?}",
+                start.elapsed()
+            );
             Ok(())
         })
     }
