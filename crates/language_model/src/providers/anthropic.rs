@@ -1,16 +1,23 @@
-use super::*;
-use ::anthropic::{stream_completion, Request, RequestMessage};
+use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, StreamExt};
-use gpui::{FontStyle, ModelContext, TextStyle, View, WeakModel, WhiteSpace};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{
+    AnyView, AppContext, FontStyle, ModelContext, Task, TextStyle, View, WeakModel, WhiteSpace,
+};
 use http::HttpClient;
 use settings::Settings;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
+
+use crate::{
+    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelRequestMessage,
+    ProvidedLanguageModel, Role,
+};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -42,7 +49,7 @@ impl LanguageModelProvider for AnthropicCompletionProvider {
     }
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
-        ::anthropic::Model::iter()
+        anthropic::Model::iter()
             .map(|model| ProvidedLanguageModel {
                 id: LanguageModelId::from(model.id().to_string()),
                 name: LanguageModelName::from(model.display_name().to_string()),
@@ -126,7 +133,7 @@ impl AnthropicModel {
             system_message = request.messages.remove(0).content;
         }
 
-        let model = ::anthropic::Model::from_id(self.id.0.as_ref()).unwrap(); //TODO
+        let model = anthropic::Model::from_id(self.id.0.as_ref()).unwrap(); //TODO
 
         Request {
             model,
@@ -135,8 +142,8 @@ impl AnthropicModel {
                 .iter()
                 .map(|msg| RequestMessage {
                     role: match msg.role {
-                        Role::User => ::anthropic::Role::User,
-                        Role::Assistant => ::anthropic::Role::Assistant,
+                        Role::User => anthropic::Role::User,
+                        Role::Assistant => anthropic::Role::Assistant,
                         Role::System => unreachable!("filtered out by preprocess_request"),
                     },
                     content: msg.content.clone(),
@@ -149,34 +156,41 @@ impl AnthropicModel {
     }
 }
 
+pub fn count_anthropic_tokens(
+    request: LanguageModelRequest,
+    cx: &AppContext,
+) -> BoxFuture<'static, Result<usize>> {
+    cx.background_executor()
+        .spawn(async move {
+            let messages = request
+                .messages
+                .into_iter()
+                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(message.content),
+                    name: None,
+                    function_call: None,
+                })
+                .collect::<Vec<_>>();
+
+            // Tiktoken doesn't yet support these models, so we manually use the
+            // same tokenizer as GPT-4.
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+        })
+        .boxed()
+}
+
 impl LanguageModel for AnthropicModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        cx.background_executor()
-            .spawn(async move {
-                let messages = request
-                    .messages
-                    .into_iter()
-                    .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(message.content),
-                        name: None,
-                        function_call: None,
-                    })
-                    .collect::<Vec<_>>();
-
-                // Tiktoken doesn't yet support these models, so we manually use the
-                // same tokenizer as GPT-4.
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            })
-            .boxed()
+        count_anthropic_tokens(request, cx)
     }
 
     fn complete(
@@ -204,14 +218,14 @@ impl LanguageModel for AnthropicModel {
                 .filter_map(|response| async move {
                     match response {
                         Ok(response) => match response {
-                            ::anthropic::ResponseEvent::ContentBlockStart {
+                            anthropic::ResponseEvent::ContentBlockStart {
                                 content_block, ..
                             } => match content_block {
-                                ::anthropic::ContentBlock::Text { text } => Some(Ok(text)),
+                                anthropic::ContentBlock::Text { text } => Some(Ok(text)),
                             },
-                            ::anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
+                            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
                                 match delta {
-                                    ::anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
+                                    anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
                                 }
                             }
                             _ => None,

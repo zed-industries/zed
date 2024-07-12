@@ -1,13 +1,19 @@
-use super::*;
-use anthropic::preprocess_anthropic_request;
+use super::open_ai::count_open_ai_tokens;
+use crate::{
+    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProviderName,
+    LanguageModelRequest, ProvidedLanguageModel,
+};
+use anyhow::Result;
 use client::Client;
-use futures::{FutureExt, StreamExt, TryFutureExt};
-use gpui::{ModelContext, Render, WeakModel};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
+use gpui::{AnyView, AppContext, ModelContext, Render, Task, WeakModel};
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, IntoElement, ViewContext};
 
 use crate::LanguageModelProvider;
+
+use super::anthropic::{count_anthropic_tokens, preprocess_anthropic_request};
 
 #[derive(Clone, Debug, Default, PartialEq, EnumIter)]
 pub enum CloudModel {
@@ -155,7 +161,34 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        todo!()
+        let model = CloudModel::from(self.id.0.as_ref());
+        match model {
+            CloudModel::Gpt3Point5Turbo => {
+                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
+            }
+            CloudModel::Gpt4 => count_open_ai_tokens(request, open_ai::Model::Four, cx),
+            CloudModel::Gpt4Turbo => count_open_ai_tokens(request, open_ai::Model::FourTurbo, cx),
+            CloudModel::Gpt4Omni => count_open_ai_tokens(request, open_ai::Model::FourOmni, cx),
+            CloudModel::Claude3_5Sonnet
+            | CloudModel::Claude3Opus
+            | CloudModel::Claude3Sonnet
+            | CloudModel::Claude3Haiku => count_anthropic_tokens(request, cx),
+            CloudModel::Custom(model) => {
+                let request = self.client.request(proto::CountTokensWithLanguageModel {
+                    model,
+                    messages: request
+                        .messages
+                        .iter()
+                        .map(|message| message.to_proto())
+                        .collect(),
+                });
+                async move {
+                    let response = request.await?;
+                    Ok(response.token_count as usize)
+                }
+                .boxed()
+            }
+        }
     }
 
     fn complete(

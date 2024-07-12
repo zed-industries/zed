@@ -1,5 +1,6 @@
 pub mod providers;
 pub mod registry;
+pub mod settings;
 
 use std::{
     fmt::{self, Display},
