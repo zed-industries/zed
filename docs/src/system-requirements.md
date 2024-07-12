@@ -8,7 +8,11 @@ Supported versions: Catalina (10.15) - Sonoma (14.x).
 
 ## Linux
 
-Not yet available as an official download. Can be built [from source](./development/linux.md).
+Zed requires a Vulkan 1.3 driver, and the following desktop portals:
+
+- `org.freedesktop.portal.FileChooser`
+- `org.freedesktop.portal.OpenURI`
+- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
 
 ## Windows
 

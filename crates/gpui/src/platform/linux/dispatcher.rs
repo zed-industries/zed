@@ -5,11 +5,9 @@ use calloop::{
     timer::TimeoutAction,
     EventLoop,
 };
-use mio::Waker;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
-    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -23,7 +21,6 @@ struct TimerAfter {
 pub(crate) struct LinuxDispatcher {
     parker: Mutex<Parker>,
     main_sender: Sender<Runnable>,
-    main_waker: Option<Arc<Waker>>,
     timer_sender: Sender<TimerAfter>,
     background_sender: flume::Sender<Runnable>,
     _background_threads: Vec<thread::JoinHandle<()>>,
@@ -31,7 +28,7 @@ pub(crate) struct LinuxDispatcher {
 }
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: Sender<Runnable>, main_waker: Option<Arc<Waker>>) -> Self {
+    pub fn new(main_sender: Sender<Runnable>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
         let thread_count = std::thread::available_parallelism()
             .map(|i| i.get())
@@ -91,7 +88,6 @@ impl LinuxDispatcher {
         Self {
             parker: Mutex::new(Parker::new()),
             main_sender,
-            main_waker,
             timer_sender,
             background_sender,
             _background_threads: background_threads,
@@ -111,9 +107,6 @@ impl PlatformDispatcher for LinuxDispatcher {
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         self.main_sender.send(runnable).ok();
-        if let Some(main_waker) = self.main_waker.as_ref() {
-            main_waker.wake().ok();
-        }
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {

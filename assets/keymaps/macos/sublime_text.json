@@ -27,6 +27,7 @@
       "ctrl-,": "editor::GoToPrevHunk",
       "cmd-k cmd-u": "editor::ConvertToUpperCase",
       "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "cmd-shift-j": "editor::JoinLines",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"

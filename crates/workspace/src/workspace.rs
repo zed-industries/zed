@@ -218,9 +218,11 @@ impl_actions!(
     ]
 );
 
+#[derive(Clone)]
 pub struct Toast {
     id: NotificationId,
     msg: Cow<'static, str>,
+    autohide: bool,
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
@@ -230,6 +232,7 @@ impl Toast {
             id,
             msg: msg.into(),
             on_click: None,
+            autohide: false,
         }
     }
 
@@ -241,6 +244,11 @@ impl Toast {
         self.on_click = Some((message.into(), Arc::new(on_click)));
         self
     }
+
+    pub fn autohide(mut self) -> Self {
+        self.autohide = true;
+        self
+    }
 }
 
 impl PartialEq for Toast {
@@ -248,16 +256,6 @@ impl PartialEq for Toast {
         self.id == other.id
             && self.msg == other.msg
             && self.on_click.is_some() == other.on_click.is_some()
-    }
-}
-
-impl Clone for Toast {
-    fn clone(&self) -> Self {
-        Toast {
-            id: self.id.clone(),
-            msg: self.msg.clone(),
-            on_click: self.on_click.clone(),
-        }
     }
 }
 
@@ -6602,7 +6600,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .on_mouse_move(|_e, cx| {
                     cx.stop_propagation();
                 })
-                .bg(cx.theme().colors().border)
                 .size_full()
                 .child(element),
         )
@@ -6664,7 +6661,7 @@ fn resize_edge(
 
     let corner_size = size(shadow_size * 1.5, shadow_size * 1.5);
     let top_left_bounds = Bounds::new(Point::new(px(0.), px(0.)), corner_size);
-    if top_left_bounds.contains(&pos) {
+    if !tiling.top && top_left_bounds.contains(&pos) {
         return Some(ResizeEdge::TopLeft);
     }
 
@@ -6672,7 +6669,7 @@ fn resize_edge(
         Point::new(window_size.width - corner_size.width, px(0.)),
         corner_size,
     );
-    if top_right_bounds.contains(&pos) {
+    if !tiling.top && top_right_bounds.contains(&pos) {
         return Some(ResizeEdge::TopRight);
     }
 
@@ -6680,7 +6677,7 @@ fn resize_edge(
         Point::new(px(0.), window_size.height - corner_size.height),
         corner_size,
     );
-    if bottom_left_bounds.contains(&pos) {
+    if !tiling.bottom && bottom_left_bounds.contains(&pos) {
         return Some(ResizeEdge::BottomLeft);
     }
 
@@ -6691,7 +6688,7 @@ fn resize_edge(
         ),
         corner_size,
     );
-    if bottom_right_bounds.contains(&pos) {
+    if !tiling.bottom && bottom_right_bounds.contains(&pos) {
         return Some(ResizeEdge::BottomRight);
     }
 

@@ -22,7 +22,7 @@ impl HeadlessClient {
     pub(crate) fn new() -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()), None);
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -80,6 +80,8 @@ impl LinuxClient for HeadlessClient {
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, _uri: &str) {}
+
+    fn reveal_path(&self, _path: std::path::PathBuf) {}
 
     fn write_to_primary(&self, _item: crate::ClipboardItem) {}
 

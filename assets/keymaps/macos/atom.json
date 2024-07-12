@@ -23,7 +23,6 @@
       "cmd-k cmd-u": "editor::ConvertToUpperCase",
       "cmd-k cmd-l": "editor::ConvertToLowerCase",
       "alt-enter": "editor::Newline",
-      "cmd-j": "editor::JoinLines",
       "cmd-shift-d": "editor::DuplicateLineDown",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",

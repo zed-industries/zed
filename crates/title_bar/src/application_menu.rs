@@ -1,6 +1,4 @@
-use settings::Settings;
-use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, NumericStepper, PopoverMenu, Tooltip};
 
 #[derive(IntoElement)]
 pub struct ApplicationMenu;
@@ -12,128 +10,77 @@ impl ApplicationMenu {
 }
 
 impl RenderOnce for ApplicationMenu {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-        let font = cx.text_style().font();
-        let font_id = cx.text_system().resolve_font(&font);
-        let width = cx
-            .text_system()
-            .typographic_bounds(font_id, ui_font_size, 'm')
-            .unwrap()
-            .size
-            .width
-            * 3.0;
-
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         PopoverMenu::new("application-menu")
             .menu(move |cx| {
-                let width = width;
                 ContextMenu::build(cx, move |menu, _cx| {
-                    let width = width;
                     menu.header("Workspace")
                         .action("Open Command Palette", Box::new(command_palette::Toggle))
                         .custom_row(move |cx| {
-                            div()
+                            h_flex()
+                                .gap_2()
                                 .w_full()
-                                .flex()
-                                .flex_row()
                                 .justify_between()
                                 .cursor(gpui::CursorStyle::Arrow)
                                 .child(Label::new("Buffer Font Size"))
                                 .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .child(div().w(px(16.0)))
-                                        .child(
-                                            IconButton::new(
-                                                "reset-buffer-zoom",
-                                                IconName::RotateCcw,
-                                            )
-                                            .on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::ResetBufferFontSize,
-                                                    ))
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new("--buffer-zoom", IconName::Dash)
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::DecreaseBufferFontSize,
-                                                    ))
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(width)
-                                                .flex()
-                                                .flex_row()
-                                                .justify_around()
-                                                .child(Label::new(
-                                                    theme::get_buffer_font_size(cx).to_string(),
-                                                )),
-                                        )
-                                        .child(
-                                            IconButton::new("+-buffer-zoom", IconName::Plus)
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::IncreaseBufferFontSize,
-                                                    ))
-                                                }),
-                                        ),
+                                    NumericStepper::new(
+                                        theme::get_buffer_font_size(cx).to_string(),
+                                        |_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::DecreaseBufferFontSize,
+                                            ))
+                                        },
+                                        |_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::IncreaseBufferFontSize,
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        theme::has_adjusted_buffer_font_size(cx),
+                                        |stepper| {
+                                            stepper.on_reset(|_, cx| {
+                                                cx.dispatch_action(Box::new(
+                                                    zed_actions::ResetBufferFontSize,
+                                                ))
+                                            })
+                                        },
+                                    ),
                                 )
                                 .into_any_element()
                         })
                         .custom_row(move |cx| {
-                            div()
+                            h_flex()
+                                .gap_2()
                                 .w_full()
-                                .flex()
-                                .flex_row()
                                 .justify_between()
                                 .cursor(gpui::CursorStyle::Arrow)
                                 .child(Label::new("UI Font Size"))
                                 .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .child(
-                                            IconButton::new("reset-ui-zoom", IconName::RotateCcw)
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::ResetUiFontSize,
-                                                    ))
-                                                }),
-                                        )
-                                        .child(
-                                            IconButton::new("--ui-zoom", IconName::Dash).on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::DecreaseUiFontSize,
-                                                    ))
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(width)
-                                                .flex()
-                                                .flex_row()
-                                                .justify_around()
-                                                .child(Label::new(
-                                                    theme::get_ui_font_size(cx).to_string(),
-                                                )),
-                                        )
-                                        .child(
-                                            IconButton::new("+-ui-zoom", IconName::Plus).on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::IncreaseUiFontSize,
-                                                    ))
-                                                },
-                                            ),
-                                        ),
+                                    NumericStepper::new(
+                                        theme::get_ui_font_size(cx).to_string(),
+                                        |_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::DecreaseUiFontSize,
+                                            ))
+                                        },
+                                        |_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::IncreaseUiFontSize,
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        theme::has_adjusted_ui_font_size(cx),
+                                        |stepper| {
+                                            stepper.on_reset(|_, cx| {
+                                                cx.dispatch_action(Box::new(
+                                                    zed_actions::ResetUiFontSize,
+                                                ))
+                                            })
+                                        },
+                                    ),
                                 )
                                 .into_any_element()
                         })

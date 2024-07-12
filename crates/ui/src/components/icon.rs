@@ -1,6 +1,6 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -75,9 +75,24 @@ impl IconSize {
             IconSize::Medium => rems_from_px(16.),
         }
     }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let icon_size = self.rems() * cx.rem_size();
+        let padding = match self {
+            IconSize::Indicator => Spacing::None.px(cx),
+            IconSize::XSmall => Spacing::XSmall.px(cx),
+            IconSize::Small => Spacing::XSmall.px(cx),
+            IconSize::Medium => Spacing::XSmall.px(cx),
+        };
+
+        icon_size + padding * 2.
+    }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, Eq, PartialEq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
@@ -145,11 +160,11 @@ pub enum IconName {
     Font,
     FontSize,
     FontWeight,
-    Github,
-    GenericMinimize,
-    GenericMaximize,
     GenericClose,
+    GenericMaximize,
+    GenericMinimize,
     GenericRestore,
+    Github,
     Hash,
     HistoryRerun,
     Indicator,
@@ -179,6 +194,10 @@ pub enum IconName {
     PullRequest,
     Quote,
     Regex,
+    ReplPlay,
+    ReplOff,
+    ReplPause,
+    ReplNeutral,
     Replace,
     ReplaceAll,
     ReplaceNext,
@@ -216,12 +235,12 @@ pub enum IconName {
     Trash,
     TriangleRight,
     Update,
+    Visible,
     WholeWord,
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
-    Visible,
 }
 
 impl IconName {
@@ -293,11 +312,11 @@ impl IconName {
             IconName::Font => "icons/font.svg",
             IconName::FontSize => "icons/font_size.svg",
             IconName::FontWeight => "icons/font_weight.svg",
-            IconName::Github => "icons/github.svg",
-            IconName::GenericMinimize => "icons/generic_minimize.svg",
-            IconName::GenericMaximize => "icons/generic_maximize.svg",
             IconName::GenericClose => "icons/generic_close.svg",
+            IconName::GenericMaximize => "icons/generic_maximize.svg",
+            IconName::GenericMinimize => "icons/generic_minimize.svg",
             IconName::GenericRestore => "icons/generic_restore.svg",
+            IconName::Github => "icons/github.svg",
             IconName::Hash => "icons/hash.svg",
             IconName::HistoryRerun => "icons/history_rerun.svg",
             IconName::Indicator => "icons/indicator.svg",
@@ -327,6 +346,10 @@ impl IconName {
             IconName::PullRequest => "icons/pull_request.svg",
             IconName::Quote => "icons/quote.svg",
             IconName::Regex => "icons/regex.svg",
+            IconName::ReplPlay => "icons/repl_play.svg",
+            IconName::ReplPause => "icons/repl_pause.svg",
+            IconName::ReplNeutral => "icons/repl_neutral.svg",
+            IconName::ReplOff => "icons/repl_off.svg",
             IconName::Replace => "icons/replace.svg",
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",
@@ -364,12 +387,12 @@ impl IconName {
             IconName::Trash => "icons/trash.svg",
             IconName::TriangleRight => "icons/triangle_right.svg",
             IconName::Update => "icons/update.svg",
+            IconName::Visible => "icons/visible.svg",
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::ZedAssistantFilled => "icons/zed_assistant_filled.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
-            IconName::Visible => "icons/visible.svg",
         }
     }
 }

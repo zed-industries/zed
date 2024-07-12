@@ -1,13 +1,13 @@
 mod anthropic;
 mod cloud;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod fake;
 mod ollama;
 mod open_ai;
 
 pub use anthropic::*;
 pub use cloud::*;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use fake::*;
 pub use ollama::*;
 pub use open_ai::*;

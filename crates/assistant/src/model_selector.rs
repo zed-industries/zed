@@ -49,6 +49,7 @@ impl RenderOnce for ModelSelector {
             })
             .trigger(
                 ButtonLike::new("active-model")
+                    .style(ButtonStyle::Subtle)
                     .child(
                         h_flex()
                             .w_full()
@@ -67,14 +68,11 @@ impl RenderOnce for ModelSelector {
                                     ),
                             )
                             .child(
-                                div().child(
-                                    Icon::new(IconName::ChevronDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
+                                Icon::new(IconName::ChevronDown)
+                                    .color(Color::Muted)
+                                    .size(IconSize::XSmall),
                             ),
                     )
-                    .style(ButtonStyle::Subtle)
                     .tooltip(move |cx| {
                         Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
                     }),

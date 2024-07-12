@@ -332,7 +332,7 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
-    pub base: Div,
+    pub(super) base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,

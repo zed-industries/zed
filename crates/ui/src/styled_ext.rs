@@ -1,13 +1,19 @@
-use gpui::{hsla, px, Styled, WindowContext};
+use gpui::{hsla, Styled, WindowContext};
 
 use crate::prelude::*;
 use crate::ElevationIndex;
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
-        .rounded(px(8.))
+        .rounded_lg()
         .border_1()
         .border_color(cx.theme().colors().border_variant)
+        .shadow(index.shadow())
+}
+
+fn elevated_borderless<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
+    this.bg(cx.theme().colors().elevated_surface_background)
+        .rounded_lg()
         .shadow(index.shadow())
 }
 
@@ -36,6 +42,13 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
+    /// See [`elevation_1`].
+    ///
+    /// Renders a borderless version [`elevation_1`].
+    fn elevation_1_borderless(self, cx: &mut WindowContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::Surface)
+    }
+
     /// Non-Modal Elevated Surfaces appear above the [`Surface`](ElevationIndex::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
     ///
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
@@ -43,6 +56,13 @@ pub trait StyledExt: Styled + Sized {
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
     fn elevation_2(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
+    }
+
+    /// See [`elevation_2`].
+    ///
+    /// Renders a borderless version [`elevation_2`].
+    fn elevation_2_borderless(self, cx: &mut WindowContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::ElevatedSurface)
     }
 
     /// Modal Surfaces are used for elements that should appear above all other UI elements and are located above the wash layer. This is the maximum elevation at which UI elements can be rendered in their default state.
@@ -56,6 +76,13 @@ pub trait StyledExt: Styled + Sized {
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
     fn elevation_3(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
+    }
+
+    /// See [`elevation_3`].
+    ///
+    /// Renders a borderless version [`elevation_3`].
+    fn elevation_3_borderless(self, cx: &mut WindowContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::ModalSurface)
     }
 
     /// The theme's primary border color.

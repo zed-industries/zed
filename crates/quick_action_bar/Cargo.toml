@@ -20,6 +20,7 @@ search.workspace = true
 settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
+repl.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

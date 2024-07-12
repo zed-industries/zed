@@ -57,6 +57,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
+    pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
 }
 
@@ -212,6 +213,7 @@ impl WindowsWindowStatePtr {
             hwnd,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
+            is_movable: context.is_movable,
             executor: context.executor.clone(),
         })
     }
@@ -235,6 +237,7 @@ struct WindowCreateContext {
     hide_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
+    is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
 }
@@ -252,7 +255,7 @@ impl WindowsWindow {
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
-            .unwrap_or(false);
+            .unwrap_or(true);
         let windowname = HSTRING::from(
             params
                 .titlebar
@@ -261,7 +264,14 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
+        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+        } else {
+            (
+                WS_EX_APPWINDOW,
+                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+            )
+        };
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -275,13 +285,14 @@ impl WindowsWindow {
             hide_title_bar,
             display,
             transparent: true,
+            is_movable: params.is_movable,
             executor,
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_APPWINDOW,
+                dwexstyle,
                 classname,
                 &windowname,
                 dwstyle,
@@ -312,10 +323,7 @@ impl WindowsWindow {
                 display.default_bounds()
             };
             let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            placement.rcNormalPosition.left = bounds.left().0;
-            placement.rcNormalPosition.right = bounds.right().0;
-            placement.rcNormalPosition.top = bounds.top().0;
-            placement.rcNormalPosition.bottom = bounds.bottom().0;
+            placement.rcNormalPosition = calcualte_window_position(bounds, raw_hwnd).unwrap();
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
@@ -383,9 +391,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().scale_factor
     }
 
-    // todo(windows)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Dark
+        system_appearance().log_err().unwrap_or_default()
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -405,9 +412,8 @@ impl PlatformWindow for WindowsWindow {
         logical_point(point.x as f32, point.y as f32, scale_factor)
     }
 
-    // todo(windows)
     fn modifiers(&self) -> Modifiers {
-        Modifiers::none()
+        current_modifiers()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -503,6 +509,11 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
+    }
+
+    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
     }
 
     fn set_title(&mut self, title: &str) {
@@ -605,6 +616,8 @@ impl PlatformWindow for WindowsWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
+
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);
@@ -787,15 +800,25 @@ pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
     last_position: Point<DevicePixels>,
+    double_click_spatial_tolerance_width: i32,
+    double_click_spatial_tolerance_height: i32,
+    double_click_interval: Duration,
     pub(crate) current_count: usize,
 }
 
 impl ClickState {
     pub fn new() -> Self {
+        let double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        let double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        let double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+
         ClickState {
             button: MouseButton::Left,
             last_click: Instant::now(),
             last_position: Point::default(),
+            double_click_spatial_tolerance_width,
+            double_click_spatial_tolerance_height,
+            double_click_interval,
             current_count: 0,
         }
     }
@@ -814,13 +837,19 @@ impl ClickState {
         self.current_count
     }
 
+    pub fn system_update(&mut self) {
+        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    }
+
     #[inline]
     fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
         let diff = self.last_position - new_position;
 
-        self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
-            && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
-            && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+        self.last_click.elapsed() < self.double_click_interval
+            && diff.x.0.abs() <= self.double_click_spatial_tolerance_width
+            && diff.y.0.abs() <= self.double_click_spatial_tolerance_height
     }
 }
 
@@ -926,12 +955,40 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     };
 }
 
+fn calcualte_window_position(bounds: Bounds<DevicePixels>, hwnd: HWND) -> anyhow::Result<RECT> {
+    let mut rect = RECT {
+        left: bounds.left().0,
+        top: bounds.top().0,
+        right: bounds.right().0,
+        bottom: bounds.bottom().0,
+    };
+    let window_rect = unsafe {
+        let mut rect = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rect)?;
+        rect
+    };
+    let client_rect = unsafe {
+        let mut rect = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rect)?;
+        rect
+    };
+    let width_offset =
+        (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+    let height_offset =
+        (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+    let left_offset = width_offset / 2;
+    let top_offset = height_offset / 2;
+    let right_offset = width_offset - left_offset;
+    let bottom_offet = height_offset - top_offset;
+    rect.left -= left_offset;
+    rect.top -= top_offset;
+    rect.right += right_offset;
+    rect.bottom += bottom_offet;
+    Ok(rect)
+}
+
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
-// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
-const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
-// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
-const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};
