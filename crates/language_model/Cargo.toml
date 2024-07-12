@@ -1,0 +1,34 @@
+[package]
+name = "language_model"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_model.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+copilot.workspace = true
+editor.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+lsp.workspace = true
+project.workspace = true
+proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+strum.workspace = true
+theme.workspace = true
+tree-sitter.workspace = true
+ui.workspace = true
+workspace.workspace = true

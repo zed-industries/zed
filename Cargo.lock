@@ -5976,6 +5976,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "copilot",
+ "editor",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "proto",
+ "serde",
+ "serde_json",
+ "settings",
+ "strum",
+ "theme",
+ "tree-sitter",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
