@@ -242,7 +242,7 @@ impl ProjectItem for ImageView {
 
 pub fn init(cx: &mut AppContext) {
     workspace::register_project_item::<ImageView>(cx);
-    workspace::register_deserializable_item::<ImageView>(cx)
+    workspace::register_serializable_item::<ImageView>(cx)
 }
 
 mod persistence {

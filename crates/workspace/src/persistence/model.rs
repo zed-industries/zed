@@ -1,5 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
-use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
+use crate::{
+    item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use client::DevServerProjectId;
@@ -331,14 +333,14 @@ impl SerializedPane {
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
             item_tasks.push(pane.update(cx, |_, cx| {
-                if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-                    deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
-                } else {
-                    Task::ready(Err(anyhow::anyhow!(
-                        "Deserializer does not exist for item kind: {}",
-                        item.kind
-                    )))
-                }
+                SerializableItemRegistry::deserialize(
+                    &item.kind,
+                    project,
+                    workspace.clone(),
+                    workspace_id,
+                    item.item_id,
+                    cx,
+                )
             })?);
             if item.active {
                 active_item_index = Some(index);

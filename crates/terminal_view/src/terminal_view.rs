@@ -31,7 +31,7 @@ use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
     notifications::NotifyResultExt,
-    register_deserializable_item,
+    register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, OpenVisible, Pane, ToolbarItemLocation, Workspace,
     WorkspaceId,
@@ -73,7 +73,7 @@ pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
     terminal::init(cx);
 
-    register_deserializable_item::<TerminalView>(cx);
+    register_serializable_item::<TerminalView>(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(TerminalView::deploy);

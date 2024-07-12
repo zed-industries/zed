@@ -74,7 +74,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{atomic::AtomicUsize, Arc, Weak},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
@@ -397,58 +397,83 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     );
 }
 
+#[derive(Copy, Clone)]
+struct SerializableItemDescriptor {
+    deserialize: fn(
+        Model<Project>,
+        WeakView<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
+    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>,
+}
+
 #[derive(Default, Deref, DerefMut)]
-struct ItemDeserializers(
-    HashMap<
-        Arc<str>,
-        fn(
-            Model<Project>,
-            WeakView<Workspace>,
-            WorkspaceId,
-            ItemId,
-            &mut ViewContext<Pane>,
-        ) -> Task<Result<Box<dyn ItemHandle>>>,
-    >,
-);
+struct SerializableItemRegistry(HashMap<Arc<str>, SerializableItemDescriptor>);
 
-impl Global for ItemDeserializers {}
+impl Global for SerializableItemRegistry {}
 
-pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
+impl SerializableItemRegistry {
+    fn deserialize(
+        item_kind: &str,
+        project: Model<Project>,
+        workspace: WeakView<Workspace>,
+        workspace_id: WorkspaceId,
+        item_item: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot deserialize {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, cx)
+    }
+
+    fn cleanup(
+        item_kind: &str,
+        workspace_id: WorkspaceId,
+        loaded_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot cleanup {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.cleanup)(workspace_id, loaded_items, cx)
+    }
+
+    fn descriptor(item_kind: &str, cx: &AppContext) -> Option<SerializableItemDescriptor> {
+        let this = cx.try_global::<Self>()?;
+        this.0.get(item_kind).copied()
+    }
+}
+
+// NOTe: trait SerializableItem that derives from Item?
+// NOTE: trait SerializableContentItem, that derives from Item?
+
+pub fn register_serializable_item<I: Item>(cx: &mut AppContext) {
     if let Some(serialized_item_kind) = I::serialized_item_kind() {
-        let deserializers = cx.default_global::<ItemDeserializers>();
-        deserializers.insert(
-            Arc::from(serialized_item_kind),
-            |project, workspace, workspace_id, item_id, cx| {
+        let registry = cx.default_global::<SerializableItemRegistry>();
+        let descriptor = SerializableItemDescriptor {
+            deserialize: |project, workspace, workspace_id, item_id, cx| {
                 let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
                 cx.foreground_executor()
                     .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
             },
-        );
-    }
-}
-
-#[derive(Default, Deref, DerefMut)]
-struct UnloadedItemsCleaners(
-    HashMap<Arc<str>, fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>>,
-);
-
-impl Global for UnloadedItemsCleaners {}
-
-impl UnloadedItemsCleaners {
-    pub fn global(cx: &AppContext) -> &Self {
-        cx.global::<Self>()
-    }
-}
-
-pub fn register_unloaded_items_cleaner<I: Item>(cx: &mut AppContext) {
-    if let Some(serialized_item_kind) = I::serialized_item_kind() {
-        let cleaners = cx.default_global::<UnloadedItemsCleaners>();
-        cleaners.insert(
-            Arc::from(serialized_item_kind),
-            |workspace_id, loaded_items, cx| {
+            cleanup: |workspace_id, loaded_items, cx| {
                 I::clean_unloaded_items(workspace_id, loaded_items, cx)
             },
-        );
+        };
+        registry
+            .0
+            .insert(Arc::from(serialized_item_kind), descriptor);
     }
 }
 
@@ -3898,15 +3923,18 @@ impl Workspace {
             // after loading the items, we might have different items and in order to avoid
             // the database filling up, we delete items that haven't been loaded now.
             let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
-                let database_id = serialized_workspace.id;
-                let mut tasks = Vec::with_capacity(item_ids_by_kind.len());
-                for (item_kind, loaded_items) in item_ids_by_kind {
-                    if let Some(clean_up) = UnloadedItemsCleaners::global(cx).get(item_kind) {
-                        let task = clean_up(database_id, loaded_items, cx).log_err();
-                        tasks.push(task);
-                    }
-                }
-                tasks
+                item_ids_by_kind
+                    .into_iter()
+                    .map(|(item_kind, loaded_items)| {
+                        SerializableItemRegistry::cleanup(
+                            item_kind,
+                            serialized_workspace.id,
+                            loaded_items,
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .collect::<Vec<_>>()
             })?;
 
             futures::future::join_all(clean_up_tasks).await;

@@ -272,8 +272,7 @@ pub fn init(cx: &mut AppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
-    workspace::register_deserializable_item::<Editor>(cx);
-    workspace::register_unloaded_items_cleaner::<Editor>(cx);
+    workspace::register_serializable_item::<Editor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
