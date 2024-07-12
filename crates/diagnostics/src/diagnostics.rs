@@ -1234,23 +1234,21 @@ impl PathUpdate {
                             self.new_diagnostics.get(i)?.0.entry.diagnostic.clone();
                         Some(BlockProperties {
                             position: earliest_in_row_position,
-                            height: new_diagnostic.message.matches('\n').count() as u8 + 1,
+                            height: diagnostic_text_lines(&new_diagnostic),
                             style: BlockStyle::Sticky,
                             render: diagnostic_block_renderer(new_diagnostic, false, true),
                             disposition: BlockDisposition::Above,
                         })
                     }
                     _ => {
-                        let lines_in_first_message = self
-                            .new_diagnostics
-                            .get(diagnostics_at_line.first().copied()?)?
-                            .0
-                            .entry
-                            .diagnostic
-                            .message
-                            .matches('\n')
-                            .count() as u8
-                            + 1;
+                        let lines_in_first_message = diagnostic_text_lines(
+                            &self
+                                .new_diagnostics
+                                .get(diagnostics_at_line.first().copied()?)?
+                                .0
+                                .entry
+                                .diagnostic,
+                        );
                         let folded_block_height = lines_in_first_message.min(2);
                         let diagnostics_to_render = Arc::new(
                             diagnostics_at_line
@@ -1339,64 +1337,84 @@ fn render_same_line_diagnostics(
                 return div().into_any_element();
             }
         };
+        let Some(first_diagnostic) = diagnostics.first() else {
+            debug_panic!("Expected at least one diagnostic");
+            return div().into_any_element();
+        };
         let button_expanded = expanded.clone();
         let expanded = expanded.load(atomic::Ordering::Acquire);
+        let expand_label = if expanded { '-' } else { '+' };
+        let first_diagnostics_height = diagnostic_text_lines(first_diagnostic);
+        let extra_diagnostics = diagnostics.len() - 1;
+        let toggle_expand_label =
+            if folded_block_height == first_diagnostics_height && extra_diagnostics == 0 {
+                None
+            } else if extra_diagnostics > 0 {
+                Some(format!("{expand_label}{extra_diagnostics}"))
+            } else {
+                Some(expand_label.to_string())
+            };
+
+        let expanded_block_height = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic_text_lines(diagnostic))
+            .sum::<u8>()
+            + 1;
         let editor_handle = editor_handle.clone();
-        let mut parent = v_flex()
-            .child(Button::new(
-                row_position.text_anchor.offset,
-                if expanded {
-                    "Click to collapse"
-                } else {
-                    "Click to expand"
-                },
-            ))
-            .on_mouse_down(MouseButton::Left, {
-                let diagnostics = Arc::clone(&diagnostics);
-                move |_, cx| {
-                    let new_expanded = !expanded;
-                    button_expanded.store(new_expanded, atomic::Ordering::Release);
-                    let new_size = if new_expanded {
-                        diagnostics
-                            .iter()
-                            .map(|diagnostic| diagnostic.message.matches('\n').count() as u8 + 1)
-                            .sum::<u8>()
-                            + 1
-                    } else {
-                        folded_block_height
-                    };
-                    editor_handle.update(cx, |editor, cx| {
-                        editor.replace_blocks(
-                            HashMap::from_iter(Some((
-                                block_id,
-                                (
-                                    Some(new_size),
-                                    render_same_line_diagnostics(
-                                        Arc::clone(&button_expanded),
-                                        Arc::clone(&diagnostics),
-                                        editor_handle.clone(),
-                                        row_position,
-                                        folded_block_height,
-                                    ),
-                                ),
-                            ))),
-                            None,
-                            cx,
-                        )
-                    });
-                }
-            });
+        let mut parent = v_flex();
+        let mut diagnostics_iter = diagnostics.iter().fuse();
+        if let Some(first_diagnostic) = diagnostics_iter.next() {
+            let mut renderer = diagnostic_block_renderer(first_diagnostic.clone(), false, true);
+            parent = parent.child(
+                h_flex()
+                    .when_some(toggle_expand_label, |parent, label| {
+                        parent.child(Button::new(cx.transform_block_id, label).on_click({
+                            let diagnostics = Arc::clone(&diagnostics);
+                            move |_, cx| {
+                                let new_expanded = !expanded;
+                                button_expanded.store(new_expanded, atomic::Ordering::Release);
+                                let new_size = if new_expanded {
+                                    expanded_block_height
+                                } else {
+                                    folded_block_height
+                                };
+                                editor_handle.update(cx, |editor, cx| {
+                                    editor.replace_blocks(
+                                        HashMap::from_iter(Some((
+                                            block_id,
+                                            (
+                                                Some(new_size),
+                                                render_same_line_diagnostics(
+                                                    Arc::clone(&button_expanded),
+                                                    Arc::clone(&diagnostics),
+                                                    editor_handle.clone(),
+                                                    row_position,
+                                                    folded_block_height,
+                                                ),
+                                            ),
+                                        ))),
+                                        None,
+                                        cx,
+                                    )
+                                });
+                            }
+                        }))
+                    })
+                    .child(renderer(cx)),
+            );
+        }
         if expanded {
-            for diagnostic in diagnostics.iter() {
+            for diagnostic in diagnostics_iter {
                 let mut renderer = diagnostic_block_renderer(diagnostic.clone(), false, true);
                 parent = parent.child(renderer(cx));
             }
-        } else if let Some(first_diagnostic) = diagnostics.first() {
-            let mut renderer = diagnostic_block_renderer(first_diagnostic.clone(), false, true);
-            parent = parent.child(renderer(cx));
         }
         parent.into_any_element()
     })
+}
+
+fn diagnostic_text_lines(diagnostic: &language::Diagnostic) -> u8 {
+    diagnostic.message.lines().count() as u8
 }
 
 fn path_state_excerpts<'a>(

@@ -12686,6 +12686,8 @@ impl InvalidationRegion for SnippetState {
 
 pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
+    // TODO kb
+    // max_message_rows: Option<u8>,
     allow_closing: bool,
     _is_valid: bool,
 ) -> RenderBlock {
