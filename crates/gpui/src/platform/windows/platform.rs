@@ -220,6 +220,7 @@ impl Platform for WindowsPlatform {
             }
         }
 
+        unsafe { OleUninitialize() };
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
         }
@@ -605,7 +606,8 @@ impl Platform for WindowsPlatform {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
-            OleUninitialize();
+            // OleUninitialize();
+            // CoUninitialize();
         }
     }
 }
@@ -712,7 +714,7 @@ fn write_to_clipboard_inner(
     unsafe {
         OpenClipboard(None)?;
         EmptyClipboard()?;
-        let encode_wide = item.text.encode_utf16().collect_vec();
+        let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
         set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
         if let Some(ref metadata) = item.metadata {
@@ -723,7 +725,7 @@ fn write_to_clipboard_inner(
             let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
             set_data_to_clipboard(encode_wide, hash_format)?;
 
-            let metadata_wide = metadata.encode_utf16().collect_vec();
+            let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
             set_data_to_clipboard(&metadata_wide, metadata_format)?;
         }
     }
@@ -795,3 +797,27 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
 // clipboard
 pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("ZedTextHash");
 pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("ZedMetadata");
+
+#[cfg(test)]
+mod tests {
+    use crate::{ClipboardItem, Platform, WindowsPlatform};
+
+    #[test]
+    fn test_clipboard() {
+        let platform = WindowsPlatform::new();
+        let item = ClipboardItem::new("你好".to_string());
+        platform.write_to_clipboard(item.clone());
+        // assert_eq!(platform.read_from_clipboard(), Some(item));
+        println!("{:#?}", platform.read_from_clipboard());
+
+        let item = ClipboardItem::new("12345".to_string());
+        platform.write_to_clipboard(item.clone());
+        // assert_eq!(platform.read_from_clipboard(), Some(item));
+        println!("{:#?}", platform.read_from_clipboard());
+
+        let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        // assert_eq!(platform.read_from_clipboard(), Some(item));
+        println!("{:#?}", platform.read_from_clipboard());
+    }
+}
