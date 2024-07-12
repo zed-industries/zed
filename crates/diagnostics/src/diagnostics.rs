@@ -22,9 +22,8 @@ use futures::{
 };
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, MouseButton, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
@@ -330,6 +329,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         // TODO kb change selections as in the old panel, to the next primary diagnostics
+        // TODO kb make [shift-]f8 to work, jump to the next block group
         let was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {
             project::compare_paths((&probe.path.path, true), (&path_to_update.path, true))
@@ -1225,22 +1225,13 @@ impl PathUpdate {
                 let earliest_in_row_position = *earliest_in_row_position;
                 match diagnostics_at_line.len() {
                     0 => None,
-                    1 => {
-                        let i = diagnostics_at_line.first().copied()?;
-                        if self.unchanged_blocks.contains_key(&i) {
-                            return None;
+                    len => {
+                        if len == 1 {
+                            let i = diagnostics_at_line.first().copied()?;
+                            if self.unchanged_blocks.contains_key(&i) {
+                                return None;
+                            }
                         }
-                        let new_diagnostic =
-                            self.new_diagnostics.get(i)?.0.entry.diagnostic.clone();
-                        Some(BlockProperties {
-                            position: earliest_in_row_position,
-                            height: diagnostic_text_lines(&new_diagnostic),
-                            style: BlockStyle::Sticky,
-                            render: diagnostic_block_renderer(new_diagnostic, false, true),
-                            disposition: BlockDisposition::Above,
-                        })
-                    }
-                    _ => {
                         let lines_in_first_message = diagnostic_text_lines(
                             &self
                                 .new_diagnostics
@@ -1249,7 +1240,7 @@ impl PathUpdate {
                                 .entry
                                 .diagnostic,
                         );
-                        let folded_block_height = lines_in_first_message.min(2);
+                        let folded_block_height = lines_in_first_message.max(1).min(2);
                         let diagnostics_to_render = Arc::new(
                             diagnostics_at_line
                                 .iter()
@@ -1358,13 +1349,17 @@ fn render_same_line_diagnostics(
         let expanded_block_height = diagnostics
             .iter()
             .map(|diagnostic| diagnostic_text_lines(diagnostic))
-            .sum::<u8>()
-            + 1;
+            .sum::<u8>();
         let editor_handle = editor_handle.clone();
         let mut parent = v_flex();
         let mut diagnostics_iter = diagnostics.iter().fuse();
         if let Some(first_diagnostic) = diagnostics_iter.next() {
-            let mut renderer = diagnostic_block_renderer(first_diagnostic.clone(), false, true);
+            let mut renderer = diagnostic_block_renderer(
+                first_diagnostic.clone(),
+                Some(folded_block_height),
+                false,
+                true,
+            );
             parent = parent.child(
                 h_flex()
                     .when_some(toggle_expand_label, |parent, label| {
@@ -1405,7 +1400,7 @@ fn render_same_line_diagnostics(
         }
         if expanded {
             for diagnostic in diagnostics_iter {
-                let mut renderer = diagnostic_block_renderer(diagnostic.clone(), false, true);
+                let mut renderer = diagnostic_block_renderer(diagnostic.clone(), None, false, true);
                 parent = parent.child(renderer(cx));
             }
         }
@@ -1414,7 +1409,7 @@ fn render_same_line_diagnostics(
 }
 
 fn diagnostic_text_lines(diagnostic: &language::Diagnostic) -> u8 {
-    diagnostic.message.lines().count() as u8
+    diagnostic.message.matches('\n').count() as u8 + 1
 }
 
 fn path_state_excerpts<'a>(

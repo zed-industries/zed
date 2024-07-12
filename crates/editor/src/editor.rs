@@ -9762,7 +9762,7 @@ impl Editor {
                         *block_id,
                         (
                             None,
-                            diagnostic_block_renderer(diagnostic.clone(), true, is_valid),
+                            diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
                         ),
                     );
                 }
@@ -9815,7 +9815,7 @@ impl Editor {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, true, true),
+                            render: diagnostic_block_renderer(diagnostic, None, true, true),
                             disposition: BlockDisposition::Below,
                         }
                     }),
@@ -12686,12 +12686,12 @@ impl InvalidationRegion for SnippetState {
 
 pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
-    // TODO kb
-    // max_message_rows: Option<u8>,
+    max_message_rows: Option<u8>,
     allow_closing: bool,
     _is_valid: bool,
 ) -> RenderBlock {
-    let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
+    let (text_without_backticks, code_ranges) =
+        highlight_diagnostic_message(&diagnostic, max_message_rows);
 
     Box::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.transform_block_id.to_string().into();
@@ -12773,7 +12773,10 @@ pub fn diagnostic_block_renderer(
     })
 }
 
-pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, Vec<Range<usize>>) {
+fn highlight_diagnostic_message(
+    diagnostic: &Diagnostic,
+    mut max_message_rows: Option<u8>,
+) -> (SharedString, Vec<Range<usize>>) {
     let mut text_without_backticks = String::new();
     let mut code_ranges = Vec::new();
 
@@ -12785,18 +12788,45 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
 
     let mut prev_offset = 0;
     let mut in_code_block = false;
+    let mut newline_indices = diagnostic
+        .message
+        .match_indices('\n')
+        .map(|(ix, _)| ix)
+        .fuse()
+        .peekable();
     for (ix, _) in diagnostic
         .message
         .match_indices('`')
         .chain([(diagnostic.message.len(), "")])
     {
+        let mut trimmed_ix = ix;
+        while let Some(newline_index) = newline_indices.peek() {
+            if *newline_index < ix {
+                if let Some(rows_left) = &mut max_message_rows {
+                    if *rows_left == 0 {
+                        trimmed_ix = newline_index.saturating_sub(1);
+                        break;
+                    } else {
+                        *rows_left -= 1;
+                    }
+                }
+                let _ = newline_indices.next();
+            } else {
+                break;
+            }
+        }
         let prev_len = text_without_backticks.len();
-        text_without_backticks.push_str(&diagnostic.message[prev_offset..ix]);
-        prev_offset = ix + 1;
+        let new_text = &diagnostic.message[prev_offset..trimmed_ix];
+        text_without_backticks.push_str(new_text);
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
         }
+        prev_offset = trimmed_ix + 1;
         in_code_block = !in_code_block;
+        if trimmed_ix != ix {
+            text_without_backticks.push_str("...");
+            break;
+        }
     }
 
     (text_without_backticks.into(), code_ranges)
