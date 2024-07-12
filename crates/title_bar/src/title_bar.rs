@@ -73,10 +73,14 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
-        let titlebar_color = if cx.is_window_active() {
-            cx.theme().colors().title_bar_background
+        let titlebar_color = if cfg!(target_os = "linux") {
+            if cx.is_window_active() {
+                cx.theme().colors().title_bar_background
+            } else {
+                cx.theme().colors().title_bar_inactive_background
+            }
         } else {
-            cx.theme().colors().element_disabled
+            cx.theme().colors().title_bar_background
         };
 
         h_flex()
