@@ -2379,14 +2379,20 @@ impl Project {
             } => {
                 let buffer = buffer_handle.read(cx);
                 let buffer_id = buffer.remote_id();
-                let Some(new_file) = buffer.file().clone() else {
+                let Some(new_file) = buffer.file() else {
                     return;
                 };
-                let client = self.client.clone();
-                let project_id = self.remote_id();
-                if *has_changed_file {
-                    if let Some(project_id) = project_id {
-                        client
+                if let Some(project_id) = self.remote_id() {
+                    self.client
+                        .send(proto::BufferSaved {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            version: serialize_version(&saved_version),
+                            mtime: new_file.mtime().map(|time| time.into()),
+                        })
+                        .log_err();
+                    if *has_changed_file {
+                        self.client
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.into(),
@@ -2394,18 +2400,6 @@ impl Project {
                             })
                             .log_err();
                     }
-                }
-
-                let mtime = new_file.mtime();
-                if let Some(project_id) = project_id {
-                    client
-                        .send(proto::BufferSaved {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            version: serialize_version(&saved_version),
-                            mtime: mtime.map(|time| time.into()),
-                        })
-                        .log_err();
                 }
             }
         }
