@@ -2036,16 +2036,8 @@ impl Project {
         buffer: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
-            return Task::ready(Err(anyhow!("buffer doesn't have a file")));
-        };
-        let worktree = file.worktree.clone();
-        let path = file.path.clone();
-        if self.is_local() {
-            self.save_local_buffer(worktree, buffer, path, false, cx)
-        } else {
-            self.save_remote_buffer(buffer, None, cx)
-        }
+        self.buffer_store
+            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
     }
 
     pub fn save_buffer_as(
@@ -2054,121 +2046,11 @@ impl Project {
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let old_file = File::from_dyn(buffer.read(cx).file()).cloned();
         let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
             return Task::ready(Err(anyhow!("worktree does not exist")));
         };
-
-        cx.spawn(move |this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
-                if this.is_local() {
-                    if let Some(old_file) = &old_file {
-                        this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
-                    }
-                    this.save_local_buffer(worktree, buffer.clone(), path.path, true, cx)
-                } else {
-                    this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
-                }
-            })?
-            .await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.detect_language_for_buffer(&buffer, cx);
-                this.register_buffer_with_language_servers(&buffer, cx);
-            })?;
-            Ok(())
-        })
-    }
-
-    pub fn save_local_buffer(
-        &self,
-        worktree: Model<Worktree>,
-        buffer_handle: Model<Buffer>,
-        path: Arc<Path>,
-        mut has_changed_file: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
-        let text = buffer.as_rope().clone();
-        let line_ending = buffer.line_ending();
-        let version = buffer.version();
-        if buffer.file().is_some_and(|file| !file.is_created()) {
-            has_changed_file = true;
-        }
-
-        let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx)
-        });
-
-        let client = self.client.clone();
-        let project_id = self.remote_id();
-        cx.spawn(move |_, mut cx| async move {
-            let new_file = save.await?;
-            let mtime = new_file.mtime;
-            if has_changed_file {
-                if let Some(project_id) = project_id {
-                    client
-                        .send(proto::UpdateBufferFile {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            file: Some(new_file.to_proto()),
-                        })
-                        .log_err();
-                }
-
-                buffer_handle.update(&mut cx, |buffer, cx| {
-                    if has_changed_file {
-                        buffer.file_updated(new_file, cx);
-                    }
-                })?;
-            }
-
-            if let Some(project_id) = project_id {
-                client.send(proto::BufferSaved {
-                    project_id,
-                    buffer_id: buffer_id.into(),
-                    version: serialize_version(&version),
-                    mtime: mtime.map(|time| time.into()),
-                })?;
-            }
-
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), mtime, cx);
-            })?;
-
-            Ok(())
-        })
-    }
-
-    pub fn save_remote_buffer(
-        &self,
-        buffer_handle: Model<Buffer>,
-        new_path: Option<proto::ProjectPath>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id().into();
-        let version = buffer.version();
-        let rpc = self.client.clone();
-        let project_id = self.remote_id();
-        cx.spawn(move |_, mut cx| async move {
-            let response = rpc
-                .request(proto::SaveBuffer {
-                    project_id: project_id.ok_or_else(|| anyhow!("project_id is not set"))?,
-                    buffer_id,
-                    new_path,
-                    version: serialize_version(&version),
-                })
-                .await?;
-            let version = deserialize_version(&response.version);
-            let mtime = response.mtime.map(|mtime| mtime.into());
-
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), mtime, cx);
-            })?;
-
-            Ok(())
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.save_buffer_as(buffer.clone(), path, worktree, cx)
         })
     }
 
@@ -2177,15 +2059,7 @@ impl Project {
         path: &ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Buffer>> {
-        let worktree = self.worktree_for_id(path.worktree_id, cx)?;
-        self.buffer_store.read(cx).buffers().find_map(|buffer| {
-            let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree == worktree && file.path() == &path.path {
-                Some(buffer)
-            } else {
-                None
-            }
-        })
+        self.buffer_store.read(cx).get_by_path(path, cx)
     }
 
     fn register_buffer(
@@ -2467,6 +2341,50 @@ impl Project {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 self.register_buffer(buffer, cx).log_err();
+            }
+            BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
+                if let Some(old_file) = &old_file {
+                    self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
+                }
+
+                self.detect_language_for_buffer(&buffer, cx);
+                self.register_buffer_with_language_servers(&buffer, cx);
+            }
+            BufferStoreEvent::BufferSaved {
+                buffer: buffer_handle,
+                has_changed_file,
+                saved_version,
+            } => {
+                let buffer = buffer_handle.read(cx);
+                let buffer_id = buffer.remote_id();
+                let Some(new_file) = buffer.file().clone() else {
+                    return;
+                };
+                let client = self.client.clone();
+                let project_id = self.remote_id();
+                if *has_changed_file {
+                    if let Some(project_id) = project_id {
+                        client
+                            .send(proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: buffer_id.into(),
+                                file: Some(new_file.to_proto()),
+                            })
+                            .log_err();
+                    }
+                }
+
+                let mtime = new_file.mtime();
+                if let Some(project_id) = project_id {
+                    client
+                        .send(proto::BufferSaved {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            version: serialize_version(&saved_version),
+                            mtime: mtime.map(|time| time.into()),
+                        })
+                        .log_err();
+                }
             }
         }
     }
@@ -7629,10 +7547,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
-        let mut renamed_buffers = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
             for (path, entry_id, _) in changes {
-                if let Some((buffer, old_file, new_file)) = buffer_store.file_changed(
+                if let Some((buffer, _, new_file)) = buffer_store.file_changed(
                     path.clone(),
                     *entry_id,
                     worktree_handle,
@@ -7648,18 +7565,9 @@ impl Project {
                             })
                             .log_err();
                     }
-                    if old_file.path != new_file.path {
-                        renamed_buffers.push((buffer, old_file));
-                    }
                 }
             }
         });
-
-        for (buffer, old_file) in renamed_buffers {
-            self.unregister_buffer_from_language_servers(&buffer, &old_file, cx);
-            self.detect_language_for_buffer(&buffer, cx);
-            self.register_buffer_with_language_servers(&buffer, cx);
-        }
     }
 
     fn update_local_worktree_language_servers(
@@ -8831,36 +8739,20 @@ impl Project {
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (project_id, buffer) = this.update(&mut cx, |this, cx| {
-            let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
-            let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            anyhow::Ok((project_id, buffer))
+        let (buffer_store, worktree, project_id) = this.update(&mut cx, |this, cx| {
+            let buffer_store = this.buffer_store.clone();
+            let project_id = this.remote_id().context("not connected")?;
+            let worktree = if let Some(path) = &envelope.payload.new_path {
+                Some(
+                    this.worktree_for_id(WorktreeId::from_proto(path.worktree_id), cx)
+                        .context("worktree does not exist")?,
+                )
+            } else {
+                None
+            };
+            anyhow::Ok((buffer_store, worktree, project_id))
         })??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })?
-            .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
-
-        if let Some(new_path) = envelope.payload.new_path {
-            let new_path = ProjectPath::from_proto(new_path);
-            this.update(&mut cx, |this, cx| {
-                this.save_buffer_as(buffer.clone(), new_path, cx)
-            })?
-            .await?;
-        } else {
-            this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
-                .await?;
-        }
-
-        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
-            project_id,
-            buffer_id: buffer_id.into(),
-            version: serialize_version(buffer.saved_version()),
-            mtime: buffer.saved_mtime().map(|time| time.into()),
-        })
+        BufferStore::handle_save_buffer(buffer_store, project_id, worktree, envelope, cx).await
     }
 
     async fn handle_reload_buffers(
