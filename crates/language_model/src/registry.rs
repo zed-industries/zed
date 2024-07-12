@@ -1,6 +1,6 @@
 use super::*;
 use collections::HashMap;
-use gpui::{AppContext, Global, Model, ModelContext};
+use gpui::{AppContext, Global, Model};
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
@@ -10,10 +10,10 @@ pub struct LanguageModelRegistry {
 impl Global for LanguageModelRegistry {}
 
 impl LanguageModelRegistry {
-    pub fn register<T: LanguageModelProvider>(
+    pub fn register_provider<T: LanguageModelProvider>(
         &mut self,
         provider: Model<T>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) {
         let name = provider.name(cx);
 

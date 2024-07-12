@@ -25,14 +25,14 @@ pub struct AnthropicSettings {
     pub low_speed_timeout: Option<Duration>,
 }
 
-pub struct AnthropicCompletionProvider {
+pub struct AnthropicLanguageModelProvider {
     api_key: Option<String>,
     settings: AnthropicSettings,
     http_client: Arc<dyn HttpClient>,
-    handle: WeakModel<AnthropicCompletionProvider>,
+    handle: WeakModel<Self>,
 }
 
-impl AnthropicCompletionProvider {
+impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
         Self {
             api_key: None,
@@ -43,7 +43,7 @@ impl AnthropicCompletionProvider {
     }
 }
 
-impl LanguageModelProvider for AnthropicCompletionProvider {
+impl LanguageModelProvider for AnthropicLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
         LanguageModelProviderName("Anthropic".into())
     }
@@ -285,13 +285,13 @@ pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
 struct AuthenticationPrompt {
     api_key: View<Editor>,
     api_url: String,
-    handle: WeakModel<AnthropicCompletionProvider>,
+    handle: WeakModel<AnthropicLanguageModelProvider>,
 }
 
 impl AuthenticationPrompt {
     fn new(
         api_url: String,
-        handle: WeakModel<AnthropicCompletionProvider>,
+        handle: WeakModel<AnthropicLanguageModelProvider>,
         cx: &mut WindowContext,
     ) -> Self {
         Self {

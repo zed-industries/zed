@@ -2,15 +2,52 @@ pub mod providers;
 pub mod registry;
 
 use anyhow::{anyhow, Result};
+use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
 use gpui::{AnyView, AppContext, Global, Model, Task};
+use providers::{
+    anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
+    ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
+};
+use registry::LanguageModelRegistry;
 use serde::{Deserialize, Serialize};
 use smol::lock::{Semaphore, SemaphoreGuardArc};
 use std::{
     fmt::{self, Display},
     sync::Arc,
 };
-use ui::{SharedString, WindowContext};
+use ui::{Context, SharedString, WindowContext};
+
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    let mut registry = LanguageModelRegistry::default();
+    register_language_model_providers(&mut registry, client, cx);
+    cx.set_global(registry);
+
+    cx.set_global(LanguageModelCompletionProvider::new());
+}
+
+fn register_language_model_providers(
+    registry: &mut LanguageModelRegistry,
+    client: Arc<Client>,
+    cx: &mut AppContext,
+) {
+    registry.register_provider(
+        cx.new_model(|cx| CloudLanguageModelProvider::new(client.clone(), cx)),
+        cx,
+    );
+    registry.register_provider(
+        cx.new_model(|cx| AnthropicLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
+        cx.new_model(|cx| OpenAiLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
+        cx.new_model(|cx| OllamaLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+}
 
 #[derive(Debug, Clone)]
 pub struct LanguageModelRequest {

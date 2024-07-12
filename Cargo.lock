@@ -13685,6 +13685,7 @@ dependencies = [
  "isahc",
  "journal",
  "language",
+ "language_model",
  "language_selector",
  "language_tools",
  "languages",

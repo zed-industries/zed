@@ -438,6 +438,8 @@ fn main() {
 
         reliability::init(client.http_client(), installation_id, cx);
 
+        language_model::init(client.clone(), cx);
+
         let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
