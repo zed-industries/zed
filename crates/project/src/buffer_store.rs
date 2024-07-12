@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Operation,
+    Buffer, Capability, Language, Operation,
 };
 use rpc::{
     proto::{self, AnyProtoClient, PeerId},
@@ -201,6 +201,41 @@ impl BufferStore {
             })?
             .await
         })
+    }
+
+    pub fn create_buffer(
+        &mut self,
+        remote_client: Option<(AnyProtoClient, u64)>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        if let Some((remote_client, project_id)) = remote_client {
+            let create = remote_client.request(proto::OpenNewBuffer { project_id });
+            cx.spawn(|this, mut cx| async move {
+                let response = create.await?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await
+            })
+        } else {
+            Task::ready(Ok(self.create_local_buffer("", None, cx)))
+        }
+    }
+
+    pub fn create_local_buffer(
+        &mut self,
+        text: &str,
+        language: Option<Arc<Language>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Model<Buffer> {
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(text, cx)
+                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+        });
+        self.add_buffer(buffer.clone(), cx).log_err();
+        buffer
     }
 
     pub fn save_buffer(

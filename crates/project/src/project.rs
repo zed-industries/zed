@@ -1236,19 +1236,10 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
-        let path = path.into();
-        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
-            self.buffer_store.read(cx).buffers().any(|buffer| {
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    if file.worktree == worktree && file.path() == &path.path {
-                        return true;
-                    }
-                }
-                false
-            })
-        } else {
-            false
-        }
+        self.buffer_store
+            .read(cx)
+            .get_by_path(&path.into(), cx)
+            .is_some()
     }
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
@@ -1838,22 +1829,16 @@ impl Project {
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
-        if self.is_remote() {
-            let create = self.client.request(proto::OpenNewBuffer {
-                project_id: self.remote_id().unwrap(),
-            });
-            cx.spawn(|this, mut cx| async move {
-                let response = create.await?;
-                let buffer_id = BufferId::new(response.buffer_id)?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
-                })?
-                .await
-            })
-        } else {
-            Task::ready(Ok(self.create_local_buffer("", None, cx)))
-        }
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.create_buffer(
+                if self.is_remote() {
+                    Some((self.client.clone().into(), self.remote_id().unwrap()))
+                } else {
+                    None
+                },
+                cx,
+            )
+        })
     }
 
     pub fn create_local_buffer(
@@ -1865,14 +1850,9 @@ impl Project {
         if self.is_remote() {
             panic!("called create_local_buffer on a remote project")
         }
-        let buffer = cx.new_model(|cx| {
-            Buffer::local(text, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
-        });
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.add_buffer(buffer.clone(), cx).log_err()
-        });
-        buffer
+            buffer_store.create_local_buffer(text, language, cx)
+        })
     }
 
     pub fn open_path(
