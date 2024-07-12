@@ -12,7 +12,6 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use clipboard_win::{get_clipboard_string, set_clipboard_string};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -220,10 +219,10 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        unsafe { OleUninitialize() };
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
         }
+        unsafe { OleUninitialize() };
     }
 
     fn quit(&self) {
@@ -603,15 +602,6 @@ impl Platform for WindowsPlatform {
     }
 }
 
-impl Drop for WindowsPlatform {
-    fn drop(&mut self) {
-        unsafe {
-            // OleUninitialize();
-            // CoUninitialize();
-        }
-    }
-}
-
 fn open_target(target: &str) {
     unsafe {
         let ret = ShellExecuteW(
@@ -807,17 +797,14 @@ mod tests {
         let platform = WindowsPlatform::new();
         let item = ClipboardItem::new("你好".to_string());
         platform.write_to_clipboard(item.clone());
-        // assert_eq!(platform.read_from_clipboard(), Some(item));
-        println!("{:#?}", platform.read_from_clipboard());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
 
         let item = ClipboardItem::new("12345".to_string());
         platform.write_to_clipboard(item.clone());
-        // assert_eq!(platform.read_from_clipboard(), Some(item));
-        println!("{:#?}", platform.read_from_clipboard());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
 
         let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
         platform.write_to_clipboard(item.clone());
-        // assert_eq!(platform.read_from_clipboard(), Some(item));
-        println!("{:#?}", platform.read_from_clipboard());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
     }
 }
