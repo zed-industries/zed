@@ -31,7 +31,9 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "f11": "zed::ToggleFullScreen"
+      "f11": "zed::ToggleFullScreen",
+      // On US keyboards, distributions may send `ctrl-~` as `ctrl-shift-~`
+      "ctrl-shift-~": ["workspace::SendKeystrokes", "ctrl-~"]
     }
   },
   {
