@@ -5,6 +5,63 @@ use repl::{
 };
 use ui::{prelude::*, ButtonLike, IconWithIndicator, IntoElement, Tooltip};
 
+use gpui::{AnyElement, AnyView, ClickEvent, CursorStyle, ElementId, IntoElement, View, WindowContext};
+use crate::{
+    prelude::*, ButtonCommon, ButtonLike, ButtonLikeRounding, ButtonSize, ButtonStyle, ContextMenu, ElevationIndex, IconButton, IconName, PopoverMenu
+};
+use smallvec::SmallVec;
+
+// No session && no support known
+
+// No session && no kernel installed for languages of known support
+// - Intro to REPL
+// - Link to docs
+
+// No session but can start one
+// - Start REPL
+// - More info -> Docs?
+
+// Yes Session
+// - [Default kernel changed - restart (this kernel) to apply] // todo!(kyle): need some kind of state thing that says if this has happened
+// - Info: Kernel name, language
+//   example: chatlab-3.7-adsf87fsa (Python)
+//   example: condapy-3.7 (Python)
+// - Change Kernel -> https://zed.dev/docs/repl#change-kernel
+// - ---
+// - Run
+// - Interrupt
+// - Clear Outputs
+// - ---
+// - Restart
+// - Shutdown
+// - ---
+// - Shutdown all kernels
+
+// #[derive(IntoElement)]
+// pub struct ReplMenuButton {}
+
+// impl RenderOnce for ReplMenuButton {
+//     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+//         let id = id.into();
+
+//         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
+
+//         let dropdown_menu = PopoverMenu::new(element_id("menu"))
+//             .menu(move |cx| {
+//                 ContextMenu::build(cx, move |menu, _cx| {
+//                     menu.header("REPL")
+//                 }).into()
+//             }).trigger(ButtonLike::new(element_id("dropdown"))
+//                 .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
+//                 .width(rems(1.).into())
+//                 .rounding(ButtonLikeRounding::Right));
+
+//         h_flex()
+//             .child(self.button)
+//             .child(self.popover_button)
+//     }
+// }
+
 use crate::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
@@ -14,6 +71,19 @@ impl QuickActionBar {
         if !JupyterSettings::enabled(cx) {
             return None;
         }
+
+        let id = id.into();
+
+        let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
+
+        let dropdown_menu = PopoverMenu::new(element_id("menu"))
+            .menu(move |cx| {
+                ContextMenu::build(cx, move |menu, _cx| {
+                    menu.header("REPL")
+                }).into()
+            }).trigger(ButtonLike::new_rounded_right(element_id("dropdown"))
+                .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
+                .width(rems(1.).into()));
 
         let workspace = self.workspace.upgrade()?.read(cx);
 
@@ -63,7 +133,7 @@ impl QuickActionBar {
 
         let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
 
-        let button = ButtonLike::new("toggle_repl_icon")
+        let button = ButtonLike::new_rounded_left("toggle_repl_icon")
             .child(
                 IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot()))
                     .indicator_border_color(Some(cx.theme().colors().border)),
@@ -75,7 +145,10 @@ impl QuickActionBar {
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .into_any_element();
 
-        Some(button)
+
+        Some(h_flex()
+            .child(self.button)
+            .child(self.popover_button))
     }
 
     pub fn render_repl_launch_menu(
