@@ -2445,19 +2445,43 @@ fn render_docs_slash_command_trailer(
         return Empty.into_any();
     };
 
-    if !store.is_indexing(&package) {
+    let mut children = Vec::new();
+
+    if store.is_indexing(&package) {
+        children.push(
+            div()
+                .id(("crates-being-indexed", row.0))
+                .child(Icon::new(IconName::ArrowCircle).with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(4)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ))
+                .tooltip({
+                    let package = package.clone();
+                    move |cx| Tooltip::text(format!("Indexing {package}…"), cx)
+                })
+                .into_any_element(),
+        );
+    }
+
+    if let Some(latest_error) = store.latest_error_for_package(&package) {
+        children.push(
+            div()
+                .id(("latest-error", row.0))
+                .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
+                .tooltip(move |cx| Tooltip::text(format!("failed to index: {latest_error}"), cx))
+                .into_any_element(),
+        )
+    }
+
+    let is_indexing = store.is_indexing(&package);
+    let latest_error = store.latest_error_for_package(&package);
+
+    if !is_indexing && latest_error.is_none() {
         return Empty.into_any();
     }
 
-    div()
-        .id(("crates-being-indexed", row.0))
-        .child(Icon::new(IconName::ArrowCircle).with_animation(
-            "arrow-circle",
-            Animation::new(Duration::from_secs(4)).repeat(),
-            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-        ))
-        .tooltip(move |cx| Tooltip::text(format!("Indexing {package}…"), cx))
-        .into_any_element()
+    h_flex().gap_2().children(children).into_any_element()
 }
 
 fn make_lsp_adapter_delegate(

@@ -193,6 +193,16 @@ impl TextInput {
             .find_map(|(idx, _)| (idx > offset).then_some(idx))
             .unwrap_or(self.content.len())
     }
+
+    fn reset(&mut self) {
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_bounds = None;
+        self.is_selecting = false;
+    }
 }
 
 impl ViewInputHandler for TextInput {
@@ -494,13 +504,47 @@ struct InputExample {
     recent_keystrokes: Vec<Keystroke>,
 }
 
+impl InputExample {
+    fn on_reset_click(&mut self, _: &MouseUpEvent, cx: &mut ViewContext<Self>) {
+        self.recent_keystrokes.clear();
+        self.text_input
+            .update(cx, |text_input, _cx| text_input.reset());
+        cx.notify();
+    }
+}
+
 impl Render for InputExample {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let num_keystrokes = self.recent_keystrokes.len();
         div()
             .bg(rgb(0xaaaaaa))
             .flex()
             .flex_col()
             .size_full()
+            .child(
+                div()
+                    .bg(white())
+                    .border_b_1()
+                    .border_color(black())
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .child(format!("Keystrokes: {}", num_keystrokes))
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(black())
+                            .px_2()
+                            .bg(yellow())
+                            .child("Reset")
+                            .hover(|style| {
+                                style
+                                    .bg(yellow().blend(opaque_grey(0.5, 0.5)))
+                                    .cursor_pointer()
+                            })
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
+                    ),
+            )
             .child(self.text_input.clone())
             .children(self.recent_keystrokes.iter().rev().map(|ks| {
                 format!(

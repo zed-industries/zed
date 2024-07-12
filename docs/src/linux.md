@@ -40,15 +40,15 @@ When installing a third-party package please be aware that it may not be complet
 
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
 
-### Downloading manually.
+### Downloading manually
 
 If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
 
 Download the `.tar.gz` file:
 
 * [zed-linux-x86_64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz) ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
-* [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz)
- ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
+* [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-aarch64.tar.gz)
+ ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-aarch64.tar.gz))
 
 Then ensure that the `zed` binary in the tarball is on your path. The easiest way is to unpack the tarball and create a symlink:
 
@@ -68,7 +68,6 @@ sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/ze
 sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/zed.desktop
 ```
 
-
 ## Troubleshooting
 
 Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
@@ -81,7 +80,7 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
-If you're using an AMD GPU, you might get a 'Broken Pipe' error. try using the RADV or Mesa drivers. See: [#13880](https://github.com/zed-industries/zed/issues/13880)
+If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See the following GitHub issue for more details: [#13880](https://github.com/zed-industries/zed/issues/13880)).
 
 Otherwise, if you see error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED", you can begin troubleshooting Vulkan, by installing the `vulkan-tools` package, and running:
 
@@ -105,8 +104,14 @@ For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/titl
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
-### Opening files does not work
+### I can't open any files
+### Zed isn't remembering my login
+### Clicking links isn't working
 
-If opening new files or projects is not working, the likely problem is that your XDG desktop does not provide a file picker.
+All of these features are provided by XDG desktop portals, specifically:
 
-If you are using a distribution that lets you configure your XDG provider or a window manager that does not provide one, you must make sure you have a backup provider configured. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point.
+- `org.freedesktop.portal.FileChooser`
+- `org.freedesktop.portal.OpenURI`
+- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
+
+Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this.
