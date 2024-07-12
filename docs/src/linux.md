@@ -26,7 +26,6 @@ Zed is open source, and [you can install from source](./development/linux.md).
 There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
 
 * Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
-* ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 * Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 * Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview),  [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 * Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
@@ -35,6 +34,7 @@ There are several third-party Zed packages for various Linux distributions and p
 * Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
 * Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
 * Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
+* ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 * Please add others to this list!
 
 When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
