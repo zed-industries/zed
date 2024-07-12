@@ -21,7 +21,7 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use collections::{btree_map, hash_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
@@ -72,7 +72,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
-use rpc::{ErrorCode, ErrorExt as _};
+use rpc::ErrorCode;
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
@@ -90,7 +90,7 @@ use std::{
     env,
     ffi::OsStr,
     hash::Hash,
-    io, iter, mem,
+    iter, mem,
     num::NonZeroU32,
     ops::Range,
     path::{self, Component, Path, PathBuf},
@@ -199,11 +199,6 @@ pub struct Project {
     buffer_store: Model<buffer_store::BufferStore>,
     _subscriptions: Vec<gpui::Subscription>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
-    #[allow(clippy::type_complexity)]
-    loading_buffers_by_path: HashMap<
-        ProjectPath,
-        postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
-    >,
     #[allow(clippy::type_complexity)]
     loading_local_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
@@ -727,7 +722,6 @@ impl Project {
                 collaborators: Default::default(),
                 buffer_store,
                 shared_buffers: Default::default(),
-                loading_buffers_by_path: Default::default(),
                 loading_local_worktrees: Default::default(),
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
@@ -863,7 +857,6 @@ impl Project {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
-                loading_buffers_by_path: Default::default(),
                 buffer_store,
                 shared_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
@@ -1947,137 +1940,12 @@ impl Project {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
 
-        // If there is already a buffer for the given path, then return it.
-        let existing_buffer = self.get_open_buffer(&project_path, cx);
-        if let Some(existing_buffer) = existing_buffer {
-            return Task::ready(Ok(existing_buffer));
-        }
-
-        let loading_watch = match self.loading_buffers_by_path.entry(project_path.clone()) {
-            // If the given path is already being loaded, then wait for that existing
-            // task to complete and return the same buffer.
-            hash_map::Entry::Occupied(e) => e.get().clone(),
-
-            // Otherwise, record the fact that this path is now being loaded.
-            hash_map::Entry::Vacant(entry) => {
-                let (mut tx, rx) = postage::watch::channel();
-                entry.insert(rx.clone());
-
-                let project_path = project_path.clone();
-                let load_buffer = if worktree.read(cx).is_local() {
-                    self.open_local_buffer_internal(project_path.path.clone(), worktree, cx)
-                } else {
-                    self.open_remote_buffer_internal(&project_path.path, &worktree, cx)
-                };
-
-                cx.spawn(move |this, mut cx| async move {
-                    let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
-                        // Record the fact that the buffer is no longer loading.
-                        this.loading_buffers_by_path.remove(&project_path);
-                        let buffer = load_result.map_err(Arc::new)?;
-                        Ok(buffer)
-                    })?);
-                    anyhow::Ok(())
-                })
-                .detach();
-                rx
-            }
-        };
-
-        cx.background_executor().spawn(async move {
-            wait_for_loading_buffer(loading_watch)
-                .await
-                .map_err(|e| e.cloned())
-        })
-    }
-
-    fn open_local_buffer_internal(
-        &mut self,
-        path: Arc<Path>,
-        worktree: Model<Worktree>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Buffer>>> {
-        let load_buffer = worktree.update(cx, |worktree, cx| {
-            let load_file = worktree.load_file(path.as_ref(), cx);
-            let reservation = cx.reserve_model();
-            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-            cx.spawn(move |_, mut cx| async move {
-                let loaded = load_file.await?;
-                let text_buffer = cx
-                    .background_executor()
-                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
-                    .await;
-                cx.insert_model(reservation, |_| {
-                    Buffer::build(
-                        text_buffer,
-                        loaded.diff_base,
-                        Some(loaded.file),
-                        Capability::ReadWrite,
-                    )
-                })
-            })
-        });
-
-        cx.spawn(move |this, mut cx| async move {
-            let buffer = match load_buffer.await {
-                Ok(buffer) => Ok(buffer),
-                Err(error) if is_not_found_error(&error) => cx.new_model(|cx| {
-                    let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
-                    Buffer::build(
-                        text_buffer,
-                        None,
-                        Some(Arc::new(File {
-                            worktree,
-                            path,
-                            mtime: None,
-                            entry_id: None,
-                            is_local: true,
-                            is_deleted: false,
-                            is_private: false,
-                        })),
-                        Capability::ReadWrite,
-                    )
-                }),
-                Err(e) => Err(e),
-            }?;
-            this.update(&mut cx, |this, cx| {
-                this.buffer_store.update(cx, |buffer_store, cx| {
-                    buffer_store.add_buffer(buffer.clone(), cx).log_err();
-                });
-            })?;
-            Ok(buffer)
-        })
-    }
-
-    fn open_remote_buffer_internal(
-        &mut self,
-        path: &Arc<Path>,
-        worktree: &Model<Worktree>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Buffer>>> {
-        let rpc = self.client.clone();
-        let project_id = self.remote_id().unwrap();
-        let remote_worktree_id = worktree.read(cx).id();
-        let path = path.clone();
-        let path_string = path.to_string_lossy().to_string();
-        if self.is_disconnected() {
+        if self.is_remote() && self.is_disconnected() {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
-        cx.spawn(move |this, mut cx| async move {
-            let response = rpc
-                .request(proto::OpenBufferByPath {
-                    project_id,
-                    worktree_id: remote_worktree_id.to_proto(),
-                    path: path_string,
-                })
-                .await?;
-            let buffer_id = BufferId::new(response.buffer_id)?;
-            this.update(&mut cx, |this, cx| {
-                this.wait_for_remote_buffer(buffer_id, cx)
-            })?
-            .await
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer(project_path, worktree, cx)
         })
     }
 
@@ -7866,8 +7734,9 @@ impl Project {
 
         // Identify the loading buffers whose containing repository that has changed.
         let future_buffers = self
-            .loading_buffers_by_path
-            .iter()
+            .buffer_store
+            .read(cx)
+            .loading_buffers()
             .filter_map(|(project_path, receiver)| {
                 if project_path.worktree_id != worktree_handle.read(cx).id() {
                     return None;
@@ -7876,11 +7745,10 @@ impl Project {
                 changed_repos
                     .iter()
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                let receiver = receiver.clone();
                 let path = path.clone();
                 let abs_path = worktree_handle.read(cx).absolutize(&path).ok()?;
                 Some(async move {
-                    wait_for_loading_buffer(receiver)
+                    BufferStore::wait_for_loading_buffer(receiver)
                         .await
                         .ok()
                         .map(|buffer| (buffer, path, abs_path))
@@ -11281,27 +11149,6 @@ impl Completion {
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
-}
-
-async fn wait_for_loading_buffer(
-    mut receiver: postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
-) -> Result<Model<Buffer>, Arc<anyhow::Error>> {
-    loop {
-        if let Some(result) = receiver.borrow().as_ref() {
-            match result {
-                Ok(buffer) => return Ok(buffer.to_owned()),
-                Err(e) => return Err(e.to_owned()),
-            }
-        }
-        receiver.next().await;
-    }
-}
-
-fn is_not_found_error(error: &anyhow::Error) -> bool {
-    error
-        .root_cause()
-        .downcast_ref::<io::Error>()
-        .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
 fn include_text(server: &lsp::LanguageServer) -> bool {

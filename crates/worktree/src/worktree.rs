@@ -1803,6 +1803,14 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
+    pub fn project_id(&self) -> u64 {
+        self.project_id
+    }
+
+    pub fn client(&self) -> AnyProtoClient {
+        self.client.clone()
+    }
+
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();

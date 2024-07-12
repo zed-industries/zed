@@ -1,7 +1,7 @@
 use crate::ProjectPath;
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, StreamExt as _};
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
@@ -10,19 +10,24 @@ use rpc::{
     proto::{self, AnyProtoClient, PeerId},
     ErrorExt as _, TypedEnvelope,
 };
-use std::{path::Path, sync::Arc};
+use std::{io, path::Path, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
-use worktree::{File, ProjectEntryId, Worktree};
+use worktree::{File, ProjectEntryId, RemoteWorktree, Worktree};
 
 pub struct BufferStore {
     retain_buffers: bool,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
-    remote_buffer_listeners:
-        HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
-    incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
+    #[allow(clippy::type_complexity)]
+    loading_buffers_by_path: HashMap<
+        ProjectPath,
+        postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
+    >,
+    loading_remote_buffers_by_id: HashMap<BufferId, Model<Buffer>>,
+    remote_buffer_listeners:
+        HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
 }
 
 enum OpenBuffer {
@@ -43,10 +48,147 @@ impl BufferStore {
             retain_buffers,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
-            incomplete_remote_buffers: Default::default(),
+            loading_remote_buffers_by_id: Default::default(),
             local_buffer_ids_by_path: Default::default(),
             local_buffer_ids_by_entry_id: Default::default(),
+            loading_buffers_by_path: Default::default(),
         }
+    }
+
+    pub fn open_buffer(
+        &mut self,
+        project_path: ProjectPath,
+        worktree: Model<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        let existing_buffer = self.get_by_path(&project_path, cx);
+        if let Some(existing_buffer) = existing_buffer {
+            return Task::ready(Ok(existing_buffer));
+        }
+
+        let loading_watch = match self.loading_buffers_by_path.entry(project_path.clone()) {
+            // If the given path is already being loaded, then wait for that existing
+            // task to complete and return the same buffer.
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+
+            // Otherwise, record the fact that this path is now being loaded.
+            hash_map::Entry::Vacant(entry) => {
+                let (mut tx, rx) = postage::watch::channel();
+                entry.insert(rx.clone());
+
+                let project_path = project_path.clone();
+                let load_buffer = match worktree.read(cx) {
+                    Worktree::Local(_) => {
+                        self.open_local_buffer_internal(project_path.path.clone(), worktree, cx)
+                    }
+                    Worktree::Remote(tree) => {
+                        self.open_remote_buffer_internal(&project_path.path, tree, cx)
+                    }
+                };
+
+                cx.spawn(move |this, mut cx| async move {
+                    let load_result = load_buffer.await;
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
+                        // Record the fact that the buffer is no longer loading.
+                        this.loading_buffers_by_path.remove(&project_path);
+                        let buffer = load_result.map_err(Arc::new)?;
+                        Ok(buffer)
+                    })?);
+                    anyhow::Ok(())
+                })
+                .detach();
+                rx
+            }
+        };
+
+        cx.background_executor().spawn(async move {
+            Self::wait_for_loading_buffer(loading_watch)
+                .await
+                .map_err(|e| e.cloned())
+        })
+    }
+
+    fn open_local_buffer_internal(
+        &mut self,
+        path: Arc<Path>,
+        worktree: Model<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        let load_buffer = worktree.update(cx, |worktree, cx| {
+            let load_file = worktree.load_file(path.as_ref(), cx);
+            let reservation = cx.reserve_model();
+            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+            cx.spawn(move |_, mut cx| async move {
+                let loaded = load_file.await?;
+                let text_buffer = cx
+                    .background_executor()
+                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .await;
+                cx.insert_model(reservation, |_| {
+                    Buffer::build(
+                        text_buffer,
+                        loaded.diff_base,
+                        Some(loaded.file),
+                        Capability::ReadWrite,
+                    )
+                })
+            })
+        });
+
+        cx.spawn(move |this, mut cx| async move {
+            let buffer = match load_buffer.await {
+                Ok(buffer) => Ok(buffer),
+                Err(error) if is_not_found_error(&error) => cx.new_model(|cx| {
+                    let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
+                    Buffer::build(
+                        text_buffer,
+                        None,
+                        Some(Arc::new(File {
+                            worktree,
+                            path,
+                            mtime: None,
+                            entry_id: None,
+                            is_local: true,
+                            is_deleted: false,
+                            is_private: false,
+                        })),
+                        Capability::ReadWrite,
+                    )
+                }),
+                Err(e) => Err(e),
+            }?;
+            this.update(&mut cx, |this, cx| {
+                this.add_buffer(buffer.clone(), cx).log_err();
+            })?;
+            Ok(buffer)
+        })
+    }
+
+    fn open_remote_buffer_internal(
+        &self,
+        path: &Arc<Path>,
+        worktree: &RemoteWorktree,
+        cx: &ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        let worktree_id = worktree.id().to_proto();
+        let project_id = worktree.project_id();
+        let client = worktree.client();
+        let path_string = path.clone().to_string_lossy().to_string();
+        cx.spawn(move |this, mut cx| async move {
+            let response = client
+                .request(proto::OpenBufferByPath {
+                    project_id,
+                    worktree_id,
+                    path: path_string,
+                })
+                .await?;
+            let buffer_id = BufferId::new(response.buffer_id)?;
+            this.update(&mut cx, |this, cx| {
+                this.wait_for_remote_buffer(buffer_id, cx)
+            })?
+            .await
+        })
     }
 
     pub fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -110,6 +252,34 @@ impl BufferStore {
             .filter_map(|buffer| buffer.upgrade())
     }
 
+    pub fn loading_buffers(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &ProjectPath,
+            postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
+        ),
+    > {
+        self.loading_buffers_by_path
+            .iter()
+            .map(|(path, rx)| (path, rx.clone()))
+    }
+
+    pub fn get_by_path(
+        &mut self,
+        path: &ProjectPath,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Model<Buffer>> {
+        self.buffers().find_map(|buffer| {
+            let file = File::from_dyn(buffer.read(cx).file())?;
+            if file.worktree_id(cx) == path.worktree_id && &file.path == &path.path {
+                Some(buffer)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn get(&self, buffer_id: BufferId) -> Option<Model<Buffer>> {
         self.opened_buffers
             .get(&buffer_id)
@@ -123,7 +293,7 @@ impl BufferStore {
 
     pub fn get_possibly_incomplete(&self, buffer_id: BufferId) -> Option<Model<Buffer>> {
         self.get(buffer_id)
-            .or_else(|| self.incomplete_remote_buffers.get(&buffer_id).cloned())
+            .or_else(|| self.loading_remote_buffers_by_id.get(&buffer_id).cloned())
     }
 
     fn get_or_remove_by_file(
@@ -180,7 +350,7 @@ impl BufferStore {
             })
             .collect();
         let incomplete_buffer_ids = self
-            .incomplete_remote_buffers
+            .loading_remote_buffers_by_id
             .keys()
             .copied()
             .collect::<Vec<_>>();
@@ -466,7 +636,7 @@ impl BufferStore {
                 match buffer_result {
                     Ok(buffer) => {
                         let buffer = cx.new_model(|_| buffer);
-                        self.incomplete_remote_buffers.insert(buffer_id, buffer);
+                        self.loading_remote_buffers_by_id.insert(buffer_id, buffer);
                     }
                     Err(error) => {
                         if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
@@ -480,7 +650,7 @@ impl BufferStore {
             proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
                 let buffer_id = BufferId::new(chunk.buffer_id)?;
                 let buffer = self
-                    .incomplete_remote_buffers
+                    .loading_remote_buffers_by_id
                     .get(&buffer_id)
                     .cloned()
                     .ok_or_else(|| {
@@ -500,20 +670,34 @@ impl BufferStore {
                 });
 
                 if let Err(error) = result {
-                    self.incomplete_remote_buffers.remove(&buffer_id);
+                    self.loading_remote_buffers_by_id.remove(&buffer_id);
                     if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
                         for listener in listeners {
                             listener.send(Err(error.cloned())).ok();
                         }
                     }
                 } else if chunk.is_last {
-                    self.incomplete_remote_buffers.remove(&buffer_id);
+                    self.loading_remote_buffers_by_id.remove(&buffer_id);
                     self.add_buffer(buffer, cx)?;
                 }
             }
         }
 
         Ok(())
+    }
+
+    pub async fn wait_for_loading_buffer(
+        mut receiver: postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
+    ) -> Result<Model<Buffer>, Arc<anyhow::Error>> {
+        loop {
+            if let Some(result) = receiver.borrow().as_ref() {
+                match result {
+                    Ok(buffer) => return Ok(buffer.to_owned()),
+                    Err(e) => return Err(e.to_owned()),
+                }
+            }
+            receiver.next().await;
+        }
     }
 }
 
@@ -525,4 +709,11 @@ impl OpenBuffer {
             OpenBuffer::Operations(_) => None,
         }
     }
+}
+
+fn is_not_found_error(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<io::Error>()
+        .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
