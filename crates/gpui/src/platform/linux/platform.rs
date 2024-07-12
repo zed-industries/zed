@@ -502,11 +502,26 @@ pub(super) fn open_uri_internal(
     if let Some(uri) = url::Url::parse(uri).log_err() {
         executor
             .spawn(async move {
-                OpenUriRequest::default()
-                    .activation_token(activation_token.map(ActivationToken::from))
+                match OpenUriRequest::default()
+                    .activation_token(activation_token.clone().map(ActivationToken::from))
                     .send_uri(&uri)
                     .await
-                    .log_err();
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+
+                for mut command in open::commands(uri.to_string()) {
+                    if let Some(token) = activation_token.as_ref() {
+                        command.env("XDG_ACTIVATION_TOKEN", token);
+                    }
+                    match command.spawn() {
+                        Ok(_) => return,
+                        Err(e) => {
+                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                        }
+                    }
+                }
             })
             .detach();
     }
@@ -519,12 +534,20 @@ pub(super) fn reveal_path_internal(
 ) {
     executor
         .spawn(async move {
-            if let Some(dir) = File::open(path).log_err() {
-                OpenDirectoryRequest::default()
+            if let Some(dir) = File::open(path.clone()).log_err() {
+                match OpenDirectoryRequest::default()
                     .activation_token(activation_token.map(ActivationToken::from))
                     .send(&dir.as_fd())
                     .await
-                    .log_err();
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+                if path.is_dir() {
+                    open::that_detached(path).log_err();
+                } else {
+                    open::that_detached(path.parent().unwrap_or(Path::new(""))).log_err();
+                }
             }
         })
         .detach();
