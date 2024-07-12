@@ -3,13 +3,9 @@ use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, Session,
     SessionSupport,
 };
-use ui::{prelude::*, ButtonLike, IconWithIndicator, IntoElement, Tooltip};
+use ui::{prelude::*, ButtonLike, ContextMenu, IconWithIndicator, IntoElement, PopoverMenu, Tooltip};
 
-use gpui::{AnyElement, AnyView, ClickEvent, CursorStyle, ElementId, IntoElement, View, WindowContext};
-use crate::{
-    prelude::*, ButtonCommon, ButtonLike, ButtonLikeRounding, ButtonSize, ButtonStyle, ContextMenu, ElevationIndex, IconButton, IconName, PopoverMenu
-};
-use smallvec::SmallVec;
+use gpui::ElementId;
 
 // No session && no support known
 
@@ -72,18 +68,6 @@ impl QuickActionBar {
             return None;
         }
 
-        let id = id.into();
-
-        let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
-
-        let dropdown_menu = PopoverMenu::new(element_id("menu"))
-            .menu(move |cx| {
-                ContextMenu::build(cx, move |menu, _cx| {
-                    menu.header("REPL")
-                }).into()
-            }).trigger(ButtonLike::new_rounded_right(element_id("dropdown"))
-                .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
-                .width(rems(1.).into()));
 
         let workspace = self.workspace.upgrade()?.read(cx);
 
@@ -133,6 +117,25 @@ impl QuickActionBar {
 
         let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
 
+        let id = "repl-menu".to_string();
+
+        let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
+
+        let dropdown_menu = PopoverMenu::new(element_id("menu"))
+            .menu(move |cx| {
+                let kernel_name = kernel_name.clone();
+                ContextMenu::build(cx, move |menu, _cx| {
+                    let kernel_name = kernel_name.clone();
+                    menu
+                        .header("REPL")
+                        .header(kernel_name.clone())
+                        .action("Run", Box::new(repl::Run {}))
+                }).into()
+            }).trigger(ButtonLike::new_rounded_right(element_id("dropdown"))
+                .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
+                .tooltip(move |cx| Tooltip::text("REPL Menu", cx))
+                .width(rems(1.).into()));
+
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
             .child(
                 IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot()))
@@ -147,8 +150,8 @@ impl QuickActionBar {
 
 
         Some(h_flex()
-            .child(self.button)
-            .child(self.popover_button))
+            .child(button)
+            .child(dropdown_menu).into_any_element())
     }
 
     pub fn render_repl_launch_menu(
