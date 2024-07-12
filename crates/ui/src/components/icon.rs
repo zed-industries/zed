@@ -1,8 +1,6 @@
-use std::str::FromStr;
-
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -92,7 +90,9 @@ impl IconSize {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
@@ -389,12 +389,6 @@ impl IconName {
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::Visible => "icons/visible.svg",
         }
-    }
-}
-
-impl From<IconName> for &str {
-    fn from(icon: IconName) -> Self {
-        icon.path()
     }
 }
 
