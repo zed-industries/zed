@@ -235,7 +235,7 @@ impl TextInput {
             return;
         }
 
-        if !hitbox.contains(&event.position) {
+        if !self.focus_handle.is_focused(cx) {
             return;
         }
 
