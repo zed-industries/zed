@@ -5,12 +5,14 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, Hover, RangeToAnchorExt,
 };
+use chrono::Local;
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
     InteractiveText, IntoElement, Length, MouseButton, ParentElement, Pixels, ScrollHandle,
     SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task,
     TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
 };
+
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
@@ -45,9 +47,15 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
         if show_keyboard_hover(editor, cx) {
             return;
         }
+        let now = Local::now();
+
         if let Some(anchor) = anchor {
+            // print!("Show{}, ", now.format("%S").to_string());
+
             show_hover(editor, anchor, false, cx);
         } else {
+            // print!("Hide{}, ", now.format("%S").to_string());
+
             hide_hover(editor, cx);
         }
     }
@@ -161,6 +169,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+    // return false;
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -229,6 +238,7 @@ fn show_hover(
                     })
                     .unwrap_or(false)
             })
+            || editor.hover_state.diagnostic_popover.is_some()
         {
             // Hover triggered from same location as last time. Don't show again.
             return;
@@ -656,8 +666,9 @@ pub struct DiagnosticPopover {
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
-    background_color: Option<Hsla>, // pub keyboard_grace: Rc<RefCell<bool>>,
-                                    // pub anchor: Option<Anchor>,
+    background_color: Option<Hsla>,
+    // pub keyboard_grace: Rc<RefCell<bool>>,
+    // pub anchor: Option<Anchor>,
 }
 
 impl DiagnosticPopover {
