@@ -636,8 +636,6 @@ impl DiagnosticPopover {
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .max_w(max_size.width)
-            .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
             .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             // Prevent a mouse move on the popover from being propagated to the editor,
@@ -651,6 +649,8 @@ impl DiagnosticPopover {
                 div()
                     .id("diagnostic-inner")
                     .overflow_y_scroll()
+                    .max_w(max_size.width)
+                    .max_h(max_size.height)
                     .px_2()
                     .py_1()
                     .bg(diagnostic_colors.background)
