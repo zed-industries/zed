@@ -5898,9 +5898,9 @@ impl Editor {
                 },
             );
         }
-
+        
         project.update(cx, |project, cx| {
-            project.update_breakpoint(buffer, row, cx);
+            project.update_breakpoint(buffer, row + 1, cx);
         });
         cx.notify();
     }

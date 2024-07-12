@@ -1200,18 +1200,9 @@ impl Project {
         row: BufferRow,
         cx: &mut ModelContext<Self>,
     ) {
-        let buffer = buffer.read(cx);
-        let Some(abs_path) = maybe!({
-            let project_path = buffer.project_path(cx)?;
-            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-            worktree.read(cx).absolutize(&project_path.path).ok()
-        }) else {
-            return;
-        };
-
         let breakpoints_for_buffer = self
             .breakpoints
-            .entry(buffer.remote_id())
+            .entry(buffer.read(cx).remote_id())
             .or_insert(Vec::new());
 
         if let Some(ix) = breakpoints_for_buffer
@@ -1220,7 +1211,7 @@ impl Project {
         {
             breakpoints_for_buffer.remove(ix);
         } else {
-            breakpoints_for_buffer.push(Breakpoint { row: row + 1 });
+            breakpoints_for_buffer.push(Breakpoint { row });
         }
 
         let clients = self
@@ -1232,23 +1223,15 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
+        let mut tasks = Vec::new();
+        for client in clients {
+            tasks.push(self.send_breakpoints(client, cx));
+        }
+
         cx.background_executor()
             .spawn(async move {
-                for client in clients {
-                    client
-                        .set_breakpoints(
-                            abs_path.clone(),
-                            Some(vec![SourceBreakpoint {
-                                line: (row + 1) as u64,
-                                condition: None,
-                                hit_condition: None,
-                                log_message: None,
-                                column: None,
-                                mode: None,
-                            }]),
-                        )
-                        .await?;
-                }
+                try_join_all(tasks).await?;
+
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
