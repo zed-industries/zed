@@ -73,7 +73,7 @@ use paths::{
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{LspSettings, ProjectSettings};
+use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
@@ -11640,6 +11640,7 @@ pub struct ProjectLspAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     shell_env: Mutex<Option<HashMap<String, String>>>,
+    load_direnv: DirenvSettings,
 }
 
 impl ProjectLspAdapterDelegate {
@@ -11648,6 +11649,7 @@ impl ProjectLspAdapterDelegate {
         worktree: &Model<Worktree>,
         cx: &ModelContext<Project>,
     ) -> Arc<Self> {
+        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
@@ -11655,12 +11657,13 @@ impl ProjectLspAdapterDelegate {
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
             shell_env: Default::default(),
+            load_direnv,
         })
     }
 
     async fn load_shell_env(&self) {
         let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = load_shell_environment(&worktree_abs_path)
+        let shell_env = load_shell_environment(&worktree_abs_path, &self.load_direnv)
             .await
             .with_context(|| {
                 format!("failed to determine load login shell environment in {worktree_abs_path:?}")
@@ -11874,7 +11877,44 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
         .unwrap_or(false)
 }
 
-async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
+    let Ok(direnv_path) = which::which("direnv") else {
+        return Ok(None);
+    };
+
+    let direnv_output = smol::process::Command::new(direnv_path)
+        .args(["export", "json"])
+        .current_dir(dir)
+        .output()
+        .await
+        .context("failed to spawn direnv to get local environment variables")?;
+
+    anyhow::ensure!(
+        direnv_output.status.success(),
+        "direnv exited with error {:?}",
+        direnv_output.status
+    );
+
+    let output = String::from_utf8_lossy(&direnv_output.stdout);
+    if output.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        serde_json::from_str(&output).context("failed to parse direnv output")?,
+    ))
+}
+
+async fn load_shell_environment(
+    dir: &Path,
+    load_direnv: &DirenvSettings,
+) -> Result<HashMap<String, String>> {
+    let direnv_environment = match load_direnv {
+        DirenvSettings::ShellHook => None,
+        DirenvSettings::Direct => load_direnv_environment(dir).await?,
+    }
+    .unwrap_or(HashMap::default());
+
     let marker = "ZED_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
@@ -11884,6 +11924,11 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     // the project directory to get the env in there as if the user
     // `cd`'d into it. We do that because tools like direnv, asdf, ...
     // hook into `cd` and only set up the env after that.
+    //
+    // If the user selects `Direct` for direnv, it would set an environment
+    // variable that later uses to know that it should not run the hook.
+    // We would include in `.envs` call so it is okay to run the hook
+    // even if direnv direct mode is enabled.
     //
     // In certain shells we need to execute additional_command in order to
     // trigger the behavior of direnv, etc.
@@ -11912,6 +11957,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let output = smol::process::Command::new(&shell)
         .args(["-i", "-c", &command])
+        .envs(direnv_environment)
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

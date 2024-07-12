@@ -546,6 +546,14 @@
       // "delay_ms": 600
     }
   },
+  // Configuration for how direnv configuration should be loaded. May take 2 values:
+  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "direnv": "shell_hook"
+  // 2. Load direnv configuration using `direnv export json` directly.
+  //    This can help with some shells that otherwise would not detect
+  //    the direnv environment, such as nushell or elvish.
+  //      "direnv": "direct"
+  "direnv": "shell_hook",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]

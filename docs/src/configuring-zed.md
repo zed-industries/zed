@@ -190,6 +190,22 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
+## Direnv Integration
+
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Setting: `direnv`
+- Default:
+
+```json
+"direnv": "shell_hook"
+```
+
+**Options**
+There are two options to choose from:
+
+1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
+2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+
 ## Inline Completions
 
 - Description: Settings for inline completions.
