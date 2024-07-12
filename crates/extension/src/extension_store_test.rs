@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
+use snippet_provider::SnippetRegistry;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -160,6 +161,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
+                        snippets: None,
                     }),
                     dev: false,
                 },
@@ -185,6 +187,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
+                        snippets: None,
                     }),
                     dev: false,
                 },
@@ -258,6 +261,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
+    let snippet_registry = Arc::new(SnippetRegistry::new());
     let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
@@ -272,6 +276,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             theme_registry.clone(),
             slash_command_registry.clone(),
             indexed_docs_registry.clone(),
+            snippet_registry.clone(),
             cx,
         )
     });
@@ -345,6 +350,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 language_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 indexed_docs_providers: BTreeMap::default(),
+                snippets: None,
             }),
             dev: false,
         },
@@ -396,6 +402,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             theme_registry.clone(),
             slash_command_registry,
             indexed_docs_registry,
+            snippet_registry,
             cx,
         )
     });
@@ -477,6 +484,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
+    let snippet_registry = Arc::new(SnippetRegistry::new());
     let node_runtime = FakeNodeRuntime::new();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -568,6 +576,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             theme_registry.clone(),
             slash_command_registry,
             indexed_docs_registry,
+            snippet_registry,
             cx,
         )
     });

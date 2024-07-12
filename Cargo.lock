@@ -341,9 +341,8 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd884d7c72877a94102c3715f3b1cd09ff4fac28221add3e57cfbe25c236d093"
+version = "0.9.0"
+source = "git+https://github.com/bilelmoussaoui/ashpd?rev=29f2e1a#29f2e1a6f4b0911f504658f5f4630c02e01b13f2"
 dependencies = [
  "async-fs 2.1.1",
  "async-net 2.0.0",
@@ -378,6 +377,7 @@ dependencies = [
  "cargo_toml",
  "chrono",
  "client",
+ "clock",
  "collections",
  "command_palette_hooks",
  "ctor",
@@ -420,6 +420,7 @@ dependencies = [
  "telemetry_events",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",
@@ -1582,7 +1583,16 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
 dependencies = [
- "bit-vec",
+ "bit-vec 0.6.3",
+]
+
+[[package]]
+name = "bit-set"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0481a0e032742109b1133a095184ee93d88f3dc9e0d28a5d033dc77a073f44f"
+dependencies = [
+ "bit-vec 0.7.0",
 ]
 
 [[package]]
@@ -1590,6 +1600,12 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
+name = "bit-vec"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit_field"
@@ -1633,7 +1649,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
+source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
 dependencies = [
  "ash",
  "ash-window",
@@ -1663,7 +1679,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
+source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1673,7 +1689,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
+source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2406,6 +2422,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "parking_lot",
+ "serde",
  "smallvec",
 ]
 
@@ -2464,6 +2481,7 @@ version = "0.44.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assistant",
  "async-trait",
  "async-tungstenite",
  "audio",
@@ -3654,6 +3672,7 @@ dependencies = [
  "linkify",
  "log",
  "lsp",
+ "markdown",
  "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot",
@@ -3985,6 +4004,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "snippet_provider",
  "task",
  "theme",
  "toml 0.8.10",
@@ -4060,7 +4080,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7493d4c459da9f84325ad297371a6b2b8a162800873a22e3b6b6512e61d18c05"
 dependencies = [
- "bit-set",
+ "bit-set 0.5.3",
  "regex",
 ]
 
@@ -4317,7 +4337,7 @@ checksum = "e32eac81c1135c1df01d4e6d4233c47ba11f6a6d07f33e0bba09d18797077770"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2 0.9.4",
+ "memmap2",
  "slotmap",
  "tinyvec",
  "ttf-parser",
@@ -4941,11 +4961,9 @@ dependencies = [
  "log",
  "media",
  "metal",
- "mio 1.0.0",
  "num_cpus",
  "objc",
  "oo7",
- "open",
  "parking",
  "parking_lot",
  "pathfinder_geometry",
@@ -5743,7 +5761,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "libc",
- "mio 0.8.11",
+ "mio",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -5756,25 +5774,6 @@ name = "ipnet"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
-
-[[package]]
-name = "is-docker"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
-dependencies = [
- "once_cell",
-]
-
-[[package]]
-name = "is-wsl"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
-dependencies = [
- "is-docker",
- "once_cell",
-]
 
 [[package]]
 name = "isahc"
@@ -6595,15 +6594,6 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a5a03cefb0d953ec0be133036f14e109412fa594edc2f77227249db66cc3ed"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "memmap2"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe751422e4a8caa417e13c3ea66452215d7d63e19e604f4980461212f3ae1322"
@@ -6693,19 +6683,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mio"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4929e1f84c5e54c3ec6141cd5d8b5a5c055f031f80cf78f2072920173cb4d880"
-dependencies = [
- "hermit-abi 0.3.9",
- "libc",
- "log",
- "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "miow"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6748,17 +6725,17 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae585df4b6514cf8842ac0f1ab4992edc975892704835b549cf818dc0191249e"
+version = "0.20.0"
+source = "git+https://github.com/gfx-rs/wgpu?rev=425526828f738c95ec50b016c6a761bc00d2fb25#425526828f738c95ec50b016c6a761bc00d2fb25"
 dependencies = [
- "bit-set",
+ "arrayvec",
+ "bit-set 0.6.0",
  "bitflags 2.6.0",
+ "cfg_aliases",
  "codespan-reporting",
  "hexf-parse",
  "indexmap 2.2.6",
  "log",
- "num-traits",
  "rustc-hash",
  "spirv",
  "termcolor",
@@ -6943,7 +6920,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio 0.8.11",
+ "mio",
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -7149,6 +7126,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_threads"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nvim-rs"
 version = "0.6.0-pre"
 source = "git+https://github.com/KillTheMule/nvim-rs?branch=master#0d2b1c884f3c39a76b5b7aac0b429f4624843954"
@@ -7276,17 +7262,6 @@ name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
-
-[[package]]
-name = "open"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61a877bf6abd716642a53ef1b89fb498923a4afca5c754f9050b4d081c05c4b3"
-dependencies = [
- "is-wsl",
- "libc",
- "pathdiff",
-]
 
 [[package]]
 name = "open_ai"
@@ -7453,6 +7428,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fuzzy",
  "gpui",
  "itertools 0.11.0",
  "language",
@@ -8139,6 +8115,7 @@ dependencies = [
  "similar",
  "smol",
  "snippet",
+ "snippet_provider",
  "task",
  "tempfile",
  "terminal",
@@ -8366,6 +8343,7 @@ dependencies = [
  "assistant",
  "editor",
  "gpui",
+ "repl",
  "search",
  "settings",
  "ui",
@@ -8592,7 +8570,7 @@ dependencies = [
  "task",
  "terminal_view",
  "ui",
- "ui_text_field",
+ "ui_input",
  "util",
  "workspace",
 ]
@@ -8754,6 +8732,7 @@ dependencies = [
  "image",
  "language",
  "log",
+ "multi_buffer",
  "project",
  "runtimelib",
  "schemars",
@@ -9858,13 +9837,13 @@ dependencies = [
 
 [[package]]
 name = "simplelog"
-version = "0.9.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bc0ffd69814a9b251d43afcabf96dad1b29f5028378056257be9e3fecc9f720"
+checksum = "16257adbfaef1ee58b1363bdc0664c9b8e1e30aed86049635fb5f147d065a9c0"
 dependencies = [
- "chrono",
  "log",
  "termcolor",
+ "time",
 ]
 
 [[package]]
@@ -9956,6 +9935,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "snippet_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "snippet",
+ "util",
+]
+
+[[package]]
 name = "socket2"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10001,12 +9996,11 @@ dependencies = [
 
 [[package]]
 name = "spirv"
-version = "0.2.0+1.5.4"
+version = "0.3.0+sdk-1.3.268.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246bfa38fe3db3f1dfc8ca5a2cdeb7348c78be2112740cc0ec8ef18b6d94f830"
+checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
 dependencies = [
- "bitflags 1.3.2",
- "num-traits",
+ "bitflags 2.6.0",
 ]
 
 [[package]]
@@ -10335,6 +10329,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "title_bar",
  "ui",
 ]
 
@@ -10792,9 +10787,9 @@ dependencies = [
 
 [[package]]
 name = "termcolor"
-version = "1.1.3"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bab24d30b911b2376f3a13cc2cd443142f0c81dda04c118693e35b3835757755"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
@@ -10811,6 +10806,7 @@ dependencies = [
  "gpui",
  "libc",
  "rand 0.8.5",
+ "release_channel",
  "schemars",
  "serde",
  "serde_derive",
@@ -11016,7 +11012,9 @@ checksum = "5dfd88e563464686c916c7e46e623e520ddc6d79fa6641390f2e3fa86e83e885"
 dependencies = [
  "deranged",
  "itoa",
+ "libc",
  "num-conv",
+ "num_threads",
  "powerfmt",
  "serde",
  "time-core",
@@ -11166,7 +11164,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
- "mio 0.8.11",
+ "mio",
  "num_cpus",
  "parking_lot",
  "pin-project-lite",
@@ -11791,7 +11789,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ui_text_field"
+name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "editor",
@@ -13523,12 +13521,11 @@ dependencies = [
 [[package]]
 name = "xkbcommon"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13867d259930edc7091a6c41b4ce6eee464328c6ff9659b7e4c668ca20d4c91e"
+source = "git+https://github.com/ConradIrwin/xkbcommon-rs?rev=2d4c4439160c7846ede0f0ece93bf73b1e613339#2d4c4439160c7846ede0f0ece93bf73b1e613339"
 dependencies = [
  "as-raw-xcb-connection",
  "libc",
- "memmap2 0.8.0",
+ "memmap2",
  "xkeysym",
 ]
 
@@ -13661,7 +13658,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.144.0"
+version = "0.145.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13737,6 +13734,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "snippet_provider",
  "supermaven",
  "tab_switcher",
  "task",
@@ -13775,9 +13773,9 @@ dependencies = [
 
 [[package]]
 name = "zed_clojure"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
@@ -13789,7 +13787,7 @@ dependencies = [
 
 [[package]]
 name = "zed_dart"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13889,7 +13887,7 @@ dependencies = [
 
 [[package]]
 name = "zed_lua"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13939,7 +13937,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

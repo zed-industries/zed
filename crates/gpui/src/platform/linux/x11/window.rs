@@ -15,7 +15,6 @@ use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
     protocol::{
-        randr::{self, ConnectionExt as _},
         sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
@@ -26,7 +25,7 @@ use x11rb::{
 
 use std::{
     cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
-    sync::Arc, time::Duration,
+    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -51,6 +50,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _NET_WM_SYNC,
+        _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
@@ -211,6 +211,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -220,7 +221,6 @@ pub struct Callbacks {
 
 pub struct X11WindowState {
     pub destroyed: bool,
-    refresh_rate: Duration,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -239,7 +239,9 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    hovered: bool,
     fullscreen: bool,
+    client_side_decorations_supported: bool,
     decorations: WindowDecorations,
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
@@ -257,7 +259,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
-    pub x_window: xproto::Window,
+    x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -295,6 +297,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -450,6 +453,7 @@ impl X11WindowState {
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
                     ],
                 }],
@@ -492,31 +496,6 @@ impl X11WindowState {
         };
         xcb_connection.map_window(x_window).unwrap();
 
-        let screen_resources = xcb_connection
-            .randr_get_screen_resources(x_window)
-            .unwrap()
-            .reply()
-            .expect("Could not find available screens");
-
-        let mode = screen_resources
-            .crtcs
-            .iter()
-            .find_map(|crtc| {
-                let crtc_info = xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                    .ok()?
-                    .reply()
-                    .ok()?;
-
-                screen_resources
-                    .modes
-                    .iter()
-                    .find(|m| m.id == crtc_info.mode)
-            })
-            .expect("Unable to find screen refresh rate");
-
-        let refresh_rate = mode_refresh_rate(&mode);
-
         Ok(Self {
             client,
             executor,
@@ -531,6 +510,7 @@ impl X11WindowState {
             atoms: *atoms,
             input_handler: None,
             active: false,
+            hovered: false,
             fullscreen: false,
             maximized_vertical: false,
             maximized_horizontal: false,
@@ -539,12 +519,12 @@ impl X11WindowState {
             handle,
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
+            client_side_decorations_supported,
             decorations: WindowDecorations::Server,
             last_insets: [0, 0, 0, 0],
             edge_constraints: None,
             counter_id: sync_request_counter,
             last_sync_counter: None,
-            refresh_rate,
         })
     }
 
@@ -608,6 +588,7 @@ impl X11Window {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -621,6 +602,7 @@ impl X11Window {
                 executor,
                 params,
                 xcb_connection,
+                client_side_decorations_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -799,6 +781,15 @@ impl X11WindowStatePtr {
                 state.hidden = true;
             }
         }
+
+        let hovered_window = self
+            .xcb_connection
+            .query_pointer(state.x_root_window)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .child;
+        self.set_hovered(hovered_window == self.x_window);
     }
 
     pub fn close(&self) {
@@ -934,8 +925,14 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_active(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+            fun(focus);
+        }
+    }
+
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hovered_status_change {
             fun(focus);
         }
     }
@@ -951,10 +948,6 @@ impl X11WindowStatePtr {
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
         }
-    }
-
-    pub fn refresh_rate(&self) -> Duration {
-        self.state.borrow().refresh_rate
     }
 }
 
@@ -1070,6 +1063,10 @@ impl PlatformWindow for X11Window {
 
     fn is_active(&self) -> bool {
         self.0.state.borrow().active
+    }
+
+    fn is_hovered(&self) -> bool {
+        self.0.state.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -1188,6 +1185,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hovered_status_change = Some(callback);
+    }
+
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
@@ -1258,10 +1259,17 @@ impl PlatformWindow for X11Window {
     fn window_decorations(&self) -> crate::Decorations {
         let state = self.0.state.borrow();
 
+        // Client window decorations require compositor support
+        if !state.client_side_decorations_supported {
+            return Decorations::Server;
+        }
+
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => {
-                let tiling = if let Some(edge_constraints) = &state.edge_constraints {
+                let tiling = if state.fullscreen {
+                    Tiling::tiled()
+                } else if let Some(edge_constraints) = &state.edge_constraints {
                     edge_constraints.to_tiling()
                 } else {
                     // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
@@ -1272,7 +1280,6 @@ impl PlatformWindow for X11Window {
                         right: state.maximized_horizontal,
                     }
                 };
-
                 Decorations::Client { tiling }
             }
         }
@@ -1283,7 +1290,9 @@ impl PlatformWindow for X11Window {
 
         let dp = (inset.0 * state.scale_factor) as u32;
 
-        let insets = if let Some(edge_constraints) = &state.edge_constraints {
+        let insets = if state.fullscreen {
+            [0, 0, 0, 0]
+        } else if let Some(edge_constraints) = &state.edge_constraints {
             let left = if edge_constraints.left_tiled { 0 } else { dp };
             let top = if edge_constraints.top_tiled { 0 } else { dp };
             let right = if edge_constraints.right_tiled { 0 } else { dp };
@@ -1324,14 +1333,23 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn request_decorations(&self, decorations: crate::WindowDecorations) {
+    fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
+        let mut state = self.0.state.borrow_mut();
+
+        if matches!(decorations, crate::WindowDecorations::Client)
+            && !state.client_side_decorations_supported
+        {
+            log::info!(
+                "x11: no compositor present, falling back to server-side window decorations"
+            );
+            decorations = crate::WindowDecorations::Server;
+        }
+
         // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
         let hints_data: [u32; 5] = match decorations {
             WindowDecorations::Server => [1 << 1, 0, 1, 0, 0],
             WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
         };
-
-        let mut state = self.0.state.borrow_mut();
 
         self.0
             .xcb_connection
@@ -1367,17 +1385,4 @@ impl PlatformWindow for X11Window {
             appearance_changed();
         }
     }
-}
-
-// Adapted from:
-// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
-        return Duration::from_millis(16);
-    }
-
-    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing at {} micros", micros);
-    Duration::from_micros(micros)
 }

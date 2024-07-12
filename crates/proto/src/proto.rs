@@ -8,7 +8,7 @@ pub use error::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
-pub use prost::Message;
+pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::time::Instant;
@@ -204,6 +204,8 @@ messages!(
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
     (GetReferencesResponse, Background),
+    (GetSignatureHelp, Background),
+    (GetSignatureHelpResponse, Background),
     (GetSupermavenApiKey, Background),
     (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
@@ -337,7 +339,13 @@ messages!(
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
     (LinkedEditingRange, Background),
-    (LinkedEditingRangeResponse, Background)
+    (LinkedEditingRangeResponse, Background),
+    (AdvertiseContexts, Foreground),
+    (OpenContext, Foreground),
+    (OpenContextResponse, Foreground),
+    (UpdateContext, Foreground),
+    (SynchronizeContexts, Foreground),
+    (SynchronizeContextsResponse, Foreground),
 );
 
 request_messages!(
@@ -376,6 +384,7 @@ request_messages!(
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetSignatureHelp, GetSignatureHelpResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
@@ -449,7 +458,9 @@ request_messages!(
     (DeleteDevServerProject, Ack),
     (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
     (RenameDevServer, Ack),
-    (RestartLanguageServers, Ack)
+    (RestartLanguageServers, Ack),
+    (OpenContext, OpenContextResponse),
+    (SynchronizeContexts, SynchronizeContextsResponse),
 );
 
 entity_messages!(
@@ -474,6 +485,7 @@ entity_messages!(
     GetHover,
     GetProjectSymbols,
     GetReferences,
+    GetSignatureHelp,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -511,6 +523,10 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    AdvertiseContexts,
+    OpenContext,
+    UpdateContext,
+    SynchronizeContexts,
 );
 
 entity_messages!(

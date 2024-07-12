@@ -1207,7 +1207,7 @@ fn get_injections(
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
-    combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
+    combined_injection_ranges: &mut HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)>,
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
@@ -1223,7 +1223,7 @@ fn get_injections(
                 .now_or_never()
                 .and_then(|language| language.ok())
             {
-                combined_injection_ranges.insert(language, Vec::new());
+                combined_injection_ranges.insert(language.id, (language, Vec::new()));
             }
         }
     }
@@ -1276,8 +1276,9 @@ fn get_injections(
                 if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
-                            .entry(language.clone())
-                            .or_default()
+                            .entry(language.id)
+                            .or_insert_with(|| (language.clone(), vec![]))
+                            .1
                             .extend(content_ranges);
                     } else {
                         queue.push(ParseStep {
@@ -1303,7 +1304,7 @@ fn get_injections(
         }
     }
 
-    for (language, mut included_ranges) in combined_injection_ranges.drain() {
+    for (_, (language, mut included_ranges)) in combined_injection_ranges.drain() {
         included_ranges.sort_unstable_by(|a, b| {
             Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
         });

@@ -68,9 +68,21 @@ pub struct TypeScriptLspAdapter {
 impl TypeScriptLspAdapter {
     const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-
+    const SERVER_NAME: &'static str = "typescript-language-server";
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         TypeScriptLspAdapter { node }
+    }
+    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+        let is_yarn = adapter
+            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .await
+            .is_ok();
+
+        if is_yarn {
+            ".yarn/sdks/typescript/lib"
+        } else {
+            "node_modules/typescript/lib"
+        }
     }
 }
 
@@ -82,7 +94,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("typescript-language-server".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
@@ -196,13 +208,14 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
+        let tsdk_path = Self::tsdk_path(adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
             "tsserver": {
-                "path": "node_modules/typescript/lib",
+                "path": tsdk_path,
             },
             "preferences": {
                 "includeInlayParameterNameHints": "all",
@@ -220,8 +233,17 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
-        _cx: &mut AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Value> {
+        let override_options = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.initialization_options.clone())
+        })?;
+        if let Some(options) = override_options {
+            return Ok(options);
+        }
         Ok(json!({
             "completions": {
               "completeFunctionCalls": true

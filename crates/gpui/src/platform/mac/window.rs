@@ -452,7 +452,7 @@ impl MacWindowState {
         let bounds = Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
-                px((window_frame.origin.y - screen_frame.origin.y) as f32),
+                px((window_frame.origin.y + screen_frame.origin.y) as f32),
             ),
             size(
                 px(window_frame.size.width as f32),
@@ -546,7 +546,7 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let frame = NSScreen::visibleFrame(screen);
+                let frame = NSScreen::frame(screen);
                 let display_id = display_id_for_screen(screen);
                 if display_id == display.0 {
                     screen_frame = Some(frame);
@@ -557,7 +557,7 @@ impl MacWindow {
             let screen_frame = screen_frame.unwrap_or_else(|| {
                 let screen = NSScreen::mainScreen(nil);
                 target_screen = screen;
-                NSScreen::visibleFrame(screen)
+                NSScreen::frame(screen)
             });
 
             let window_rect = NSRect::new(
@@ -940,6 +940,11 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -1060,6 +1065,8 @@ impl PlatformWindow for MacWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
+
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.as_ref().lock().resize_callback = Some(callback);

@@ -6,8 +6,7 @@
       "ctrl-pagedown": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem",
-      "cmd-+": "zed::IncreaseBufferFontSize"
+      "ctrl-tab": "pane::ActivatePrevItem"
     }
   },
   {
@@ -26,6 +25,10 @@
       "alt-shift-cmd-down": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
+      "cmd-k cmd-u": "editor::ConvertToUpperCase",
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "cmd-shift-j": "editor::JoinLines",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"
     }

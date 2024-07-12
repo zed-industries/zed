@@ -21,13 +21,16 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    Point,
+    ParsedMarkdown, Point,
 };
 use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
-use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use project::{
+    lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
+    project_settings::{LspSettings, ProjectSettings},
+};
 use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
@@ -6832,6 +6835,626 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
+async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]".to_string(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let language = Arc::new(language);
+
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+
+    cx.editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+    });
+}
+
+#[gpui::test]
+async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(false);
+                settings.show_signature_help_after_edits = Some(false);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]".to_string(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let language = Arc::new(language);
+
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    // Ensure that signature_help is not called when no signature help is enabled.
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.task().is_none());
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+
+    // Ensure that signature_help is called when enabled afte edits
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(false);
+                settings.show_signature_help_after_edits = Some(true);
+            });
+        });
+    });
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        editor.signature_help_state = SignatureHelpState::default();
+    });
+
+    // Ensure that signature_help is called when auto signature help override is enabled
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(true);
+                settings.show_signature_help_after_edits = Some(false);
+            });
+        });
+    });
+    cx.set_state(
+        &r#"
+            fn main() {
+                sampleˇ
+            }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|view, cx| {
+        view.handle_input("(", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            fn main() {
+                sample(ˇ)
+            }
+        "
+        .unindent(),
+    );
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+    });
+}
+
+#[gpui::test]
+async fn test_signature_help(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // A test that directly calls `show_signature_help`
+    cx.update_editor(|editor, cx| {
+        editor.show_signature_help(&ShowSignatureHelp, cx);
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+
+    cx.editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text, highlights, ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+    });
+
+    // When exiting outside from inside the brackets, `signature_help` is closed.
+    cx.set_state(indoc! {"
+        fn main() {
+            sample(ˇ);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: Vec::new(),
+        active_signature: None,
+        active_parameter: None,
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown())
+        .await;
+
+    cx.editor(|editor, _| {
+        assert!(!editor.signature_help_state.is_shown());
+    });
+
+    // When entering inside the brackets from outside, `show_signature_help` is automatically called.
+    cx.set_state(indoc! {"
+        fn main() {
+            sample(ˇ);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.is_shown());
+    });
+
+    // Restore the popover with more parameter input
+    cx.set_state(indoc! {"
+        fn main() {
+            sample(param1, param2ˇ);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(1),
+    };
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+
+    // When selecting a range, the popover is gone.
+    // Avoid using `cx.set_state` to not actually edit the document, just change its selections.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, «ˇparam2»);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.editor(|editor, _| {
+        assert!(!editor.signature_help_state.is_shown());
+    });
+
+    // When unselecting again, the popover is back if within the brackets.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.is_shown());
+    });
+
+    // Test to confirm that SignatureHelp does not appear after deselecting multiple ranges when it was hidden by pressing Escape.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(0, 0)..Point::new(0, 0)));
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(1),
+    };
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, cx| {
+        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+    });
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, «ˇparam2»);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown()) // because hidden by escape
+        .await;
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12448,6 +13071,21 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
         "Assert selections are {}",
         marked_text
     );
+}
+
+pub fn handle_signature_help_request(
+    cx: &mut EditorLspTestContext,
+    mocked_response: lsp::SignatureHelp,
+) -> impl Future<Output = ()> {
+    let mut request =
+        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
+            let mocked_response = mocked_response.clone();
+            async move { Ok(Some(mocked_response)) }
+        });
+
+    async move {
+        request.next().await;
+    }
 }
 
 /// Handle completion request passing a marked string specifying where the completion

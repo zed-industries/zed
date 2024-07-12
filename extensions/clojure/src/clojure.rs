@@ -1,5 +1,5 @@
 use std::fs;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, LanguageServerId, Result};
 
 struct ClojureExtension {
     cached_binary_path: Option<String>,
@@ -8,7 +8,7 @@ struct ClojureExtension {
 impl ClojureExtension {
     fn language_server_binary_path(
         &mut self,
-        config: zed::LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<String> {
         if let Some(path) = worktree.which("clojure-lsp") {
@@ -22,7 +22,7 @@ impl ClojureExtension {
         }
 
         zed::set_language_server_installation_status(
-            &config.name,
+            &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let release = zed::latest_github_release(
@@ -60,7 +60,7 @@ impl ClojureExtension {
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &config.name,
+                &language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
@@ -95,11 +95,11 @@ impl zed::Extension for ClojureExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: self.language_server_binary_path(config, worktree)?,
+            command: self.language_server_binary_path(language_server_id, worktree)?,
             args: Vec::new(),
             env: Default::default(),
         })
