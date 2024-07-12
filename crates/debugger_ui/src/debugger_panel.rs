@@ -366,7 +366,7 @@ impl DebugPanel {
                             item.client().id() == client_id && item.thread_id() == thread_id
                         });
 
-                    if existing_item {
+                    if !existing_item {
                         let debug_panel = cx.view().clone();
                         this.pane.update(cx, |this, cx| {
                             let tab = cx.new_view(|cx| {
