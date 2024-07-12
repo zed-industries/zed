@@ -46,7 +46,7 @@ use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds, SurroundsType};
 use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
-use workspace::{self, item::FollowableItem, Workspace};
+use workspace::{self, Workspace};
 
 use crate::state::ReplayableAction;
 
@@ -241,7 +241,7 @@ impl Vim {
         self.active_editor = Some(editor.clone().downgrade());
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             EditorEvent::SelectionsChanged { local: true } => {
-                if editor.read(cx).leader_peer_id(cx).is_none() {
+                if editor.read(cx).leader_peer_id().is_none() {
                     Vim::update(cx, |vim, cx| {
                         vim.local_selections_changed(editor, cx);
                     })
@@ -275,7 +275,7 @@ impl Vim {
                 && !newest_selection_empty
                 && self.state().mode == Mode::Normal
                 // When following someone, don't switch vim mode.
-                && editor.leader_peer_id(cx).is_none()
+                && editor.leader_peer_id().is_none()
         {
             self.switch_mode(Mode::Visual, true, cx);
         }

@@ -3398,7 +3398,7 @@ impl Workspace {
 
     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
         self.follower_states.iter().find_map(|(leader_id, state)| {
-            if state.center_pane == *pane {
+            if state.center_pane == *pane || state.dock_pane.as_ref() == Some(pane) {
                 Some(*leader_id)
             } else {
                 None
