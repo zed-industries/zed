@@ -25,6 +25,7 @@ http.workspace = true
 language.workspace = true
 lsp.workspace = true
 menu.workspace = true
+ollama.workspace = true
 open_ai.workspace = true
 project.workspace = true
 proto.workspace = true

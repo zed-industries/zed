@@ -5991,6 +5991,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "ollama",
  "open_ai",
  "project",
  "proto",
