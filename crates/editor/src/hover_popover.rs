@@ -7,9 +7,9 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
-    InteractiveText, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString,
-    Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task, TextStyle,
-    TextStyleRefinement, View, ViewContext, WeakView,
+    InteractiveText, IntoElement, Length, MouseButton, ParentElement, Pixels, ScrollHandle,
+    SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task,
+    TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -300,8 +300,6 @@ fn show_hover(
             });
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
-                println!("{:?}", local_diagnostic);
-                println!("{:?}", primary_diagnostic);
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
                         format!("{source}: {}", local_diagnostic.diagnostic.message)
@@ -309,35 +307,37 @@ fn show_hover(
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
 
+                let mut border_color: Option<Hsla> = None;
+                let mut background_color: Option<Hsla> = None;
+
                 let parsed_content = cx
                     .new_view(|cx| {
                         let status_colors = cx.theme().status();
-
-                        struct DiagnosticColors {
-                            pub background: Hsla,
-                            pub border: Hsla,
-                        }
+                        // struct DiagnosticColors {
+                        //     pub background: Hsla,
+                        //     pub border: Hsla,
+                        // }
                         let diagnostic_colors = match local_diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => DiagnosticColors {
-                                background: status_colors.error_background,
-                                border: status_colors.error_border,
-                            },
-                            DiagnosticSeverity::WARNING => DiagnosticColors {
-                                background: status_colors.warning_background,
-                                border: status_colors.warning_border,
-                            },
-                            DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                                background: status_colors.info_background,
-                                border: status_colors.info_border,
-                            },
-                            DiagnosticSeverity::HINT => DiagnosticColors {
-                                background: status_colors.hint_background,
-                                border: status_colors.hint_border,
-                            },
-                            _ => DiagnosticColors {
-                                background: status_colors.ignored_background,
-                                border: status_colors.ignored_border,
-                            },
+                            DiagnosticSeverity::ERROR => {
+                                background_color = Some(status_colors.error_background);
+                                border_color = Some(status_colors.error_border);
+                            }
+                            DiagnosticSeverity::WARNING => {
+                                background_color = Some(status_colors.warning_background);
+                                border_color = Some(status_colors.warning_border);
+                            }
+                            DiagnosticSeverity::INFORMATION => {
+                                background_color = Some(status_colors.info_background);
+                                border_color = Some(status_colors.info_border);
+                            }
+                            DiagnosticSeverity::HINT => {
+                                background_color = Some(status_colors.hint_background);
+                                border_color = Some(status_colors.hint_border);
+                            }
+                            _ => {
+                                background_color = Some(status_colors.ignored_background);
+                                border_color = Some(status_colors.ignored_border);
+                            }
                         };
                         let settings = ThemeSettings::get_global(cx);
                         let markdown_style = MarkdownStyle {
@@ -345,7 +345,7 @@ fn show_hover(
                                 font_family: settings.buffer_font.family.clone(),
                                 font_size: settings.buffer_font_size.into(),
                                 color: cx.theme().colors().editor_foreground,
-                                background_color: Some(diagnostic_colors.background),
+                                background_color: Some(background_color.unwrap()),
                                 ..Default::default()
                             },
                             selection_background_color: { cx.theme().players().local().selection },
@@ -360,6 +360,8 @@ fn show_hover(
                     local_diagnostic,
                     primary_diagnostic,
                     parsed_content,
+                    border_color,
+                    background_color,
                 })
             } else {
                 None
@@ -572,7 +574,7 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(style, max_size, cx));
+            elements.push(diagnostic_popover.render(max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
             elements.push(info_popover.render(max_size, cx));
@@ -597,7 +599,6 @@ impl HoverState {
                 }
             }
         }
-        println!("{}", hover_popover_is_focused);
         return hover_popover_is_focused;
     }
 }
@@ -653,18 +654,14 @@ impl InfoPopover {
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
-    pub parsed_content: Option<View<Markdown>>,
-    // pub keyboard_grace: Rc<RefCell<bool>>,
-    // pub anchor: Option<Anchor>,
+    parsed_content: Option<View<Markdown>>,
+    border_color: Option<Hsla>,
+    background_color: Option<Hsla>, // pub keyboard_grace: Rc<RefCell<bool>>,
+                                    // pub anchor: Option<Anchor>,
 }
 
 impl DiagnosticPopover {
-    pub fn render(
-        &self,
-        style: &EditorStyle,
-        max_size: Size<Pixels>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement {
+    pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
         let mut d = div()
             .id("diagnostic")
             .block()
@@ -674,7 +671,7 @@ impl DiagnosticPopover {
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .max_w(max_size.width)
+            .max_w(Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(max_size.width.0/5.)))))
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
             .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
@@ -685,24 +682,16 @@ impl DiagnosticPopover {
             // because that would move the cursor.
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             // .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
-            .child(
-                div()
-                    .id("diagnostic-inner")
-                    .overflow_y_scroll()
-                    // .px_2()
-                    // .py_1()
-                    .text_color(style.text.color)
-                    .border_1()
-                    // .bg(diagnostic_colors.background)
-                    // .border_color(diagnostic_colors.border)
-                    .rounded_lg(), // .child(SharedString::from(text))
-                                   // .child(InteractiveText::new(
-                                   //     "diagnostic-text",
-                                   //     StyledText::new(SharedString::from(text)),
-                                   // )),
-            );
+
+            ;
         if let Some(markdown) = &self.parsed_content {
             d = d.child(markdown.clone());
+        }
+        if let Some(border_color) = &self.border_color {
+            d = d.border_1().border_color(border_color.clone()).rounded_lg()
+        }
+        if let Some(backgorund_color) = &self.background_color {
+            d = d.bg(backgorund_color.clone())
         }
         d.into_any_element()
     }
