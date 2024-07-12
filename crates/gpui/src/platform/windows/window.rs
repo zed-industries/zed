@@ -35,6 +35,7 @@ pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
+    pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -82,6 +83,7 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
+        let border_offset = WindowBorderOffset::default();
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -94,6 +96,7 @@ impl WindowsWindowState {
             origin,
             logical_size,
             fullscreen_restore_bounds,
+            border_offset,
             scale_factor,
             callbacks,
             input_handler,
@@ -124,7 +127,8 @@ impl WindowsWindowState {
         }
     }
 
-    fn window_bounds(&self) -> WindowBounds {
+    // Calculate the bounds used for saving and whether the window is maximized.
+    fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -133,22 +137,22 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
-        let physical_size = size(
-            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
-        );
-        let bounds = Bounds {
-            origin: logical_point(
-                placement.rcNormalPosition.left as f32,
-                placement.rcNormalPosition.top as f32,
+        (
+            calculate_client_rect(
+                placement.rcNormalPosition,
+                self.border_offset,
                 self.scale_factor,
             ),
-            size: physical_size.to_pixels(self.scale_factor),
-        };
+            placement.showCmd == SW_SHOWMAXIMIZED.0 as u32,
+        )
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        let (bounds, maximized) = self.calculate_window_bounds();
 
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+        } else if maximized {
             WindowBounds::Maximized(bounds)
         } else {
             WindowBounds::Windowed(bounds)
@@ -308,7 +312,6 @@ impl WindowsWindow {
         };
         let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
         register_drag_drop(state_ptr.clone());
-        let wnd = Self(state_ptr);
 
         unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -322,13 +325,16 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
-            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            placement.rcNormalPosition = calcualte_window_position(bounds, raw_hwnd).unwrap();
+            let mut lock = state_ptr.state.borrow_mut();
+            let bounds = bounds.to_device_pixels(lock.scale_factor);
+            lock.border_offset.udpate(raw_hwnd).unwrap();
+            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
+            drop(lock);
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
-        wnd
+        Self(state_ptr)
     }
 }
 
@@ -544,10 +550,6 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 let mut lock = state_ptr.state.borrow_mut();
-                lock.fullscreen_restore_bounds = Bounds {
-                    origin: lock.origin,
-                    size: lock.logical_size,
-                };
                 let StyleAndBounds {
                     style,
                     x,
@@ -557,6 +559,8 @@ impl PlatformWindow for WindowsWindow {
                 } = if let Some(state) = lock.fullscreen.take() {
                     state
                 } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
                     let style =
                         WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
@@ -861,6 +865,32 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WindowBorderOffset {
+    width_offset: i32,
+    height_offset: i32,
+}
+
+impl WindowBorderOffset {
+    pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+        let window_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut rect)?;
+            rect
+        };
+        let client_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetClientRect(hwnd, &mut rect)?;
+            rect
+        };
+        self.width_offset =
+            (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+        self.height_offset =
+            (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+        Ok(())
+    }
+}
+
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -955,36 +985,49 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     };
 }
 
-fn calcualte_window_position(bounds: Bounds<DevicePixels>, hwnd: HWND) -> anyhow::Result<RECT> {
+fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
+    // NOTE:
+    // The reason that not using `AdjustWindowRectEx()` here is
+    // that the size reported by this function is incorrect.
+    // You can test it, and there are similar discussions online.
+    // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
+    //
+    // So we manually calculate these values here.
     let mut rect = RECT {
         left: bounds.left().0,
         top: bounds.top().0,
         right: bounds.right().0,
         bottom: bounds.bottom().0,
     };
-    let window_rect = unsafe {
-        let mut rect = std::mem::zeroed();
-        GetWindowRect(hwnd, &mut rect)?;
-        rect
-    };
-    let client_rect = unsafe {
-        let mut rect = std::mem::zeroed();
-        GetClientRect(hwnd, &mut rect)?;
-        rect
-    };
-    let width_offset =
-        (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
-    let height_offset =
-        (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
-    let left_offset = width_offset / 2;
-    let top_offset = height_offset / 2;
-    let right_offset = width_offset - left_offset;
-    let bottom_offet = height_offset - top_offset;
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
     rect.left -= left_offset;
     rect.top -= top_offset;
     rect.right += right_offset;
     rect.bottom += bottom_offet;
-    Ok(rect)
+    rect
+}
+
+fn calculate_client_rect(
+    rect: RECT,
+    border_offset: WindowBorderOffset,
+    scale_factor: f32,
+) -> Bounds<Pixels> {
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
+    let left = rect.left + left_offset;
+    let top = rect.top + top_offset;
+    let right = rect.right - right_offset;
+    let bottom = rect.bottom - bottom_offet;
+    let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
+    Bounds {
+        origin: logical_point(left as f32, top as f32, scale_factor),
+        size: physical_size.to_pixels(scale_factor),
+    }
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
