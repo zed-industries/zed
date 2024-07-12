@@ -526,7 +526,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        read_from_clipboard().log_err()
+        read_from_clipboard(self.clipboard_hash_format, self.clipboard_metadata_format)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -741,17 +741,54 @@ fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
     Ok(())
 }
 
-fn read_from_clipboard() -> Result<ClipboardItem> {
+fn read_from_clipboard(hash_format: u32, metadata_format: u32) -> Option<ClipboardItem> {
+    let result = read_from_clipboard_inner(hash_format, metadata_format).log_err();
+    unsafe { CloseClipboard().log_err() };
+    result
+}
+
+fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<ClipboardItem> {
     unsafe {
         OpenClipboard(None)?;
-        let package = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
-        let text = PCWSTR(package.0 as *const u16);
-        let text = String::from_utf16_lossy(text.as_wide());
-        CloseClipboard()?;
-        Ok(ClipboardItem {
+        let text = {
+            let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
+            let text = PCWSTR(handle.0 as *const u16);
+            String::from_utf16_lossy(text.as_wide())
+        };
+        let mut item = ClipboardItem {
             text,
             metadata: None,
-        })
+        };
+        let Some(hash) = read_hash_from_clipboard(hash_format) else {
+            return Ok(item);
+        };
+        let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
+            return Ok(item);
+        };
+        if hash == ClipboardItem::text_hash(&item.text) {
+            item.metadata = Some(metadata);
+        }
+        Ok(item)
+    }
+}
+
+fn read_hash_from_clipboard(hash_format: u32) -> Option<u64> {
+    unsafe {
+        let handle = GetClipboardData(hash_format).log_err()?;
+        let raw_ptr = handle.0 as *const u16;
+        let hash_bytes: [u8; 8] = std::slice::from_raw_parts(raw_ptr.cast::<u8>(), 8)
+            .to_vec()
+            .try_into()
+            .log_err()?;
+        Some(u64::from_ne_bytes(hash_bytes))
+    }
+}
+
+fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
+    unsafe {
+        let handle = GetClipboardData(metadata_format).log_err()?;
+        let text = PCWSTR(handle.0 as *const u16);
+        Some(String::from_utf16_lossy(text.as_wide()))
     }
 }
 
