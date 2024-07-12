@@ -62,7 +62,7 @@ pub struct BlockRow(pub(super) u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
 
 pub struct Block {
     id: BlockId,
@@ -77,7 +77,7 @@ pub struct BlockProperties<P> {
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>,
+    pub render: RenderBlock,
     pub disposition: BlockDisposition,
 }
 

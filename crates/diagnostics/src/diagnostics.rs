@@ -21,8 +21,9 @@ use futures::{
 };
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    FocusableView, InteractiveElement, IntoElement, Model, MouseButton, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
@@ -37,6 +38,10 @@ use std::{
     any::{Any, TypeId},
     cmp::Ordering,
     ops::Range,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -1250,12 +1255,16 @@ impl PathUpdate {
                                 let diagnostic = &self.new_diagnostics.get(i)?.0.entry.diagnostic;
                                 Some(diagnostic.message.matches('\n').count() as u8 + 1)
                             })
-                            .sum::<u8>();
+                            .sum::<u8>()
+                            + 1;
                         Some(BlockProperties {
                             position: earliest_in_row_position,
                             height: total_lines,
                             style: BlockStyle::Sticky,
-                            render: self.render_same_line_diagnostics(diagnostics_at_line),
+                            render: self.render_same_line_diagnostics(
+                                earliest_in_row_position,
+                                diagnostics_at_line,
+                            ),
                             disposition: BlockDisposition::Above,
                         })
                     }
@@ -1307,17 +1316,43 @@ impl PathUpdate {
             .collect()
     }
 
-    fn render_same_line_diagnostics(&self, diagnostics_at_line: &[usize]) -> RenderBlock {
+    fn render_same_line_diagnostics(
+        &self,
+        row_position: editor::Anchor,
+        diagnostics_at_line: &[usize],
+    ) -> RenderBlock {
         let diagnostics = diagnostics_at_line
             .iter()
             .filter_map(|&index| self.new_diagnostics.get(index))
             .map(|(diagnostic_data, _)| diagnostic_data.entry.diagnostic.clone())
             .collect::<Vec<_>>();
+        let expanded = Arc::new(AtomicBool::new(false));
         Box::new(move |cx: &mut BlockContext| {
-            let mut parent = v_flex();
-            for diagnostic in diagnostics.clone() {
-                let renderer = diagnostic_block_renderer(diagnostic, false, true);
-                parent = parent.child(renderer(cx));
+            let button_expanded = expanded.clone();
+            let expanded = expanded.load(atomic::Ordering::Acquire);
+            let mut parent = v_flex()
+                .child(Button::new(
+                    row_position.text_anchor.offset,
+                    if expanded {
+                        "Click to collapse"
+                    } else {
+                        "Click to expand"
+                    },
+                ))
+                .on_mouse_down(MouseButton::Left, move |_, _| {
+                    button_expanded.store(!expanded, atomic::Ordering::Release);
+                });
+            if expanded {
+                for diagnostic in diagnostics.clone() {
+                    let mut renderer = diagnostic_block_renderer(diagnostic, false, true);
+                    parent = parent.child(renderer(cx));
+                }
+            } else {
+                if let Some(first_diagnostic) = diagnostics.first() {
+                    let mut renderer =
+                        diagnostic_block_renderer(first_diagnostic.clone(), false, true);
+                    parent = parent.child(renderer(cx));
+                }
             }
             parent.into_any_element()
         })
