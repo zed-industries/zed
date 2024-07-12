@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use nix::unistd::Uid;
+use users::get_current_uid;
 
 use release_channel::ReleaseChannel;
 
@@ -15,20 +15,27 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_millis(35);
 const SEND_TIMEOUT: Duration = Duration::from_millis(20);
 
 fn address() -> SocketAddr {
-    // These port numbers have a 10 port offset between each release channel
-    // to avoid conflicts between different users. This means that only up to
-    // 10 users can run Zed on the same machine at the same time.
+    // These port numbers are offset by the user ID to avoid conflicts between
+    // different users on the same machine. In addition to that the ports for each
+    // release channel are spaced out by 100 to avoid conflicts between different
+    // users running different release channels on the same machine. This ends up
+    // interleaving the ports between different users and different release channels.
+    //
+    // On macOS user IDs start at 501 and on Linux they start at 1000. The first user
+    // on a Mac with ID 501 running a dev channel build will use port 44238, and the
+    // second user with ID 502 will use port 44239, and so on. User 501 will use ports
+    // 44338, 44438, and 44538 for the preview, stable, and nightly channels,
+    // respectively. User 502 will use ports 44339, 44439, and 44539 for the preview,
+    // stable, and nightly channels, respectively.
     let port = match *release_channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => 43737,
-        ReleaseChannel::Preview => 43747,
-        ReleaseChannel::Stable => 43757,
-        ReleaseChannel::Nightly => 43767,
+        ReleaseChannel::Preview => 43837,
+        ReleaseChannel::Stable => 43937,
+        ReleaseChannel::Nightly => 44037,
     };
-    let user_id = Uid::current().as_raw() as u16;
+    let user_id = get_current_uid() as u16;
     let user_port = port + user_id;
 
-    let channel_name = &release_channel::RELEASE_CHANNEL_NAME;
-    println!("Using port: {user_port} for release channel {:?}, port={port} user_id={user_id}", channel_name);
     SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
 }
 

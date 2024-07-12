@@ -64,7 +64,7 @@ log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread", "signal", "user"] }
+nix = {workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
@@ -98,6 +98,7 @@ theme.workspace = true
 theme_selector.workspace = true
 urlencoding = "2.1.2"
 ui.workspace = true
+users = "0.11"
 util.workspace = true
 uuid.workspace = true
 vim.workspace = true

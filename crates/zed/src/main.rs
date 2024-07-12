@@ -312,7 +312,7 @@ fn main() {
     {
         if env::var("ZED_STATELESS").is_err() {
             if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
-                println!("zed is already running {:?}", crate::zed::listen_for_cli_connections(open_listener.clone()));
+                println!("zed is already running");
                 return;
             }
         }
