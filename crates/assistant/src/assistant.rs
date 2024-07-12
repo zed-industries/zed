@@ -3,6 +3,7 @@ pub mod assistant_settings;
 mod completion_provider;
 mod context_store;
 mod inline_assistant;
+mod local_model;
 mod model_selector;
 mod prompt_library;
 mod prompts;
