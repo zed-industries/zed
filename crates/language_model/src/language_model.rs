@@ -10,7 +10,7 @@ use anyhow::Result;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, Model, Task};
 use serde::{Deserialize, Serialize};
-use ui::SharedString;
+use ui::{SharedString, WindowContext};
 
 #[derive(Debug, Clone)]
 pub struct LanguageModelRequest {
@@ -72,8 +72,13 @@ impl<T: LanguageModelProvider> LanguageModelProvider for Model<T> {
         self.read(cx).authenticate(cx)
     }
 
-    fn authentication_prompt(&self, cx: &mut AppContext) -> AnyView {
-        self.update(cx, |provider, cx| provider.authentication_prompt(cx))
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+        let handle = cx.window_handle();
+
+        self.update(cx, |provider, cx| {
+            handle.update(cx, |_, cx| provider.authentication_prompt(cx))
+        })
+        .unwrap() // TODO: Handle this better
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {

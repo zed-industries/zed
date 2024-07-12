@@ -2,7 +2,7 @@ use super::*;
 use anthropic::preprocess_anthropic_request;
 use client::Client;
 use futures::{FutureExt, StreamExt, TryFutureExt};
-use gpui::{ModelContext, Render};
+use gpui::{ModelContext, Render, WeakModel};
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, IntoElement, ViewContext};
@@ -73,6 +73,7 @@ pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
     status: client::Status,
     _maintain_client_status: Task<()>,
+    handle: WeakModel<CloudLanguageModelProvider>,
 }
 
 impl CloudLanguageModelProvider {
@@ -95,6 +96,7 @@ impl CloudLanguageModelProvider {
         Self {
             client,
             status,
+            handle: cx.weak_model(),
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -124,7 +126,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| AuthenticationPrompt).into()
+        cx.new_view(|_cx| AuthenticationPrompt {
+            handle: self.handle.clone(),
+        })
+        .into()
     }
 
     fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
@@ -195,10 +200,12 @@ impl LanguageModel for CloudLanguageModel {
     }
 }
 
-struct AuthenticationPrompt;
+struct AuthenticationPrompt {
+    handle: WeakModel<CloudLanguageModelProvider>,
+}
 
 impl Render for AuthenticationPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
 
         v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
@@ -211,12 +218,11 @@ impl Render for AuthenticationPrompt {
                         .icon_position(IconPosition::Start)
                         .style(ButtonStyle::Filled)
                         .full_width()
-                        .on_click(|_, cx| {
-                            //TODO auth
-                            // CompletionProvider::global(cx)
-                            //     .authenticate(cx)
-                            //     .detach_and_log_err(cx);
-                        }),
+                        .on_click(cx.listener(move |this, _, cx| {
+                            this.handle.update(cx, |provider, cx| {
+                                provider.authenticate(cx).detach_and_log_err(cx);
+                            });
+                        })),
                 )
                 .child(
                     div().flex().w_full().items_center().child(

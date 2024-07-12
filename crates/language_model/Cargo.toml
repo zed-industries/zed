@@ -13,6 +13,7 @@ path = "src/language_model.rs"
 doctest = false
 
 [dependencies]
+anthropic.workspace = true
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -20,8 +21,10 @@ copilot.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 language.workspace = true
 lsp.workspace = true
+menu.workspace = true
 project.workspace = true
 proto.workspace = true
 serde.workspace = true
@@ -30,5 +33,7 @@ settings.workspace = true
 strum.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
+tiktoken-rs.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true

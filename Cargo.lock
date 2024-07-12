@@ -5979,6 +5979,7 @@ dependencies = [
 name = "language_model"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "client",
  "collections",
@@ -5986,8 +5987,10 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
+ "http 0.1.0",
  "language",
  "lsp",
+ "menu",
  "project",
  "proto",
  "serde",
@@ -5995,8 +5998,10 @@ dependencies = [
  "settings",
  "strum",
  "theme",
+ "tiktoken-rs",
  "tree-sitter",
  "ui",
+ "util",
  "workspace",
 ]
 
