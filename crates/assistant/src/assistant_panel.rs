@@ -376,7 +376,7 @@ impl AssistantPanel {
 
     fn handle_pane_event(
         &mut self,
-        _pane: View<Pane>,
+        pane: View<Pane>,
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -386,14 +386,25 @@ impl AssistantPanel {
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
             pane::Event::AddItem { item } => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
+                self.workspace
+                    .update(cx, |workspace, cx| {
                         item.added_to_pane(workspace, self.pane.clone(), cx)
-                    });
-                }
+                    })
+                    .ok();
             }
 
-            pane::Event::RemoveItem { .. } | pane::Event::ActivateItem { .. } => {
+            pane::Event::ActivateItem { local } => {
+                if *local {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.unfollow_in_pane(&pane, cx);
+                        })
+                        .ok();
+                }
+                cx.emit(AssistantPanelEvent::ContextEdited);
+            }
+
+            pane::Event::RemoveItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
             }
 

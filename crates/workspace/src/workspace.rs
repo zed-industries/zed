@@ -2680,7 +2680,7 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    fn unfollow_in_pane(
+    pub fn unfollow_in_pane(
         &mut self,
         pane: &View<Pane>,
         cx: &mut ViewContext<Workspace>,
