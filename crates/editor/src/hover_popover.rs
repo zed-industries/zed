@@ -72,6 +72,18 @@ pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) ->
             }
         }
     }
+
+    let diagnostic_popover = editor.hover_state.diagnostic_popover.clone();
+    if let Some(d) = diagnostic_popover {
+        let keyboard_grace = d.keyboard_grace.borrow();
+        if *keyboard_grace {
+            if let Some(anchor) = d.anchor {
+                show_hover(editor, anchor, false, cx);
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -372,6 +384,8 @@ fn show_hover(
                     parsed_content,
                     border_color,
                     background_color,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
                 })
             } else {
                 None
@@ -667,12 +681,13 @@ pub struct DiagnosticPopover {
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
-    // pub keyboard_grace: Rc<RefCell<bool>>,
-    // pub anchor: Option<Anchor>,
+    pub keyboard_grace: Rc<RefCell<bool>>,
+    pub anchor: Option<Anchor>,
 }
 
 impl DiagnosticPopover {
     pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+        let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("diagnostic")
             .block()
@@ -682,7 +697,9 @@ impl DiagnosticPopover {
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .max_w(Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(max_size.width.0/5.)))))
+            .max_w(Length::Definite(DefiniteLength::Absolute(
+                AbsoluteLength::Pixels(px(max_size.width.0 / 5.)),
+            )))
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
             .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
@@ -691,10 +708,11 @@ impl DiagnosticPopover {
             .on_mouse_move(|_, cx| cx.stop_propagation())
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            // .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
-
-            ;
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                let mut keyboard_grace = keyboard_grace.borrow_mut();
+                *keyboard_grace = false;
+                cx.stop_propagation();
+            });
         if let Some(markdown) = &self.parsed_content {
             d = d.child(markdown.clone());
         }
