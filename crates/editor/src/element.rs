@@ -408,8 +408,10 @@ impl EditorElement {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-
                 editor.update(cx, |editor, cx| {
+                    if editor.hover_state.focused(cx) {
+                        return;
+                    }
                     Self::modifiers_changed(editor, event, &position_map, &text_hitbox, cx)
                 })
             }
