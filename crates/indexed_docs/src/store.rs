@@ -21,12 +21,6 @@ use crate::IndexedDocsRegistry;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct ProviderId(pub Arc<str>);
 
-impl ProviderId {
-    pub fn rustdoc() -> Self {
-        Self("rustdoc".into())
-    }
-}
-
 /// The name of a package.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct PackageName(Arc<str>);

@@ -8,7 +8,8 @@ use assistant_slash_command::{
 };
 use gpui::{AppContext, Model, Task, WeakView};
 use indexed_docs::{
-    IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName, ProviderId, RustdocIndexer,
+    DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
+    ProviderId,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -34,22 +35,22 @@ impl DocsSlashCommand {
         ))
     }
 
-    /// Ensures that the rustdoc provider is registered.
+    /// Ensures that the indexed doc providers for Rust are registered.
     ///
     /// Ideally we would do this sooner, but we need to wait until we're able to
     /// access the workspace so we can read the project.
-    fn ensure_rustdoc_provider_is_registered(
+    fn ensure_rust_doc_providers_are_registered(
         &self,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) {
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         if indexed_docs_registry
-            .get_provider_store(ProviderId::rustdoc())
+            .get_provider_store(LocalRustdocProvider::id())
             .is_none()
         {
             let index_provider_deps = maybe!({
-                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+                let workspace = workspace.clone().ok_or_else(|| anyhow!("no workspace"))?;
                 let workspace = workspace
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace was dropped"))?;
@@ -63,9 +64,29 @@ impl DocsSlashCommand {
             });
 
             if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                indexed_docs_registry.register_provider(Box::new(RustdocIndexer::new(Box::new(
-                    LocalProvider::new(fs, cargo_workspace_root),
-                ))));
+                indexed_docs_registry.register_provider(Box::new(LocalRustdocProvider::new(
+                    fs,
+                    cargo_workspace_root,
+                )));
+            }
+        }
+
+        if indexed_docs_registry
+            .get_provider_store(DocsDotRsProvider::id())
+            .is_none()
+        {
+            let http_client = maybe!({
+                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                let project = workspace.read(cx).project().clone();
+                anyhow::Ok(project.read(cx).client().http_client().clone())
+            });
+
+            if let Some(http_client) = http_client.log_err() {
+                indexed_docs_registry
+                    .register_provider(Box::new(DocsDotRsProvider::new(http_client)));
             }
         }
     }
@@ -95,7 +116,7 @@ impl SlashCommand for DocsSlashCommand {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        self.ensure_rustdoc_provider_is_registered(workspace, cx);
+        self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         let args = DocsSlashCommandArgs::parse(&query);
