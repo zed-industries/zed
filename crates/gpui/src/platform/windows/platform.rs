@@ -22,9 +22,19 @@ use windows::{
     core::*,
     Win32::{
         Foundation::*,
+        Globalization::u_memcpy,
         Graphics::Gdi::*,
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
+        System::{
+            Com::*,
+            DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
+            LibraryLoader::*,
+            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+            Ole::*,
+            SystemInformation::*,
+            Threading::*,
+            Time::*,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     UI::ViewManagement::UISettings,
@@ -498,17 +508,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        if item.text.len() > 0 {
-            set_clipboard_string(item.text()).unwrap();
-        }
+        write_to_clipboard(item);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let text = get_clipboard_string().ok()?;
-        Some(ClipboardItem {
-            text,
-            metadata: None,
-        })
+        read_from_clipboard().log_err()
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -679,4 +683,45 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn write_to_clipboard(item: ClipboardItem) {
+    write_to_clipboard_inner(item).log_err();
+    unsafe { CloseClipboard().log_err() };
+}
+
+fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
+    unsafe {
+        OpenClipboard(None)?;
+        EmptyClipboard()?;
+        let encode_wide = item.text.encode_utf16().collect_vec();
+        let global = GlobalAlloc(GMEM_MOVEABLE, encode_wide.len() * 2)?;
+        let handle = GlobalLock(global);
+        u_memcpy(handle as _, encode_wide.as_ptr(), encode_wide.len() as _);
+        let _ = GlobalUnlock(global);
+        SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(global.0 as isize))?;
+    }
+    Ok(())
+}
+
+fn read_from_clipboard() -> Result<ClipboardItem> {
+    unsafe {
+        let clipboard = OleGetClipboard()?;
+        // read text
+        let format = FORMATETC {
+            cfFormat: CF_UNICODETEXT.0,
+            ptd: std::ptr::null_mut() as _,
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as _,
+        };
+        let data = clipboard.GetData(&format)?;
+        let encode_wide = PCWSTR(GlobalLock(data.u.hGlobal) as *mut u16);
+        let text = String::from_utf16_lossy(encode_wide.as_wide());
+        GlobalUnlock(data.u.hGlobal).log_err();
+        Ok(ClipboardItem {
+            text,
+            metadata: None,
+        })
+    }
 }
