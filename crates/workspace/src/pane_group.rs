@@ -183,7 +183,7 @@ impl Member {
                 }
 
                 let follower_state = follower_states.iter().find_map(|(leader_id, state)| {
-                    if state.pane() == pane {
+                    if state.center_pane == *pane {
                         Some((*leader_id, state))
                     } else {
                         None
@@ -201,6 +201,10 @@ impl Member {
                     })
                 });
 
+                let is_in_panel = follower_state
+                    .as_ref()
+                    .map_or(false, |(_, state)| state.dock_pane.is_some());
+
                 let mut leader_border = None;
                 let mut leader_status_box = None;
                 let mut leader_join_data = None;
@@ -210,7 +214,11 @@ impl Member {
                         .players()
                         .color_for_participant(leader.participant_index.0)
                         .cursor;
-                    leader_color.fade_out(0.3);
+                    if is_in_panel {
+                        leader_color.fade_out(0.75);
+                    } else {
+                        leader_color.fade_out(0.3);
+                    }
                     leader_border = Some(leader_color);
 
                     leader_status_box = match leader.location {
