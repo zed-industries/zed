@@ -141,11 +141,6 @@ impl TextInput {
         cx.notify()
     }
 
-    fn unselect(&mut self, cx: &mut ViewContext<Self>) {
-        self.selected_range = self.cursor_offset()..self.cursor_offset();
-        cx.notify()
-    }
-
     fn offset_from_utf16(&self, offset: usize) -> usize {
         let mut utf8_offset = 0;
         let mut utf16_count = 0;
