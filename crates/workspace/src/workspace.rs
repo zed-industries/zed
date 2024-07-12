@@ -85,7 +85,7 @@ use ui::{
     ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
     WindowContext,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
@@ -280,6 +280,12 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+impl Into<i64> for WorkspaceId {
+    fn into(self) -> i64 {
+        self.0
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -416,6 +422,25 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
                 let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
                 cx.foreground_executor()
                     .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+            },
+        );
+    }
+}
+
+#[derive(Default, Deref, DerefMut)]
+struct UnloadedItemsCleaners(
+    HashMap<Arc<str>, fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>>,
+);
+
+impl Global for UnloadedItemsCleaners {}
+
+pub fn register_unloaded_items_cleaner<I: Item>(cx: &mut AppContext) {
+    if let Some(serialized_item_kind) = I::serialized_item_kind() {
+        let cleaners = cx.default_global::<UnloadedItemsCleaners>();
+        cleaners.insert(
+            Arc::from(serialized_item_kind),
+            |workspace_id, loaded_items, cx| {
+                I::clean_unloaded_items(workspace_id, loaded_items, cx)
             },
         );
     }
@@ -3751,7 +3776,6 @@ impl Workspace {
         };
 
         // don't save workspace state for the empty workspace.
-        println!("location: {:?}", location);
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
@@ -3804,14 +3828,16 @@ impl Workspace {
             }
 
             let mut items_by_project_path = HashMap::default();
-            let mut item_ids = Vec::default();
+            let mut item_ids_by_kind = HashMap::default();
             cx.update(|cx| {
-                for item in center_items
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|item| item)
-                {
-                    item_ids.push(item.item_id().as_u64() as ItemId);
+                for item in center_items.unwrap_or_default().into_iter().flatten() {
+                    if let Some(serialized_item_kind) = item.serialized_item_kind() {
+                        item_ids_by_kind
+                            .entry(serialized_item_kind)
+                            .or_insert(Vec::new())
+                            .push(item.item_id().as_u64() as ItemId);
+                    }
+
                     if let Some(project_path) = item.project_path(cx) {
                         items_by_project_path.insert(project_path, item);
                     }
@@ -3863,12 +3889,19 @@ impl Workspace {
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid
             // the database filling up, we delete items that haven't been loaded now.
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.delete_unloaded_items(item_ids, cx)
-                })?
-                .await
-                .context("cleaning unloaded workspace items from database failed")?;
+            let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
+                let database_id = serialized_workspace.id;
+                let mut tasks = vec![];
+                for (item_kind, loaded_items) in item_ids_by_kind {
+                    if let Some(clean_up) = cx.global::<UnloadedItemsCleaners>().get(item_kind) {
+                        let task = clean_up(database_id, loaded_items, cx).log_err();
+                        tasks.push(task);
+                    }
+                }
+                tasks
+            })?;
+
+            futures::future::join_all(clean_up_tasks).await;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace
@@ -3878,22 +3911,6 @@ impl Workspace {
                 .ok();
 
             Ok(opened_items)
-        })
-    }
-
-    fn delete_unloaded_items(
-        &self,
-        loaded_items: Vec<ItemId>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        let Some(database_id) = self.database_id() else {
-            return Task::ready(Ok(()));
-        };
-
-        cx.spawn(|_| async move {
-            persistence::DB
-                .delete_unloaded_items(database_id, loaded_items)
-                .await
         })
     }
 

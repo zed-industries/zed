@@ -262,6 +262,14 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
+    fn clean_unloaded_items(
+        _workspace_id: WorkspaceId,
+        _loaded_items: Vec<ItemId>,
+        _cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
     fn can_serialize_content(&self, _: &AppContext) -> bool {
         false
     }

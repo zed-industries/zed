@@ -16,7 +16,7 @@ use ui::px;
 use util::ResultExt;
 use uuid::Uuid;
 
-use crate::{ItemId, WorkspaceId};
+use crate::WorkspaceId;
 
 use model::{
     GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
@@ -980,22 +980,22 @@ impl WorkspaceDb {
         }
     }
 
-    pub async fn delete_unloaded_items(
-        &self,
-        workspace: WorkspaceId,
-        item_ids: Vec<ItemId>,
-    ) -> Result<()> {
-        let ids_string = item_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
+    // pub async fn delete_unloaded_items(
+    //     &self,
+    //     workspace: WorkspaceId,
+    //     item_ids: Vec<ItemId>,
+    // ) -> Result<()> {
+    //     let ids_string = item_ids
+    //         .iter()
+    //         .map(|id| id.to_string())
+    //         .collect::<Vec<String>>()
+    //         .join(", ");
 
-        let workspace_id = workspace.0;
-        // TODO: This is hacky because we're reaching into `editor_contents` from this struct
-        let query = format!("DELETE FROM editor_contents WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
-        self.write(move |conn| conn.exec(&query).unwrap()()).await
-    }
+    //     let workspace_id = workspace.0;
+    //     // TODO: This is hacky because we're reaching into `editor_contents` from this struct
+    //     let query = format!("DELETE FROM editor_contents WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
+    //     self.write(move |conn| conn.exec(&query).unwrap()()).await
+    // }
 }
 
 #[cfg(test)]

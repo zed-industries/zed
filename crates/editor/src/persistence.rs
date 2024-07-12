@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::path::PathBuf;
 
 use db::sqlez_macros::sql;
@@ -120,5 +121,23 @@ impl EditorDb {
                 scroll_vertical_offset = ?5
             WHERE item_id = ?1 AND workspace_id = ?2
         }
+    }
+
+    pub async fn delete_unloaded_items(
+        &self,
+        workspace: WorkspaceId,
+        loaded_item_ids: Vec<ItemId>,
+    ) -> Result<()> {
+        println!("Editor. delete_unloaded_items: ids: {:?}", loaded_item_ids);
+        let ids_string = loaded_item_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let workspace_id: i64 = workspace.into();
+
+        let query = format!("DELETE FROM editor_contents WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
+        self.write(move |conn| conn.exec(&query).unwrap()()).await
     }
 }

@@ -1058,11 +1058,21 @@ impl Item for Editor {
         }
     }
 
+    fn clean_unloaded_items(
+        workspace_id: WorkspaceId,
+        loaded_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        cx.spawn(|_| DB.delete_unloaded_items(workspace_id, loaded_items))
+    }
+
     fn can_serialize_content(&self, cx: &AppContext) -> bool {
-        let workspace_can_deserialize = self.workspace().map_or(false, |workspace| {
-            workspace.read(cx).can_deserialize_content(cx)
-        });
-        workspace_can_deserialize && self.buffer().read(cx).as_singleton().is_some()
+        // TODO: This is broken because the `workspace.read(cx)` panics when closing Zed
+        // let workspace_can_deserialize = self.workspace().map_or(false, |workspace| {
+        //     workspace.read(cx).can_deserialize_content(cx)
+        // });
+        // workspace_can_deserialize && self.buffer().read(cx).as_singleton().is_some()
+        self.buffer().read(cx).as_singleton().is_some()
     }
 
     fn serialize_content(
