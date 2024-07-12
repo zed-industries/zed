@@ -77,15 +77,15 @@ struct PathState {
     diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone)]
 struct DiagnosticData {
     language_server_id: LanguageServerId,
     is_primary: bool,
     entry: DiagnosticEntry<language::Anchor>,
 }
 
-impl PartialEq for DiagnosticData {
-    fn eq(&self, other: &Self) -> bool {
+impl DiagnosticData {
+    fn diagnostic_entries_equal(&self, other: &DiagnosticData) -> bool {
         self.language_server_id == other.language_server_id
             && self.is_primary == other.is_primary
             && self.entry.range == other.entry.range
@@ -688,7 +688,7 @@ struct PathUpdate {
         MultiBufferRow,
         (
             editor::Anchor,
-            BTreeMap<(Option<String>, String), Vec<(usize, Option<BlockId>)>>,
+            BTreeMap<(Option<String>, String), Vec<usize>>,
         ),
     >,
     blocks_to_remove: HashSet<BlockId>,
@@ -1024,7 +1024,7 @@ impl PathUpdate {
                                 self.blocks_to_remove.insert(*current_block);
                             }
                             Ordering::Equal => {
-                                if current_diagnostic == new_diagnostic {
+                                if current_diagnostic.diagnostic_entries_equal(&new_diagnostic) {
                                     self.unchanged_blocks
                                         .insert(diagnostic_index, *current_block);
                                 } else {
@@ -1191,10 +1191,7 @@ impl PathUpdate {
                     .or_default();
                 if grouped_diagnostics.len() > 0 {
                     if grouped_diagnostics.len() == 1 {
-                        if let Some((i, block_id)) = grouped_diagnostics.first() {
-                            if let Some(block_id) = block_id {
-                                self.blocks_to_remove.insert(*block_id);
-                            }
+                        if let Some(i) = grouped_diagnostics.first() {
                             if let Some(block_id) = self.unchanged_blocks.remove(i) {
                                 self.blocks_to_remove.insert(block_id);
                             }
@@ -1207,7 +1204,7 @@ impl PathUpdate {
                         self.blocks_to_remove.insert(block_id);
                     }
                 }
-                grouped_diagnostics.push((diagnostic_index, *existing_block));
+                grouped_diagnostics.push(diagnostic_index);
 
                 diagnostics_by_row_label
             },
@@ -1221,7 +1218,7 @@ impl PathUpdate {
                     .flat_map(|diagnostics_with_same_label| {
                         diagnostics_with_same_label
                             .first()
-                            .map(|&(index, _)| (*earliest_in_row_position, index))
+                            .map(|&index| (*earliest_in_row_position, index))
                     })
             })
             .filter(|(_, index)| !self.unchanged_blocks.contains_key(index))
@@ -1258,27 +1255,24 @@ impl PathUpdate {
             {
                 let mut created_block_id = None;
                 let grouped_diagnostics_len = grouped_diagnostics.len();
-                for (index, block_id) in grouped_diagnostics {
-                    match block_id {
-                        Some(block_id) => self.new_diagnostics[index].1 = Some(block_id),
-                        None => match self.unchanged_blocks.get(&index) {
-                            Some(&block_id) => {
-                                debug_assert!(
-                                    grouped_diagnostics_len == 1,
-                                    "Should only allow unchanged blocks for labels without duplicates"
-                                );
-                                self.new_diagnostics[index].1 = Some(block_id);
-                            }
-                            None => {
-                                let Some(block_id) =
-                                    created_block_id.get_or_insert_with(|| new_block_ids.next())
-                                else {
-                                    debug_panic!("Expected a new block for each new diagnostic");
-                                    continue;
-                                };
-                                self.new_diagnostics[index].1 = Some(*block_id);
-                            }
-                        },
+                for index in grouped_diagnostics {
+                    match self.unchanged_blocks.get(&index) {
+                        Some(&block_id) => {
+                            debug_assert!(
+                                grouped_diagnostics_len == 1,
+                                "Should only allow unchanged blocks for labels without duplicates"
+                            );
+                            self.new_diagnostics[index].1 = Some(block_id);
+                        }
+                        None => {
+                            let Some(block_id) =
+                                created_block_id.get_or_insert_with(|| new_block_ids.next())
+                            else {
+                                debug_panic!("Expected a new block for each new diagnostic");
+                                continue;
+                            };
+                            self.new_diagnostics[index].1 = Some(*block_id);
+                        }
                     }
                 }
             }
