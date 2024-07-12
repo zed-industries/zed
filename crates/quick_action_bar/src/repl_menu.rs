@@ -121,15 +121,67 @@ impl QuickActionBar {
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
+    let kernel = &session.kernel;
+        let status_borrow = &kernel.status();
+        let status = status_borrow.clone();
+
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
                 let kernel_name = kernel_name.clone();
+                let kernel_language = kernel_language.clone();
+                let status = status.clone();
                 ContextMenu::build(cx, move |menu, _cx| {
                     let kernel_name = kernel_name.clone();
+                    let kernel_language = kernel_language.clone();
+                    let status = status.clone();
                     menu
-                        .header("REPL")
-                        .header(kernel_name.clone())
+                        .when_else(status.is_running(), |running| {
+                            let status = status.clone();
+                            running.custom_row(move |_cx| {
+                            h_flex().child(
+                                Label::new(format!("kernel: {} ({})", kernel_name.clone(), kernel_language.clone())).size(LabelSize::Small).color(Color::Muted)
+
+                            ).into_any_element()
+                        })
+                        .custom_row(move |_cx| {
+                            h_flex().child(
+                                Label::new(
+                                    status.clone().to_string()
+                                ).size(LabelSize::Small).color(Color::Muted)
+
+                            ).into_any_element()
+                        })}, |not_running| {
+                            let status = status.clone();
+                            not_running.custom_row(move |_cx| {
+                            h_flex().child(
+                                Label::new(format!("{}...", status.clone().to_string())).size(LabelSize::Small).color(Color::Muted)
+                            ).into_any_element()
+                        })})
+
+                        .separator()
+                        // TODO:
+                        // Check if there is a selection in the editor
+                        // If there is, label is "Run Selection"
+                        // otherwise, label is "Run Line" (Cell?)
                         .action("Run", Box::new(repl::Run {}))
+                        // TODO: Add action
+                        .action("Interrupt", Box::new(gpui::NoAction))
+                        // TODO: Add action
+                        .action("Clear Outputs", Box::new(gpui::NoAction))
+                        .separator()
+                        .link(
+                            "Change Kernel",
+                            Box::new(zed_actions::OpenBrowser {
+                                url: ZED_REPL_DOCUMENTATION.into(),
+                            }),
+                        )
+                        // TODO: Add action
+                        .action("Restart", Box::new(gpui::NoAction))
+                        // TODO: Add action
+                        .action("Shut Down", Box::new(gpui::NoAction))
+                        .separator()
+                        // TODO: Add action
+                        .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 }).into()
             }).trigger(ButtonLike::new_rounded_right(element_id("dropdown"))
                 .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))

@@ -8295,6 +8295,7 @@ dependencies = [
  "settings",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

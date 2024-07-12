@@ -81,6 +81,48 @@ pub enum Kernel {
     Shutdown,
 }
 
+#[derive(Debug, Clone)]
+pub enum KernelStatus {
+    Running,
+    Starting,
+    Error,
+    ShuttingDown,
+    Shutdown,
+}
+
+impl ToString for KernelStatus {
+    fn to_string(&self) -> String {
+        match self {
+            KernelStatus::Running => "Running".to_string(),
+            KernelStatus::Starting => "Starting".to_string(),
+            KernelStatus::Error => "Error".to_string(),
+            KernelStatus::ShuttingDown => "Shutting Down".to_string(),
+            KernelStatus::Shutdown => "Shutdown".to_string(),
+        }
+    }
+}
+
+impl From<&Kernel> for KernelStatus {
+    fn from(kernel: &Kernel) -> Self {
+        match kernel {
+            Kernel::RunningKernel(_) => KernelStatus::Running,
+            Kernel::StartingKernel(_) => KernelStatus::Starting,
+            Kernel::ErroredLaunch(_) => KernelStatus::Error,
+            Kernel::ShuttingDown => KernelStatus::ShuttingDown,
+            Kernel::Shutdown => KernelStatus::Shutdown,
+        }
+    }
+}
+
+impl KernelStatus {
+    pub fn is_running(&self) -> bool {
+        match self {
+            KernelStatus::Running | KernelStatus::Error => true,
+            _ => false,
+        }
+    }
+}
+
 impl Kernel {
     pub fn dot(&self) -> Indicator {
         match self {
@@ -93,6 +135,10 @@ impl Kernel {
             Kernel::ShuttingDown => Indicator::dot().color(Color::Modified),
             Kernel::Shutdown => Indicator::dot().color(Color::Disabled),
         }
+    }
+
+    pub fn status(&self) -> KernelStatus {
+        self.into()
     }
 
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
