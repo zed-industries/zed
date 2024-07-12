@@ -410,16 +410,18 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         project: Model<Project>,
         _: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
-        project
-            .update(&mut cx, |project, cx| {
-                project.deserialize_project_transaction(message, self.push_to_history, cx)
-            })?
-            .await
+        Project::deserialize_project_transaction(
+            project.downgrade(),
+            message,
+            self.push_to_history,
+            cx,
+        )
+        .await
     }
 
     fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {
