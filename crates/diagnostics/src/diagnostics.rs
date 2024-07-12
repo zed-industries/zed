@@ -9,7 +9,9 @@ use anyhow::Result;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle},
+    display_map::{
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+    },
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint,
 };
@@ -22,7 +24,6 @@ use gpui::{
     FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
-use itertools::Itertools;
 use language::{
     Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
     ToPoint as _,
@@ -684,13 +685,7 @@ struct PathUpdate {
     path_excerpts_borders: (Option<ExcerptId>, Option<ExcerptId>),
     latest_excerpt_id: ExcerptId,
     new_diagnostics: Vec<(DiagnosticData, Option<BlockId>)>,
-    diagnostics_by_row_label: BTreeMap<
-        MultiBufferRow,
-        (
-            editor::Anchor,
-            BTreeMap<(Option<String>, String), Vec<usize>>,
-        ),
-    >,
+    diagnostics_by_row_label: BTreeMap<MultiBufferRow, (editor::Anchor, Vec<usize>)>,
     blocks_to_remove: HashSet<BlockId>,
     unchanged_blocks: HashMap<usize, BlockId>,
     excerpts_with_new_diagnostics: HashSet<ExcerptId>,
@@ -1141,6 +1136,7 @@ impl PathUpdate {
         )
         .fuse()
         .peekable();
+        let mut used_labels = BTreeMap::new();
         self.diagnostics_by_row_label = self.new_diagnostics.iter().enumerate().fold(
             BTreeMap::new(),
             |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
@@ -1179,24 +1175,19 @@ impl PathUpdate {
                         .row,
                 );
 
-                let diagnostics_by_labels = &mut diagnostics_by_row_label
+                let grouped_diagnostics = &mut diagnostics_by_row_label
                     .entry(multi_buffer_row)
-                    .or_insert_with(|| (position_in_multi_buffer, BTreeMap::new()))
+                    .or_insert_with(|| (position_in_multi_buffer, Vec::new()))
                     .1;
-                let grouped_diagnostics = diagnostics_by_labels
-                    .entry((
-                        new_diagnostic.diagnostic.source.clone(),
-                        new_diagnostic.diagnostic.message.clone(),
-                    ))
-                    .or_default();
-                if grouped_diagnostics.len() > 0 {
-                    if grouped_diagnostics.len() == 1 {
-                        if let Some(i) = grouped_diagnostics.first() {
-                            if let Some(block_id) = self.unchanged_blocks.remove(i) {
-                                self.blocks_to_remove.insert(block_id);
-                            }
-                        }
-                    }
+                let new_label = used_labels
+                    .entry(multi_buffer_row)
+                    .or_insert_with(|| HashSet::default())
+                    .insert((
+                        new_diagnostic.diagnostic.source.as_deref(),
+                        new_diagnostic.diagnostic.message.as_str(),
+                    ));
+
+                if !new_label || !grouped_diagnostics.is_empty() {
                     if let Some(existing_block) = existing_block {
                         self.blocks_to_remove.insert(*existing_block);
                     }
@@ -1204,7 +1195,17 @@ impl PathUpdate {
                         self.blocks_to_remove.insert(block_id);
                     }
                 }
-                grouped_diagnostics.push(diagnostic_index);
+                if new_label {
+                    let (Ok(i) | Err(i)) = grouped_diagnostics.binary_search_by(|&probe| {
+                        let a = &self.new_diagnostics[probe].0.entry.diagnostic;
+                        let b = &self.new_diagnostics[diagnostic_index].0.entry.diagnostic;
+                        a.group_id
+                            .cmp(&b.group_id)
+                            .then_with(|| a.is_primary.cmp(&b.is_primary).reverse())
+                            .then_with(|| a.severity.cmp(&b.severity))
+                    });
+                    grouped_diagnostics.insert(i, diagnostic_index);
+                }
 
                 diagnostics_by_row_label
             },
@@ -1212,34 +1213,52 @@ impl PathUpdate {
 
         self.diagnostics_by_row_label
             .values()
-            .flat_map(|(earliest_in_row_position, diagnostics_by_label)| {
-                diagnostics_by_label
-                    .values()
-                    .flat_map(|diagnostics_with_same_label| {
-                        diagnostics_with_same_label
-                            .first()
-                            .map(|&index| (*earliest_in_row_position, index))
-                    })
-            })
-            .filter(|(_, index)| !self.unchanged_blocks.contains_key(index))
-            .sorted_by(|&(position_a, index_a), &(position_b, index_b)| {
-                let a = &self.new_diagnostics[index_a].0.entry.diagnostic;
-                let b = &self.new_diagnostics[index_b].0.entry.diagnostic;
-                position_a
-                    .cmp(&position_b, &multi_buffer_snapshot)
-                    .then_with(|| a.group_id.cmp(&b.group_id))
-                    .then_with(|| a.is_primary.cmp(&b.is_primary).reverse())
-                    .then_with(|| a.severity.cmp(&b.severity))
-            })
-            .map(|(earliest_in_row_position, index)| {
-                let new_diagnostic = self.new_diagnostics[index].0.entry.diagnostic.clone();
-                BlockProperties {
-                    position: earliest_in_row_position,
-                    height: new_diagnostic.message.matches('\n').count() as u8 + 1,
-                    style: BlockStyle::Sticky,
-                    // TODO kb need to render something that will toggle diagnostics for the same line
-                    render: diagnostic_block_renderer(new_diagnostic, false, true),
-                    disposition: BlockDisposition::Above,
+            .filter_map(|(earliest_in_row_position, diagnostics_at_line)| {
+                let earliest_in_row_position = *earliest_in_row_position;
+                match dbg!(diagnostics_at_line.len()) {
+                    0 => None,
+                    1 => {
+                        let i = diagnostics_at_line.first().copied()?;
+                        if self.unchanged_blocks.contains_key(&i) {
+                            return None;
+                        }
+                        let new_diagnostic =
+                            self.new_diagnostics.get(i)?.0.entry.diagnostic.clone();
+                        Some(BlockProperties {
+                            position: earliest_in_row_position,
+                            height: new_diagnostic.message.matches('\n').count() as u8 + 1,
+                            style: BlockStyle::Sticky,
+                            render: diagnostic_block_renderer(new_diagnostic, false, true),
+                            disposition: BlockDisposition::Above,
+                        })
+                    }
+                    _ => {
+                        let first_diagnostic = &self
+                            .new_diagnostics
+                            .get(diagnostics_at_line.first().copied()?)?
+                            .0
+                            .entry
+                            .diagnostic;
+                        // TODO kb height has to be dynamic + need to trim the first message too
+                        // TODO kb render the actual dynamic block
+                        let newlines_in_first_message =
+                            first_diagnostic.message.matches('\n').count() as u8;
+                        let total_lines = newlines_in_first_message + 1;
+                        let total_lines = diagnostics_at_line
+                            .iter()
+                            .filter_map(|&i| {
+                                let diagnostic = &self.new_diagnostics.get(i)?.0.entry.diagnostic;
+                                Some(diagnostic.message.matches('\n').count() as u8 + 1)
+                            })
+                            .sum::<u8>();
+                        Some(BlockProperties {
+                            position: earliest_in_row_position,
+                            height: total_lines,
+                            style: BlockStyle::Sticky,
+                            render: self.render_same_line_diagnostics(diagnostics_at_line),
+                            disposition: BlockDisposition::Above,
+                        })
+                    }
                 }
             })
             .collect()
@@ -1247,32 +1266,36 @@ impl PathUpdate {
 
     fn new_blocks(mut self, new_block_ids: Vec<BlockId>) -> Vec<(DiagnosticData, BlockId)> {
         let mut new_block_ids = new_block_ids.into_iter().fuse();
-        for (_, diagnostics_by_label) in self.diagnostics_by_row_label {
-            for grouped_diagnostics in diagnostics_by_label
-                .1
-                .into_values()
-                .map(|grouped_diagnostics| grouped_diagnostics)
-            {
-                let mut created_block_id = None;
-                let grouped_diagnostics_len = grouped_diagnostics.len();
-                for index in grouped_diagnostics {
-                    match self.unchanged_blocks.get(&index) {
-                        Some(&block_id) => {
-                            debug_assert!(
-                                grouped_diagnostics_len == 1,
-                                "Should only allow unchanged blocks for labels without duplicates"
-                            );
-                            self.new_diagnostics[index].1 = Some(block_id);
-                        }
-                        None => {
-                            let Some(block_id) =
-                                created_block_id.get_or_insert_with(|| new_block_ids.next())
-                            else {
-                                debug_panic!("Expected a new block for each new diagnostic");
-                                continue;
-                            };
-                            self.new_diagnostics[index].1 = Some(*block_id);
-                        }
+        for (_, (_, grouped_diagnostics)) in self.diagnostics_by_row_label {
+            let mut created_block_id = None;
+            match grouped_diagnostics.len() {
+                0 => {
+                    debug_panic!("Unexpected empty diagnostics group");
+                    continue;
+                }
+                1 => {
+                    let index = grouped_diagnostics[0];
+                    if let Some(&block_id) = self.unchanged_blocks.get(&index) {
+                        self.new_diagnostics[index].1 = Some(block_id);
+                    } else {
+                        let Some(block_id) =
+                            created_block_id.get_or_insert_with(|| new_block_ids.next())
+                        else {
+                            debug_panic!("Expected a new block for each new diagnostic");
+                            continue;
+                        };
+                        self.new_diagnostics[index].1 = Some(*block_id);
+                    }
+                }
+                _ => {
+                    let Some(block_id) =
+                        created_block_id.get_or_insert_with(|| new_block_ids.next())
+                    else {
+                        debug_panic!("Expected a new block for each new diagnostic group");
+                        continue;
+                    };
+                    for i in grouped_diagnostics {
+                        self.new_diagnostics[i].1 = Some(*block_id);
                     }
                 }
             }
@@ -1282,6 +1305,22 @@ impl PathUpdate {
             .into_iter()
             .filter_map(|(diagnostic, block_id)| Some((diagnostic, block_id?)))
             .collect()
+    }
+
+    fn render_same_line_diagnostics(&self, diagnostics_at_line: &[usize]) -> RenderBlock {
+        let diagnostics = diagnostics_at_line
+            .iter()
+            .filter_map(|&index| self.new_diagnostics.get(index))
+            .map(|(diagnostic_data, _)| diagnostic_data.entry.diagnostic.clone())
+            .collect::<Vec<_>>();
+        Box::new(move |cx: &mut BlockContext| {
+            let mut parent = v_flex();
+            for diagnostic in diagnostics.clone() {
+                let renderer = diagnostic_block_renderer(diagnostic, false, true);
+                parent = parent.child(renderer(cx));
+            }
+            parent.into_any_element()
+        })
     }
 }
 

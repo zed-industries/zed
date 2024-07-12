@@ -3404,7 +3404,6 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "itertools 0.11.0",
  "language",
  "log",
  "lsp",
