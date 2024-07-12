@@ -115,8 +115,20 @@ impl DebugPanel {
         match event {
             Events::Initialized(_) => {
                 let client = this.debug_client_by_id(*client_id, cx);
-                cx.spawn(|_, _| async move {
-                    // TODO: send all the current breakpoints
+
+                cx.spawn(|this, mut cx| async move {
+                    let task = this.update(&mut cx, |this, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.project().update(cx, |project, cx| {
+                                let client = client.clone();
+
+                                project.send_breakpoints(client, cx)
+                            })
+                        })
+                    })??;
+
+                    task.await?;
+
                     client.configuration_done().await
                 })
                 .detach_and_log_err(cx);

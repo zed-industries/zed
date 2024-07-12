@@ -1059,6 +1059,57 @@ impl Project {
         })
     }
 
+    pub fn send_breakpoints(
+        &self,
+        client: Arc<DebugAdapterClient>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        cx.spawn(|project, mut cx| async move {
+            let task = project.update(&mut cx, |project, cx| {
+                let mut tasks = Vec::new();
+
+                for (buffer_id, breakpoints) in project.breakpoints.iter() {
+                    let res = maybe!({
+                        let buffer = project.buffer_for_id(*buffer_id)?;
+
+                        let project_path = buffer.read(cx).project_path(cx)?;
+                        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+                        let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
+
+                        Some((path, breakpoints))
+                    });
+
+                    if let Some((path, breakpoints)) = res {
+                        tasks.push(
+                            client.set_breakpoints(
+                                path,
+                                Some(
+                                    breakpoints
+                                        .iter()
+                                        .map(|b| SourceBreakpoint {
+                                            line: b.row as u64,
+                                            condition: None,
+                                            hit_condition: None,
+                                            log_message: None,
+                                            column: None,
+                                            mode: None,
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                            ),
+                        );
+                    }
+                }
+
+                try_join_all(tasks)
+            })?;
+
+            task.await?;
+
+            Ok(())
+        })
+    }
+
     pub fn start_debug_adapter_client(
         &mut self,
         debug_task: task::ResolvedTask,
