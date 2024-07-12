@@ -1081,7 +1081,11 @@ impl Workspace {
         self.window_edited
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut WindowContext) {
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+        let focus_handle = panel.focus_handle(cx);
+        cx.on_focus_in(&focus_handle, Self::handle_panel_focused)
+            .detach();
+
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -2601,6 +2605,10 @@ impl Workspace {
         });
 
         cx.notify();
+    }
+
+    fn handle_panel_focused(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_active_view_for_followers(cx);
     }
 
     fn handle_pane_event(
