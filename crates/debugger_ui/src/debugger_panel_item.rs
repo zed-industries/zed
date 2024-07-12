@@ -1,13 +1,10 @@
-use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, Variable};
-use editor::Editor;
-use futures::future::try_join_all;
+
 use gpui::{
     actions, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
-    Subscription, Task, View, WeakView,
+    Subscription, View,
 };
-use std::path::Path;
 use std::sync::Arc;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
@@ -98,13 +95,13 @@ impl DebugPanelItem {
         this: &mut Self,
         client_id: &DebugAdapterClientId,
         event: &ThreadEvent,
-        cx: &mut ViewContext<DebugPanelItem>,
+        _: &mut ViewContext<DebugPanelItem>,
     ) {
         if Self::should_skip_event(this, client_id, event.thread_id) {
             return;
         }
 
-        // dbg!(event);
+        // TODO: handle thread event
     }
 }
 
@@ -192,7 +189,7 @@ impl DebugPanelItem {
             })
             .on_click(cx.listener({
                 let stack_frame = stack_frame.clone();
-                move |this, _, cx| {
+                move |this, _, _| {
                     this.current_stack_frame_id = Some(stack_frame.id);
 
                     // let client = this.client();
