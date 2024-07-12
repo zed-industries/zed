@@ -11,6 +11,7 @@ use editor::{
     diagnostic_block_renderer,
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+        TransformBlockId,
     },
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint,
@@ -384,7 +385,8 @@ impl ProjectDiagnosticsEditor {
         });
 
         let new_multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
-        let blocks_to_insert = path_update.prepare_blocks_to_insert(new_multi_buffer_snapshot);
+        let blocks_to_insert =
+            path_update.prepare_blocks_to_insert(self.editor.clone(), new_multi_buffer_snapshot);
 
         let new_block_ids = self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(std::mem::take(&mut path_update.blocks_to_remove), None, cx);
@@ -1132,6 +1134,7 @@ impl PathUpdate {
 
     fn prepare_blocks_to_insert(
         &mut self,
+        editor: View<Editor>,
         multi_buffer_snapshot: MultiBufferSnapshot,
     ) -> Vec<BlockProperties<editor::Anchor>> {
         let mut updated_excerpts = path_state_excerpts(
@@ -1220,7 +1223,7 @@ impl PathUpdate {
             .values()
             .filter_map(|(earliest_in_row_position, diagnostics_at_line)| {
                 let earliest_in_row_position = *earliest_in_row_position;
-                match dbg!(diagnostics_at_line.len()) {
+                match diagnostics_at_line.len() {
                     0 => None,
                     1 => {
                         let i = diagnostics_at_line.first().copied()?;
@@ -1238,32 +1241,36 @@ impl PathUpdate {
                         })
                     }
                     _ => {
-                        let first_diagnostic = &self
+                        let lines_in_first_message = self
                             .new_diagnostics
                             .get(diagnostics_at_line.first().copied()?)?
                             .0
                             .entry
-                            .diagnostic;
-                        // TODO kb height has to be dynamic + need to trim the first message too
-                        // TODO kb render the actual dynamic block
-                        let newlines_in_first_message =
-                            first_diagnostic.message.matches('\n').count() as u8;
-                        let total_lines = newlines_in_first_message + 1;
-                        let total_lines = diagnostics_at_line
-                            .iter()
-                            .filter_map(|&i| {
-                                let diagnostic = &self.new_diagnostics.get(i)?.0.entry.diagnostic;
-                                Some(diagnostic.message.matches('\n').count() as u8 + 1)
-                            })
-                            .sum::<u8>()
+                            .diagnostic
+                            .message
+                            .matches('\n')
+                            .count() as u8
                             + 1;
+                        let folded_block_height = lines_in_first_message.min(2);
+                        let diagnostics_to_render = Arc::new(
+                            diagnostics_at_line
+                                .iter()
+                                .filter_map(|&index| self.new_diagnostics.get(index))
+                                .map(|(diagnostic_data, _)| {
+                                    diagnostic_data.entry.diagnostic.clone()
+                                })
+                                .collect::<Vec<_>>(),
+                        );
                         Some(BlockProperties {
                             position: earliest_in_row_position,
-                            height: total_lines,
+                            height: folded_block_height,
                             style: BlockStyle::Sticky,
-                            render: self.render_same_line_diagnostics(
+                            render: render_same_line_diagnostics(
+                                Arc::new(AtomicBool::new(false)),
+                                diagnostics_to_render,
+                                editor.clone(),
                                 earliest_in_row_position,
-                                diagnostics_at_line,
+                                folded_block_height,
                             ),
                             disposition: BlockDisposition::Above,
                         })
@@ -1315,48 +1322,81 @@ impl PathUpdate {
             .filter_map(|(diagnostic, block_id)| Some((diagnostic, block_id?)))
             .collect()
     }
+}
 
-    fn render_same_line_diagnostics(
-        &self,
-        row_position: editor::Anchor,
-        diagnostics_at_line: &[usize],
-    ) -> RenderBlock {
-        let diagnostics = diagnostics_at_line
-            .iter()
-            .filter_map(|&index| self.new_diagnostics.get(index))
-            .map(|(diagnostic_data, _)| diagnostic_data.entry.diagnostic.clone())
-            .collect::<Vec<_>>();
-        let expanded = Arc::new(AtomicBool::new(false));
-        Box::new(move |cx: &mut BlockContext| {
-            let button_expanded = expanded.clone();
-            let expanded = expanded.load(atomic::Ordering::Acquire);
-            let mut parent = v_flex()
-                .child(Button::new(
-                    row_position.text_anchor.offset,
-                    if expanded {
-                        "Click to collapse"
-                    } else {
-                        "Click to expand"
-                    },
-                ))
-                .on_mouse_down(MouseButton::Left, move |_, _| {
-                    button_expanded.store(!expanded, atomic::Ordering::Release);
-                });
-            if expanded {
-                for diagnostic in diagnostics.clone() {
-                    let mut renderer = diagnostic_block_renderer(diagnostic, false, true);
-                    parent = parent.child(renderer(cx));
-                }
-            } else {
-                if let Some(first_diagnostic) = diagnostics.first() {
-                    let mut renderer =
-                        diagnostic_block_renderer(first_diagnostic.clone(), false, true);
-                    parent = parent.child(renderer(cx));
-                }
+fn render_same_line_diagnostics(
+    expanded: Arc<AtomicBool>,
+    diagnostics: Arc<Vec<language::Diagnostic>>,
+    editor_handle: View<Editor>,
+    row_position: editor::Anchor,
+    folded_block_height: u8,
+) -> RenderBlock {
+    Box::new(move |cx: &mut BlockContext| {
+        let block_id = match cx.transform_block_id {
+            TransformBlockId::Block(block_id) => block_id,
+            _ => {
+                debug_panic!("Expected a block id for the diagnostics block");
+                return div().into_any_element();
             }
-            parent.into_any_element()
-        })
-    }
+        };
+        let button_expanded = expanded.clone();
+        let expanded = expanded.load(atomic::Ordering::Acquire);
+        let editor_handle = editor_handle.clone();
+        let mut parent = v_flex()
+            .child(Button::new(
+                row_position.text_anchor.offset,
+                if expanded {
+                    "Click to collapse"
+                } else {
+                    "Click to expand"
+                },
+            ))
+            .on_mouse_down(MouseButton::Left, {
+                let diagnostics = Arc::clone(&diagnostics);
+                move |_, cx| {
+                    let new_expanded = !expanded;
+                    button_expanded.store(new_expanded, atomic::Ordering::Release);
+                    let new_size = if new_expanded {
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| diagnostic.message.matches('\n').count() as u8 + 1)
+                            .sum::<u8>()
+                            + 1
+                    } else {
+                        folded_block_height
+                    };
+                    editor_handle.update(cx, |editor, cx| {
+                        editor.replace_blocks(
+                            HashMap::from_iter(Some((
+                                block_id,
+                                (
+                                    Some(new_size),
+                                    render_same_line_diagnostics(
+                                        Arc::clone(&button_expanded),
+                                        Arc::clone(&diagnostics),
+                                        editor_handle.clone(),
+                                        row_position,
+                                        folded_block_height,
+                                    ),
+                                ),
+                            ))),
+                            None,
+                            cx,
+                        )
+                    });
+                }
+            });
+        if expanded {
+            for diagnostic in diagnostics.iter() {
+                let mut renderer = diagnostic_block_renderer(diagnostic.clone(), false, true);
+                parent = parent.child(renderer(cx));
+            }
+        } else if let Some(first_diagnostic) = diagnostics.first() {
+            let mut renderer = diagnostic_block_renderer(first_diagnostic.clone(), false, true);
+            parent = parent.child(renderer(cx));
+        }
+        parent.into_any_element()
+    })
 }
 
 fn path_state_excerpts<'a>(

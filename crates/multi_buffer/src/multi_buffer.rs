@@ -6,7 +6,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
-use gpui::{AppContext, EventEmitter, Model, ModelContext};
+use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
 use itertools::Itertools;
 use language::{
     char_kind,
@@ -48,6 +48,12 @@ const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(usize);
+
+impl From<ExcerptId> for EntityId {
+    fn from(id: ExcerptId) -> Self {
+        EntityId::from(id.0 as u64)
+    }
+}
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, Pixels, WindowContext};
+use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use multi_buffer::{Anchor, ExcerptId, ExcerptRange, MultiBufferRow, ToPoint as _};
 use parking_lot::Mutex;
@@ -20,6 +20,7 @@ use std::{
 };
 use sum_tree::{Bias, SumTree};
 use text::Edit;
+use ui::ElementId;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -52,6 +53,12 @@ pub struct BlockSnapshot {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockId(usize);
+
+impl Into<ElementId> for BlockId {
+    fn into(self) -> ElementId {
+        ElementId::Integer(self.0)
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct BlockPoint(pub Point);
@@ -106,8 +113,45 @@ pub struct BlockContext<'a, 'b> {
     pub gutter_dimensions: &'b GutterDimensions,
     pub em_width: Pixels,
     pub line_height: Pixels,
-    pub block_id: usize,
+    pub transform_block_id: TransformBlockId,
     pub editor_style: &'b EditorStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransformBlockId {
+    Block(BlockId),
+    ExcerptHeader(ExcerptId),
+    ExcerptFooter(ExcerptId),
+}
+
+impl From<TransformBlockId> for EntityId {
+    fn from(value: TransformBlockId) -> Self {
+        match value {
+            TransformBlockId::Block(BlockId(id)) => EntityId::from(id as u64),
+            TransformBlockId::ExcerptHeader(id) => id.into(),
+            TransformBlockId::ExcerptFooter(id) => id.into(),
+        }
+    }
+}
+
+impl Into<ElementId> for TransformBlockId {
+    fn into(self) -> ElementId {
+        match self {
+            Self::Block(BlockId(id)) => ("Block", id).into(),
+            Self::ExcerptHeader(id) => ("ExcerptHeader", EntityId::from(id)).into(),
+            Self::ExcerptFooter(id) => ("ExcerptFooter", EntityId::from(id)).into(),
+        }
+    }
+}
+
+impl std::fmt::Display for TransformBlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Block(id) => write!(f, "Block({id:?})"),
+            Self::ExcerptHeader(id) => write!(f, "ExcerptHeader({id:?})"),
+            Self::ExcerptFooter(id) => write!(f, "ExcerptFooter({id:?})"),
+        }
+    }
 }
 
 /// Whether the block should be considered above or below the anchor line
@@ -168,6 +212,14 @@ impl BlockLike for TransformBlock {
 }
 
 impl TransformBlock {
+    pub fn id(&self) -> TransformBlockId {
+        match self {
+            TransformBlock::Custom(block) => TransformBlockId::Block(block.id),
+            TransformBlock::ExcerptHeader { id, .. } => TransformBlockId::ExcerptHeader(*id),
+            TransformBlock::ExcerptFooter { id, .. } => TransformBlockId::ExcerptFooter(*id),
+        }
+    }
+
     fn disposition(&self) -> BlockDisposition {
         match self {
             TransformBlock::Custom(block) => block.disposition,

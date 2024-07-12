@@ -68,12 +68,12 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
-    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
-    WeakView, WhiteSpace, WindowContext,
+    Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
+    FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
+    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -12692,7 +12692,7 @@ pub fn diagnostic_block_renderer(
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
     Box::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.block_id.to_string().into();
+        let group_id: SharedString = cx.transform_block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
@@ -12704,7 +12704,7 @@ pub fn diagnostic_block_renderer(
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 
-        let buttons = |diagnostic: &Diagnostic, block_id: usize| {
+        let buttons = |diagnostic: &Diagnostic, block_id: TransformBlockId| {
             if multi_line_diagnostic {
                 v_flex()
             } else {
@@ -12712,7 +12712,7 @@ pub fn diagnostic_block_renderer(
             }
             .when(allow_closing, |div| {
                 div.children(diagnostic.is_primary.then(|| {
-                    IconButton::new(("close-block", block_id), IconName::XCircle)
+                    IconButton::new(("close-block", EntityId::from(block_id)), IconName::XCircle)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Transparent)
@@ -12722,7 +12722,7 @@ pub fn diagnostic_block_renderer(
                 }))
             })
             .child(
-                IconButton::new(("copy-block", block_id), IconName::Copy)
+                IconButton::new(("copy-block", EntityId::from(block_id)), IconName::Copy)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)
@@ -12735,12 +12735,12 @@ pub fn diagnostic_block_renderer(
             )
         };
 
-        let icon_size = buttons(&diagnostic, cx.block_id)
+        let icon_size = buttons(&diagnostic, cx.transform_block_id)
             .into_any_element()
             .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
-            .id(cx.block_id)
+            .id(cx.transform_block_id)
             .group(group_id.clone())
             .relative()
             .size_full()
@@ -12752,7 +12752,7 @@ pub fn diagnostic_block_renderer(
                     .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
-            .child(buttons(&diagnostic, cx.block_id))
+            .child(buttons(&diagnostic, cx.transform_block_id))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
