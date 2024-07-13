@@ -658,6 +658,10 @@ impl LanguageServer {
                         }),
                         ..SignatureHelpClientCapabilities::default()
                     }),
+                    synchronization: Some(TextDocumentSyncClientCapabilities {
+                        did_save: Some(true),
+                        ..TextDocumentSyncClientCapabilities::default()
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
