@@ -10,10 +10,9 @@ use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, FontWeight, Model};
+use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind},
-    markdown::{MarkdownHighlight, MarkdownHighlightStyle},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
@@ -24,6 +23,7 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
     OneOf, ServerCapabilities,
 };
+use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
@@ -1242,7 +1242,7 @@ impl LspCommand for GetDocumentHighlights {
 
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
-    type Response = Vec<SignatureHelp>;
+    type Response = Option<SignatureHelp>;
     type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
 
@@ -1283,10 +1283,7 @@ impl LspCommand for GetSignatureHelp {
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        Ok(message
-            .into_iter()
-            .filter_map(|message| SignatureHelp::new(message, language.clone()))
-            .collect())
+        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1329,34 +1326,8 @@ impl LspCommand for GetSignatureHelp {
         _: &mut AppContext,
     ) -> proto::GetSignatureHelpResponse {
         proto::GetSignatureHelpResponse {
-            entries: response
-                .into_iter()
-                .map(|signature_help| proto::SignatureHelp {
-                    rendered_text: signature_help.markdown,
-                    highlights: signature_help
-                        .highlights
-                        .into_iter()
-                        .filter_map(|(range, highlight)| {
-                            let MarkdownHighlight::Style(highlight) = highlight else {
-                                return None;
-                            };
-
-                            Some(proto::HighlightedRange {
-                                range: Some(proto::Range {
-                                    start: range.start as u64,
-                                    end: range.end as u64,
-                                }),
-                                highlight: Some(proto::MarkdownHighlight {
-                                    italic: highlight.italic,
-                                    underline: highlight.underline,
-                                    strikethrough: highlight.strikethrough,
-                                    weight: highlight.weight.0,
-                                }),
-                            })
-                        })
-                        .collect(),
-                })
-                .collect(),
+            signature_help: response
+                .map(|signature_help| lsp_to_proto_signature(signature_help.original_data)),
         }
     }
 
@@ -1364,33 +1335,14 @@ impl LspCommand for GetSignatureHelp {
         self,
         response: proto::GetSignatureHelpResponse,
         _: Model<Project>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
+        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
-            .entries
-            .into_iter()
-            .map(|proto_entry| SignatureHelp {
-                markdown: proto_entry.rendered_text,
-                highlights: proto_entry
-                    .highlights
-                    .into_iter()
-                    .filter_map(|highlight| {
-                        let proto_highlight = highlight.highlight?;
-                        let range = highlight.range?;
-                        Some((
-                            range.start as usize..range.end as usize,
-                            MarkdownHighlight::Style(MarkdownHighlightStyle {
-                                italic: proto_highlight.italic,
-                                underline: proto_highlight.underline,
-                                strikethrough: proto_highlight.strikethrough,
-                                weight: FontWeight(proto_highlight.weight),
-                            }),
-                        ))
-                    })
-                    .collect(),
-            })
-            .collect())
+            .signature_help
+            .map(|proto_help| proto_to_lsp_signature(proto_help))
+            .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
