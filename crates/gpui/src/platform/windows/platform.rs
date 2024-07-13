@@ -102,9 +102,9 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let clipboard_hash_format = unsafe { RegisterClipboardFormatW(CLIPBOARD_HASH_FORMAT) };
+        let clipboard_hash_format = register_clipboard_format(CLIPBOARD_HASH_FORMAT).unwrap();
         let clipboard_metadata_format =
-            unsafe { RegisterClipboardFormatW(CLIPBOARD_METADATA_FORMAT) };
+            register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
 
         Self {
             state,
@@ -695,6 +695,18 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn register_clipboard_format(format: PCWSTR) -> Result<u32> {
+    let ret = unsafe { RegisterClipboardFormatW(format) };
+    if ret == 0 {
+        Err(anyhow::anyhow!(
+            "Error when registering clipboard format: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(ret)
+    }
 }
 
 fn write_to_clipboard(item: ClipboardItem, hash_format: u32, metadata_format: u32) {
