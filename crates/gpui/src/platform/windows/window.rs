@@ -268,12 +268,13 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+        let (dwexstyle, dwstyle, gwlstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0), None)
         } else {
             (
                 WS_EX_APPWINDOW,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+                Some((WS_BORDER.0 | WS_THICKFRAME.0) as i32),
             )
         };
         let hinstance = get_module_handle();
@@ -310,6 +311,11 @@ impl WindowsWindow {
                 lpparam,
             )
         };
+        if let Some(s) = gwlstyle {
+            unsafe {
+                SetWindowLongW(raw_hwnd, GWL_STYLE, s);
+            }
+        }
         let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
         register_drag_drop(state_ptr.clone());
 
