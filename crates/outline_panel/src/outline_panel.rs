@@ -1622,11 +1622,7 @@ impl OutlinePanel {
                         ExcerptOutlines::Invalidated(_) => ExcerptOutlines::NotFetched,
                         ExcerptOutlines::NotFetched => ExcerptOutlines::NotFetched,
                     },
-                    None => {
-                        new_collapsed_entries
-                            .insert(CollapsedEntry::Excerpt(buffer_id, excerpt_id));
-                        ExcerptOutlines::NotFetched
-                    }
+                    None => ExcerptOutlines::NotFetched,
                 };
                 new_excerpts.entry(buffer_id).or_default().insert(
                     excerpt_id,
@@ -1673,11 +1669,6 @@ impl OutlinePanel {
                                     new_collapsed_entries
                                         .insert(CollapsedEntry::ExternalFile(buffer_id));
                                 }
-                            }
-
-                            for excerpt_id in &excerpts {
-                                new_collapsed_entries
-                                    .insert(CollapsedEntry::Excerpt(buffer_id, *excerpt_id));
                             }
                         }
 
