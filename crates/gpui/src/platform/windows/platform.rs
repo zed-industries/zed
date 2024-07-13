@@ -222,7 +222,6 @@ impl Platform for WindowsPlatform {
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
         }
-        unsafe { OleUninitialize() };
     }
 
     fn quit(&self) {
@@ -599,6 +598,13 @@ impl Platform for WindowsPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+}
+
+impl Drop for WindowsPlatform {
+    fn drop(&mut self) {
+        self.text_system.destory();
+        unsafe { OleUninitialize() };
     }
 }
 
