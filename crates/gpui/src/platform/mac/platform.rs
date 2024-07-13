@@ -602,7 +602,7 @@ impl Platform for MacPlatform {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -632,7 +632,7 @@ impl Platform for MacPlatform {
                         };
 
                         if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(result);
+                            let _ = done_tx.send(Ok(result));
                         }
                     });
                     let block = block.copy();
@@ -643,7 +643,7 @@ impl Platform for MacPlatform {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
@@ -665,7 +665,7 @@ impl Platform for MacPlatform {
                         }
 
                         if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(result);
+                            let _ = done_tx.send(Ok(result));
                         }
                     });
                     let block = block.copy();

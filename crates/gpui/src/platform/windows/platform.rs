@@ -316,7 +316,10 @@ impl Platform for WindowsPlatform {
         self.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
-    fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
 
         self.foreground_executor()
@@ -355,7 +358,7 @@ impl Platform for WindowsPlatform {
                     if hr.unwrap_err().code() == HRESULT(0x800704C7u32 as i32) {
                         // user canceled error
                         if let Some(tx) = tx.take() {
-                            tx.send(None).unwrap();
+                            tx.send(Ok(None)).unwrap();
                         }
                         return;
                     }
@@ -374,10 +377,10 @@ impl Platform for WindowsPlatform {
                 }
 
                 if let Some(tx) = tx.take() {
-                    if paths.len() == 0 {
-                        tx.send(None).unwrap();
+                    if paths.is_empty() {
+                        tx.send(Ok(None)).unwrap();
                     } else {
-                        tx.send(Some(paths)).unwrap();
+                        tx.send(Ok(Some(paths))).unwrap();
                     }
                 }
             })
@@ -386,27 +389,27 @@ impl Platform for WindowsPlatform {
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
                 unsafe {
                     let Ok(dialog) = show_savefile_dialog(directory) else {
-                        let _ = tx.send(None);
+                        let _ = tx.send(Ok(None));
                         return;
                     };
                     let Ok(_) = dialog.Show(None) else {
-                        let _ = tx.send(None); // user cancel
+                        let _ = tx.send(Ok(None)); // user cancel
                         return;
                     };
                     if let Ok(shell_item) = dialog.GetResult() {
                         if let Ok(file) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
-                            let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
+                            let _ = tx.send(Ok(Some(PathBuf::from(file.to_string().unwrap()))));
                             return;
                         }
                     }
-                    let _ = tx.send(None);
+                    let _ = tx.send(Ok(None));
                 }
             })
             .detach();
