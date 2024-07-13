@@ -489,13 +489,13 @@ fn handle_mouse_wheel_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let lshift_pressed = unsafe { GetKeyState(VK_LSHIFT.0 as i32) < 0 };
+    let modifiers = current_modifiers();
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_amount = match lshift_pressed {
+        let wheel_scroll_amount = match modifiers.shift {
             true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines
+            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
         };
         drop(lock);
         let wheel_distance =
@@ -507,9 +507,15 @@ fn handle_mouse_wheel_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(match lshift_pressed {
-                true => Point { x: wheel_distance, y: 0.0 },
-                false => Point { y: wheel_distance, x: 0.0 },
+            delta: ScrollDelta::Lines(match modifiers.shift {
+                true => Point {
+                    x: wheel_distance,
+                    y: 0.0,
+                },
+                false => Point {
+                    y: wheel_distance,
+                    x: 0.0,
+                },
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
