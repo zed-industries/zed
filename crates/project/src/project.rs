@@ -5444,7 +5444,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Vec<SignatureHelp>> {
+    ) -> Task<Vec<SignatureHelps>> {
         let position = position.to_point_utf16(buffer.read(cx));
         if self.is_local() {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -5459,7 +5459,6 @@ impl Project {
                     .await
                     .into_iter()
                     .flatten()
-                    .filter(|help| !help.markdown.is_empty())
                     .collect::<Vec<_>>()
             })
         } else if let Some(project_id) = self.remote_id() {

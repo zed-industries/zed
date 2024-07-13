@@ -27,9 +27,7 @@ use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
-pub use signature_help::{
-    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
-};
+pub use signature_help::{SignatureHelp, SignatureHelps, SIGNATURE_HELP_HIGHLIGHT_CURRENT};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -1242,7 +1240,7 @@ impl LspCommand for GetDocumentHighlights {
 
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
-    type Response = Option<SignatureHelp>;
+    type Response = Option<SignatureHelps>;
     type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
 
@@ -1283,7 +1281,7 @@ impl LspCommand for GetSignatureHelp {
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
+        Ok(message.and_then(|message| SignatureHelps::new(message, language)))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1342,7 +1340,7 @@ impl LspCommand for GetSignatureHelp {
         Ok(response
             .signature_help
             .map(|proto_help| proto_to_lsp_signature(proto_help))
-            .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
+            .and_then(|lsp_help| SignatureHelps::new(lsp_help, language)))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {

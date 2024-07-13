@@ -6967,11 +6967,18 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
         .await;
 
     cx.editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
+        let signature_help_popover = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_popover.is_some());
+        let signature_help_popover = signature_help_popover.unwrap();
+        let current_page = signature_help_popover.current_page();
+        let signature_help_markdown = signature_help_popover
+            .signature_help_markdowns()
+            .get(current_page);
+        assert!(signature_help_markdown.is_some());
+        let signature_help_markdown = signature_help_markdown.unwrap().clone();
         let ParsedMarkdown {
             text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
+        } = signature_help_markdown.signature;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
     });
@@ -7139,11 +7146,18 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
     cx.update_editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
+        let signature_help_popover = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_popover.is_some());
+        let signature_help_popover = signature_help_popover.unwrap();
+        let current_page = signature_help_popover.current_page();
+        let signature_help_markdown = signature_help_popover
+            .signature_help_markdowns()
+            .get(current_page);
+        assert!(signature_help_markdown.is_some());
+        let signature_help_markdown = signature_help_markdown.unwrap().clone();
         let ParsedMarkdown {
             text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
+        } = signature_help_markdown.signature;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
         editor.signature_help_state = SignatureHelpState::default();
@@ -7181,11 +7195,18 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
     cx.editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
+        let signature_help_popover = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_popover.is_some());
+        let signature_help_popover = signature_help_popover.unwrap();
+        let current_page = signature_help_popover.current_page();
+        let signature_help_markdown = signature_help_popover
+            .signature_help_markdowns()
+            .get(current_page);
+        assert!(signature_help_markdown.is_some());
+        let signature_help_markdown = signature_help_markdown.unwrap().clone();
         let ParsedMarkdown {
             text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
+        } = signature_help_markdown.signature;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
     });
@@ -7243,11 +7264,18 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         .await;
 
     cx.editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
+        let signature_help_popover = editor.signature_help_state.popover().cloned();
+        assert!(signature_help_popover.is_some());
+        let signature_help_popover = signature_help_popover.unwrap();
+        let current_page = signature_help_popover.current_page();
+        let signature_help_markdown = signature_help_popover
+            .signature_help_markdowns()
+            .get(current_page);
+        assert!(signature_help_markdown.is_some());
+        let signature_help_markdown = signature_help_markdown.unwrap().clone();
         let ParsedMarkdown {
             text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
+        } = signature_help_markdown.signature;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
     });
