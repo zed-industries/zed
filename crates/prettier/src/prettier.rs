@@ -515,40 +515,36 @@ mod tests {
         )
         .await;
 
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/.config/zed/settings.json"),
-                )
-                .await,
-                Ok(ControlFlow::Continue(None))
-            ),
-            "Should successfully find no prettier for path hierarchy without it"
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/.config/zed/settings.json"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(None),
+            "Should find no prettier for path hierarchy without it"
         );
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/work/project/src/index.js")
-                )
-                .await,
-                Ok(ControlFlow::Continue(None))
-            ),
-            "Should successfully find no prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/src/index.js")
+            )
+            .await.unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/work/project"))),
+            "Should successfully find a prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
         );
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/work/project/node_modules/expect/build/print.js")
-                )
-                .await,
-                Ok(ControlFlow::Break(()))
-            ),
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
             "Should not format files inside node_modules/"
         );
     }
@@ -658,18 +654,17 @@ mod tests {
         )
         .await;
 
-        match Prettier::locate_prettier_installation(
-            fs.as_ref(),
-            &HashSet::default(),
-            Path::new("/root/work/web_blog/pages/[slug].tsx")
-        )
-        .await {
-            Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
-            Err(e) => {
-                let message = e.to_string();
-                assert!(message.contains("/root/work/web_blog"), "Error message should mention which project had prettier defined");
-            },
-        };
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/web_blog/pages/[slug].tsx")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(None),
+            "Should find no prettier when node_modules don't have it"
+        );
 
         assert_eq!(
             Prettier::locate_prettier_installation(
