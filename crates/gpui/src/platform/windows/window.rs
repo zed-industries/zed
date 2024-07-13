@@ -926,7 +926,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.inner = Some(creation_result);
             return LRESULT(0);
         }
-        let weak = Box::new(Rc::downgrade(&creation_result.as_ref().unwrap()));
+        let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(creation_result);
         return LRESULT(1);
