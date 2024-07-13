@@ -656,7 +656,7 @@ impl Element for TerminalElement {
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
-                    background_color: None,
+                    background_color: Some(theme.colors().terminal_background),
                     white_space: WhiteSpace::Normal,
                     // These are going to be overridden per-cell
                     underline: None,
@@ -1142,7 +1142,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
             NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
             NamedColor::Foreground => colors.terminal_foreground,
-            NamedColor::Background => colors.background,
+            NamedColor::Background => colors.terminal_background,
             NamedColor::Cursor => theme.players().local().cursor,
             NamedColor::DimBlack => colors.terminal_ansi_dim_black,
             NamedColor::DimRed => colors.terminal_ansi_dim_red,
