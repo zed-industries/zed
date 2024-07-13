@@ -649,7 +649,11 @@ impl LanguageServer {
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    synchronization: Some(TextDocumentSyncClientCapabilities {
+                        did_save: Some(true),
+                        ..TextDocumentSyncClientCapabilities::default()
+                    }),
+                    ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
                     "serverStatusNotification": true,

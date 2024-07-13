@@ -2853,15 +2853,21 @@ impl Project {
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
-                    let text = include_text(server.as_ref()).then(|| buffer.read(cx).text());
-                    server
-                        .notify::<lsp::notification::DidSaveTextDocument>(
-                            lsp::DidSaveTextDocumentParams {
-                                text_document: text_document.clone(),
-                                text,
-                            },
-                        )
-                        .log_err();
+                    if let Some(include_text) = include_text(server.as_ref()) {
+                        let text = if include_text {
+                            Some(buffer.read(cx).text())
+                        } else {
+                            None
+                        };
+                        server
+                            .notify::<lsp::notification::DidSaveTextDocument>(
+                                lsp::DidSaveTextDocumentParams {
+                                    text_document: text_document.clone(),
+                                    text,
+                                },
+                            )
+                            .log_err();
+                    }
                 }
 
                 for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
@@ -11834,20 +11840,27 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
-fn include_text(server: &lsp::LanguageServer) -> bool {
-    server
-        .capabilities()
-        .text_document_sync
-        .as_ref()
-        .and_then(|sync| match sync {
-            lsp::TextDocumentSyncCapability::Kind(_) => None,
-            lsp::TextDocumentSyncCapability::Options(options) => options.save.as_ref(),
-        })
-        .and_then(|save_options| match save_options {
-            lsp::TextDocumentSyncSaveOptions::Supported(_) => None,
-            lsp::TextDocumentSyncSaveOptions::SaveOptions(options) => options.include_text,
-        })
-        .unwrap_or(false)
+fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
+    match server.capabilities().text_document_sync.as_ref()? {
+        lsp::TextDocumentSyncCapability::Kind(kind) => match kind {
+            &lsp::TextDocumentSyncKind::NONE => None,
+            &lsp::TextDocumentSyncKind::FULL => Some(true),
+            &lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
+            _ => None,
+        },
+        lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {
+            lsp::TextDocumentSyncSaveOptions::Supported(supported) => {
+                if *supported {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
+                Some(save_options.include_text.unwrap_or(false))
+            }
+        },
+    }
 }
 
 async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
