@@ -54,6 +54,9 @@ pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
+const FILE_PICKER_PORTAL_MISSING: &str =
+    "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
+
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
@@ -256,7 +259,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -282,23 +285,23 @@ impl<P: LinuxClient + 'static> Platform for P {
                     .directory(options.directories)
                     .send()
                     .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
-                        response
-                            .uris()
-                            .iter()
-                            .map(|uri| uri.to_file_path().ok())
-                            .collect()
-                    });
-
+                    .map(|request| {
+                        request.response().ok().and_then(|response| {
+                            response
+                                .uris()
+                                .iter()
+                                .map(|uri| uri.to_file_path().ok())
+                                .collect()
+                        })
+                    })
+                    .map_err(|_| anyhow!(FILE_PICKER_PORTAL_MISSING));
                 done_tx.send(result);
             })
             .detach();
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
         self.foreground_executor()
@@ -313,16 +316,17 @@ impl<P: LinuxClient + 'static> Platform for P {
                     request
                         .send()
                         .await
-                        .ok()
-                        .and_then(|request| request.response().ok())
-                        .and_then(|response| {
-                            response
-                                .uris()
-                                .first()
-                                .and_then(|uri| uri.to_file_path().ok())
+                        .map(|request| {
+                            request.response().ok().and_then(|response| {
+                                response
+                                    .uris()
+                                    .first()
+                                    .and_then(|uri| uri.to_file_path().ok())
+                            })
                         })
+                        .map_err(|_| anyhow!(FILE_PICKER_PORTAL_MISSING))
                 } else {
-                    None
+                    Ok(None)
                 };
 
                 done_tx.send(result);
