@@ -9561,7 +9561,7 @@ impl Editor {
                         editor: rename_editor,
                         block_id,
                     });
-                    // disable vim mode during Rename
+                    // unhook vim settings during rename
                     cx.emit(EditorEvent::Rename);
                 })?;
             }
