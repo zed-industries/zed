@@ -35,31 +35,6 @@ use gpui::ElementId;
 // - ---
 // - Shutdown all kernels
 
-// #[derive(IntoElement)]
-// pub struct ReplMenuButton {}
-
-// impl RenderOnce for ReplMenuButton {
-//     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-//         let id = id.into();
-
-//         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
-
-//         let dropdown_menu = PopoverMenu::new(element_id("menu"))
-//             .menu(move |cx| {
-//                 ContextMenu::build(cx, move |menu, _cx| {
-//                     menu.header("REPL")
-//                 }).into()
-//             }).trigger(ButtonLike::new(element_id("dropdown"))
-//                 .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
-//                 .width(rems(1.).into())
-//                 .rounding(ButtonLikeRounding::Right));
-
-//         h_flex()
-//             .child(self.button)
-//             .child(self.popover_button)
-//     }
-// }
-
 use crate::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
