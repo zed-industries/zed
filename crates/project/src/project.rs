@@ -695,7 +695,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
-        client.add_model_request_handler(Self::handle_signature_help);
     }
 
     pub fn local(
@@ -5464,33 +5463,52 @@ impl Project {
                     .collect::<Vec<_>>()
             })
         } else if let Some(project_id) = self.remote_id() {
-            let position_anchor = buffer
-                .read(cx)
-                .anchor_at(buffer.read(cx).point_utf16_to_offset(position), Bias::Right);
-            let request = self.client.request(proto::GetSignatureHelp {
-                project_id,
-                position: Some(serialize_anchor(&position_anchor)),
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
+            let request_task = self.client().request(proto::MultiLspQuery {
+                buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
+                    GetSignatureHelp { position }.to_proto(project_id, buffer.read(cx)),
+                )),
             });
             let buffer = buffer.clone();
-            cx.spawn(move |project, cx| async move {
-                let Some(response) = request.await.log_err() else {
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
                     return Vec::new();
                 };
-                let Some(project) = project.upgrade() else {
-                    return Vec::new();
-                };
-                GetSignatureHelp::response_from_proto(
-                    GetSignatureHelp { position },
-                    response,
-                    project,
-                    buffer,
-                    cx,
+                join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetSignatureHelpResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|signature_response| {
+                            let response = GetSignatureHelp { position }.response_from_proto(
+                                signature_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move { response.await.log_err().flatten() }
+                        }),
                 )
                 .await
-                .log_err()
-                .unwrap_or_default()
+                .into_iter()
+                .flatten()
+                .collect()
             })
         } else {
             Task::ready(Vec::new())
@@ -8356,6 +8374,48 @@ impl Project {
                         .collect(),
                 })
             }
+            Some(proto::multi_lsp_query::Request::GetSignatureHelp(get_signature_help)) => {
+                let get_signature_help = GetSignatureHelp::from_proto(
+                    get_signature_help,
+                    project.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_signatures = project
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_signature_help.position),
+                            |server_capabilities| {
+                                server_capabilities.signature_help_provider.is_some()
+                            },
+                            get_signature_help,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                project.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_signatures
+                        .map(|signature_help| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetSignatureHelpResponse(
+                                    GetSignatureHelp::response_to_proto(
+                                        signature_help,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
             None => anyhow::bail!("empty multi lsp query request"),
         }
     }
@@ -9320,39 +9380,6 @@ impl Project {
             .collect();
 
         Ok(proto::TaskTemplatesResponse { templates })
-    }
-
-    async fn handle_signature_help(
-        project: Model<Self>,
-        envelope: TypedEnvelope<proto::GetSignatureHelp>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::GetSignatureHelpResponse> {
-        let sender_id = envelope.original_sender_id()?;
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let buffer = project.update(&mut cx, |project, cx| {
-            project.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
-        let response = GetSignatureHelp::from_proto(
-            envelope.payload.clone(),
-            project.clone(),
-            buffer.clone(),
-            cx.clone(),
-        )
-        .await?;
-        let help_response = project
-            .update(&mut cx, |project, cx| {
-                project.signature_help(&buffer, response.position, cx)
-            })?
-            .await;
-        project.update(&mut cx, |project, cx| {
-            GetSignatureHelp::response_to_proto(
-                help_response,
-                project,
-                sender_id,
-                &buffer.read(cx).version(),
-                cx,
-            )
-        })
     }
 
     async fn try_resolve_code_action(

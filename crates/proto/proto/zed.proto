@@ -945,24 +945,45 @@ message GetSignatureHelp {
 }
 
 message GetSignatureHelpResponse {
-    repeated SignatureHelp entries = 1;
+    optional SignatureHelp signature_help = 1;
 }
 
 message SignatureHelp {
-    string rendered_text = 1;
-    repeated HighlightedRange highlights = 2;
+    repeated SignatureInformation signatures = 1;
+    optional uint32 active_signature = 2;
+    optional uint32 active_parameter = 3;
 }
 
-message HighlightedRange {
-    Range range = 1;
-    MarkdownHighlight highlight = 2;
+message SignatureInformation {
+    string label = 1;
+    optional Documentation documentation = 2;
+    repeated ParameterInformation parameters = 3;
+    optional uint32 active_parameter = 4;
 }
 
-message MarkdownHighlight {
-    bool italic = 1;
-    bool underline = 2;
-    bool strikethrough = 3;
-    float weight = 4;
+message Documentation {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+enum MarkupKind {
+    PlainText = 0;
+    Markdown = 1;
+}
+
+message ParameterInformation {
+    oneof label {
+        string simple = 1;
+        LabelOffsets label_offsets = 2;
+    }
+    optional Documentation documentation = 3;
+}
+
+message LabelOffsets {
+    uint32 start = 1;
+    uint32 end = 2;
 }
 
 message GetHover {
@@ -2166,6 +2187,7 @@ message MultiLspQuery {
     oneof request {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
     }
 }
 
@@ -2184,6 +2206,7 @@ message LspResponse {
     oneof response {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
+        GetSignatureHelpResponse get_signature_help_response = 3;
     }
 }
 
