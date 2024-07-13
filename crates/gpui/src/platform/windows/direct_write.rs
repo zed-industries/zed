@@ -240,7 +240,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             })
     }
 
-    fn destory(&self) {
+    fn destroy(&self) {
         let mut lock = self.0.write();
         unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
     }

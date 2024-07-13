@@ -407,7 +407,7 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
     #[cfg(target_os = "windows")]
-    fn destory(&self);
+    fn destroy(&self);
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]

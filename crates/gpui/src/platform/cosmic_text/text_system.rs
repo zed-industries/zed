@@ -178,7 +178,7 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().layout_line(text, font_size, runs)
     }
 
-    fn destory(&self) {}
+    fn destroy(&self) {}
 }
 
 impl CosmicTextSystemState {

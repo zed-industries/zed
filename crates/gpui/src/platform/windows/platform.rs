@@ -603,7 +603,7 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        self.text_system.destory();
+        self.text_system.destroy();
         unsafe { OleUninitialize() };
     }
 }
