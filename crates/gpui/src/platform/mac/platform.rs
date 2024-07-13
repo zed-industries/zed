@@ -24,6 +24,7 @@ use core_foundation::{
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
+    runloop::CFRunLoopRun,
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
@@ -413,6 +414,10 @@ impl Platform for MacPlatform {
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
             (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
+    }
+
+    fn run_headless(&self) {
+        unsafe { CFRunLoopRun() };
     }
 
     fn quit(&self) {

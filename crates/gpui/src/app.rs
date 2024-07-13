@@ -119,6 +119,14 @@ impl App {
         ))
     }
 
+    /// Put the application in headless mode. This prevents opening windows,
+    /// but makes it possible to run an application in an context like
+    /// SSH, where GUI applications are not allowed.
+    pub fn headless(self) -> Self {
+        self.0.borrow_mut().headless = true;
+        self
+    }
+
     /// Assign
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
         let mut context_lock = self.0.borrow_mut();
@@ -136,11 +144,20 @@ impl App {
         F: 'static + FnOnce(&mut AppContext),
     {
         let this = self.0.clone();
+        let headless = self.0.borrow().headless;
         let platform = self.0.borrow().platform.clone();
-        platform.run(Box::new(move || {
-            let cx = &mut *this.borrow_mut();
-            on_finish_launching(cx);
-        }));
+        if headless {
+            {
+                let cx = &mut *this.borrow_mut();
+                on_finish_launching(cx);
+            }
+            platform.run_headless();
+        } else {
+            platform.run(Box::new(move || {
+                let cx = &mut *this.borrow_mut();
+                on_finish_launching(cx);
+            }));
+        }
     }
 
     /// Register a handler to be invoked when the platform instructs the application
@@ -212,6 +229,7 @@ pub struct AppContext {
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
+    headless: bool,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
@@ -265,6 +283,7 @@ impl AppContext {
                 active_drag: None,
                 background_executor: executor,
                 foreground_executor,
+                headless: false,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_cache: AssetCache::new(),
                 loading_assets: Default::default(),

@@ -1978,6 +1978,12 @@ impl Snapshot {
     }
 
     pub(crate) fn apply_remote_update(&mut self, mut update: proto::UpdateWorktree) -> Result<()> {
+        log::trace!(
+            "applying remote worktree update. {} entries updated, {} removed",
+            update.updated_entries.len(),
+            update.removed_entries.len()
+        );
+
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
 

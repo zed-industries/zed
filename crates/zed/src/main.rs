@@ -46,7 +46,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -520,6 +520,20 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     };
 
+    if !request.open_ssh_paths.is_empty() {
+        cx.spawn(|mut cx| async move {
+            open_ssh_paths(
+                &request.open_ssh_paths,
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut cx,
+            )
+            .await
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
     let mut task = None;
     if !request.open_paths.is_empty() {
         let app_state = app_state.clone();
@@ -890,7 +904,10 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
         Err(error) => {
-            if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
+            if arg.starts_with("file://")
+                || arg.starts_with("zed-cli://")
+                || arg.starts_with("ssh://")
+            {
                 Ok(arg.into())
             } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())

@@ -1,0 +1,45 @@
+[package]
+name = "remote"
+description = "Client-side subsystem for remote editing"
+edition = "2021"
+version = "0.1.0"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/remote.rs"
+doctest = false
+
+[[bin]]
+name = "remote_server"
+path = "src/remote_server.rs"
+
+[features]
+default = []
+test-support = ["fs/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+async-pipe.workspace = true
+async-ssh2-lite = { version = "0.4", default-features = false, features = ["async-io"] }
+async-tar.workspace = true
+async-trait.workspace = true
+collections.workspace = true
+env_logger.workspace = true
+fs.workspace = true
+git.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+prost.workspace = true
+rpc.workspace = true
+smol.workspace = true
+text.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }

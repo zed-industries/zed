@@ -150,6 +150,10 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn run_headless(&self) {
+        unimplemented!()
+    }
+
     fn quit(&self) {}
 
     fn restart(&self, _: Option<PathBuf>) {

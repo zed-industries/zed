@@ -9,8 +9,9 @@ use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
+use gpui::{AppContext, AsyncAppContext, Global, VisualContext as _, WindowHandle};
 use language::{Bias, Point};
+use std::net::IpAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,8 +29,17 @@ use crate::{init_headless, init_ui};
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
     pub open_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    pub open_ssh_paths: Vec<SshPath>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
+}
+
+#[derive(Debug)]
+pub struct SshPath {
+    pub username: String,
+    pub password: String,
+    pub address: std::net::SocketAddr,
+    pub path: PathBuf,
 }
 
 impl OpenRequest {
@@ -42,6 +52,8 @@ impl OpenRequest {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
+            } else if url.starts_with("ssh://") {
+                this.parse_ssh_file_path(&url)
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -60,6 +72,40 @@ impl OpenRequest {
                 self.open_paths.push(path_buf)
             }
         }
+    }
+
+    fn parse_ssh_file_path(&mut self, file: &str) {
+        let Some(url) = url::Url::parse(file.as_ref()).log_err() else {
+            return;
+        };
+        let Some(host) = url.host() else {
+            return;
+        };
+        let username = url.username();
+        if username.is_empty() {
+            return;
+        }
+        let Some(password) = url.password() else {
+            return;
+        };
+        let port = url.port().unwrap_or(22);
+        let address = match host {
+            url::Host::Domain(domain) => {
+                if let Ok(ip) = domain.parse::<IpAddr>() {
+                    (ip, port).into()
+                } else {
+                    return;
+                }
+            }
+            url::Host::Ipv4(ip) => (ip, port).into(),
+            url::Host::Ipv6(ip) => (ip, port).into(),
+        };
+        self.open_ssh_paths.push(SshPath {
+            username: username.to_string(),
+            password: password.to_string(),
+            address,
+            path: PathBuf::from(url.path()),
+        });
     }
 
     fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
@@ -158,6 +204,49 @@ fn connect_to_cli(
     });
 
     Ok((async_request_rx, response_tx))
+}
+
+pub async fn open_ssh_paths(
+    ssh_paths: &Vec<SshPath>,
+    app_state: Arc<AppState>,
+    _open_options: workspace::OpenOptions,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    for path in ssh_paths {
+        let Some(session) =
+            remote::SshSession::client(path.address, &path.username, &path.password, cx)
+                .await
+                .log_err()
+        else {
+            continue;
+        };
+
+        let project = cx.update(|cx| {
+            project::Project::ssh(
+                app_state.client.clone(),
+                session,
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            )
+        })?;
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree(&path.path, true, cx)
+            })?
+            .await?;
+
+        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+        let window = cx.open_window(options, {
+            let app_state = app_state.clone();
+            move |cx| cx.new_view(|cx| Workspace::new(None, project, app_state, cx))
+        })?;
+        window.update(cx, |_, cx| cx.activate_window()).log_err();
+    }
+    Ok(())
 }
 
 pub async fn open_paths_with_positions(
