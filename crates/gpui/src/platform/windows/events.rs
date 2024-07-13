@@ -82,7 +82,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -732,7 +732,10 @@ fn handle_dpi_changed_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let new_dpi = wparam.loword() as f32;
-    state_ptr.state.borrow_mut().scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    lock.border_offset.udpate(handle).log_err();
+    drop(lock);
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
     let width = rect.right - rect.left;
@@ -1050,12 +1053,17 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     Some(1)
 }
 
-fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_system_settings_changed(
+    handle: HWND,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
     // mouse double click
     lock.click_state.system_update();
+    // window border offset
+    lock.border_offset.udpate(handle).log_err();
     Some(0)
 }
 

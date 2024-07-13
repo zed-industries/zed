@@ -13,8 +13,9 @@ use async_tungstenite::tungstenite::{
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
@@ -23,6 +24,7 @@ use http::{HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
+use proto::ProtoClient;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -1408,6 +1410,11 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
+    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
@@ -1603,6 +1610,20 @@ impl Client {
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
         &self.telemetry
+    }
+}
+
+impl ProtoClient for Client {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+        self.send_dynamic(envelope)
     }
 }
 

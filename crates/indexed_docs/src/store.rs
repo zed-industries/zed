@@ -21,12 +21,6 @@ use crate::IndexedDocsRegistry;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct ProviderId(pub Arc<str>);
 
-impl ProviderId {
-    pub fn rustdoc() -> Self {
-        Self("rustdoc".into())
-    }
-}
-
 /// The name of a package.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct PackageName(Arc<str>);
@@ -106,6 +100,15 @@ impl IndexedDocsStore {
             .await
             .map_err(|err| anyhow!(err))?
             .load(key)
+            .await
+    }
+
+    pub async fn load_many_by_prefix(&self, prefix: String) -> Result<Vec<(String, MarkdownDocs)>> {
+        self.database_future
+            .clone()
+            .await
+            .map_err(|err| anyhow!(err))?
+            .load_many_by_prefix(prefix)
             .await
     }
 
@@ -260,6 +263,28 @@ impl IndexedDocsDatabase {
             entries
                 .get(&txn, &key)?
                 .ok_or_else(|| anyhow!("no docs found for {key}"))
+        })
+    }
+
+    pub fn load_many_by_prefix(&self, prefix: String) -> Task<Result<Vec<(String, MarkdownDocs)>>> {
+        let env = self.env.clone();
+        let entries = self.entries;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let results = entries
+                .iter(&txn)?
+                .filter_map(|entry| {
+                    let (key, value) = entry.ok()?;
+                    if key.starts_with(&prefix) {
+                        Some((key, value))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            Ok(results)
         })
     }
 

@@ -8529,7 +8529,7 @@ impl Editor {
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
             let (worktree_id, file) = project
-                .buffer_for_id(runnable.buffer)
+                .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
                 .map(|file| (WorktreeId::from_usize(file.worktree_id()), file.clone()))
                 .unzip();

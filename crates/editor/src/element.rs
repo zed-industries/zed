@@ -2642,28 +2642,30 @@ impl EditorElement {
         hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
-        display_point: Option<DisplayPoint>,
+        newest_selection_head: Option<DisplayPoint>,
         start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         em_width: Pixels,
         cx: &mut WindowContext,
     ) {
-        let Some(display_point) = display_point else {
+        let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
-
-        let Some(cursor_row_layout) =
-            line_layouts.get(display_point.row().minus(start_row) as usize)
+        let selection_row = newest_selection_head.row();
+        if selection_row < start_row {
+            return;
+        }
+        let Some(cursor_row_layout) = line_layouts.get(selection_row.minus(start_row) as usize)
         else {
             return;
         };
 
-        let start_x = cursor_row_layout.x_for_index(display_point.column() as usize)
+        let start_x = cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
             - scroll_pixel_position.x
             + content_origin.x;
         let start_y =
-            display_point.row().as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
+            selection_row.as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
 
         let max_size = size(
             (120. * em_width) // Default size
