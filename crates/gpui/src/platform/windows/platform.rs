@@ -791,8 +791,8 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
 }
 
 // clipboard
-pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("ZedTextHash");
-pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("ZedMetadata");
+pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
+pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
 
 #[cfg(test)]
 mod tests {
