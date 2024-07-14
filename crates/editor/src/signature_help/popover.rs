@@ -92,6 +92,7 @@ impl SignatureHelpPopover {
         let signature_help_children = if let Some(signature_description) = signature_description {
             let signature_description_element = div()
                 .id("signature_help_popover_description")
+                .max_w(max_size.width)
                 .child(div().p_2().child(crate::render_parsed_markdown(
                     "signature_help_popover_description_content",
                     signature_description,
