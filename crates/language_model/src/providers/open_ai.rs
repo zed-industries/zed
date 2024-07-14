@@ -61,8 +61,20 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+        let available_models = &self.state.read(cx).settings.available_models;
+        if !available_models.is_empty() {
+            return available_models
+                .iter()
+                .map(|model| ProvidedLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    name: LanguageModelName::from(model.display_name().to_string()),
+                })
+                .collect();
+        }
+
         open_ai::Model::iter()
+            .filter(|model| !matches!(model, open_ai::Model::Custom { .. }))
             .map(|model| ProvidedLanguageModel {
                 id: LanguageModelId::from(model.id().to_string()),
                 name: LanguageModelName::from(model.display_name().to_string()),

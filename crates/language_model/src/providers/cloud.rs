@@ -155,6 +155,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
         CloudModel::iter()
+            .filter(|model| !matches!(model, CloudModel::Custom(_)))
             .map(|model| ProvidedLanguageModel {
                 id: LanguageModelId::from(model.id().to_string()),
                 name: LanguageModelName::from(model.display_name().to_string()),
