@@ -235,6 +235,10 @@ impl DebugAdapterClient {
         self.id
     }
 
+    pub fn config(&self) -> DebugAdapterConfig {
+        self.config.clone()
+    }
+
     pub fn request_type(&self) -> DebugRequestType {
         self.config.request.clone()
     }

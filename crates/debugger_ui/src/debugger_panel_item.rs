@@ -121,13 +121,17 @@ impl Item for DebugPanelItem {
         params: workspace::item::TabContentParams,
         _: &WindowContext,
     ) -> AnyElement {
-        Label::new(format!("Thread {}", self.thread_id))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        Label::new(format!(
+            "{} - Thread {}",
+            self.client.config().id,
+            self.thread_id
+        ))
+        .color(if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        })
+        .into_any_element()
     }
 }
 
