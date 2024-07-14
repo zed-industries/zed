@@ -428,18 +428,12 @@ impl AssistantSettingsContent {
     pub fn set_model(&mut self, language_model: AvailableLanguageModel) {
         let provider = language_model.provider.clone();
         let name = language_model.model.name.clone();
-        match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_model = Some(AssistentDefaultModel {
-                        model: name.0.to_string(),
-                        provider: provider.0.to_string(),
-                    });
-                }
-                _ => return,
-            },
-            _ => return,
-        }
+        let mut settings = self.upgrade();
+        settings.default_model = Some(AssistentDefaultModel {
+            model: name.0.to_string(),
+            provider: provider.0.to_string(),
+        });
+        *self = Self::Versioned(VersionedAssistantSettingsContent::V2(settings));
     }
 }
 

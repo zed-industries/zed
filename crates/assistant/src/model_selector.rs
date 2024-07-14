@@ -31,8 +31,18 @@ impl RenderOnce for ModelSelector {
                     for available_model in LanguageModelRegistry::global(cx).available_models(cx) {
                         menu = menu.custom_entry(
                             {
-                                let model = available_model.model.clone();
-                                move |_| Label::new(model.name.0.clone()).into_any_element()
+                                let model_name = available_model.model.name.0.clone();
+                                let provider = available_model.provider.0.clone();
+                                move |_| {
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(model_name.clone()))
+                                        .child(div().ml_4().child(
+                                            Label::new(provider.clone()).color(Color::Muted),
+                                        ))
+                                        .into_any()
+                                }
                             },
                             {
                                 let fs = self.fs.clone();

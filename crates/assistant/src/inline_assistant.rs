@@ -1297,10 +1297,21 @@ impl Render for PromptEditor {
                                     {
                                         menu = menu.custom_entry(
                                             {
-                                                let model = available_model.model.clone();
+                                                let model_name =
+                                                    available_model.model.name.0.clone();
+                                                let provider = available_model.provider.0.clone();
                                                 move |_| {
-                                                    Label::new(model.name.0.clone())
-                                                        .into_any_element()
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_between()
+                                                        .child(Label::new(model_name.clone()))
+                                                        .child(
+                                                            div().ml_4().child(
+                                                                Label::new(provider.clone())
+                                                                    .color(Color::Muted),
+                                                            ),
+                                                        )
+                                                        .into_any()
                                                 }
                                             },
                                             {

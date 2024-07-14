@@ -343,7 +343,7 @@ impl AssistantPanel {
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if dbg!(self.is_authenticated(cx)) {
+        if self.is_authenticated(cx) {
             self.authentication_prompt = None;
 
             if let Some(editor) = self.active_context_editor(cx) {
