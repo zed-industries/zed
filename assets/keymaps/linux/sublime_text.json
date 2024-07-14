@@ -5,8 +5,8 @@
       "ctrl-shift-]": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivateNextItem"
-      "ctrl-shift-tab": "pane::ActivatePrevItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
     }
   },
   {
