@@ -2,6 +2,7 @@ use crate::transport::{self, Events, Payload, Request, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
+    events::Process,
     requests::{
         Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
         StepBack, StepIn, StepOut,
@@ -130,14 +131,31 @@ impl DebugAdapterClient {
     }
 
     async fn create_stdio_client(
-        _id: DebugAdapterClientId,
-        _config: DebugAdapterConfig,
-        _command: &str,
-        _args: Vec<&str>,
-        _project_path: PathBuf,
-        _cx: &mut AsyncAppContext,
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
+        command: &str,
+        args: Vec<&str>,
+        project_path: PathBuf,
+        cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        todo!("not implemented")
+        let mut command = process::Command::new(command);
+        command
+            .current_dir(project_path)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut process = command
+            .spawn()
+            .with_context(|| "failed to spawn command.")?;
+
+        let stdin = Box::new(process.stdin.take().unwrap());
+        let stdout = Box::new(BufReader::new(process.stdout.take().unwrap()));
+        let stderr = Box::new(BufReader::new(process.stderr.take().unwrap()));
+
+        Self::handle_transport(id, config, stdout, stdin, Some(stderr), Some(process), cx)
     }
 
     pub fn handle_transport(
