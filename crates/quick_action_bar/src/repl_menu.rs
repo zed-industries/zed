@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation};
 use repl::{
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, Session,
-    SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, SessionSupport,
 };
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu, Tooltip
+    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
+    Tooltip,
 };
 
 use gpui::ElementId;
@@ -83,9 +83,13 @@ impl QuickActionBar {
         struct ReplMenuState {
             tooltip: SharedString,
             icon: IconName,
+            icon_color: Color,
             icon_is_animating: bool,
             popover_disabled: bool,
             indicator: Option<Indicator>,
+            // TODO: Persist rotation state so the
+            // icon doesn't reset on every state change
+            // current_delta: Duration,
         }
 
         impl Default for ReplMenuState {
@@ -93,57 +97,53 @@ impl QuickActionBar {
                 Self {
                     tooltip: "Nothing running".into(),
                     icon: IconName::ReplNeutral,
+                    icon_color: Color::Default,
                     icon_is_animating: false,
                     popover_disabled: false,
                     indicator: None,
+                    // current_delta: Duration::default(),
                 }
             }
         }
 
-        let tooltip = |session: &Session| match &session.kernel {
+        let menu_state = match &session.kernel {
             Kernel::RunningKernel(kernel) => match &kernel.execution_state {
-                ExecutionState::Idle => {
-                    format!("Run code on {} ({})", kernel_name, kernel_language)
-                }
-                ExecutionState::Busy => format!("Interrupt {} ({})", kernel_name, kernel_language),
+                ExecutionState::Idle => ReplMenuState {
+                    tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
+                    indicator: Some(Indicator::dot().color(Color::Success)),
+                    ..Default::default()
+                },
+                ExecutionState::Busy => ReplMenuState {
+                    tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
+                    icon_is_animating: true,
+                    popover_disabled: false,
+                    indicator: None,
+                    ..Default::default()
+                },
             },
-            Kernel::StartingKernel(_) => format!("{} is starting", kernel_name),
-            Kernel::ErroredLaunch(e) => format!("Error with kernel {}: {}", kernel_name, e),
-            Kernel::ShuttingDown => format!("{} is shutting down", kernel_name),
-            Kernel::Shutdown => "Nothing running".to_string(),
-        };
-
-        let indicator = match &session.kernel {
-            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
-                ExecutionState::Idle => Some(Indicator::dot().color(Color::Success)),
-                ExecutionState::Busy => None,
+            Kernel::StartingKernel(_) => ReplMenuState {
+                tooltip: format!("{} is starting", kernel_name).into(),
+                icon_is_animating: true,
+                popover_disabled: true,
+                icon_color: Color::Muted,
+                indicator: Some(Indicator::dot().color(Color::Muted)),
+                ..Default::default()
             },
-            Kernel::StartingKernel(_) => Some(Indicator::dot().color(Color::Muted)),
-            Kernel::ErroredLaunch(_) => Some(Indicator::dot().color(Color::Error)),
-            Kernel::ShuttingDown => Some(Indicator::dot().color(Color::Muted)),
-            Kernel::Shutdown => None,
-        };
-
-        let icon = match &session.kernel {
-            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
-                ExecutionState::Idle => IconName::ReplNeutral,
-                ExecutionState::Busy => IconName::ReplNeutral,
+            Kernel::ErroredLaunch(e) => ReplMenuState {
+                tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
+                popover_disabled: false,
+                indicator: Some(Indicator::dot().color(Color::Error)),
+                ..Default::default()
             },
-            Kernel::StartingKernel(_) => IconName::ReplNeutral,
-            Kernel::ErroredLaunch(_) => IconName::ReplNeutral,
-            Kernel::ShuttingDown => IconName::ReplNeutral,
-            Kernel::Shutdown => IconName::ReplNeutral,
-        };
-
-        let icon_is_animating = match &session.kernel {
-            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
-                ExecutionState::Idle => false,
-                ExecutionState::Busy => true,
+            Kernel::ShuttingDown => ReplMenuState {
+                tooltip: format!("{} is shutting down", kernel_name).into(),
+                popover_disabled: true,
+                icon_color: Color::Muted,
+                indicator: Some(Indicator::dot().color(Color::Muted)),
+                ..Default::default()
             },
-           _ => false,
+            Kernel::Shutdown => ReplMenuState::default(),
         };
-
-        let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
 
         let id = "repl-menu".to_string();
 
@@ -233,27 +233,37 @@ impl QuickActionBar {
             })
             .trigger(
                 ButtonLike::new_rounded_right(element_id("dropdown"))
-                    .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall).color(Color::Muted))
+                    .child(
+                        Icon::new(IconName::ChevronDownSmall)
+                            .size(IconSize::XSmall)
+                            .color(menu_state.icon_color),
+                    )
                     .tooltip(move |cx| Tooltip::text("REPL Menu", cx))
-                    .width(rems(1.).into()).disabled(false),
+                    .width(rems(1.).into())
+                    .disabled(menu_state.popover_disabled),
             );
 
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
-            .child(
-                if icon_is_animating {
-                    Icon::new(icon).with_animation(
+            .child(if menu_state.icon_is_animating {
+                Icon::new(menu_state.icon)
+                    .color(menu_state.icon_color)
+                    .with_animation(
                         "arrow-circle",
-                        Animation::new(Duration::from_secs(3)).repeat(),
+                        Animation::new(Duration::from_secs(5)).repeat(),
                         |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    ).into_any_element()
-                } else {
-                IconWithIndicator::new(Icon::new(IconName::ReplNeutral), indicator)
-                    .indicator_border_color(Some(cx.theme().colors().toolbar_background)).into_any_element()
-                }
-            )
+                    )
+                    .into_any_element()
+            } else {
+                IconWithIndicator::new(
+                    Icon::new(IconName::ReplNeutral).color(menu_state.icon_color),
+                    menu_state.indicator,
+                )
+                .indicator_border_color(Some(cx.theme().colors().toolbar_background))
+                .into_any_element()
+            })
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
-            .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
+            .tooltip(move |cx| Tooltip::text(menu_state.tooltip.clone(), cx))
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .into_any_element();
@@ -275,7 +285,7 @@ impl QuickActionBar {
             SharedString::from(format!("Start REPL for {}", kernel_specification.name));
 
         Some(
-            IconButton::new("toggle_repl_icon", IconName::Play)
+            IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
@@ -292,7 +302,7 @@ impl QuickActionBar {
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
-            IconButton::new("toggle_repl_icon", IconName::Play)
+            IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
