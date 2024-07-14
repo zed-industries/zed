@@ -21,6 +21,7 @@ use std::{
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
+use ashpd::desktop::ResponseError;
 use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
@@ -277,7 +278,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     }
                 };
 
-                let result = OpenFileRequest::default()
+                let request = match OpenFileRequest::default()
                     .modal(true)
                     .title(title)
                     .accept_label("Select")
@@ -285,16 +286,29 @@ impl<P: LinuxClient + 'static> Platform for P {
                     .directory(options.directories)
                     .send()
                     .await
-                    .map(|request| {
-                        request.response().ok().and_then(|response| {
-                            response
-                                .uris()
-                                .iter()
-                                .map(|uri| uri.to_file_path().ok())
-                                .collect()
-                        })
-                    })
-                    .map_err(|_| anyhow!(FILE_PICKER_PORTAL_MISSING));
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
+                };
+
+                let result = match request.response() {
+                    Ok(response) => Ok(Some(
+                        response
+                            .uris()
+                            .iter()
+                            .filter_map(|uri| uri.to_file_path().ok())
+                            .collect::<Vec<_>>(),
+                    )),
+                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
@@ -306,29 +320,34 @@ impl<P: LinuxClient + 'static> Platform for P {
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let request = SaveFileRequest::default()
+                let request = match SaveFileRequest::default()
                     .modal(true)
                     .title("Select new path")
                     .accept_label("Accept")
-                    .current_folder(directory);
-
-                let result = if let Ok(request) = request {
-                    request
-                        .send()
-                        .await
-                        .map(|request| {
-                            request.response().ok().and_then(|response| {
-                                response
-                                    .uris()
-                                    .first()
-                                    .and_then(|uri| uri.to_file_path().ok())
-                            })
-                        })
-                        .map_err(|_| anyhow!(FILE_PICKER_PORTAL_MISSING))
-                } else {
-                    Ok(None)
+                    .current_folder(directory)
+                    .expect("pathbuf should not be nul terminated")
+                    .send()
+                    .await
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
                 };
 
+                let result = match request.response() {
+                    Ok(response) => Ok(response
+                        .uris()
+                        .first()
+                        .and_then(|uri| uri.to_file_path().ok())),
+                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
