@@ -4,7 +4,7 @@ pub mod registry;
 use anyhow::{anyhow, Result};
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
-use gpui::{AnyView, AppContext, Global, Model, ReadGlobal, Task};
+use gpui::{AnyView, AppContext, Global, ReadGlobal, Task};
 use providers::{
     anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
     ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
@@ -16,7 +16,7 @@ use std::{
     fmt::{self, Display},
     sync::Arc,
 };
-use ui::{Context, SharedString, WindowContext};
+use ui::{SharedString, WindowContext};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let mut registry = LanguageModelRegistry::default();
@@ -39,20 +39,17 @@ fn register_language_model_providers(
     client: Arc<Client>,
     cx: &mut AppContext,
 ) {
+    registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
     registry.register_provider(
-        cx.new_model(|cx| CloudLanguageModelProvider::new(client.clone(), cx)),
+        AnthropicLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
-        cx.new_model(|cx| AnthropicLanguageModelProvider::new(client.http_client(), cx)),
+        OpenAiLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
-        cx.new_model(|cx| OpenAiLanguageModelProvider::new(client.http_client(), cx)),
-        cx,
-    );
-    registry.register_provider(
-        cx.new_model(|cx| OllamaLanguageModelProvider::new(client.http_client(), cx)),
+        OllamaLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
 }
@@ -93,6 +90,7 @@ pub trait LanguageModel: Send + Sync {
     fn complete(
         &self,
         request: LanguageModelRequest,
+        cx: &AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 }
 
@@ -104,41 +102,6 @@ pub trait LanguageModelProvider: 'static {
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>>;
     fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>>;
-}
-
-impl<T: LanguageModelProvider> LanguageModelProvider for Model<T> {
-    fn name(&self, cx: &AppContext) -> LanguageModelProviderName {
-        self.read(cx).name(cx)
-    }
-
-    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
-        self.read(cx).provided_models(cx)
-    }
-
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.read(cx).is_authenticated(cx)
-    }
-
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.read(cx).authenticate(cx)
-    }
-
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        let handle = cx.window_handle();
-
-        self.update(cx, |provider, cx| {
-            handle.update(cx, |_, cx| provider.authentication_prompt(cx))
-        })
-        .unwrap() // TODO: Handle this better
-    }
-
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.read(cx).reset_credentials(cx)
-    }
-
-    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        self.read(cx).model(id, cx)
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -288,9 +251,16 @@ impl LanguageModelCompletionProvider {
     ) -> Task<Result<CompletionResponse>> {
         if let Some(language_model) = self.active_model() {
             let rate_limiter = self.request_limiter.clone();
-            cx.background_executor().spawn(async move {
-                let lock = rate_limiter.acquire_arc().await;
-                let response = language_model.complete(request);
+            cx.spawn(|cx| async move {
+                let lock = cx
+                    .background_executor()
+                    .spawn(async move { rate_limiter.acquire_arc().await })
+                    .await;
+
+                let Ok(response) = cx.update(|cx| language_model.complete(request, &cx)) else {
+                    return Err(anyhow!("App state dropped"));
+                };
+
                 Ok(CompletionResponse {
                     inner: response,
                     _lock: lock,

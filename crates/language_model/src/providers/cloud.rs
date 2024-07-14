@@ -6,11 +6,10 @@ use crate::{
 use anyhow::Result;
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
-use gpui::{AnyView, AppContext, ModelContext, Render, Task, WeakModel};
+use gpui::{AnyView, AppContext, Render, Task};
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, IntoElement, ViewContext};
-use util::ResultExt;
 
 use crate::LanguageModelProvider;
 
@@ -91,19 +90,36 @@ impl CloudModel {
 
 pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
-    status: client::Status,
+    state: gpui::Model<State>,
     _maintain_client_status: Task<()>,
-    handle: WeakModel<CloudLanguageModelProvider>,
+}
+
+struct State {
+    client: Arc<Client>,
+    status: client::Status,
+}
+
+impl State {
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+    }
 }
 
 impl CloudLanguageModelProvider {
-    pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(client: Arc<Client>, cx: &mut AppContext) -> Self {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let maintain_client_status = cx.spawn(|this, mut cx| async move {
+        let state = cx.new_model(|_| State {
+            client: client.clone(),
+            status,
+        });
+
+        let state_ref = state.downgrade();
+        let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
-                if let Some(this) = this.upgrade() {
+                if let Some(this) = state_ref.upgrade() {
                     _ = this.update(&mut cx, |this, _| {
                         this.status = status;
                     });
@@ -115,8 +131,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            status,
-            handle: cx.weak_model(),
+            state,
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -138,18 +153,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, _cx: &AppContext) -> bool {
-        self.status.is_connected()
+    fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.state.read(cx).status.is_connected()
     }
 
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        let client = self.client.clone();
-        cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+        self.state.read(cx).authenticate(cx)
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|_cx| AuthenticationPrompt {
-            handle: self.handle.clone(),
+            state: self.state.clone(),
         })
         .into()
     }
@@ -233,6 +247,7 @@ impl LanguageModel for CloudLanguageModel {
     fn complete(
         &self,
         mut request: LanguageModelRequest,
+        _cx: &AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match self.model {
             CloudModel::Claude3Opus
@@ -272,7 +287,7 @@ impl LanguageModel for CloudLanguageModel {
 }
 
 struct AuthenticationPrompt {
-    handle: WeakModel<CloudLanguageModelProvider>,
+    state: gpui::Model<State>,
 }
 
 impl Render for AuthenticationPrompt {
@@ -290,11 +305,9 @@ impl Render for AuthenticationPrompt {
                         .style(ButtonStyle::Filled)
                         .full_width()
                         .on_click(cx.listener(move |this, _, cx| {
-                            this.handle
-                                .update(cx, |provider, cx| {
-                                    provider.authenticate(cx).detach_and_log_err(cx);
-                                })
-                                .log_err();
+                            this.state.update(cx, |provider, cx| {
+                                provider.authenticate(cx).detach_and_log_err(cx);
+                            });
                         })),
                 )
                 .child(

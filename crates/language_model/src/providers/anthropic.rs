@@ -2,9 +2,7 @@ use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{
-    AnyView, AppContext, FontStyle, ModelContext, Task, TextStyle, View, WeakModel, WhiteSpace,
-};
+use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
 use settings::Settings;
 use std::{sync::Arc, time::Duration};
@@ -28,20 +26,23 @@ pub struct AnthropicSettings {
 }
 
 pub struct AnthropicLanguageModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: gpui::Model<State>,
+}
+
+struct State {
     api_key: Option<String>,
     settings: AnthropicSettings,
-    http_client: Arc<dyn HttpClient>,
-    handle: WeakModel<Self>,
 }
 
 impl AnthropicLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
-        Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
+        let state = cx.new_model(|_| State {
             api_key: None,
-            http_client,
             settings: AnthropicSettings::default(),
-            handle: cx.weak_model(),
-        }
+        });
+
+        Self { http_client, state }
     }
 }
 
@@ -59,16 +60,16 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, _cx: &AppContext) -> bool {
-        self.api_key.is_some()
+    fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.state.read(cx).api_key.is_some()
     }
 
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
-            let api_url = self.settings.api_url.clone();
-            let handle = self.handle.clone();
+            let api_url = self.state.read(cx).settings.api_url.clone();
+            let state = self.state.clone();
             cx.spawn(|mut cx| async move {
                 let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
                     api_key
@@ -80,7 +81,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     String::from_utf8(api_key)?
                 };
 
-                handle.update(&mut cx, |this, _| {
+                state.update(&mut cx, |this, _| {
                     this.api_key = Some(api_key);
                 })
             })
@@ -88,18 +89,16 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| {
-            AuthenticationPrompt::new(self.settings.api_url.clone(), self.handle.clone(), cx)
-        })
-        .into()
+        cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let handle = self.handle.clone();
-        let delete_credentials = cx.delete_credentials(&self.settings.api_url);
+        let state = self.state.clone();
+        let delete_credentials = cx.delete_credentials(&self.state.read(cx).settings.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
-            handle.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, _| {
                 this.api_key = None;
             })
         })
@@ -111,8 +110,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         Ok(Arc::new(AnthropicModel {
             id,
             model,
-            api_key: self.api_key.clone(),
-            settings: self.settings.clone(),
+            state: self.state.clone(),
             http_client: self.http_client.clone(),
         }))
     }
@@ -121,8 +119,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 pub struct AnthropicModel {
     id: LanguageModelId,
     model: anthropic::Model,
-    api_key: Option<String>,
-    settings: AnthropicSettings,
+    state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
 }
 
@@ -220,13 +217,16 @@ impl LanguageModel for AnthropicModel {
     fn complete(
         &self,
         request: LanguageModelRequest,
+        cx: &AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_anthropic_request(request);
 
         let http_client = self.http_client.clone();
-        let api_key = self.api_key.clone();
-        let api_url = self.settings.api_url.clone();
-        let low_speed_timeout = self.settings.low_speed_timeout;
+        let state = self.state.read(cx);
+        let api_key = state.api_key.clone();
+        let api_url = state.settings.api_url.clone();
+        let low_speed_timeout = state.settings.low_speed_timeout;
+
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(
@@ -308,16 +308,11 @@ pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
 
 struct AuthenticationPrompt {
     api_key: View<Editor>,
-    api_url: String,
-    handle: WeakModel<AnthropicLanguageModelProvider>,
+    state: gpui::Model<State>,
 }
 
 impl AuthenticationPrompt {
-    fn new(
-        api_url: String,
-        handle: WeakModel<AnthropicLanguageModelProvider>,
-        cx: &mut WindowContext,
-    ) -> Self {
+    fn new(state: gpui::Model<State>, cx: &mut WindowContext) -> Self {
         Self {
             api_key: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -327,8 +322,7 @@ impl AuthenticationPrompt {
                 );
                 editor
             }),
-            api_url,
-            handle,
+            state,
         }
     }
 
@@ -338,8 +332,12 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let write_credentials = cx.write_credentials(&self.api_url, "Bearer", api_key.as_bytes());
-        let handle = self.handle.clone();
+        let write_credentials = cx.write_credentials(
+            &self.state.read(cx).settings.api_url,
+            "Bearer",
+            api_key.as_bytes(),
+        );
+        let handle = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
 

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, ModelContext, Task, WeakModel};
+use gpui::{AnyView, AppContext, ModelContext, Task};
 use http::HttpClient;
 use ollama::{get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest};
 use std::{sync::Arc, time::Duration};
@@ -23,27 +23,60 @@ pub struct OllamaSettings {
 }
 
 pub struct OllamaLanguageModelProvider {
-    settings: OllamaSettings,
+    http_client: Arc<dyn HttpClient>,
+    state: gpui::Model<State>,
+}
+
+struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<ollama::Model>,
-    handle: WeakModel<Self>,
+    settings: OllamaSettings,
+}
+
+impl State {
+    fn fetch_models(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let http_client = self.http_client.clone();
+        let api_url = self.settings.api_url.clone();
+
+        // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
+        cx.spawn(|this, mut cx| async move {
+            let models = get_models(http_client.as_ref(), &api_url, None).await?;
+
+            let mut models: Vec<ollama::Model> = models
+                .into_iter()
+                // Since there is no metadata from the Ollama API
+                // indicating which models are embedding models,
+                // simply filter out models with "-embed" in their name
+                .filter(|model| !model.name.contains("-embed"))
+                .map(|model| ollama::Model::new(&model.name))
+                .collect();
+
+            models.sort_by(|a, b| a.name.cmp(&b.name));
+
+            this.update(&mut cx, |this, _| {
+                this.available_models = models;
+            })
+        })
+    }
 }
 
 impl OllamaLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         Self {
-            http_client,
-            settings: OllamaSettings::default(),
-            available_models: Default::default(),
-            handle: cx.weak_model(),
+            http_client: http_client.clone(),
+            state: cx.new_model(|_| State {
+                http_client,
+                available_models: Default::default(),
+                settings: OllamaSettings::default(),
+            }),
         }
     }
 
     fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
         let http_client = self.http_client.clone();
-        let api_url = self.settings.api_url.clone();
+        let api_url = self.state.read(cx).settings.api_url.clone();
 
-        let handle = self.handle.clone();
+        let state = self.state.clone();
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(|mut cx| async move {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
@@ -59,7 +92,7 @@ impl OllamaLanguageModelProvider {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            handle.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, _| {
                 this.available_models = models;
             })
         })
@@ -71,8 +104,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
-        self.available_models
+    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+        self.state
+            .read(cx)
+            .available_models
             .iter()
             .map(|model| ProvidedLanguageModel {
                 id: LanguageModelId::from(model.name.clone()),
@@ -81,8 +116,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, _cx: &AppContext) -> bool {
-        !self.available_models.is_empty()
+    fn is_authenticated(&self, cx: &AppContext) -> bool {
+        !self.state.read(cx).available_models.is_empty()
     }
 
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
@@ -94,11 +129,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        let handle = self.handle.clone();
+        let state = self.state.clone();
         let fetch_models = Box::new(move |cx: &mut WindowContext| {
-            handle
-                .update(cx, |this, cx| this.fetch_models(cx))
-                .unwrap_or_else(|_| Task::ready(Ok(())))
+            state.update(cx, |this, cx| this.fetch_models(cx))
         });
 
         cx.new_view(|cx| DownloadOllamaMessage::new(fetch_models, cx))
@@ -109,8 +142,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.fetch_models(cx)
     }
 
-    fn model(&self, id: LanguageModelId, _cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
+    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
         let model = self
+            .state
+            .read(cx)
             .available_models
             .iter()
             .find(|model| model.name == id.0)
@@ -121,7 +156,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             id,
             model,
             http_client: self.http_client.clone(),
-            settings: self.settings.clone(),
+            state: self.state.clone(),
         }))
     }
 }
@@ -129,8 +164,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 pub struct OllamaLanguageModel {
     id: LanguageModelId,
     model: ollama::Model,
+    state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
-    settings: OllamaSettings,
 }
 
 impl OllamaLanguageModel {
@@ -205,12 +240,14 @@ impl LanguageModel for OllamaLanguageModel {
     fn complete(
         &self,
         request: LanguageModelRequest,
+        cx: &AppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let api_url = self.settings.api_url.clone();
-        let low_speed_timeout = self.settings.low_speed_timeout;
+        let state = self.state.read(cx);
+        let api_url = state.settings.api_url.clone();
+        let low_speed_timeout = state.settings.low_speed_timeout;
         async move {
             let request =
                 stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);
