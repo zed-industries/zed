@@ -2,7 +2,6 @@ use crate::transport::{self, Events, Payload, Request, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
-    events::Process,
     requests::{
         Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
         StepBack, StepIn, StepOut,
@@ -151,9 +150,27 @@ impl DebugAdapterClient {
             .spawn()
             .with_context(|| "failed to spawn command.")?;
 
-        let stdin = Box::new(process.stdin.take().unwrap());
-        let stdout = Box::new(BufReader::new(process.stdout.take().unwrap()));
-        let stderr = Box::new(BufReader::new(process.stderr.take().unwrap()));
+        // give the adapter some time to start std
+        cx.background_executor()
+            .timer(Duration::from_millis(1000))
+            .await;
+
+        let stdin = process
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
+        let stdout = process
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stderr = process
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stderr"))?;
+
+        let stdin = Box::new(stdin);
+        let stdout = Box::new(BufReader::new(stdout));
+        let stderr = Box::new(BufReader::new(stderr));
 
         Self::handle_transport(id, config, stdout, stdin, Some(stderr), Some(process), cx)
     }
