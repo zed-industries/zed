@@ -91,6 +91,7 @@ pub struct ThemeSettings {
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
     pub ui_density: UiDensity,
+    pub unnecessary_code_fade: f32,
 }
 
 impl ThemeSettings {
@@ -265,6 +266,10 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+
+    // How much to fade out unused code.
+    #[serde(rename = "unnecessary_code_fade", default)]
+    pub unnecessary_code_fade: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -465,6 +470,7 @@ impl settings::Settings for ThemeSettings {
                 .unwrap(),
             theme_overrides: None,
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
+            unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
@@ -512,6 +518,7 @@ impl settings::Settings for ThemeSettings {
                 value.buffer_font_size.map(Into::into),
             );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
+            merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
         }
 
         Ok(this)

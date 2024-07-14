@@ -551,6 +551,8 @@
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // Settings specific to journaling
   "journal": {
     // The path of the directory where journal entries are stored
