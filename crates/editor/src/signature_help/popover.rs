@@ -1,7 +1,7 @@
 use crate::{Editor, EditorStyle};
 use gpui::{
-    div, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels, Size, Styled,
-    ViewContext, WeakView,
+    div, AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Size,
+    Styled, ViewContext, WeakView,
 };
 use language::ParsedMarkdown;
 use std::cell::RefCell;
@@ -154,6 +154,8 @@ impl SignatureHelpPopover {
             let boarder = div().border_primary(cx).border_1().into_any_element();
 
             div()
+                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                .on_mouse_move(|_, cx| cx.stop_propagation())
                 .elevation_2(cx)
                 .flex()
                 .flex_row()
@@ -161,6 +163,7 @@ impl SignatureHelpPopover {
                 .into_any_element()
         } else {
             div()
+                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                 .elevation_2(cx)
                 .child(signature_help)
                 .into_any_element()
