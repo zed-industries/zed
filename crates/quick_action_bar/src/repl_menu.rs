@@ -1,10 +1,12 @@
-use gpui::AnyElement;
+use std::time::Duration;
+
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation};
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, Session,
     SessionSupport,
 };
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, IntoElement, PopoverMenu, Tooltip,
+    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu, Tooltip
 };
 
 use gpui::ElementId;
@@ -78,6 +80,26 @@ impl QuickActionBar {
             .clone()
             .into();
 
+        struct ReplMenuState {
+            tooltip: SharedString,
+            icon: IconName,
+            icon_is_animating: bool,
+            popover_disabled: bool,
+            indicator: Option<Indicator>,
+        }
+
+        impl Default for ReplMenuState {
+            fn default() -> Self {
+                Self {
+                    tooltip: "Nothing running".into(),
+                    icon: IconName::ReplNeutral,
+                    icon_is_animating: false,
+                    popover_disabled: false,
+                    indicator: None,
+                }
+            }
+        }
+
         let tooltip = |session: &Session| match &session.kernel {
             Kernel::RunningKernel(kernel) => match &kernel.execution_state {
                 ExecutionState::Idle => {
@@ -89,6 +111,36 @@ impl QuickActionBar {
             Kernel::ErroredLaunch(e) => format!("Error with kernel {}: {}", kernel_name, e),
             Kernel::ShuttingDown => format!("{} is shutting down", kernel_name),
             Kernel::Shutdown => "Nothing running".to_string(),
+        };
+
+        let indicator = match &session.kernel {
+            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+                ExecutionState::Idle => Some(Indicator::dot().color(Color::Success)),
+                ExecutionState::Busy => None,
+            },
+            Kernel::StartingKernel(_) => Some(Indicator::dot().color(Color::Muted)),
+            Kernel::ErroredLaunch(_) => Some(Indicator::dot().color(Color::Error)),
+            Kernel::ShuttingDown => Some(Indicator::dot().color(Color::Muted)),
+            Kernel::Shutdown => None,
+        };
+
+        let icon = match &session.kernel {
+            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+                ExecutionState::Idle => IconName::ReplNeutral,
+                ExecutionState::Busy => IconName::ReplNeutral,
+            },
+            Kernel::StartingKernel(_) => IconName::ReplNeutral,
+            Kernel::ErroredLaunch(_) => IconName::ReplNeutral,
+            Kernel::ShuttingDown => IconName::ReplNeutral,
+            Kernel::Shutdown => IconName::ReplNeutral,
+        };
+
+        let icon_is_animating = match &session.kernel {
+            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+                ExecutionState::Idle => false,
+                ExecutionState::Busy => true,
+            },
+           _ => false,
         };
 
         let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
@@ -181,15 +233,23 @@ impl QuickActionBar {
             })
             .trigger(
                 ButtonLike::new_rounded_right(element_id("dropdown"))
-                    .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall))
+                    .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall).color(Color::Muted))
                     .tooltip(move |cx| Tooltip::text("REPL Menu", cx))
-                    .width(rems(1.).into()),
+                    .width(rems(1.).into()).disabled(false),
             );
 
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
             .child(
-                IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot()))
-                    .indicator_border_color(Some(cx.theme().colors().border)),
+                if icon_is_animating {
+                    Icon::new(icon).with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(3)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ).into_any_element()
+                } else {
+                IconWithIndicator::new(Icon::new(IconName::ReplNeutral), indicator)
+                    .indicator_border_color(Some(cx.theme().colors().toolbar_background)).into_any_element()
+                }
             )
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
