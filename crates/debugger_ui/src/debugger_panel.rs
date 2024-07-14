@@ -210,7 +210,7 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let mut tasks = Vec::new();
-        for thread_state in client.thread_state().values() {
+        for thread_state in client.thread_states().values() {
             for stack_frame in thread_state.stack_frames.clone() {
                 tasks.push(Self::remove_editor_highlight(&stack_frame, cx));
             }
@@ -233,7 +233,7 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let mut tasks = Vec::new();
-        if let Some(thread_state) = client.thread_state().get(&thread_id) {
+        if let Some(thread_state) = client.thread_states().get(&thread_id) {
             for stack_frame in thread_state.stack_frames.clone() {
                 tasks.push(Self::remove_editor_highlight(&stack_frame, cx));
             }
@@ -356,7 +356,7 @@ impl DebugPanel {
                 }
 
                 this.update(&mut cx, |this, cx| {
-                    let mut thread_state = client.thread_state();
+                    let mut thread_state = client.thread_states();
                     let thread_state = thread_state
                         .entry(thread_id)
                         .or_insert(ThreadState::default());
@@ -423,7 +423,7 @@ impl DebugPanel {
 
         if event.reason == ThreadEventReason::Started {
             client
-                .thread_state()
+                .thread_states()
                 .insert(thread_id, ThreadState::default());
         } else {
             client.update_thread_state_status(thread_id.clone(), ThreadStatus::Ended);

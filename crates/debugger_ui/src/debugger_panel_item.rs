@@ -150,7 +150,7 @@ impl DebugPanelItem {
     }
 
     fn current_thread_state(&self) -> Option<ThreadState> {
-        self.client.thread_state().get(&self.thread_id).cloned()
+        self.client.thread_states().get(&self.thread_id).cloned()
     }
 
     fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {

@@ -66,8 +66,8 @@ pub struct DebugAdapterClient {
     capabilities: Option<dap_types::Capabilities>,
     config: DebugAdapterConfig,
     client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
-    thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
     request_type: DebugRequestType,
+    thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
 }
 
 impl DebugAdapterClient {
@@ -102,8 +102,8 @@ impl DebugAdapterClient {
             .current_dir(project_path)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true);
 
         let process = command
@@ -165,7 +165,7 @@ impl DebugAdapterClient {
             capabilities: None,
             server_tx: server_tx.clone(),
             request_count: AtomicU64::new(0),
-            thread_state: Arc::new(Mutex::new(HashMap::new())),
+            thread_states: Arc::new(Mutex::new(HashMap::new())),
         };
 
         cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
@@ -247,17 +247,17 @@ impl DebugAdapterClient {
     }
 
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
-        if let Some(thread_state) = self.thread_state().get_mut(&thread_id) {
+        if let Some(thread_state) = self.thread_states().get_mut(&thread_id) {
             thread_state.status = status;
         };
     }
 
-    pub fn thread_state(&self) -> MutexGuard<HashMap<u64, ThreadState>> {
-        self.thread_state.lock()
+    pub fn thread_states(&self) -> MutexGuard<HashMap<u64, ThreadState>> {
+        self.thread_states.lock()
     }
 
     pub fn thread_state_by_id(&self, thread_id: u64) -> ThreadState {
-        self.thread_state.lock().get(&thread_id).cloned().unwrap()
+        self.thread_states.lock().get(&thread_id).cloned().unwrap()
     }
 
     pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
