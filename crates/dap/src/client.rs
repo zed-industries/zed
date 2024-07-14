@@ -66,7 +66,6 @@ pub struct DebugAdapterClient {
     capabilities: Option<dap_types::Capabilities>,
     config: DebugAdapterConfig,
     client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
-    request_type: DebugRequestType,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
 }
 
@@ -155,12 +154,10 @@ impl DebugAdapterClient {
 
         let client_rx = Arc::new(smol::lock::Mutex::new(client_rx));
 
-        let request_type = config.clone().request;
         let client = Self {
             id,
             config,
             client_rx,
-            request_type,
             _process: process,
             capabilities: None,
             server_tx: server_tx.clone(),
@@ -239,7 +236,7 @@ impl DebugAdapterClient {
     }
 
     pub fn request_type(&self) -> DebugRequestType {
-        self.request_type.clone()
+        self.config.request.clone()
     }
 
     pub fn next_request_id(&self) -> u64 {
