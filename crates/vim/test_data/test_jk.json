@@ -6,3 +6,10 @@
 {"Key":"j"}
 {"Key":"k"}
 {"Get":{"state":"jˇohello","mode":"Normal"}}
+{"Put":{"state":"ˇhello"}}
+{"Key":"i"}
+{"Key":"o"}
+{"Key":"j"}
+{"Key":"j"}
+{"Key":"k"}
+{"Get":{"state":"oˇjhello","mode":"Normal"}}

@@ -587,17 +587,41 @@ impl PendingInput {
             .join("")
     }
 
-    fn used_by_binding(&self, binding: &KeyBinding) -> bool {
-        if self.keystrokes.is_empty() {
-            return true;
-        }
-        let keystroke = &self.keystrokes[0];
-        for candidate in keystroke.match_candidates() {
-            if binding.match_keystrokes(&[candidate]) == KeyMatch::Pending {
-                return true;
+    fn used_by_binding_offset(&self, binding: &KeyBinding) -> Option<usize> {
+        fn used_by_binding(
+            binding: &KeyBinding,
+            resolved_keystrokes: &mut Vec<Keystroke>,
+            unresolved_keystrokes: &[Keystroke],
+        ) -> bool {
+            if let Some((keystroke, unresolved_keystrokes)) = unresolved_keystrokes.split_first() {
+                keystroke.match_candidates().into_iter().any(|candidate| {
+                    resolved_keystrokes.push(candidate);
+                    let result =
+                        used_by_binding(binding, resolved_keystrokes, unresolved_keystrokes);
+                    resolved_keystrokes.pop();
+                    result
+                })
+            } else {
+                binding.match_keystrokes(resolved_keystrokes) == KeyMatch::Pending
             }
         }
-        false
+
+        let mut resolved_keystrokes = Vec::with_capacity(self.keystrokes.len());
+
+        let mut offset = 0;
+        while offset < self.keystrokes.len() {
+            resolved_keystrokes.clear();
+            if used_by_binding(
+                binding,
+                &mut resolved_keystrokes,
+                &self.keystrokes[offset..],
+            ) {
+                return Some(offset);
+            }
+            offset += 1;
+        }
+
+        None
     }
 }
 
@@ -3297,8 +3321,19 @@ impl<'a> WindowContext<'a> {
             if let Some(keystroke) = keystroke {
                 currently_pending.keystrokes.push(keystroke.clone());
             }
+
+            // TODO: also compare tree depth
             for binding in bindings {
-                currently_pending.bindings.push(binding);
+                match currently_pending
+                    .bindings
+                    .iter()
+                    .position(|el| el.keystrokes.len() < binding.keystrokes.len())
+                {
+                    Some(idx) => {
+                        currently_pending.bindings.insert(idx, binding);
+                    }
+                    None => currently_pending.bindings.push(binding),
+                }
             }
 
             currently_pending.timer = Some(self.spawn(|mut cx| async move {
@@ -3319,14 +3354,22 @@ impl<'a> WindowContext<'a> {
 
             self.propagate_event = false;
             return;
-        } else if let Some(currently_pending) = self.window.pending_input.take() {
+        } else if let Some(mut currently_pending) = self.window.pending_input.take() {
             self.pending_input_changed();
-            if bindings
+
+            if let Some(skipped_keystrokes_count) = bindings
                 .iter()
-                .all(|binding| !currently_pending.used_by_binding(binding))
+                .filter_map(|binding| currently_pending.used_by_binding_offset(binding))
+                .min()
             {
-                self.replay_pending_input(currently_pending)
+                currently_pending
+                    .keystrokes
+                    .drain(skipped_keystrokes_count..);
+                currently_pending.bindings.clear();
+                currently_pending.timer = None;
             }
+
+            self.replay_pending_input(currently_pending);
         }
 
         if !bindings.is_empty() {
