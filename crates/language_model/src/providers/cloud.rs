@@ -15,6 +15,8 @@ use crate::LanguageModelProvider;
 
 use super::anthropic::{count_anthropic_tokens, preprocess_anthropic_request};
 
+const PROVIDER_NAME: &str = "zed.dev";
+
 #[derive(Clone, Debug, Default, PartialEq, EnumIter)]
 pub enum CloudModel {
     Gpt3Point5Turbo,
@@ -136,8 +138,6 @@ impl CloudLanguageModelProvider {
         }
     }
 }
-
-const PROVIDER_NAME: &str = "zed.dev";
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {

@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
+use crate::{
+    assistant_settings::AssistantSettings, completion_provider::LanguageModelCompletionProvider,
+    ToggleModelSelector,
+};
 use fs::Fs;
 use gpui::ReadGlobal;
-use language_model::{registry::LanguageModelRegistry, LanguageModelCompletionProvider};
+use language_model::registry::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -36,12 +39,11 @@ impl RenderOnce for ModelSelector {
                                 let model = available_model.clone();
                                 move |cx| {
                                     let model = model.clone();
-                                    dbg!("TODO changing model");
-                                    // update_settings_file::<AssistantSettings>(
-                                    //     fs.clone(),
-                                    //     cx,
-                                    //     move |settings| settings.set_model(model),
-                                    // );
+                                    update_settings_file::<AssistantSettings>(
+                                        fs.clone(),
+                                        cx,
+                                        move |settings| settings.set_model(model),
+                                    );
                                 }
                             },
                         );

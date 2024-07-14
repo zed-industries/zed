@@ -1,5 +1,6 @@
 pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
+use language_model::AvailableLanguageModel;
 pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
@@ -97,6 +98,20 @@ impl JsonSchema for CloudModel {
 }
 
 impl CloudModel {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "gpt-3.5-turbo" => Some(Self::Gpt3Point5Turbo),
+            "gpt-4" => Some(Self::Gpt4),
+            "gpt-4-turbo-preview" => Some(Self::Gpt4Turbo),
+            "gpt-4o" => Some(Self::Gpt4Omni),
+            "claude-3-5-sonnet" => Some(Self::Claude3_5Sonnet),
+            "claude-3-opus" => Some(Self::Claude3Opus),
+            "claude-3-sonnet" => Some(Self::Claude3Sonnet),
+            "claude-3-haiku" => Some(Self::Claude3Haiku),
+            _ => None,
+        }
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
@@ -310,17 +325,28 @@ impl AssistantSettingsContent {
                         .clone()
                         .and_then(|provider| match provider {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
-                                default_model.map(|model| AssistentDefaultModel::Cloud { model })
+                                default_model.map(|model| AssistentDefaultModel {
+                                    provider: "zed.dev".to_string(),
+                                    model: model.id().to_string(),
+                                })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {
-                                default_model.map(|model| AssistentDefaultModel::OpenAi { model })
+                                default_model.map(|model| AssistentDefaultModel {
+                                    provider: "openai".to_string(),
+                                    model: model.id().to_string(),
+                                })
                             }
                             AssistantProviderContentV1::Anthropic { default_model, .. } => {
-                                default_model
-                                    .map(|model| AssistentDefaultModel::Anthropic { model })
+                                default_model.map(|model| AssistentDefaultModel {
+                                    provider: "anthropic".to_string(),
+                                    model: model.id().to_string(),
+                                })
                             }
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
-                                default_model.map(|model| AssistentDefaultModel::Ollama { model })
+                                default_model.map(|model| AssistentDefaultModel {
+                                    provider: "ollama".to_string(),
+                                    model: model.id().to_string(),
+                                })
                             }
                         }),
                     providers: settings
@@ -368,10 +394,12 @@ impl AssistantSettingsContent {
                 dock: settings.dock,
                 default_width: settings.default_width,
                 default_height: settings.default_height,
-                default_model: settings
-                    .default_open_ai_model
-                    .clone()
-                    .map(|model| AssistentDefaultModel::OpenAi { model }),
+                default_model: settings.default_open_ai_model.clone().map(|model| {
+                    AssistentDefaultModel {
+                        provider: "openai".to_string(),
+                        model: model.id().to_string(),
+                    }
+                }),
                 providers: vec![AssistantProviderContentV2::OpenAi {
                     api_url: settings.openai_api_url.clone(),
                     low_speed_timeout_in_seconds: None,
@@ -397,90 +425,22 @@ impl AssistantSettingsContent {
         }
     }
 
-    // pub fn set_model(&mut self, new_model: LanguageModel) {
-    //     match self {
-    //         AssistantSettingsContent::Versioned(settings) => match settings {
-    //             VersionedAssistantSettingsContent::V1(settings) => match &mut settings.provider {
-    //                 Some(AssistantProviderContentV1::ZedDotDev {
-    //                     default_model: model,
-    //                 }) => {
-    //                     if let LanguageModel::Cloud(new_model) = new_model {
-    //                         *model = Some(new_model);
-    //                     }
-    //                 }
-    //                 Some(AssistantProviderContentV1::OpenAi {
-    //                     default_model: model,
-    //                     ..
-    //                 }) => {
-    //                     if let LanguageModel::OpenAi(new_model) = new_model {
-    //                         *model = Some(new_model);
-    //                     }
-    //                 }
-    //                 Some(AssistantProviderContentV1::Anthropic {
-    //                     default_model: model,
-    //                     ..
-    //                 }) => {
-    //                     if let LanguageModel::Anthropic(new_model) = new_model {
-    //                         *model = Some(new_model);
-    //                     }
-    //                 }
-    //                 Some(AssistantProviderContentV1::Ollama {
-    //                     default_model: model,
-    //                     ..
-    //                 }) => {
-    //                     if let LanguageModel::Ollama(new_model) = new_model {
-    //                         *model = Some(new_model);
-    //                     }
-    //                 }
-    //                 provider => match new_model {
-    //                     LanguageModel::Cloud(model) => {
-    //                         *provider = Some(AssistantProviderContentV1::ZedDotDev {
-    //                             default_model: Some(model),
-    //                         })
-    //                     }
-    //                     LanguageModel::OpenAi(model) => {
-    //                         *provider = Some(AssistantProviderContentV1::OpenAi {
-    //                             default_model: Some(model),
-    //                             api_url: None,
-    //                             low_speed_timeout_in_seconds: None,
-    //                             available_models: Some(Default::default()),
-    //                         })
-    //                     }
-    //                     LanguageModel::Anthropic(model) => {
-    //                         *provider = Some(AssistantProviderContentV1::Anthropic {
-    //                             default_model: Some(model),
-    //                             api_url: None,
-    //                             low_speed_timeout_in_seconds: None,
-    //                         })
-    //                     }
-    //                     LanguageModel::Ollama(model) => {
-    //                         *provider = Some(AssistantProviderContentV1::Ollama {
-    //                             default_model: Some(model),
-    //                             api_url: None,
-    //                             low_speed_timeout_in_seconds: None,
-    //                         })
-    //                     }
-    //                 },
-    //             },
-    //             VersionedAssistantSettingsContent::V2(settings) => {
-    //                 let model = match new_model {
-    //                     LanguageModel::Cloud(model) => AssistentDefaultModel::Cloud { model },
-    //                     LanguageModel::OpenAi(model) => AssistentDefaultModel::OpenAi { model },
-    //                     LanguageModel::Anthropic(model) => {
-    //                         AssistentDefaultModel::Anthropic { model }
-    //                     }
-    //                     LanguageModel::Ollama(model) => AssistentDefaultModel::Ollama { model },
-    //                 };
-    //                 settings.default_model = Some(model);
-    //             }
-    //         },
-    //         AssistantSettingsContent::Legacy(settings) => {
-    //             if let LanguageModel::OpenAi(model) = new_model {
-    //                 settings.default_open_ai_model = Some(model);
-    //             }
-    //         }
-    //     }
-    // }
+    pub fn set_model(&mut self, language_model: AvailableLanguageModel) {
+        let provider = language_model.provider.clone();
+        let name = language_model.model.name.clone();
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V2(settings) => {
+                    settings.default_model = Some(AssistentDefaultModel {
+                        model: name.0.to_string(),
+                        provider: provider.0.to_string(),
+                    });
+                }
+                _ => return,
+            },
+            _ => return,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -571,22 +531,16 @@ pub struct AssistentSettingsContentV2 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(tag = "name", rename_all = "snake_case")]
-pub enum AssistentDefaultModel {
-    #[serde(rename = "zed.dev")]
-    Cloud { model: CloudModel },
-    #[serde(rename = "openai")]
-    OpenAi { model: OpenAiModel },
-    #[serde(rename = "anthropic")]
-    Anthropic { model: AnthropicModel },
-    #[serde(rename = "ollama")]
-    Ollama { model: OllamaModel },
+pub struct AssistentDefaultModel {
+    pub provider: String,
+    pub model: String,
 }
 
 impl Default for AssistentDefaultModel {
     fn default() -> Self {
-        Self::OpenAi {
-            model: OpenAiModel::default(),
+        Self {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
         }
     }
 }
@@ -642,6 +596,10 @@ impl Settings for AssistantSettings {
             merge(
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
+            );
+            merge(
+                &mut settings.default_model,
+                value.default_model.map(Into::into),
             );
 
             // let mut new_providers = Vec::new();

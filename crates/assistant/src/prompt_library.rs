@@ -1,4 +1,5 @@
 use crate::{
+    completion_provider::LanguageModelCompletionProvider,
     slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
     Role,
 };
@@ -19,9 +20,7 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
-use language_model::{
-    LanguageModelCompletionProvider, LanguageModelRequest, LanguageModelRequestMessage,
-};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;

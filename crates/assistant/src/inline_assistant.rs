@@ -1,6 +1,7 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, AssistantPanelEvent, Hunk, Role, StreamingDiff,
+    assistant_settings::AssistantSettings, completion_provider::LanguageModelCompletionProvider,
+    humanize_token_count, prompts::generate_content_prompt, AssistantPanel, AssistantPanelEvent,
+    Hunk, Role, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -23,8 +24,7 @@ use gpui::{
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{
-    registry::LanguageModelRegistry, LanguageModelCompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage,
+    registry::LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -1308,12 +1308,11 @@ impl Render for PromptEditor {
                                                 let model = available_model.clone();
                                                 move |cx| {
                                                     let model = model.clone();
-                                                    dbg!("TODO changing model");
-                                                    // update_settings_file::<AssistantSettings>(
-                                                    //     fs.clone(),
-                                                    //     cx,
-                                                    //     move |settings| settings.set_model(model),
-                                                    // );
+                                                    update_settings_file::<AssistantSettings>(
+                                                        fs.clone(),
+                                                        cx,
+                                                        move |settings| settings.set_model(model),
+                                                    );
                                                 }
                                             },
                                         );

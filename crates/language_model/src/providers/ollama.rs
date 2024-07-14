@@ -14,7 +14,7 @@ use crate::{
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 
-const PROVIDER_NAME: &str = "Ollama";
+const PROVIDER_NAME: &str = "ollama";
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {

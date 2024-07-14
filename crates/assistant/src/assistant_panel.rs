@@ -1,3 +1,4 @@
+use crate::completion_provider::LanguageModelCompletionProvider;
 use crate::slash_command::docs_command::{DocsSlashCommand, DocsSlashCommandArgs};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
@@ -44,9 +45,7 @@ use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
-use language_model::{
-    LanguageModelCompletionProvider, LanguageModelRequest, LanguageModelRequestMessage,
-};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage};
 use multi_buffer::MultiBufferRow;
 use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
@@ -344,7 +343,7 @@ impl AssistantPanel {
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if self.is_authenticated(cx) {
+        if dbg!(self.is_authenticated(cx)) {
             self.authentication_prompt = None;
 
             if let Some(editor) = self.active_context_editor(cx) {
