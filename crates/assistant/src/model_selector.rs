@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use crate::{assistant_settings::AssistantSettings, CompletionProvider, ToggleModelSelector};
+use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
 use fs::Fs;
+use gpui::ReadGlobal;
+use language_model::{registry::LanguageModelRegistry, LanguageModelCompletionProvider};
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -23,22 +25,23 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for model in CompletionProvider::global(cx).available_models(cx) {
+                    for available_model in LanguageModelRegistry::global(cx).available_models(cx) {
                         menu = menu.custom_entry(
                             {
-                                let model = model.clone();
-                                move |_| Label::new(model.display_name()).into_any_element()
+                                let model = available_model.model.clone();
+                                move |_| Label::new(model.name.0.clone()).into_any_element()
                             },
                             {
                                 let fs = self.fs.clone();
-                                let model = model.clone();
+                                let model = available_model.clone();
                                 move |cx| {
                                     let model = model.clone();
-                                    update_settings_file::<AssistantSettings>(
-                                        fs.clone(),
-                                        cx,
-                                        move |settings| settings.set_model(model),
-                                    );
+                                    dbg!("TODO changing model");
+                                    // update_settings_file::<AssistantSettings>(
+                                    //     fs.clone(),
+                                    //     cx,
+                                    //     move |settings| settings.set_model(model),
+                                    // );
                                 }
                             },
                         );
@@ -60,7 +63,10 @@ impl RenderOnce for ModelSelector {
                                     .whitespace_nowrap()
                                     .child(
                                         Label::new(
-                                            CompletionProvider::global(cx).model().display_name(),
+                                            LanguageModelCompletionProvider::global(cx)
+                                                .active_model()
+                                                .map(|model| model.name().0.clone())
+                                                .unwrap_or_default(),
                                         )
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),

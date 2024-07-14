@@ -4,7 +4,7 @@ use gpui::{AppContext, Global, Model};
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
-    providers: HashMap<LanguageModelProviderName, Box<dyn LanguageModelProvider>>,
+    providers: HashMap<LanguageModelProviderName, Arc<dyn LanguageModelProvider>>,
 }
 
 impl Global for LanguageModelRegistry {}
@@ -17,7 +17,7 @@ impl LanguageModelRegistry {
     ) {
         let name = provider.name(cx);
 
-        self.providers.insert(name, Box::new(provider));
+        self.providers.insert(name, Arc::new(provider));
     }
 
     pub fn available_models(&self, cx: &AppContext) -> Vec<AvailableLanguageModel> {
@@ -45,5 +45,12 @@ impl LanguageModelRegistry {
         })?;
 
         provider.model(requested.model.id.clone(), cx)
+    }
+
+    pub fn provider(
+        &self,
+        name: &LanguageModelProviderName,
+    ) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.providers.get(name).cloned()
     }
 }

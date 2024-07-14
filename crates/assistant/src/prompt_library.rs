@@ -1,6 +1,6 @@
 use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
+    Role,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
@@ -19,6 +19,9 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language_model::{
+    LanguageModelCompletionProvider, LanguageModelRequest, LanguageModelRequestMessage,
+};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
@@ -636,8 +639,8 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let provider = CompletionProvider::global(cx);
-        if provider.is_authenticated() {
+        let provider = LanguageModelCompletionProvider::global(cx);
+        if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
                 assistant.assist(&prompt_editor, None, None, cx)
             })
@@ -735,11 +738,8 @@ impl PromptLibrary {
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
                         .update(|cx| {
-                            let provider = CompletionProvider::global(cx);
-                            let model = provider.model();
-                            provider.count_tokens(
+                            LanguageModelCompletionProvider::global(cx).count_tokens(
                                 LanguageModelRequest {
-                                    model,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: body.to_string(),
@@ -804,7 +804,7 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let current_model = CompletionProvider::global(cx).model();
+                let current_model = LanguageModelCompletionProvider::global(cx).active_model();
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -915,7 +915,12 @@ impl PromptLibrary {
                                                                     format!(
                                                                         "Model: {}",
                                                                         current_model
-                                                                            .display_name()
+                                                                            .as_ref()
+                                                                            .map(|model| model
+                                                                                .name()
+                                                                                .0
+                                                                                .clone())
+                                                                            .unwrap_or_default()
                                                                     ),
                                                                     cx,
                                                                 )

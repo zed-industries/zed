@@ -14,6 +14,8 @@ use crate::{
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 
+const PROVIDER_NAME: &str = "Ollama";
+
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
@@ -66,7 +68,7 @@ impl OllamaLanguageModelProvider {
 
 impl LanguageModelProvider for OllamaLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
-        LanguageModelProviderName("Ollama".into())
+        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
@@ -116,6 +118,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?;
 
         Ok(Arc::new(OllamaLanguageModel {
+            id,
             model,
             http_client: self.http_client.clone(),
             settings: self.settings.clone(),
@@ -124,6 +127,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 }
 
 pub struct OllamaLanguageModel {
+    id: LanguageModelId,
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     settings: OllamaSettings,
@@ -161,6 +165,26 @@ impl OllamaLanguageModel {
 }
 
 impl LanguageModel for OllamaLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("ollama/{}", self.model.id())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

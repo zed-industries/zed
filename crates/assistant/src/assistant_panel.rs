@@ -9,11 +9,10 @@ use crate::{
         SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistant, InsertIntoEditor,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    ModelSelector, QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleModelSelector,
+    ApplyEdit, Assist, ConfirmCommand, ContextStore, CycleMessageRole, DeployHistory,
+    DeployPromptLibrary, InlineAssist, InlineAssistant, InsertIntoEditor, MessageId,
+    MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
+    SavedContextMetadata, SavedMessage, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -36,13 +35,17 @@ use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty,
     EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext,
-    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    ParentElement, Pixels, ReadGlobal, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
+};
+use language_model::{
+    LanguageModelCompletionProvider, LanguageModelRequest, LanguageModelRequestMessage,
 };
 use multi_buffer::MultiBufferRow;
 use paths::contexts_dir;
@@ -294,13 +297,7 @@ impl AssistantPanel {
         let subscriptions = vec![
             cx.observe(&pane, |_, _, cx| cx.notify()),
             cx.subscribe(&pane, Self::handle_pane_event),
-            cx.observe_global::<CompletionProvider>({
-                let mut prev_settings_version = CompletionProvider::global(cx).settings_version();
-                move |this, cx| {
-                    this.completion_provider_changed(prev_settings_version, cx);
-                    prev_settings_version = CompletionProvider::global(cx).settings_version();
-                }
-            }),
+            cx.observe_global::<LanguageModelCompletionProvider>(Self::completion_provider_changed),
         ];
 
         Self {
@@ -346,11 +343,7 @@ impl AssistantPanel {
         }
     }
 
-    fn completion_provider_changed(
-        &mut self,
-        prev_settings_version: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
             self.authentication_prompt = None;
 
@@ -366,13 +359,10 @@ impl AssistantPanel {
                 self.new_context(cx);
             }
             cx.notify();
-        } else if self.authentication_prompt.is_none()
-            || prev_settings_version != CompletionProvider::global(cx).settings_version()
-        {
-            self.authentication_prompt =
-                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
-                    provider.authentication_prompt(cx)
-                }));
+        } else if self.authentication_prompt.is_none() {
+            self.authentication_prompt = LanguageModelCompletionProvider::global(cx)
+                .current_provider(cx)
+                .map(|provider| provider.authentication_prompt(cx));
             cx.notify();
         }
     }
@@ -590,7 +580,7 @@ impl AssistantPanel {
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        CompletionProvider::global(cx)
+        LanguageModelCompletionProvider::global(cx)
             .reset_credentials(cx)
             .detach_and_log_err(cx);
     }
@@ -661,11 +651,13 @@ impl AssistantPanel {
     }
 
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        CompletionProvider::global(cx).is_authenticated()
+        LanguageModelCompletionProvider::global(cx).is_authenticated(cx)
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
+        cx.update_global::<LanguageModelCompletionProvider, _>(|provider, cx| {
+            provider.authenticate(cx)
+        })
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1075,7 +1067,9 @@ impl Context {
                     .await;
 
                 let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                    .update(|cx| {
+                        LanguageModelCompletionProvider::global(cx).count_tokens(request, cx)
+                    })?
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
@@ -1403,13 +1397,13 @@ impl Context {
         }
 
         if should_assist {
-            if !CompletionProvider::global(cx).is_authenticated() {
+            if !LanguageModelCompletionProvider::global(cx).is_authenticated(cx) {
                 log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
             let request = self.to_completion_request(cx);
-            let response = CompletionProvider::global(cx).complete(request, cx);
+            let response = LanguageModelCompletionProvider::global(cx).complete(request, cx);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1422,7 +1416,9 @@ impl Context {
 
             let task = cx.spawn({
                 |this, mut cx| async move {
-                    let response = response.await;
+                    let Ok(response) = response.await else {
+                        return;
+                    };
                     let assistant_message_id = assistant_message.id;
                     let mut response_latency = None;
                     let stream_completion = async {
@@ -1493,14 +1489,17 @@ impl Context {
                             }
 
                             if let Some(telemetry) = this.telemetry.as_ref() {
-                                let model = CompletionProvider::global(cx).model();
-                                telemetry.report_assistant_event(
-                                    this.id.clone(),
-                                    AssistantKind::Panel,
-                                    model.telemetry_id(),
-                                    response_latency,
-                                    error_message,
-                                );
+                                if let Some(model) =
+                                    LanguageModelCompletionProvider::global(cx).active_model()
+                                {
+                                    telemetry.report_assistant_event(
+                                        this.id.clone(),
+                                        AssistantKind::Panel,
+                                        model.telemetry_id(),
+                                        response_latency,
+                                        error_message,
+                                    );
+                                }
                             }
 
                             cx.emit(ContextEvent::MessagesEdited);
@@ -1526,7 +1525,6 @@ impl Context {
             .map(|message| message.to_request_message(self.buffer.read(cx)));
 
         LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
             messages: messages.collect(),
             stop: vec![],
             temperature: 1.0,
@@ -1701,7 +1699,7 @@ impl Context {
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
         if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
+            if !LanguageModelCompletionProvider::global(cx).is_authenticated(cx) {
                 return;
             }
 
@@ -1713,16 +1711,15 @@ impl Context {
                     content: "Summarize the context into a short title without punctuation.".into(),
                 }));
             let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let response = CompletionProvider::global(cx).complete(request, cx);
+            let response = LanguageModelCompletionProvider::global(cx).complete(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let response = response.await;
+                    let response = response.await?;
                     let mut messages = response.inner.await?;
 
                     while let Some(message) = messages.next().await {
@@ -3342,7 +3339,7 @@ impl ContextEditorToolbarItem {
     }
 
     fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::global(cx).active_model()?;
         let context = &self
             .active_context_editor
             .as_ref()?
@@ -3630,7 +3627,7 @@ mod tests {
     use super::*;
     use crate::{
         slash_command::{active_command, file_command},
-        FakeCompletionProvider, MessageId,
+        MessageId,
     };
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};

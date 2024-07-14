@@ -19,6 +19,8 @@ use crate::{
     ProvidedLanguageModel, Role,
 };
 
+const PROVIDER_NAME: &str = "Anthropic";
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
     pub api_url: String,
@@ -45,7 +47,7 @@ impl AnthropicLanguageModelProvider {
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
-        LanguageModelProviderName("Anthropic".into())
+        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
@@ -107,6 +109,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         let model = anthropic::Model::from_id(&id.0)?;
 
         Ok(Arc::new(AnthropicModel {
+            id,
             model,
             api_key: self.api_key.clone(),
             settings: self.settings.clone(),
@@ -116,6 +119,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 }
 
 pub struct AnthropicModel {
+    id: LanguageModelId,
     model: anthropic::Model,
     api_key: Option<String>,
     settings: AnthropicSettings,
@@ -185,6 +189,26 @@ pub fn count_anthropic_tokens(
 }
 
 impl LanguageModel for AnthropicModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("anthropic/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

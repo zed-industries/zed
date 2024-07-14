@@ -1,7 +1,6 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count,
-    prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent, Role,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -14,9 +13,14 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
-    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
+    Model, ModelContext, ReadGlobal, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
+    WhiteSpace,
 };
 use language::Buffer;
+use language_model::{
+    registry::LanguageModelRegistry, LanguageModelCompletionProvider, LanguageModelRequest,
+    LanguageModelRequestMessage,
+};
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -212,8 +216,6 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let model = CompletionProvider::global(cx).model();
-
         let shell = std::env::var("SHELL").ok();
         let working_directory = assist
             .terminal
@@ -265,7 +267,6 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
-            model,
             messages,
             stop: Vec::new(),
             temperature: 1.0,
@@ -556,26 +557,28 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
+                                    for available_model in
+                                        LanguageModelRegistry::global(cx).available_models(cx)
                                     {
                                         menu = menu.custom_entry(
                                             {
-                                                let model = model.clone();
+                                                let model = available_model.model.clone();
                                                 move |_| {
-                                                    Label::new(model.display_name())
+                                                    Label::new(model.name.0.clone())
                                                         .into_any_element()
                                                 }
                                             },
                                             {
                                                 let fs = fs.clone();
-                                                let model = model.clone();
+                                                let model = available_model.clone();
                                                 move |cx| {
                                                     let model = model.clone();
-                                                    update_settings_file::<AssistantSettings>(
-                                                        fs.clone(),
-                                                        cx,
-                                                        move |settings| settings.set_model(model),
-                                                    );
+                                                    dbg!("Setting model TODO");
+                                                    // update_settings_file::<AssistantSettings>(
+                                                    //     fs.clone(),
+                                                    //     cx,
+                                                    //     move |settings| settings.set_model(model),
+                                                    // );
                                                 }
                                             },
                                         );
@@ -593,9 +596,10 @@ impl Render for PromptEditor {
                                         Tooltip::with_meta(
                                             format!(
                                                 "Using {}",
-                                                CompletionProvider::global(cx)
-                                                    .model()
-                                                    .display_name()
+                                                LanguageModelCompletionProvider::global(cx)
+                                                    .active_model()
+                                                    .map(|model| model.name().0)
+                                                    .unwrap_or_default()
                                             ),
                                             None,
                                             "Click to Change Model",
@@ -746,7 +750,7 @@ impl PromptEditor {
                 })??;
 
             let token_count = cx
-                .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| LanguageModelCompletionProvider::global(cx).count_tokens(request, cx))?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -876,7 +880,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1021,15 +1025,21 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+        let Some(model) = LanguageModelCompletionProvider::global(cx).active_model() else {
+            return;
+        };
+
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
 
         let telemetry = self.telemetry.clone();
-        let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).complete(prompt, cx);
+        let model_telemetry_id = model.telemetry_id();
+        let response = LanguageModelCompletionProvider::global(cx).complete(prompt, cx);
 
         self.generation = cx.spawn(|this, mut cx| async move {
-            let response = response.await;
+            let Ok(response) = response.await else {
+                return;
+            };
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 

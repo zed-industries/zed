@@ -18,6 +18,8 @@ use crate::{
     LanguageModelProviderName, LanguageModelRequest, ProvidedLanguageModel, Role,
 };
 
+const PROVIDER_NAME: &str = "OpenAI";
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
     pub api_url: String,
@@ -45,7 +47,7 @@ impl OpenAiLanguageModelProvider {
 
 impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
-        LanguageModelProviderName("OpenAI".into())
+        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
@@ -106,6 +108,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         let model = open_ai::Model::from_id(&id.0)?;
 
         Ok(Arc::new(OpenAiLanguageModel {
+            id,
             model,
             api_key: self.api_key.clone(),
             settings: self.settings.clone(),
@@ -115,6 +118,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 }
 
 pub struct OpenAiLanguageModel {
+    id: LanguageModelId,
     model: open_ai::Model,
     api_key: Option<String>,
     settings: OpenAiSettings,
@@ -151,6 +155,26 @@ impl OpenAiLanguageModel {
 }
 
 impl LanguageModel for OpenAiLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("openai/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

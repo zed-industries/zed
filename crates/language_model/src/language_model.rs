@@ -4,7 +4,7 @@ pub mod registry;
 use anyhow::{anyhow, Result};
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
-use gpui::{AnyView, AppContext, Global, Model, Task};
+use gpui::{AnyView, AppContext, Global, Model, ReadGlobal, Task};
 use providers::{
     anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
     ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
@@ -21,9 +21,17 @@ use ui::{Context, SharedString, WindowContext};
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let mut registry = LanguageModelRegistry::default();
     register_language_model_providers(&mut registry, client, cx);
-    cx.set_global(registry);
 
-    cx.set_global(LanguageModelCompletionProvider::new());
+    let mut completion_provider = LanguageModelCompletionProvider::new();
+    let default_model = registry
+        .model(registry.available_models(cx).first().unwrap(), cx)
+        .ok();
+    if let Some(default_model) = default_model {
+        completion_provider.set_active_model(default_model);
+    }
+
+    cx.set_global(registry);
+    cx.set_global(completion_provider);
 }
 
 fn register_language_model_providers(
@@ -69,6 +77,13 @@ pub struct AvailableLanguageModel {
 }
 
 pub trait LanguageModel: Send + Sync {
+    fn id(&self) -> LanguageModelId;
+    fn name(&self) -> LanguageModelName;
+    fn provider_name(&self) -> LanguageModelProviderName;
+    fn telemetry_id(&self) -> String;
+
+    fn max_token_count(&self) -> usize;
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -230,6 +245,28 @@ impl LanguageModelCompletionProvider {
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>) {
         self.active_model = Some(model);
+    }
+
+    pub fn current_provider(&self, cx: &AppContext) -> Option<Arc<dyn LanguageModelProvider>> {
+        let provider_name = self.active_model.as_ref()?.provider_name();
+        LanguageModelRegistry::global(cx).provider(&provider_name)
+    }
+
+    pub fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.current_provider(cx)
+            .map_or(false, |provider| provider.is_authenticated(cx))
+    }
+
+    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+        self.current_provider(cx)
+            .map_or(Task::ready(Ok(())), |provider| provider.authenticate(cx))
+    }
+
+    pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+        self.current_provider(cx)
+            .map_or(Task::ready(Ok(())), |provider| {
+                provider.reset_credentials(cx)
+            })
     }
 
     pub fn count_tokens(

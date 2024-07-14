@@ -1,9 +1,3 @@
-use std::{fmt, time::Duration};
-
-use crate::{
-    preprocess_anthropic_request, AnthropicSettings, LanguageModel, LanguageModelRequest,
-    LanguageModelSettings, OllamaSettings, OpenAiSettings,
-};
 pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
 pub use ollama::Model as OllamaModel;
@@ -17,6 +11,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use settings::{Settings, SettingsSources};
+use std::fmt;
 use strum::{EnumIter, IntoEnumIterator};
 
 #[derive(Clone, Debug, Default, PartialEq, EnumIter)]
@@ -142,15 +137,6 @@ impl CloudModel {
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
-
-    pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
-        match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => {
-                preprocess_anthropic_request(request)
-            }
-            _ => {}
-        }
-    }
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
@@ -222,30 +208,30 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AssistantProvider {
-    ZedDotDev,
-    OpenAi(OpenAiSettings),
-    Anthropic(AnthropicSettings),
-    Ollama(OllamaSettings),
-}
+// #[derive(Clone, Debug, PartialEq)]
+// pub enum AssistantProvider {
+//     ZedDotDev,
+//     OpenAi(OpenAiSettings),
+//     Anthropic(AnthropicSettings),
+//     Ollama(OllamaSettings),
+// }
 
-impl AssistantProvider {
-    pub fn settings(&self) -> &dyn LanguageModelSettings {
-        match self {
-            AssistantProvider::ZedDotDev => &(),
-            AssistantProvider::OpenAi(settings) => settings,
-            AssistantProvider::Anthropic(settings) => settings,
-            AssistantProvider::Ollama(settings) => settings,
-        }
-    }
-}
+// impl AssistantProvider {
+//     pub fn settings(&self) -> &dyn LanguageModelSettings {
+//         match self {
+//             AssistantProvider::ZedDotDev => &(),
+//             AssistantProvider::OpenAi(settings) => settings,
+//             AssistantProvider::Anthropic(settings) => settings,
+//             AssistantProvider::Ollama(settings) => settings,
+//         }
+//     }
+// }
 
-impl Default for AssistantProvider {
-    fn default() -> Self {
-        Self::OpenAi(OpenAiSettings::default())
-    }
-}
+// impl Default for AssistantProvider {
+//     fn default() -> Self {
+//         Self::OpenAi(OpenAiSettings::default())
+//     }
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
@@ -278,7 +264,7 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: AssistentDefaultModel,
-    pub providers: Vec<AssistantProvider>,
+    // pub providers: Vec<AssistantProvider>,
 }
 
 /// Assistant panel settings
@@ -411,90 +397,90 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn set_model(&mut self, new_model: LanguageModel) {
-        match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V1(settings) => match &mut settings.provider {
-                    Some(AssistantProviderContentV1::ZedDotDev {
-                        default_model: model,
-                    }) => {
-                        if let LanguageModel::Cloud(new_model) = new_model {
-                            *model = Some(new_model);
-                        }
-                    }
-                    Some(AssistantProviderContentV1::OpenAi {
-                        default_model: model,
-                        ..
-                    }) => {
-                        if let LanguageModel::OpenAi(new_model) = new_model {
-                            *model = Some(new_model);
-                        }
-                    }
-                    Some(AssistantProviderContentV1::Anthropic {
-                        default_model: model,
-                        ..
-                    }) => {
-                        if let LanguageModel::Anthropic(new_model) = new_model {
-                            *model = Some(new_model);
-                        }
-                    }
-                    Some(AssistantProviderContentV1::Ollama {
-                        default_model: model,
-                        ..
-                    }) => {
-                        if let LanguageModel::Ollama(new_model) = new_model {
-                            *model = Some(new_model);
-                        }
-                    }
-                    provider => match new_model {
-                        LanguageModel::Cloud(model) => {
-                            *provider = Some(AssistantProviderContentV1::ZedDotDev {
-                                default_model: Some(model),
-                            })
-                        }
-                        LanguageModel::OpenAi(model) => {
-                            *provider = Some(AssistantProviderContentV1::OpenAi {
-                                default_model: Some(model),
-                                api_url: None,
-                                low_speed_timeout_in_seconds: None,
-                                available_models: Some(Default::default()),
-                            })
-                        }
-                        LanguageModel::Anthropic(model) => {
-                            *provider = Some(AssistantProviderContentV1::Anthropic {
-                                default_model: Some(model),
-                                api_url: None,
-                                low_speed_timeout_in_seconds: None,
-                            })
-                        }
-                        LanguageModel::Ollama(model) => {
-                            *provider = Some(AssistantProviderContentV1::Ollama {
-                                default_model: Some(model),
-                                api_url: None,
-                                low_speed_timeout_in_seconds: None,
-                            })
-                        }
-                    },
-                },
-                VersionedAssistantSettingsContent::V2(settings) => {
-                    let model = match new_model {
-                        LanguageModel::Cloud(model) => AssistentDefaultModel::Cloud { model },
-                        LanguageModel::OpenAi(model) => AssistentDefaultModel::OpenAi { model },
-                        LanguageModel::Anthropic(model) => {
-                            AssistentDefaultModel::Anthropic { model }
-                        }
-                        LanguageModel::Ollama(model) => AssistentDefaultModel::Ollama { model },
-                    };
-                    settings.default_model = Some(model);
-                }
-            },
-            AssistantSettingsContent::Legacy(settings) => {
-                if let LanguageModel::OpenAi(model) = new_model {
-                    settings.default_open_ai_model = Some(model);
-                }
-            }
-        }
-    }
+    // pub fn set_model(&mut self, new_model: LanguageModel) {
+    //     match self {
+    //         AssistantSettingsContent::Versioned(settings) => match settings {
+    //             VersionedAssistantSettingsContent::V1(settings) => match &mut settings.provider {
+    //                 Some(AssistantProviderContentV1::ZedDotDev {
+    //                     default_model: model,
+    //                 }) => {
+    //                     if let LanguageModel::Cloud(new_model) = new_model {
+    //                         *model = Some(new_model);
+    //                     }
+    //                 }
+    //                 Some(AssistantProviderContentV1::OpenAi {
+    //                     default_model: model,
+    //                     ..
+    //                 }) => {
+    //                     if let LanguageModel::OpenAi(new_model) = new_model {
+    //                         *model = Some(new_model);
+    //                     }
+    //                 }
+    //                 Some(AssistantProviderContentV1::Anthropic {
+    //                     default_model: model,
+    //                     ..
+    //                 }) => {
+    //                     if let LanguageModel::Anthropic(new_model) = new_model {
+    //                         *model = Some(new_model);
+    //                     }
+    //                 }
+    //                 Some(AssistantProviderContentV1::Ollama {
+    //                     default_model: model,
+    //                     ..
+    //                 }) => {
+    //                     if let LanguageModel::Ollama(new_model) = new_model {
+    //                         *model = Some(new_model);
+    //                     }
+    //                 }
+    //                 provider => match new_model {
+    //                     LanguageModel::Cloud(model) => {
+    //                         *provider = Some(AssistantProviderContentV1::ZedDotDev {
+    //                             default_model: Some(model),
+    //                         })
+    //                     }
+    //                     LanguageModel::OpenAi(model) => {
+    //                         *provider = Some(AssistantProviderContentV1::OpenAi {
+    //                             default_model: Some(model),
+    //                             api_url: None,
+    //                             low_speed_timeout_in_seconds: None,
+    //                             available_models: Some(Default::default()),
+    //                         })
+    //                     }
+    //                     LanguageModel::Anthropic(model) => {
+    //                         *provider = Some(AssistantProviderContentV1::Anthropic {
+    //                             default_model: Some(model),
+    //                             api_url: None,
+    //                             low_speed_timeout_in_seconds: None,
+    //                         })
+    //                     }
+    //                     LanguageModel::Ollama(model) => {
+    //                         *provider = Some(AssistantProviderContentV1::Ollama {
+    //                             default_model: Some(model),
+    //                             api_url: None,
+    //                             low_speed_timeout_in_seconds: None,
+    //                         })
+    //                     }
+    //                 },
+    //             },
+    //             VersionedAssistantSettingsContent::V2(settings) => {
+    //                 let model = match new_model {
+    //                     LanguageModel::Cloud(model) => AssistentDefaultModel::Cloud { model },
+    //                     LanguageModel::OpenAi(model) => AssistentDefaultModel::OpenAi { model },
+    //                     LanguageModel::Anthropic(model) => {
+    //                         AssistentDefaultModel::Anthropic { model }
+    //                     }
+    //                     LanguageModel::Ollama(model) => AssistentDefaultModel::Ollama { model },
+    //                 };
+    //                 settings.default_model = Some(model);
+    //             }
+    //         },
+    //         AssistantSettingsContent::Legacy(settings) => {
+    //             if let LanguageModel::OpenAi(model) = new_model {
+    //                 settings.default_open_ai_model = Some(model);
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -658,103 +644,103 @@ impl Settings for AssistantSettings {
                 value.default_height.map(Into::into),
             );
 
-            let mut new_providers = Vec::new();
-            for provider in value.providers.into_iter() {
-                let mut found = false;
-                for settings_provider in &mut settings.providers {
-                    match (settings_provider, provider.clone()) {
-                        (AssistantProvider::ZedDotDev, AssistantProviderContentV2::ZedDotDev) => {
-                            found = true;
-                        }
-                        (
-                            AssistantProvider::OpenAi(settings),
-                            AssistantProviderContentV2::OpenAi {
-                                api_url: api_url_override,
-                                low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
-                                available_models: available_models_override,
-                            },
-                        ) => {
-                            merge(&mut settings.api_url, api_url_override);
-                            merge(&mut settings.available_models, available_models_override);
-                            if let Some(low_speed_timeout_in_seconds_override) =
-                                low_speed_timeout_in_seconds_override
-                            {
-                                settings.low_speed_timeout = Some(Duration::from_secs(
-                                    low_speed_timeout_in_seconds_override,
-                                ));
-                            }
-                            found = true;
-                        }
-                        (
-                            AssistantProvider::Ollama(settings),
-                            AssistantProviderContentV2::Ollama {
-                                api_url: api_url_override,
-                                low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
-                            },
-                        ) => {
-                            merge(&mut settings.api_url, api_url_override);
-                            if let Some(low_speed_timeout_in_seconds_override) =
-                                low_speed_timeout_in_seconds_override
-                            {
-                                settings.low_speed_timeout = Some(Duration::from_secs(
-                                    low_speed_timeout_in_seconds_override,
-                                ));
-                            }
-                            found = true;
-                        }
-                        (
-                            AssistantProvider::Anthropic(settings),
-                            AssistantProviderContentV2::Anthropic {
-                                api_url: api_url_override,
-                                low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
-                            },
-                        ) => {
-                            merge(&mut settings.api_url, api_url_override);
-                            if let Some(low_speed_timeout_in_seconds_override) =
-                                low_speed_timeout_in_seconds_override
-                            {
-                                settings.low_speed_timeout = Some(Duration::from_secs(
-                                    low_speed_timeout_in_seconds_override,
-                                ));
-                            }
-                            found = true;
-                        }
-                        _ => {}
-                    }
-                }
+            // let mut new_providers = Vec::new();
+            // for provider in value.providers.into_iter() {
+            //     let mut found = false;
+            //     for settings_provider in &mut settings.providers {
+            //         match (settings_provider, provider.clone()) {
+            //             (AssistantProvider::ZedDotDev, AssistantProviderContentV2::ZedDotDev) => {
+            //                 found = true;
+            //             }
+            //             (
+            //                 AssistantProvider::OpenAi(settings),
+            //                 AssistantProviderContentV2::OpenAi {
+            //                     api_url: api_url_override,
+            //                     low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+            //                     available_models: available_models_override,
+            //                 },
+            //             ) => {
+            //                 merge(&mut settings.api_url, api_url_override);
+            //                 merge(&mut settings.available_models, available_models_override);
+            //                 if let Some(low_speed_timeout_in_seconds_override) =
+            //                     low_speed_timeout_in_seconds_override
+            //                 {
+            //                     settings.low_speed_timeout = Some(Duration::from_secs(
+            //                         low_speed_timeout_in_seconds_override,
+            //                     ));
+            //                 }
+            //                 found = true;
+            //             }
+            //             (
+            //                 AssistantProvider::Ollama(settings),
+            //                 AssistantProviderContentV2::Ollama {
+            //                     api_url: api_url_override,
+            //                     low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+            //                 },
+            //             ) => {
+            //                 merge(&mut settings.api_url, api_url_override);
+            //                 if let Some(low_speed_timeout_in_seconds_override) =
+            //                     low_speed_timeout_in_seconds_override
+            //                 {
+            //                     settings.low_speed_timeout = Some(Duration::from_secs(
+            //                         low_speed_timeout_in_seconds_override,
+            //                     ));
+            //                 }
+            //                 found = true;
+            //             }
+            //             (
+            //                 AssistantProvider::Anthropic(settings),
+            //                 AssistantProviderContentV2::Anthropic {
+            //                     api_url: api_url_override,
+            //                     low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+            //                 },
+            //             ) => {
+            //                 merge(&mut settings.api_url, api_url_override);
+            //                 if let Some(low_speed_timeout_in_seconds_override) =
+            //                     low_speed_timeout_in_seconds_override
+            //                 {
+            //                     settings.low_speed_timeout = Some(Duration::from_secs(
+            //                         low_speed_timeout_in_seconds_override,
+            //                     ));
+            //                 }
+            //                 found = true;
+            //             }
+            //             _ => {}
+            //         }
+            //     }
 
-                if !found {
-                    new_providers.push(match provider {
-                        AssistantProviderContentV2::ZedDotDev => AssistantProvider::ZedDotDev,
-                        AssistantProviderContentV2::OpenAi {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            available_models,
-                        } => AssistantProvider::OpenAi(OpenAiSettings {
-                            api_url: api_url.unwrap_or_else(|| open_ai::OPEN_AI_API_URL.into()),
-                            low_speed_timeout: low_speed_timeout_in_seconds
-                                .map(Duration::from_secs),
-                            available_models: available_models.unwrap_or_default(),
-                        }),
-                        AssistantProviderContentV2::Anthropic {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                        } => AssistantProvider::Anthropic(AnthropicSettings {
-                            api_url: api_url.unwrap_or_else(|| anthropic::ANTHROPIC_API_URL.into()),
-                            low_speed_timeout: low_speed_timeout_in_seconds
-                                .map(Duration::from_secs),
-                        }),
-                        AssistantProviderContentV2::Ollama {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                        } => AssistantProvider::Ollama(OllamaSettings {
-                            api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
-                            low_speed_timeout: low_speed_timeout_in_seconds
-                                .map(Duration::from_secs),
-                        }),
-                    });
-                }
-            }
+            //     if !found {
+            //         new_providers.push(match provider {
+            //             AssistantProviderContentV2::ZedDotDev => AssistantProvider::ZedDotDev,
+            //             AssistantProviderContentV2::OpenAi {
+            //                 api_url,
+            //                 low_speed_timeout_in_seconds,
+            //                 available_models,
+            //             } => AssistantProvider::OpenAi(OpenAiSettings {
+            //                 api_url: api_url.unwrap_or_else(|| open_ai::OPEN_AI_API_URL.into()),
+            //                 low_speed_timeout: low_speed_timeout_in_seconds
+            //                     .map(Duration::from_secs),
+            //                 available_models: available_models.unwrap_or_default(),
+            //             }),
+            //             AssistantProviderContentV2::Anthropic {
+            //                 api_url,
+            //                 low_speed_timeout_in_seconds,
+            //             } => AssistantProvider::Anthropic(AnthropicSettings {
+            //                 api_url: api_url.unwrap_or_else(|| anthropic::ANTHROPIC_API_URL.into()),
+            //                 low_speed_timeout: low_speed_timeout_in_seconds
+            //                     .map(Duration::from_secs),
+            //             }),
+            //             AssistantProviderContentV2::Ollama {
+            //                 api_url,
+            //                 low_speed_timeout_in_seconds,
+            //             } => AssistantProvider::Ollama(OllamaSettings {
+            //                 api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
+            //                 low_speed_timeout: low_speed_timeout_in_seconds
+            //                     .map(Duration::from_secs),
+            //             }),
+            //         });
+            //     }
+            // }
         }
 
         Ok(settings)

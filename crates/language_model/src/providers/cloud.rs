@@ -10,6 +10,7 @@ use gpui::{AnyView, AppContext, ModelContext, Render, Task, WeakModel};
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, IntoElement, ViewContext};
+use util::ResultExt;
 
 use crate::LanguageModelProvider;
 
@@ -73,6 +74,19 @@ impl CloudModel {
             Self::Custom(id) => id.as_str(),
         }
     }
+
+    pub fn max_token_count(&self) -> usize {
+        match self {
+            Self::Gpt3Point5Turbo => 2048,
+            Self::Gpt4 => 4096,
+            Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 200000,
+            Self::Custom(_) => 4096, // TODO: Make this configurable
+        }
+    }
 }
 
 pub struct CloudLanguageModelProvider {
@@ -108,9 +122,11 @@ impl CloudLanguageModelProvider {
     }
 }
 
+const PROVIDER_NAME: &str = "zed.dev";
+
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
-        LanguageModelProviderName("Cloud".into())
+        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
@@ -143,8 +159,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn model(&self, id: LanguageModelId, _cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
+        let model = CloudModel::from(id.0.as_ref());
         Ok(Arc::new(CloudLanguageModel {
             id,
+            model,
             client: self.client.clone(),
         }))
     }
@@ -152,10 +170,31 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
 pub struct CloudLanguageModel {
     id: LanguageModelId,
+    model: CloudModel,
     client: Arc<Client>,
 }
 
 impl LanguageModel for CloudLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("zed.dev/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -195,7 +234,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        match CloudModel::from(self.id.0.as_ref()) {
+        match self.model {
             CloudModel::Claude3Opus
             | CloudModel::Claude3Sonnet
             | CloudModel::Claude3Haiku
@@ -251,9 +290,11 @@ impl Render for AuthenticationPrompt {
                         .style(ButtonStyle::Filled)
                         .full_width()
                         .on_click(cx.listener(move |this, _, cx| {
-                            this.handle.update(cx, |provider, cx| {
-                                provider.authenticate(cx).detach_and_log_err(cx);
-                            });
+                            this.handle
+                                .update(cx, |provider, cx| {
+                                    provider.authenticate(cx).detach_and_log_err(cx);
+                                })
+                                .log_err();
                         })),
                 )
                 .child(

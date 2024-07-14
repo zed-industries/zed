@@ -394,6 +394,7 @@ dependencies = [
  "indexed_docs",
  "indoc",
  "language",
+ "language_model",
  "log",
  "menu",
  "multi_buffer",
