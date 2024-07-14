@@ -8,7 +8,8 @@ use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderName, LanguageModelRequest, ProvidedLanguageModel, Role,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProvidedLanguageModel, Role,
 };
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -53,8 +54,9 @@ impl State {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
                 this.available_models = models;
+                cx.notify();
             })
         })
     }
@@ -92,9 +94,18 @@ impl OllamaLanguageModelProvider {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            state.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, cx| {
                 this.available_models = models;
+                cx.notify();
             })
+        })
+    }
+}
+
+impl LanguageModelProviderState for OllamaLanguageModelProvider {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription {
+        cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
         })
     }
 }

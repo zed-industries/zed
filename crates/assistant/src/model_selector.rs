@@ -5,7 +5,6 @@ use crate::{
     ToggleModelSelector,
 };
 use fs::Fs;
-use gpui::ReadGlobal;
 use language_model::registry::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
@@ -28,7 +27,10 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for available_model in LanguageModelRegistry::global(cx).available_models(cx) {
+                    for available_model in LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .available_models(cx)
+                    {
                         menu = menu.custom_entry(
                             {
                                 let model_name = available_model.model.name.0.clone();
@@ -75,7 +77,7 @@ impl RenderOnce for ModelSelector {
                                     .whitespace_nowrap()
                                     .child(
                                         Label::new(
-                                            LanguageModelCompletionProvider::global(cx)
+                                            LanguageModelCompletionProvider::read_global(cx)
                                                 .active_model()
                                                 .map(|model| model.name().0.clone())
                                                 .unwrap_or_default(),

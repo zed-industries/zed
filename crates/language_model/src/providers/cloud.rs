@@ -1,7 +1,7 @@
 use super::open_ai::count_open_ai_tokens;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProviderName,
-    LanguageModelRequest, ProvidedLanguageModel,
+    LanguageModelProviderState, LanguageModelRequest, ProvidedLanguageModel,
 };
 use anyhow::Result;
 use client::Client;
@@ -122,8 +122,9 @@ impl CloudLanguageModelProvider {
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(&mut cx, |this, _| {
+                    _ = this.update(&mut cx, |this, cx| {
                         this.status = status;
+                        cx.notify();
                     });
                 } else {
                     break;
@@ -136,6 +137,14 @@ impl CloudLanguageModelProvider {
             state,
             _maintain_client_status: maintain_client_status,
         }
+    }
+}
+
+impl LanguageModelProviderState for CloudLanguageModelProvider {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription {
+        cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        })
     }
 }
 
@@ -307,6 +316,7 @@ impl Render for AuthenticationPrompt {
                         .on_click(cx.listener(move |this, _, cx| {
                             this.state.update(cx, |provider, cx| {
                                 provider.authenticate(cx).detach_and_log_err(cx);
+                                cx.notify();
                             });
                         })),
                 )

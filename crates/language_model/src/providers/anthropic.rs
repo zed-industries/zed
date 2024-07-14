@@ -13,8 +13,8 @@ use util::ResultExt;
 
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelRequestMessage,
-    ProvidedLanguageModel, Role,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelRequestMessage, ProvidedLanguageModel, Role,
 };
 
 const PROVIDER_NAME: &str = "anthropic";
@@ -43,6 +43,14 @@ impl AnthropicLanguageModelProvider {
         });
 
         Self { http_client, state }
+    }
+}
+
+impl LanguageModelProviderState for AnthropicLanguageModelProvider {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription {
+        cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        })
     }
 }
 
@@ -81,8 +89,9 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     String::from_utf8(api_key)?
                 };
 
-                state.update(&mut cx, |this, _| {
+                state.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
+                    cx.notify();
                 })
             })
         }
@@ -98,8 +107,9 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         let delete_credentials = cx.delete_credentials(&self.state.read(cx).settings.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
-            state.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, cx| {
                 this.api_key = None;
+                cx.notify();
             })
         })
     }
@@ -337,12 +347,13 @@ impl AuthenticationPrompt {
             "Bearer",
             api_key.as_bytes(),
         );
-        let handle = self.state.clone();
+        let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
 
-            handle.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);

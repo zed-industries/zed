@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AppContext, Global, ReadGlobal, Task};
+use gpui::{AppContext, Global, Model, ModelContext, Task};
 use language_model::{
-    registry::LanguageModelRegistry, LanguageModel, LanguageModelId, LanguageModelProvider,
+    registry::LanguageModelRegistry, LanguageModel, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderName, LanguageModelRequest,
 };
 use settings::{Settings, SettingsStore};
@@ -12,30 +12,38 @@ use smol::{
     future::FutureExt,
     lock::{Semaphore, SemaphoreGuardArc},
 };
-use ui::BorrowAppContext;
+use ui::Context;
 
 use crate::assistant_settings::AssistantSettings;
 
 pub fn init(cx: &mut AppContext) {
-    let mut completion_provider = LanguageModelCompletionProvider::new();
-    update_active_model_from_settings(&mut completion_provider, cx);
-    cx.set_global(LanguageModelCompletionProvider::new());
+    let completion_provider = cx.new_model(|cx| LanguageModelCompletionProvider::new(cx));
+    cx.set_global(GlobalLanguageModelCompletionProvider(completion_provider));
 
-    cx.observe_global::<SettingsStore>(move |cx| {
-        cx.update_global::<LanguageModelCompletionProvider, _>(update_active_model_from_settings)
-    })
-    .detach();
+    update_active_model_from_settings(cx);
+
+    cx.observe_global::<SettingsStore>(move |cx| update_active_model_from_settings(cx))
+        .detach();
 }
 
-fn update_active_model_from_settings(
-    completion_provider: &mut LanguageModelCompletionProvider,
-    cx: &mut AppContext,
-) {
+fn update_active_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
     let provider_name = LanguageModelProviderName::from(settings.default_model.provider.clone());
-    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    let model_name = LanguageModelName::from(settings.default_model.model.clone());
 
-    let Some(provider) = LanguageModelRegistry::global(cx).provider(&provider_name) else {
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_name)
+    else {
+        return;
+    };
+
+    let Some(model_id) = provider
+        .provided_models(cx)
+        .iter()
+        .find(|model| model.name == model_name)
+        .map(|model| model.id.clone())
+    else {
         return;
     };
 
@@ -43,15 +51,19 @@ fn update_active_model_from_settings(
         return;
     };
 
-    completion_provider.set_active_model(model)
+    LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
+        completion_provider.set_active_model(model, cx);
+    });
 }
+
+struct GlobalLanguageModelCompletionProvider(Model<LanguageModelCompletionProvider>);
+
+impl Global for GlobalLanguageModelCompletionProvider {}
 
 pub struct LanguageModelCompletionProvider {
     active_model: Option<Arc<dyn LanguageModel>>,
     request_limiter: Arc<Semaphore>,
 }
-
-impl Global for LanguageModelCompletionProvider {}
 
 const MAX_CONCURRENT_COMPLETION_REQUESTS: usize = 4;
 
@@ -61,7 +73,24 @@ pub struct CompletionResponse {
 }
 
 impl LanguageModelCompletionProvider {
-    pub fn new() -> Self {
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<GlobalLanguageModelCompletionProvider>()
+            .0
+            .clone()
+    }
+
+    pub fn read_global(cx: &AppContext) -> &Self {
+        cx.global::<GlobalLanguageModelCompletionProvider>()
+            .0
+            .read(cx)
+    }
+
+    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+        cx.observe(&LanguageModelRegistry::global(cx), |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
         Self {
             active_model: None,
             request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_COMPLETION_REQUESTS)),
@@ -72,13 +101,16 @@ impl LanguageModelCompletionProvider {
         self.active_model.clone()
     }
 
-    pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>) {
+    pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
         self.active_model = Some(model);
+        cx.notify();
     }
 
     pub fn current_provider(&self, cx: &AppContext) -> Option<Arc<dyn LanguageModelProvider>> {
         let provider_name = self.active_model.as_ref()?.provider_name();
-        LanguageModelRegistry::global(cx).provider(&provider_name)
+        LanguageModelRegistry::global(cx)
+            .read(cx)
+            .provider(&provider_name)
     }
 
     pub fn is_authenticated(&self, cx: &AppContext) -> bool {

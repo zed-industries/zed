@@ -13,7 +13,8 @@ use util::ResultExt;
 
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderName, LanguageModelRequest, ProvidedLanguageModel, Role,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProvidedLanguageModel, Role,
 };
 
 const PROVIDER_NAME: &str = "openai";
@@ -44,6 +45,14 @@ impl OpenAiLanguageModelProvider {
                 settings: OpenAiSettings::default(),
             }),
         }
+    }
+}
+
+impl LanguageModelProviderState for OpenAiLanguageModelProvider {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription {
+        cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        })
     }
 }
 
@@ -81,8 +90,9 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                         .ok_or_else(|| anyhow!("credentials not found"))?;
                     String::from_utf8(api_key)?
                 };
-                state.update(&mut cx, |this, _| {
+                state.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
+                    cx.notify();
                 })
             })
         }
@@ -98,8 +108,9 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         let state = self.state.clone();
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
-            state.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, cx| {
                 this.api_key = None;
+                cx.notify();
             })
         })
     }
@@ -281,8 +292,9 @@ impl AuthenticationPrompt {
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
-            state.update(&mut cx, |this, _| {
+            state.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);

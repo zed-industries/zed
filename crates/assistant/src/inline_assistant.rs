@@ -19,8 +19,8 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
     point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, Global, HighlightStyle,
-    Model, ModelContext, ReadGlobal, Subscription, Task, TextStyle, UpdateGlobal, View,
-    ViewContext, WeakView, WhiteSpace, WindowContext,
+    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{
@@ -1292,8 +1292,9 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for available_model in
-                                        LanguageModelRegistry::global(cx).available_models(cx)
+                                    for available_model in LanguageModelRegistry::global(cx)
+                                        .read(cx)
+                                        .available_models(cx)
                                     {
                                         menu = menu.custom_entry(
                                             {
@@ -1341,7 +1342,7 @@ impl Render for PromptEditor {
                                         Tooltip::with_meta(
                                             format!(
                                                 "Using {}",
-                                                LanguageModelCompletionProvider::global(cx)
+                                                LanguageModelCompletionProvider::read_global(cx)
                                                     .active_model()
                                                     .map(|model| model.name().0.clone())
                                                     .unwrap_or_default()
@@ -1542,7 +1543,9 @@ impl PromptEditor {
                 .await?;
 
             let token_count = cx
-                .update(|cx| LanguageModelCompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                })?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -1670,7 +1673,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::global(cx).active_model()?;
+        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1979,7 +1982,7 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
-        let Some(model) = LanguageModelCompletionProvider::global(cx).active_model() else {
+        let Some(model) = LanguageModelCompletionProvider::read_global(cx).active_model() else {
             return;
         };
         let range = self.range.clone();
@@ -1996,7 +1999,7 @@ impl Codegen {
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
         let model_telemetry_id = model.telemetry_id();
-        let response = LanguageModelCompletionProvider::global(cx).complete(prompt, cx);
+        let response = LanguageModelCompletionProvider::read_global(cx).complete(prompt, cx);
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
         self.diff = Diff::default();
