@@ -261,7 +261,7 @@ impl DebugAdapterClient {
         let args = dap_types::InitializeRequestArguments {
             client_id: Some("zed".to_owned()),
             client_name: Some("Zed".to_owned()),
-            adapter_id: "xdebug".into(), // TODO: read from config
+            adapter_id: self.config.id.clone(),
             locale: Some("en-us".to_owned()),
             path_format: Some(InitializeRequestArgumentsPathFormat::Path),
             supports_variable_type: Some(true),

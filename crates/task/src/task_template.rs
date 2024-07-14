@@ -95,6 +95,9 @@ pub enum DebugRequestType {
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
+    /// Unique id of for the debug adapter,
+    /// that will be send with the `initialize` request
+    pub id: String,
     /// The type of connection the adapter should use
     #[serde(default)]
     pub connection: DebugConnectionType,
