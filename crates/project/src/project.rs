@@ -3174,7 +3174,7 @@ impl Project {
     }
 
     async fn setup_pending_language_server(
-        this: WeakModel<Self>,
+        project: WeakModel<Self>,
         override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -3193,7 +3193,7 @@ impl Project {
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
-                let this = this.clone();
+                let this = project.clone();
                 move |mut params, mut cx| {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
@@ -3247,7 +3247,7 @@ impl Project {
         // to these requests when initializing.
         language_server
             .on_request::<lsp::request::WorkDoneProgressCreate, _, _>({
-                let this = this.clone();
+                let this = project.clone();
                 move |params, mut cx| {
                     let this = this.clone();
                     async move {
@@ -3268,20 +3268,103 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::RegisterCapability, _, _>({
-                let this = this.clone();
+                let project = project.clone();
                 move |params, mut cx| {
-                    let this = this.clone();
+                    let project = project.clone();
                     async move {
                         for reg in params.registrations {
-                            if reg.method == "workspace/didChangeWatchedFiles" {
-                                if let Some(options) = reg.register_options {
-                                    let options = serde_json::from_value(options)?;
-                                    this.update(&mut cx, |this, cx| {
-                                        this.on_lsp_did_change_watched_files(
-                                            server_id, &reg.id, options, cx,
-                                        );
-                                    })?;
+                            match reg.method.as_str() {
+                                "workspace/didChangeWatchedFiles" => {
+                                    if let Some(options) = reg.register_options {
+                                        let options = serde_json::from_value(options)?;
+                                        project.update(&mut cx, |project, cx| {
+                                            project.on_lsp_did_change_watched_files(
+                                                server_id, &reg.id, options, cx,
+                                            );
+                                        })?;
+                                    }
                                 }
+                                "textDocument/rangeFormatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            let options = reg
+                                                .register_options
+                                                .map(|options| {
+                                                    serde_json::from_value::<
+                                                        lsp::DocumentRangeFormattingOptions,
+                                                    >(
+                                                        options
+                                                    )
+                                                })
+                                                .transpose()?;
+                                            let provider = match options {
+                                                None => OneOf::Left(true),
+                                                Some(options) => OneOf::Right(options),
+                                            };
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.document_range_formatting_provider =
+                                                    Some(provider);
+                                            })
+                                        }
+                                        anyhow::Ok(())
+                                    })??;
+                                }
+                                "textDocument/onTypeFormatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            let options = reg
+                                                .register_options
+                                                .map(|options| {
+                                                    serde_json::from_value::<
+                                                        lsp::DocumentOnTypeFormattingOptions,
+                                                    >(
+                                                        options
+                                                    )
+                                                })
+                                                .transpose()?;
+                                            if let Some(options) = options {
+                                                server.update_capabilities(|capabilities| {
+                                                    capabilities
+                                                        .document_on_type_formatting_provider =
+                                                        Some(options);
+                                                })
+                                            }
+                                        }
+                                        anyhow::Ok(())
+                                    })??;
+                                }
+                                "textDocument/formatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            let options = reg
+                                                .register_options
+                                                .map(|options| {
+                                                    serde_json::from_value::<
+                                                        lsp::DocumentFormattingOptions,
+                                                    >(
+                                                        options
+                                                    )
+                                                })
+                                                .transpose()?;
+                                            let provider = match options {
+                                                None => OneOf::Left(true),
+                                                Some(options) => OneOf::Right(options),
+                                            };
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.document_formatting_provider =
+                                                    Some(provider);
+                                            })
+                                        }
+                                        anyhow::Ok(())
+                                    })??;
+                                }
+                                _ => log::warn!("unhandled capability registration: {reg:?}"),
                             }
                         }
                         Ok(())
@@ -3292,17 +3375,55 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::UnregisterCapability, _, _>({
-                let this = this.clone();
+                let this = project.clone();
                 move |params, mut cx| {
-                    let this = this.clone();
+                    let project = this.clone();
                     async move {
                         for unreg in params.unregisterations.iter() {
-                            if unreg.method == "workspace/didChangeWatchedFiles" {
-                                this.update(&mut cx, |this, cx| {
-                                    this.on_lsp_unregister_did_change_watched_files(
-                                        server_id, &unreg.id, cx,
-                                    );
-                                })?;
+                            match unreg.method.as_str() {
+                                "workspace/didChangeWatchedFiles" => {
+                                    project.update(&mut cx, |project, cx| {
+                                        project.on_lsp_unregister_did_change_watched_files(
+                                            server_id, &unreg.id, cx,
+                                        );
+                                    })?;
+                                }
+                                "textDocument/rangeFormatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.document_range_formatting_provider =
+                                                    None
+                                            })
+                                        }
+                                    })?;
+                                }
+                                "textDocument/onTypeFormatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.document_on_type_formatting_provider =
+                                                    None;
+                                            })
+                                        }
+                                    })?;
+                                }
+                                "textDocument/formatting" => {
+                                    project.update(&mut cx, |project, _| {
+                                        if let Some(server) =
+                                            project.language_server_for_id(server_id)
+                                        {
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.document_formatting_provider = None;
+                                            })
+                                        }
+                                    })?;
+                                }
+                                _ => log::warn!("unhandled capability unregistration: {unreg:?}"),
                             }
                         }
                         Ok(())
@@ -3314,7 +3435,7 @@ impl Project {
         language_server
             .on_request::<lsp::request::ApplyWorkspaceEdit, _, _>({
                 let adapter = adapter.clone();
-                let this = this.clone();
+                let this = project.clone();
                 move |params, cx| {
                     Self::on_lsp_workspace_edit(
                         this.clone(),
@@ -3329,7 +3450,7 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
-                let this = this.clone();
+                let this = project.clone();
                 move |(), mut cx| {
                     let this = this.clone();
                     async move {
@@ -3348,7 +3469,7 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
-                let this = this.clone();
+                let this = project.clone();
                 let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
@@ -3387,7 +3508,7 @@ impl Project {
 
         language_server
             .on_notification::<ServerStatus, _>({
-                let this = this.clone();
+                let this = project.clone();
                 let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
@@ -3430,7 +3551,7 @@ impl Project {
             .detach();
         language_server
             .on_notification::<lsp::notification::ShowMessage, _>({
-                let this = this.clone();
+                let this = project.clone();
                 let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
@@ -3457,7 +3578,7 @@ impl Project {
             .detach();
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
-                if let Some(this) = this.upgrade() {
+                if let Some(this) = project.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.on_lsp_progress(
                             params,
@@ -6774,7 +6895,7 @@ impl Project {
             } else {
                 return Task::ready(Ok(hint));
             };
-            if !InlayHints::can_resolve_inlays(lang_server.capabilities()) {
+            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
                 return Task::ready(Ok(hint));
             }
 
@@ -7186,7 +7307,7 @@ impl Project {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 let status = request.status();
                 return cx.spawn(move |this, cx| async move {
-                    if !request.check_capabilities(language_server.capabilities()) {
+                    if !request.check_capabilities(&language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
@@ -7280,7 +7401,7 @@ impl Project {
         let scope = position.and_then(|position| snapshot.language_scope_at(position));
         let mut response_results = self
             .language_servers_for_buffer(buffer.read(cx), cx)
-            .filter(|(_, server)| server_capabilities_check(server.capabilities()))
+            .filter(|(_, server)| server_capabilities_check(&server.capabilities()))
             .filter(|(adapter, _)| {
                 scope
                     .as_ref()
