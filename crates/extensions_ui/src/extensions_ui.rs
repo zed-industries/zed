@@ -151,12 +151,28 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum SortByFilter {
+    None,
+    Downloads,
+    Name,
+    PublishedAt,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum SortDirection {
+    Ascending,
+    Descending,
+}
+
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
     filter: ExtensionFilter,
+    sort_by: SortByFilter,
+    sort_direction: SortDirection,
     remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
@@ -196,6 +212,8 @@ impl ExtensionsPage {
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
+                sort_by: SortByFilter::None,
+                sort_direction: SortDirection::Descending,
                 dev_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
@@ -259,6 +277,45 @@ impl ExtensionsPage {
         }
     }
 
+    fn sort_extension_entries(&mut self) {
+        self.remote_extension_entries
+            .sort_by(|a, b| match self.sort_by {
+                SortByFilter::Downloads => {
+                    let a_downloads = a.download_count;
+                    let b_downloads = b.download_count;
+                    if a_downloads == b_downloads {
+                        a.manifest.name.cmp(&b.manifest.name)
+                    } else {
+                        match self.sort_direction {
+                            SortDirection::Ascending => a_downloads.cmp(&b_downloads),
+                            SortDirection::Descending => b_downloads.cmp(&a_downloads),
+                        }
+                    }
+                }
+                SortByFilter::Name => {
+                    let a_name = a.manifest.name.to_lowercase();
+                    let b_name = b.manifest.name.to_lowercase();
+                    match self.sort_direction {
+                        SortDirection::Ascending => a_name.cmp(&b_name),
+                        SortDirection::Descending => b_name.cmp(&a_name),
+                    }
+                }
+                SortByFilter::PublishedAt => {
+                    let a_published_at = a.published_at;
+                    let b_published_at = b.published_at;
+                    match self.sort_direction {
+                        SortDirection::Ascending => a_published_at.cmp(&b_published_at),
+                        SortDirection::Descending => b_published_at.cmp(&a_published_at),
+                    }
+                }
+                SortByFilter::None => {
+                    let a_name = a.manifest.name.to_lowercase();
+                    let b_name = b.manifest.name.to_lowercase();
+                    a_name.cmp(&b_name)
+                }
+            });
+    }
+
     fn filter_extension_entries(&mut self, cx: &mut ViewContext<Self>) {
         self.filtered_remote_extension_indices.clear();
         self.filtered_remote_extension_indices.extend(
@@ -279,6 +336,7 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+        self.sort_extension_entries();
         cx.notify();
     }
 
@@ -984,6 +1042,7 @@ impl ExtensionsPage {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let this = cx.view().clone();
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1017,48 +1076,191 @@ impl Render for ExtensionsPage {
                             .child(h_flex().child(self.render_search(cx)))
                             .child(
                                 h_flex()
+                                    .gap_2()
                                     .child(
-                                        ToggleButton::new("filter-all", "All")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::All)
-                                            .on_click(cx.listener(|this, _event, cx| {
-                                                this.filter = ExtensionFilter::All;
-                                                this.filter_extension_entries(cx);
-                                            }))
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("Show all extensions", cx)
-                                            })
-                                            .first(),
+                                        h_flex()
+                                            .child(
+                                                ToggleButton::new("filter-all", "All")
+                                                    .style(ButtonStyle::Filled)
+                                                    .size(ButtonSize::Large)
+                                                    .selected(self.filter == ExtensionFilter::All)
+                                                    .on_click(cx.listener(|this, _event, cx| {
+                                                        this.filter = ExtensionFilter::All;
+                                                        this.filter_extension_entries(cx);
+                                                    }))
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text("Show all extensions", cx)
+                                                    })
+                                                    .first(),
+                                            )
+                                            .child(
+                                                ToggleButton::new("filter-installed", "Installed")
+                                                    .style(ButtonStyle::Filled)
+                                                    .size(ButtonSize::Large)
+                                                    .selected(
+                                                        self.filter == ExtensionFilter::Installed,
+                                                    )
+                                                    .on_click(cx.listener(|this, _event, cx| {
+                                                        this.filter = ExtensionFilter::Installed;
+                                                        this.filter_extension_entries(cx);
+                                                    }))
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text(
+                                                            "Show installed extensions",
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .middle(),
+                                            )
+                                            .child(
+                                                ToggleButton::new(
+                                                    "filter-not-installed",
+                                                    "Not Installed",
+                                                )
+                                                .style(ButtonStyle::Filled)
+                                                .size(ButtonSize::Large)
+                                                .selected(
+                                                    self.filter == ExtensionFilter::NotInstalled,
+                                                )
+                                                .on_click(cx.listener(|this, _event, cx| {
+                                                    this.filter = ExtensionFilter::NotInstalled;
+                                                    this.filter_extension_entries(cx);
+                                                }))
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(
+                                                        "Show not installed extensions",
+                                                        cx,
+                                                    )
+                                                })
+                                                .last(),
+                                            ),
                                     )
-                                    .child(
-                                        ToggleButton::new("filter-installed", "Installed")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::Installed)
-                                            .on_click(cx.listener(|this, _event, cx| {
-                                                this.filter = ExtensionFilter::Installed;
-                                                this.filter_extension_entries(cx);
-                                            }))
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("Show installed extensions", cx)
+                                    .child({
+                                        PopoverMenu::new("sort-by")
+                                            .trigger(
+                                                IconButton::new("sort-by", IconName::ChevronUpDown)
+                                                    .icon_color(if self.sort_by == SortByFilter::None {
+                                                        Color::Muted
+                                                    } else {
+                                                        Color::Accent
+                                                    })
+                                                    .icon_size(IconSize::Small)
+                                                    .size(ButtonSize::Large)
+                                                    .style(ButtonStyle::Filled),
+                                            )
+                                            .menu(move |cx| {
+                                                let this = this.clone();
+                                                ContextMenu::build(cx, move |menu, cx| {
+                                                    let state = this.read(cx);
+                                                    menu.header("Sort by")
+                                                        .toggleable_entry(
+                                                            "Downloads",
+                                                            state.sort_by
+                                                                == SortByFilter::Downloads,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(
+                                                                        cx,
+                                                                        |this, cx| {
+                                                                            this.sort_by =
+                                                                                SortByFilter::Downloads;
+                                                                            this.filter_extension_entries(
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                }
+                                                            },
+                                                        )
+                                                        .toggleable_entry(
+                                                            "Name",
+                                                            state.sort_by == SortByFilter::Name,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(cx, |this, cx| {
+                                                                        this.sort_by = SortByFilter::Name;
+                                                                        this.filter_extension_entries(cx);
+                                                                    });
+                                                                }
+                                                            },
+                                                        )
+                                                        .toggleable_entry(
+                                                            "Published At",
+                                                            state.sort_by == SortByFilter::PublishedAt,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(cx, |this, cx| {
+                                                                        this.sort_by =
+                                                                            SortByFilter::PublishedAt;
+                                                                        this.filter_extension_entries(cx);
+                                                                    });
+                                                                }
+                                                            },
+                                                        )
+                                                        .toggleable_entry(
+                                                            "None",
+                                                            state.sort_by == SortByFilter::None,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(cx, |this, cx| {
+                                                                        this.sort_by =
+                                                                            SortByFilter::None;
+                                                                        this.filter_extension_entries(
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        )
+                                                        .separator()
+                                                        .toggleable_entry(
+                                                            "Ascending",
+                                                            state.sort_direction
+                                                                == SortDirection::Ascending,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(cx, |this, cx| {
+                                                                        this.sort_direction =
+                                                                            SortDirection::Ascending;
+                                                                        this.filter_extension_entries(
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        )
+                                                        .toggleable_entry(
+                                                            "Descending",
+                                                            state.sort_direction
+                                                                == SortDirection::Descending,
+                                                            None,
+                                                            {
+                                                                let this = this.clone();
+                                                                move |cx| {
+                                                                    this.update(cx, |this, cx| {
+                                                                        this.sort_direction =
+                                                                            SortDirection::Descending;
+                                                                        this.filter_extension_entries(
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        )
+                                                })
+                                                .into()
                                             })
-                                            .middle(),
-                                    )
-                                    .child(
-                                        ToggleButton::new("filter-not-installed", "Not Installed")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::NotInstalled)
-                                            .on_click(cx.listener(|this, _event, cx| {
-                                                this.filter = ExtensionFilter::NotInstalled;
-                                                this.filter_extension_entries(cx);
-                                            }))
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("Show not installed extensions", cx)
-                                            })
-                                            .last(),
-                                    ),
+                                    }),
                             ),
                     ),
             )
