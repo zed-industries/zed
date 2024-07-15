@@ -8310,7 +8310,9 @@ dependencies = [
  "search",
  "settings",
  "ui",
+ "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
