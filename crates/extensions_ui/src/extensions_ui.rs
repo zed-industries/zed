@@ -762,25 +762,19 @@ impl ExtensionsPage {
             cx.theme().colors().border
         };
 
-        h_flex()
-            .w_full()
-            .gap_2()
-            .key_context(key_context)
-            // .capture_action(cx.listener(Self::tab))
-            // .on_action(cx.listener(Self::dismiss))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .border_1()
-                    .border_color(editor_border)
-                    .min_w(rems_from_px(384.))
-                    .rounded_lg()
-                    .child(Icon::new(IconName::MagnifyingGlass))
-                    .child(self.render_text_input(&self.query_editor, cx)),
-            )
+        h_flex().w_full().gap_2().key_context(key_context).child(
+            h_flex()
+                .flex_1()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .border_1()
+                .border_color(editor_border)
+                .min_w(rems_from_px(384.))
+                .rounded_lg()
+                .child(Icon::new(IconName::MagnifyingGlass))
+                .child(self.render_text_input(&self.query_editor, cx)),
+        )
     }
 
     fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
