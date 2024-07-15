@@ -7559,22 +7559,42 @@ impl Project {
         }
     }
 
-    pub fn completions_for_open_path_query(
+    pub fn list_directory(
         &self,
         query: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
-        let fs = self.fs.clone();
-        cx.background_executor().spawn(async move {
-            let mut results = vec![];
-            let expanded = shellexpand::tilde(&query);
-            let query = Path::new(expanded.as_ref());
-            let mut response = fs.read_dir(query).await?;
-            while let Some(path) = response.next().await {
-                results.push(path?);
-            }
-            Ok(results)
-        })
+        if self.is_local() {
+            let fs = self.fs.clone();
+            cx.background_executor().spawn(async move {
+                let mut results = vec![];
+                let expanded = shellexpand::tilde(&query);
+                let query = Path::new(expanded.as_ref());
+                let mut response = fs.read_dir(query).await?;
+                while let Some(path) = response.next().await {
+                    if let Some(file_name) = path?.file_name() {
+                        results.push(PathBuf::from(file_name.to_os_string()));
+                    }
+                }
+                Ok(results)
+            })
+        } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
+            dev_server_projects::Store::global(cx)
+                .read(cx)
+                .dev_server_for_project(id)
+        }) {
+            let request = proto::ListRemoteDirectory {
+                dev_server_id: dev_server.id.0,
+                path: query,
+            };
+            let response = self.client.request(request);
+            cx.background_executor().spawn(async move {
+                let response = response.await?;
+                Ok(response.entries.into_iter().map(PathBuf::from).collect())
+            })
+        } else {
+            Task::ready(Err(anyhow!("cannot list directory in remote project")))
+        }
     }
 
     fn create_local_worktree(

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
-use futures::Future;
+use futures::{Future, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -10,6 +10,7 @@ use postage::stream::Stream;
 use project::Project;
 use rpc::{proto, ErrorCode, TypedEnvelope};
 use settings::Settings;
+use std::path::{Path, PathBuf};
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -90,6 +91,7 @@ impl DevServer {
                     cx.weak_model(),
                     Self::handle_validate_dev_server_project_request,
                 ),
+                client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory),
                 client.add_message_handler(cx.weak_model(), Self::handle_shutdown),
             ],
             _maintain_connection: maintain_connection,
@@ -173,6 +175,24 @@ impl DevServer {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_list_remote_directory(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ListRemoteDirectory>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::ListRemoteDirectoryResponse> {
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
+
+        let mut entries = Vec::new();
+        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        while let Some(path) = response.next().await {
+            if let Some(file_name) = path?.file_name() {
+                entries.push(file_name.to_string_lossy().to_string());
+            }
+        }
+        Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
     async fn handle_shutdown(

@@ -19,6 +19,28 @@ impl Database {
         .await
     }
 
+    pub async fn get_dev_server_for_user(
+        &self,
+        dev_server_id: DevServerId,
+        user_id: UserId,
+    ) -> crate::Result<dev_server::Model> {
+        self.transaction(|tx| async move {
+            let server = dev_server::Entity::find_by_id(dev_server_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("no dev server with id {}", dev_server_id))?;
+            if server.user_id != user_id {
+                return Err(anyhow::anyhow!(
+                    "dev server {} is not owned by user {}",
+                    dev_server_id,
+                    user_id
+                ))?;
+            }
+            Ok(server)
+        })
+        .await
+    }
+
     pub async fn get_dev_servers(&self, user_id: UserId) -> crate::Result<Vec<dev_server::Model>> {
         self.transaction(|tx| async move {
             Ok(dev_server::Entity::find()

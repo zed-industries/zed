@@ -109,9 +109,7 @@ impl PickerDelegate for OpenPathDelegate {
         {
             None
         } else {
-            Some(project.update(cx, |project, cx| {
-                project.completions_for_open_path_query(dir.clone(), cx)
-            }))
+            Some(project.update(cx, |project, cx| project.list_directory(dir.clone(), cx)))
         };
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -127,19 +125,14 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(&mut cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            paths.sort_by(|a, b| {
-                                compare_paths(
-                                    (a.strip_prefix(&dir).unwrap_or(Path::new("")), true),
-                                    (b.strip_prefix(&dir).unwrap_or(Path::new("")), true),
-                                )
-                            });
+                            paths.sort_by(|a, b| compare_paths((a, true), (b, true)));
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
                                 .filter_map(|(ix, path)| {
                                     Some(StringMatchCandidate::new(
                                         ix,
-                                        path.file_name()?.to_string_lossy().into(),
+                                        path.to_string_lossy().into(),
                                     ))
                                 })
                                 .collect::<Vec<_>>();
