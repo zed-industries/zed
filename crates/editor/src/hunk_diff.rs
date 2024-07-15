@@ -13,7 +13,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
+    div, ActiveTheme, Context as _, IntoElement, Label, ParentElement, Pixels, RenderOnce, Styled,
+    ViewContext, VisualContext, WindowContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -25,8 +26,22 @@ use crate::{
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
+#[derive(Debug)]
+pub(super) struct HunkPopover {
+    clicked_hunk: HoveredHunk,
+    expanded: bool,
+}
+impl HunkPopover {
+    pub fn new(clicked_hunk: HoveredHunk, expanded: bool) -> Self {
+        Self {
+            clicked_hunk,
+            expanded,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(super) struct HunkToExpand {
+pub(super) struct HoveredHunk {
     pub multi_buffer_range: Range<Anchor>,
     pub status: DiffHunkStatus,
     pub diff_base_byte_range: Range<usize>,
@@ -164,7 +179,7 @@ impl Editor {
                                         retain = false;
                                         break;
                                     } else {
-                                        hunks_to_expand.push(HunkToExpand {
+                                        hunks_to_expand.push(HoveredHunk {
                                             status,
                                             multi_buffer_range,
                                             diff_base_byte_range,
@@ -182,7 +197,7 @@ impl Editor {
                         let remaining_hunk_point_range =
                             Point::new(remaining_hunk.associated_range.start.0, 0)
                                 ..Point::new(remaining_hunk.associated_range.end.0, 0);
-                        hunks_to_expand.push(HunkToExpand {
+                        hunks_to_expand.push(HoveredHunk {
                             status: hunk_status(&remaining_hunk),
                             multi_buffer_range: remaining_hunk_point_range
                                 .to_anchors(&snapshot.buffer_snapshot),
@@ -215,7 +230,7 @@ impl Editor {
     pub(super) fn expand_diff_hunk(
         &mut self,
         diff_base_buffer: Option<Model<Buffer>>,
-        hunk: &HunkToExpand,
+        hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
@@ -303,7 +318,7 @@ impl Editor {
         &mut self,
         diff_base_buffer: Model<Buffer>,
         deleted_text_height: u8,
-        hunk: &HunkToExpand,
+        hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<BlockId> {
         let deleted_hunk_color = deleted_hunk_color(cx);
@@ -339,16 +354,25 @@ impl Editor {
         }
     }
 
-    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) {
+    pub(super) fn clear_clicked_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
+        if self.clicked_hunk.is_some() {
+            self.clicked_hunk = None;
+            return true;
+        }
         self.expanded_hunks.hunk_update_tasks.clear();
+        self.clear_row_highlights::<DiffRowHighlight>();
         let to_remove = self
             .expanded_hunks
             .hunks
             .drain(..)
             .filter_map(|expanded_hunk| expanded_hunk.block)
-            .collect();
-        self.clear_row_highlights::<DiffRowHighlight>();
-        self.remove_blocks(to_remove, None, cx);
+            .collect::<HashSet<_>>();
+        if to_remove.is_empty() {
+            false
+        } else {
+            self.remove_blocks(to_remove, None, cx);
+            true
+        }
     }
 
     pub(super) fn sync_expanded_diff_hunks(
@@ -457,7 +481,7 @@ impl Editor {
                                                 recalculated_hunks.next();
                                                 retain = true;
                                             } else {
-                                                hunks_to_reexpand.push(HunkToExpand {
+                                                hunks_to_reexpand.push(HoveredHunk {
                                                     status,
                                                     multi_buffer_range,
                                                     diff_base_byte_range,
@@ -555,7 +579,7 @@ fn deleted_hunk_color(cx: &AppContext) -> Hsla {
 fn editor_with_deleted_text(
     diff_base_buffer: Model<Buffer>,
     deleted_color: Hsla,
-    hunk: &HunkToExpand,
+    hunk: &HoveredHunk,
     cx: &mut ViewContext<'_, Editor>,
 ) -> (u8, View<Editor>) {
     let parent_editor = cx.view().downgrade();
@@ -680,4 +704,15 @@ fn to_inclusive_row_range(
         ..display_row_range.end.to_point(&snapshot.display_snapshot);
     let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
     new_range.start..=new_range.end
+}
+
+impl RenderOnce for HunkPopover {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        // TODO kb
+        div()
+            .min_h(Pixels(40.0))
+            .min_w(Pixels(40.0))
+            .bg(gpui::red())
+            .child(Label::new("test"))
+    }
 }

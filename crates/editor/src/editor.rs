@@ -78,7 +78,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
-pub(crate) use hunk_diff::HunkToExpand;
+pub(crate) use hunk_diff::HoveredHunk;
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
@@ -536,6 +536,7 @@ pub struct Editor {
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
+    clicked_hunk: Option<HoveredHunk>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1860,6 +1861,7 @@ impl Editor {
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             expanded_hunks: ExpandedHunks::default(),
+            clicked_hunk: None,
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2866,7 +2868,10 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        self.clear_expanded_diff_hunks(cx);
+        if self.clear_clicked_diff_hunks(cx) {
+            cx.notify();
+            return;
+        }
         if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
@@ -12954,8 +12959,13 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-pub trait RangeToAnchorExt {
+pub trait RangeToAnchorExt: Sized {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
+
+    fn to_display_points(self, snapshot: &EditorSnapshot) -> Range<DisplayPoint> {
+        let anchor_range = self.to_anchors(&snapshot.buffer_snapshot);
+        anchor_range.start.to_display_point(&snapshot)..anchor_range.end.to_display_point(&snapshot)
+    }
 }
 
 impl<T: ToOffset> RangeToAnchorExt for Range<T> {
