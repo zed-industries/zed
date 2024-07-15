@@ -2,12 +2,13 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
-use crate::components::ExtensionCard;
-use crate::extension_version_selector::{
-    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
-};
+use std::ops::DerefMut;
+use std::time::Duration;
+use std::{ops::Range, sync::Arc};
+
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
+use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -19,15 +20,17 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
 use settings::Settings;
-use std::ops::DerefMut;
-use std::time::Duration;
-use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
+};
+
+use crate::components::ExtensionCard;
+use crate::extension_version_selector::{
+    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
 actions!(zed, [Extensions, InstallDevExtension]);
@@ -135,6 +138,7 @@ pub struct ExtensionsPage {
     query_contains_error: bool,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
+    notices: BTreeMap<Arc<str>, Arc<str>>,
 }
 
 impl ExtensionsPage {
@@ -173,6 +177,7 @@ impl ExtensionsPage {
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
+                notices: BTreeMap::default(),
             };
             this.fetch_extensions(None, cx);
             this
@@ -792,6 +797,22 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
+
+            if let Some(search) = self.search_query(cx) {
+                if search.contains("git") {
+                    self.notices
+                        .insert("git".into(), "Git support is built-in to Zed!".into());
+                } else {
+                    self.notices.remove("git");
+                }
+
+                if search.contains("vim") {
+                    self.notices
+                        .insert("vim".into(), "Vim support is built-in to Zed!".into());
+                } else {
+                    self.notices.remove("vim");
+                }
+            }
         }
     }
 
@@ -944,6 +965,18 @@ impl Render for ExtensionsPage {
                                     ),
                             ),
                     ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .children(self.notices.values().enumerate().map(|(ix, notice)| {
+                        h_flex()
+                            .p_4()
+                            .when(ix > 0, |el| el.border_t_1())
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(Label::new(notice))
+                    })),
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();

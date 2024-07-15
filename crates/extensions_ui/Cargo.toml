@@ -17,6 +17,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+collections.workspace = true
 db.workspace = true
 editor.workspace = true
 extension.workspace = true
