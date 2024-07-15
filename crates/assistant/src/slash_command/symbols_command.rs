@@ -13,15 +13,15 @@ pub(crate) struct OutlineSlashCommand;
 
 impl SlashCommand for OutlineSlashCommand {
     fn name(&self) -> String {
-        "outline".into()
+        "symbols".into()
     }
 
     fn description(&self) -> String {
-        "insert outline for active tab".into()
+        "insert symbols for active tab".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Outline for Active Tab".into()
+        "Insert Symbols for Active Tab".into()
     }
 
     fn complete_argument(
@@ -62,7 +62,7 @@ impl SlashCommand for OutlineSlashCommand {
             cx.background_executor().spawn(async move {
                 let outline = snapshot
                     .outline(None)
-                    .context("no outline for active tab")?;
+                    .context("no symbols for active tab")?;
 
                 let path = path.as_deref().unwrap_or(Path::new("untitled"));
                 let mut outline_text = format!("Symbols for {}:\n", path.display());
