@@ -892,19 +892,17 @@ impl ExtensionsPage {
     }
 
     fn render_feature_upsells(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_2()
-            .children(self.upsells.iter().enumerate().map(|(ix, feature)| {
-                let upsell = match feature {
-                    Feature::Git => FeatureUpsell::new("Git support is built-in to Zed!"),
-                    Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
-                        .docs_url("https://zed.dev/docs/vim"),
-                };
+        let upsells_count = self.upsells.len();
 
-                upsell
-                    .when(ix > 0, |upsell| upsell.border_t_1())
-                    .border_b_1()
-            }))
+        v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+            let upsell = match feature {
+                Feature::Git => FeatureUpsell::new("Git support is built-in to Zed!"),
+                Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/vim"),
+            };
+
+            upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
+        }))
     }
 }
 
