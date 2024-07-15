@@ -1231,7 +1231,7 @@ impl PathUpdate {
                                 .entry
                                 .diagnostic,
                         );
-                        let folded_block_height = lines_in_first_message.max(1).min(2);
+                        let folded_block_height = lines_in_first_message.clamp(1, 2);
                         let diagnostics_to_render = Arc::new(
                             diagnostics_at_line
                                 .iter()
@@ -1249,7 +1249,6 @@ impl PathUpdate {
                                 Arc::new(AtomicBool::new(false)),
                                 diagnostics_to_render,
                                 editor.clone(),
-                                earliest_in_row_position,
                                 folded_block_height,
                             ),
                             disposition: BlockDisposition::Above,
@@ -1308,7 +1307,6 @@ fn render_same_line_diagnostics(
     expanded: Arc<AtomicBool>,
     diagnostics: Arc<Vec<language::Diagnostic>>,
     editor_handle: View<Editor>,
-    row_position: editor::Anchor,
     folded_block_height: u8,
 ) -> RenderBlock {
     Box::new(move |cx: &mut BlockContext| {
@@ -1374,7 +1372,6 @@ fn render_same_line_diagnostics(
                                                     Arc::clone(&button_expanded),
                                                     Arc::clone(&diagnostics),
                                                     editor_handle.clone(),
-                                                    row_position,
                                                     folded_block_height,
                                                 ),
                                             ),
@@ -1403,17 +1400,11 @@ fn diagnostic_text_lines(diagnostic: &language::Diagnostic) -> u8 {
     diagnostic.message.matches('\n').count() as u8 + 1
 }
 
-fn path_state_excerpts<'a>(
+fn path_state_excerpts(
     after_excerpt_id: Option<ExcerptId>,
     before_excerpt_id: Option<ExcerptId>,
-    multi_buffer_snapshot: &'a editor::MultiBufferSnapshot,
-) -> impl Iterator<
-    Item = (
-        ExcerptId,
-        &'a BufferSnapshot,
-        ExcerptRange<language::Anchor>,
-    ),
-> {
+    multi_buffer_snapshot: &editor::MultiBufferSnapshot,
+) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<language::Anchor>)> {
     multi_buffer_snapshot
         .excerpts()
         .skip_while(move |&(excerpt_id, ..)| match after_excerpt_id {
