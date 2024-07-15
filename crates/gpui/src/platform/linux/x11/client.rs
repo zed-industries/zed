@@ -24,7 +24,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xim::{x11rb::X11rbClient, Client};
 use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb as xkbc;
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
@@ -94,6 +94,13 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct XKBStateNotiy {
+    depressed_layout: LayoutIndex,
+    latched_layout: LayoutIndex,
+    locked_layout: LayoutIndex,
+}
+
 pub struct X11ClientState {
     pub(crate) loop_handle: LoopHandle<'static, X11Client>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
@@ -112,6 +119,7 @@ pub struct X11ClientState {
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
+    previous_xkb_state: XKBStateNotiy,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -343,6 +351,7 @@ impl X11Client {
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
+            previous_xkb_state: XKBStateNotiy::default(),
             ximc,
             xim_handler,
 
@@ -615,7 +624,11 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout: event.base_group as u32,
+                    latched_layout: event.latched_group as u32,
+                    locked_layout: event.locked_group.into(),
+                };
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.modifiers == modifiers {
                     drop(state);
@@ -637,11 +650,18 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_ime_key_down.take();
-
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -700,8 +720,16 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
