@@ -370,7 +370,7 @@ fn show_hover(
                             selection_background_color: { cx.theme().players().local().selection },
                             ..Default::default()
                         };
-
+                        println!("{:?}", text);
                         Markdown::new(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
@@ -595,9 +595,7 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            let mut max_diagnostic_size = max_size.clone();
-            max_diagnostic_size.width.0 /= 1.5;
-            elements.push(diagnostic_popover.render(max_diagnostic_size, cx));
+            elements.push(diagnostic_popover.render(max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
             elements.push(info_popover.render(max_size, cx));
@@ -687,24 +685,13 @@ pub struct DiagnosticPopover {
 impl DiagnosticPopover {
     pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
-        let mut d = div().max_w(max_size.width);
-
-        if let Some(markdown) = &self.parsed_content {
-            d = d.child(markdown.clone());
-        }
-
-        if let Some(background_color) = &self.background_color {
-            // d = d.bg(background_color.clone()).p_1();
-            // d = d.bg(green()).px_1()
-            d = d
-                .border_3()
-                .border_color(background_color.clone())
-                .rounded_lg()
-        }
-
-        let mut full_div = div()
+        let mut d = div()
             .id("diagnostic")
             .block()
+            .max_w_96()
+            .max_h(max_size.height)
+            .py_1()
+            .px_2()
             .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
@@ -721,15 +708,20 @@ impl DiagnosticPopover {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
-            })
-            .child(d);
-        if let Some(border_color) = &self.border_color {
-            full_div = full_div
-                .border_1()
-                .border_color(border_color.clone())
-                .rounded_lg()
+            });
+
+        if let Some(markdown) = &self.parsed_content {
+            d = d.child(markdown.clone());
         }
-        full_div.into_any_element()
+
+        if let Some(background_color) = &self.background_color {
+            d = d.bg(background_color.clone());
+        }
+
+        if let Some(border_color) = &self.border_color {
+            d = d.border_1().border_color(border_color.clone()).rounded_lg();
+        }
+        d.into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
