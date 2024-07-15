@@ -264,18 +264,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.multiple {
-                    if options.directories {
-                        "Open Folders"
-                    } else {
-                        "Open Files"
-                    }
+                let title = if options.directories {
+                    "Open Folder"
                 } else {
-                    if options.directories {
-                        "Open Folder"
-                    } else {
-                        "Open File"
-                    }
+                    "Open File"
                 };
 
                 let request = match OpenFileRequest::default()
