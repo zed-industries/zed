@@ -595,7 +595,8 @@ impl AssistantPanel {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
-                workspace,
+                workspace.clone(),
+                self.project.clone(),
                 lsp_adapter_delegate,
                 cx,
             );
@@ -707,6 +708,7 @@ impl AssistantPanel {
             .context_store
             .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
         let fs = self.fs.clone();
+        let project = self.project.clone();
         let workspace = self.workspace.clone();
 
         let lsp_adapter_delegate = workspace
@@ -723,7 +725,14 @@ impl AssistantPanel {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
-                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace,
+                        project,
+                        lsp_adapter_delegate,
+                        cx,
+                    )
                 });
                 this.show_context(editor, cx);
                 anyhow::Ok(())
@@ -770,7 +779,14 @@ impl AssistantPanel {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
-                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace,
+                        this.project.clone(),
+                        lsp_adapter_delegate,
+                        cx,
+                    )
                 });
                 this.show_context(editor.clone(), cx);
                 anyhow::Ok(editor)
@@ -961,6 +977,7 @@ impl ContextEditor {
         context: Model<Context>,
         fs: Arc<dyn Fs>,
         workspace: View<Workspace>,
+        project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -979,6 +996,7 @@ impl ContextEditor {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
+            editor.set_collaboration_hub(Box::new(project));
             editor
         });
 
