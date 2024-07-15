@@ -13335,6 +13335,7 @@ dependencies = [
  "derive_more",
  "dev_server_projects",
  "env_logger",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "gpui",
