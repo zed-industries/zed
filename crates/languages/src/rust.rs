@@ -208,6 +208,12 @@ impl LspAdapter for RustLspAdapter {
             .and_then(|detail| detail.detail.as_ref())
             .or(completion.detail.as_ref())
             .map(ToOwned::to_owned);
+        let function_signature = completion
+            .label_details
+            .as_ref()
+            .and_then(|detail| detail.description.as_ref())
+            .or(completion.detail.as_ref())
+            .map(ToOwned::to_owned);
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if detail.is_some() => {
                 let name = &completion.label;
@@ -241,18 +247,31 @@ impl LspAdapter for RustLspAdapter {
                     static ref REGEX: Regex = Regex::new("\\(…?\\)").unwrap();
                 }
                 let detail = detail.unwrap();
-                const FUNCTION_PREFIXES: [&'static str; 2] = ["async fn", "fn"];
-                let prefix = FUNCTION_PREFIXES
-                    .iter()
-                    .find_map(|prefix| detail.strip_prefix(*prefix).map(|suffix| (prefix, suffix)));
+                const FUNCTION_PREFIXES: [&'static str; 6] = [
+                    "async fn",
+                    "async unsafe fn",
+                    "const fn",
+                    "const unsafe fn",
+                    "unsafe fn",
+                    "fn",
+                ];
+                // Is it function `async`?
+                let fn_keyword = FUNCTION_PREFIXES.iter().find_map(|prefix| {
+                    function_signature.as_ref().and_then(|signature| {
+                        signature
+                            .strip_prefix(*prefix)
+                            .map(|suffix| (*prefix, suffix))
+                    })
+                });
                 // fn keyword should be followed by opening parenthesis.
-                if let Some((prefix, suffix)) = prefix {
-                    if suffix.starts_with('(') {
-                        let text = REGEX.replace(&completion.label, suffix).to_string();
+                if let Some((prefix, suffix)) = fn_keyword {
+                    if detail.starts_with(" (") {
+                        let mut text = REGEX.replace(&completion.label, suffix).to_string();
                         let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
                         let run_start = prefix.len() + 1;
                         let runs =
                             language.highlight_text(&source, run_start..run_start + text.len());
+                        text.push_str(&detail);
                         return Some(CodeLabel {
                             filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
                             text,
@@ -273,17 +292,21 @@ impl LspAdapter for RustLspAdapter {
                     }
                     _ => None,
                 };
-                let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name?)?;
+
                 let mut label = completion.label.clone();
                 if let Some(detail) = detail.filter(|detail| detail.starts_with(" (")) {
                     use std::fmt::Write;
                     write!(label, "{detail}").ok()?;
                 }
                 let mut label = CodeLabel::plain(label, None);
-                label.runs.push((
-                    0..label.text.rfind('(').unwrap_or(completion.label.len()),
-                    highlight_id,
-                ));
+                if let Some(highlight_name) = highlight_name {
+                    let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
+                    label.runs.push((
+                        0..label.text.rfind('(').unwrap_or(completion.label.len()),
+                        highlight_id,
+                    ));
+                }
+
                 return Some(label);
             }
             _ => {}
