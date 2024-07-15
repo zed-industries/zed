@@ -1684,7 +1684,6 @@ impl Pane {
                         })
                 })),
             })
-            // .start_slot::<Indicator>(indicator)
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)
