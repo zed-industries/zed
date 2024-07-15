@@ -32,11 +32,7 @@ Zed supports running code in multiple languages. To get started, you need to ins
 
 * [Python (ipykernel)](#python)
 * [TypeScript (Deno)](#typescript-deno)
-* [Julia (iJulia)](https://github.com/JuliaLang/IJulia.jl)
-* R
-  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
-  - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-* [Scala (almond)](https://almond.sh/docs/quick-start-install)
+
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown.
 
@@ -60,9 +56,17 @@ Work in Progress!
 
 #### Global environment
 
+<div class="warning">
+
+On MacOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
+
+</div>
+
+
 To setup your current python to have an available kernel, run:
 
 ```
+pip install ipykernel
 python -m ipykernel install --user
 ```
 
@@ -95,7 +99,7 @@ deno jupyter --unstable --install
 
 The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
 
-* [Julia (iJulia)](https://github.com/JuliaLang/IJulia.jl)
+* [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
 * R
   - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
   - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
