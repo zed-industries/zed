@@ -1707,16 +1707,8 @@ impl Workspace {
         );
 
         cx.spawn(|this, mut cx| async move {
-            let paths = match Flatten::flatten(paths.await.map_err(|e| e.into())) {
-                Ok(Some(paths)) => paths,
-                Ok(None) => return,
-                Err(err) => {
-                    this.update(&mut cx, |this, cx| {
-                        this.show_portal_error(err.to_string(), cx);
-                    })
-                    .ok();
-                    return;
-                }
+            let Some(paths) = paths.await.log_err().flatten() else {
+                return;
             };
 
             if let Some(task) = this
@@ -1881,14 +1873,7 @@ impl Workspace {
             cx,
         );
         cx.spawn(|this, mut cx| async move {
-            let paths = Flatten::flatten(paths.await.map_err(|e| e.into())).map_err(|err| {
-                this.update(&mut cx, |this, cx| {
-                    this.show_portal_error(err.to_string(), cx);
-                })
-                .ok();
-                err
-            })?;
-            if let Some(paths) = paths {
+            if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
                     .update(&mut cx, |this, cx| {
                         this.open_paths(paths, OpenVisible::All, None, cx)
