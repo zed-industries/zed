@@ -142,7 +142,6 @@ impl QuickActionBar {
         let status = status_borrow.clone();
         let panel_clone = repl_panel.clone();
         let editor_clone = editor.downgrade();
-        let has_nonempty_selection = has_nonempty_selection.clone();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
                 let kernel_name = kernel_name.clone();
@@ -150,7 +149,6 @@ impl QuickActionBar {
                 let status = status.clone();
                 let panel_clone = panel_clone.clone();
                 let editor_clone = editor_clone.clone();
-                let has_nonempty_selection = has_nonempty_selection.clone();
                 ContextMenu::build(cx, move |menu, _cx| {
                     let kernel_name = kernel_name.clone();
                     let kernel_language = kernel_language.clone();
