@@ -21,7 +21,8 @@ use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use vim::VimModeSetting;
 use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
@@ -891,14 +892,53 @@ impl ExtensionsPage {
         Label::new(message)
     }
 
-    fn render_feature_upsells(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn update_settings<T: Settings>(
+        &mut self,
+        selection: &Selection,
+        cx: &mut ViewContext<Self>,
+        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let selection = *selection;
+            settings::update_settings_file::<T>(fs, cx, move |settings| {
+                let value = match selection {
+                    Selection::Unselected => false,
+                    Selection::Selected => true,
+                    _ => return,
+                };
+
+                callback(settings, value)
+            });
+        }
+    }
+
+    fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
             let upsell = match feature {
                 Feature::Git => FeatureUpsell::new("Git support is built-in to Zed!"),
                 Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/vim"),
+                    .docs_url("https://zed.dev/docs/vim")
+                    .child(CheckboxWithLabel::new(
+                        "enable-vim",
+                        Label::new("Enable vim mode"),
+                        if VimModeSetting::get_global(cx).0 {
+                            ui::Selection::Selected
+                        } else {
+                            ui::Selection::Unselected
+                        },
+                        cx.listener(move |this, selection, cx| {
+                            this.telemetry
+                                .report_app_event("extensions: toggle vim".to_string());
+                            this.update_settings::<VimModeSetting>(
+                                selection,
+                                cx,
+                                |setting, value| *setting = Some(value),
+                            );
+                        }),
+                    )),
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())

@@ -4005,6 +4005,7 @@ dependencies = [
  "theme_selector",
  "ui",
  "util",
+ "vim",
  "workspace",
 ]
 

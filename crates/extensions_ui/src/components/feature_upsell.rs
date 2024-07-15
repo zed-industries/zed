@@ -1,4 +1,5 @@
-use gpui::{Div, StyleRefinement};
+use gpui::{AnyElement, Div, StyleRefinement};
+use smallvec::SmallVec;
 use ui::{prelude::*, ButtonLike};
 
 #[derive(IntoElement)]
@@ -6,6 +7,7 @@ pub struct FeatureUpsell {
     base: Div,
     text: SharedString,
     docs_url: Option<SharedString>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
 impl FeatureUpsell {
@@ -14,12 +16,19 @@ impl FeatureUpsell {
             base: h_flex(),
             text: text.into(),
             docs_url: None,
+            children: SmallVec::new(),
         }
     }
 
     pub fn docs_url(mut self, docs_url: impl Into<SharedString>) -> Self {
         self.docs_url = Some(docs_url.into());
         self
+    }
+}
+
+impl ParentElement for FeatureUpsell {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -40,21 +49,24 @@ impl RenderOnce for FeatureUpsell {
             .p_4()
             .justify_between()
             .border_color(cx.theme().colors().border)
-            .child(Label::new(self.text))
-            .when_some(self.docs_url, |el, docs_url| {
-                el.child(
-                    ButtonLike::new("open_docs")
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new("View docs"))
-                                .child(Icon::new(IconName::ArrowUpRight)),
-                        )
-                        .on_click({
-                            let docs_url = docs_url.clone();
-                            move |_event, cx| cx.open_url(&docs_url)
-                        }),
-                )
-            })
+            .child(h_flex().gap_2().child(Label::new(self.text)).when_some(
+                self.docs_url,
+                |el, docs_url| {
+                    el.child(
+                        ButtonLike::new("open_docs")
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("View docs"))
+                                    .child(Icon::new(IconName::ArrowUpRight)),
+                            )
+                            .on_click({
+                                let docs_url = docs_url.clone();
+                                move |_event, cx| cx.open_url(&docs_url)
+                            }),
+                    )
+                },
+            ))
+            .child(h_flex().children(self.children))
     }
 }
