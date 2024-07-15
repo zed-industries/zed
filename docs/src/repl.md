@@ -8,12 +8,13 @@ This feature is in active development. Details may change. We're delighted to ge
 
 </div>
 
+## Getting started
 
-The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
 <!-- TODO: Include GIF in action -->
 
-To start using the REPL, add the following to your Zed `settings.json` to bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor:
+To start using the REPL, add the following to your Zed `settings.json`:
 
 ```json
 {
@@ -23,14 +24,37 @@ To start using the REPL, add the following to your Zed `settings.json` to bring 
 }
 ```
 
-After that, install any of the supported kernels:
+## Installation
 
-* [Python](#python)
-* [TypeScript via Deno](#deno)
+Zed supports running code in multiple languages. To get started, you need to install a kernel for the language you want to use.
 
-## Python
+**Currently supported languages:**
 
-### Global environment
+* [Python (ipykernel)](#python)
+* [TypeScript (Deno)](#typescript-deno)
+* [Julia (iJulia)](https://github.com/JuliaLang/IJulia.jl)
+* R
+  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
+  - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
+* [Scala (almond)](https://almond.sh/docs/quick-start-install)
+
+Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown.
+
+<!-- TODO: Make markdown a link with an example -->
+
+## Using the REPL
+
+To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to CMD + Enter on macOS). You can also click on the REPL icon in the toolbar.
+
+The `repl: run` command will be executed on your selection(s), and the result will be displayed below the selection.
+
+Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
+
+## Language specific instructions
+
+### Python {#python}
+
+#### Global environment
 
 To setup your current python to have an available kernel, run:
 
@@ -38,7 +62,7 @@ To setup your current python to have an available kernel, run:
 python -m ipykernel install --user
 ```
 
-### Conda Environment
+#### Conda Environment
 
 ```
 source activate myenv
@@ -47,7 +71,7 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
 
-### Virtualenv with pip
+#### Virtualenv with pip
 
 ```
 source activate myenv
@@ -55,7 +79,7 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-## Deno
+### Typescript: Deno {#typescript-deno}
 
 [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
@@ -63,10 +87,12 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 deno jupyter --unstable --install
 ```
 
-## Other languages
+### Other languages
 
-* [Julia](https://github.com/JuliaLang/IJulia.jl)
+The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
+
+* [Julia (iJulia)](https://github.com/JuliaLang/IJulia.jl)
 * R
-  - [Ark Kernel from Positron, formerly RStudio](https://github.com/posit-dev/ark)
+  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
   - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-* [Scala](https://almond.sh/docs/quick-start-install)
+* [Scala (almond)](https://almond.sh/docs/quick-start-install)
