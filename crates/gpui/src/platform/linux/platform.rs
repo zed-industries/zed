@@ -265,13 +265,13 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.foreground_executor()
             .spawn(async move {
                 let title = if options.multiple {
-                    if !options.files {
+                    if options.directories {
                         "Open folders"
                     } else {
                         "Open files"
                     }
                 } else {
-                    if !options.files {
+                    if options.directories {
                         "Open folder"
                     } else {
                         "Open file"
