@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{net::Ipv4Addr, path::PathBuf};
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
@@ -70,14 +70,28 @@ pub enum TaskType {
 }
 
 /// Represents the type of the debugger adapter connection
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "lowercase", tag = "connection")]
 pub enum DebugConnectionType {
     /// Connect to the debug adapter via TCP
-    #[default]
-    TCP,
+    TCP(TCPHost),
     /// Connect to the debug adapter via STDIO
     STDIO,
+}
+
+impl Default for DebugConnectionType {
+    fn default() -> Self {
+        DebugConnectionType::TCP(TCPHost::default())
+    }
+}
+
+/// Represents the host information of the debug adapter
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+pub struct TCPHost {
+    /// The port that the debug adapter is listening on
+    pub port: Option<u16>,
+    /// The host that the debug adapter is listening too
+    pub host: Option<Ipv4Addr>,
 }
 
 /// Represents the type that will determine which request to call on the debug adapter
@@ -99,10 +113,8 @@ pub struct DebugAdapterConfig {
     /// that will be send with the `initialize` request
     pub id: String,
     /// The type of connection the adapter should use
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub connection: DebugConnectionType,
-    /// The port that the debug adapter is listening on
-    pub port: u16,
     /// The type of request that should be called on the debug adapter
     #[serde(default)]
     pub request: DebugRequestType,
