@@ -11,7 +11,8 @@ use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
     FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
 };
-use language::Point;
+use language::{Language, Point};
+use multi_buffer::MultiBufferRow;
 use project::Fs;
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
@@ -22,7 +23,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ClearOutputs]);
+actions!(repl, [Run, ClearOutputs, Interrupt, Shutdown]);
 actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
@@ -50,6 +51,8 @@ pub struct RuntimePanel {
 pub enum ReplEvent {
     Run(WeakView<Editor>),
     ClearOutputs(WeakView<Editor>),
+    Interrupt(WeakView<Editor>),
+    Shutdown(WeakView<Editor>),
 }
 
 impl RuntimePanel {
@@ -107,6 +110,40 @@ impl RuntimePanel {
                                         },
                                     )
                                     .detach();
+
+                                editor
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
+                                        move |_: &Interrupt, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            repl_editor_event_tx
+                                                .unbounded_send(ReplEvent::Interrupt(
+                                                    editor.clone(),
+                                                ))
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
+
+                                editor
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
+                                        move |_: &Shutdown, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            repl_editor_event_tx
+                                                .unbounded_send(ReplEvent::Shutdown(editor.clone()))
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
                             },
                         ),
                     ];
@@ -121,6 +158,12 @@ impl RuntimePanel {
                                     }
                                     ReplEvent::ClearOutputs(editor) => {
                                         runtime_panel.clear_outputs(editor, cx);
+                                    }
+                                    ReplEvent::Interrupt(editor) => {
+                                        runtime_panel.interrupt(editor, cx);
+                                    }
+                                    ReplEvent::Shutdown(editor) => {
+                                        runtime_panel.shutdown(editor, cx);
                                     }
                                 })
                                 .ok();
@@ -174,34 +217,14 @@ impl RuntimePanel {
         let range = if selection.is_empty() {
             let cursor = selection.head();
 
-            let line_start = multi_buffer_snapshot.offset_to_point(cursor).row;
-            let mut start_offset = multi_buffer_snapshot.point_to_offset(Point::new(line_start, 0));
+            let cursor_row = multi_buffer_snapshot.offset_to_point(cursor).row;
+            let start_offset = multi_buffer_snapshot.point_to_offset(Point::new(cursor_row, 0));
 
-            // Iterate backwards to find the start of the line
-            while start_offset > 0 {
-                let ch = multi_buffer_snapshot
-                    .chars_at(start_offset - 1)
-                    .next()
-                    .unwrap_or('\0');
-                if ch == '\n' {
-                    break;
-                }
-                start_offset -= 1;
-            }
-
-            let mut end_offset = cursor;
-
-            // Iterate forwards to find the end of the line
-            while end_offset < multi_buffer_snapshot.len() {
-                let ch = multi_buffer_snapshot
-                    .chars_at(end_offset)
-                    .next()
-                    .unwrap_or('\0');
-                if ch == '\n' {
-                    break;
-                }
-                end_offset += 1;
-            }
+            let end_point = Point::new(
+                cursor_row,
+                multi_buffer_snapshot.line_len(MultiBufferRow(cursor_row)),
+            );
+            let end_offset = start_offset.saturating_add(end_point.column as usize);
 
             // Create a range from the start to the end of the line
             start_offset..end_offset
@@ -216,7 +239,7 @@ impl RuntimePanel {
         &self,
         editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Arc<str>, Range<Anchor>)> {
+    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
         let editor = editor.upgrade()?;
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -226,30 +249,24 @@ impl RuntimePanel {
             .text_for_range(anchor_range.clone())
             .collect::<String>();
 
-        let start_language = buffer.language_at(anchor_range.start);
-        let end_language = buffer.language_at(anchor_range.end);
-
-        let language_name = if start_language == end_language {
-            start_language
-                .map(|language| language.code_fence_block_name())
-                .filter(|lang| **lang != *"markdown")?
-        } else {
-            // If the selection spans multiple languages, don't run it
+        let start_language = buffer.language_at(anchor_range.start)?;
+        let end_language = buffer.language_at(anchor_range.end)?;
+        if start_language != end_language {
             return None;
-        };
+        }
 
-        Some((selected_text, language_name, anchor_range))
+        Some((selected_text, start_language.clone(), anchor_range))
     }
 
     pub fn language(
         &self,
         editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Arc<str>> {
-        match self.snippet(editor, cx) {
-            Some((_, language, _)) => Some(language),
-            None => None,
-        }
+    ) -> Option<Arc<Language>> {
+        let editor = editor.upgrade()?;
+        let selection = editor.read(cx).selections.newest::<usize>(cx);
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        buffer.language_at(selection.head()).cloned()
     }
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
@@ -266,11 +283,12 @@ impl RuntimePanel {
 
     pub fn kernelspec(
         &self,
-        language_name: &str,
+        language: &Language,
         cx: &mut ViewContext<Self>,
     ) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let selected_kernel = settings.kernel_selections.get(language_name);
+        let language_name = language.code_fence_block_name();
+        let selected_kernel = settings.kernel_selections.get(language_name.as_ref());
 
         self.kernel_specifications
             .iter()
@@ -296,7 +314,7 @@ impl RuntimePanel {
             return Ok(());
         }
 
-        let (selected_text, language_name, anchor_range) = match self.snippet(editor.clone(), cx) {
+        let (selected_text, language, anchor_range) = match self.snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
             None => return Ok(()),
         };
@@ -304,8 +322,8 @@ impl RuntimePanel {
         let entity_id = editor.entity_id();
 
         let kernel_specification = self
-            .kernelspec(&language_name, cx)
-            .with_context(|| format!("No kernel found for language: {language_name}"))?;
+            .kernelspec(&language, cx)
+            .with_context(|| format!("No kernel found for language: {}", language.name()))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
             let view =
@@ -320,7 +338,6 @@ impl RuntimePanel {
                             panel.sessions.remove(&shutdown_event.entity_id());
                         }
                     }
-                    //
                 },
             );
 
@@ -345,12 +362,32 @@ impl RuntimePanel {
             cx.notify();
         }
     }
+
+    pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get_mut(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.interrupt(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.shutdown(cx);
+            });
+            cx.notify();
+        }
+    }
 }
 
 pub enum SessionSupport {
     ActiveSession(View<Session>),
-    Inactive(KernelSpecification),
-    RequiresSetup(String),
+    Inactive(Box<KernelSpecification>),
+    RequiresSetup(Arc<str>),
     Unsupported,
 }
 
@@ -375,13 +412,14 @@ impl RuntimePanel {
                 let kernelspec = self.kernelspec(&language, cx);
 
                 match kernelspec {
-                    Some(kernelspec) => SessionSupport::Inactive(kernelspec),
+                    Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
                     None => {
-                        let language: String = language.to_lowercase();
-                        // If no kernelspec but language is one of typescript, python, r, or julia
+                        // If no kernelspec but language is one of typescript or python
                         // then we return RequiresSetup
-                        match language.as_str() {
-                            "typescript" | "python" => SessionSupport::RequiresSetup(language),
+                        match language.name().as_ref() {
+                            "TypeScript" | "Python" => {
+                                SessionSupport::RequiresSetup(language.name())
+                            }
                             _ => SessionSupport::Unsupported,
                         }
                     }

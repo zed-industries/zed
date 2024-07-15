@@ -3,7 +3,7 @@ use crate::{
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
+    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, ToolbarItemLocation,
     ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
@@ -472,22 +472,6 @@ impl<T: Item> ItemHandle for View<T> {
             this.added_to_workspace(workspace, cx);
         });
 
-        if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            if let Some(message) = followed_item.to_state_proto(cx) {
-                workspace.update_followers(
-                    followed_item.is_project_item(cx),
-                    proto::update_followers::Variant::CreateView(proto::View {
-                        id: followed_item
-                            .remote_id(&workspace.client(), cx)
-                            .map(|id| id.to_proto()),
-                        variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane),
-                    }),
-                    cx,
-                );
-            }
-        }
-
         if workspace
             .panes_by_item
             .insert(self.item_id(), pane.downgrade())
@@ -548,11 +532,11 @@ impl<T: Item> ItemHandle for View<T> {
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
-                        let follow_event = item.to_follow_event(event);
-                        if leader_id.is_some()
-                            && matches!(follow_event, Some(FollowEvent::Unfollow))
-                        {
-                            workspace.unfollow(&pane, cx);
+
+                        if let Some(leader_id) = leader_id {
+                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
+                                workspace.unfollow(leader_id, cx);
+                            }
                         }
 
                         if item.focus_handle(cx).contains_focused(cx) {
@@ -682,9 +666,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        let builders = cx.try_global::<FollowableItemBuilders>()?;
-        let item = self.to_any();
-        Some(builders.get(&item.entity_type())?.1(&item))
+        FollowableViewRegistry::to_followable_view(self.clone(), cx)
     }
 
     fn on_release(
@@ -769,11 +751,15 @@ pub enum FollowEvent {
     Unfollow,
 }
 
+pub enum Dedup {
+    KeepExisting,
+    ReplaceExisting,
+}
+
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
-        pane: View<Pane>,
         project: View<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
@@ -794,6 +780,7 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -815,6 +802,7 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup>;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for View<T> {
@@ -867,6 +855,11 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
+    }
+
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup> {
+        let existing = existing.to_any().downcast::<T>().ok()?;
+        self.read(cx).dedup(existing.read(cx), cx)
     }
 }
 

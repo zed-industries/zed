@@ -12,7 +12,7 @@ use theme::{color_alpha, ActiveTheme, ThemeSettings};
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
-    path_candidates: Vec<StringMatchCandidate>,
+    pub path_candidates: Vec<StringMatchCandidate>,
     path_candidate_prefixes: Vec<usize>,
 }
 

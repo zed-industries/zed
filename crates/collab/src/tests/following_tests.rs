@@ -135,7 +135,7 @@ async fn test_basic_following(
         assert_eq!(editor.selections.ranges(cx), vec![2..1]);
     });
 
-    // When client B starts following client A, all visible view states are replicated to client B.
+    // When client B starts following client A, only the active view state is replicated to client B.
     workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
 
     cx_c.executor().run_until_parked();
@@ -156,7 +156,7 @@ async fn test_basic_following(
     );
     assert_eq!(
         editor_b1.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![3..2]
+        vec![3..3]
     );
 
     executor.run_until_parked();
@@ -194,7 +194,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx);
+        workspace.unfollow(peer_id_a, cx).unwrap();
     });
 
     // All clients see that clients B is following client A.
@@ -398,7 +398,7 @@ async fn test_basic_following(
 
     // After unfollowing, client B stops receiving updates from client A.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx)
+        workspace.unfollow(peer_id_a, cx).unwrap()
     });
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a2, cx)

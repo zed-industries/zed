@@ -346,7 +346,11 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
+                #[cfg(target_os = "linux")]
                 hold: !matches!(shell.clone(), Shell::System),
+                // with hold: true, macOS gets tasks stuck on ctrl-c interrupts periodically
+                #[cfg(not(target_os = "linux"))]
+                hold: false,
                 env: env.into_iter().collect(),
             }
         };

@@ -122,7 +122,7 @@ lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
-            soft_wrap: Some(SoftWrap::PreferredLineLength),
+            soft_wrap: Some(SoftWrap::EditorWidth),
             ..Default::default()
         },
         None,

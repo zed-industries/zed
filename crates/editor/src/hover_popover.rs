@@ -722,6 +722,7 @@ impl DiagnosticPopover {
             .child(markdown_div);
 
         d.into_any_element()
+
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
