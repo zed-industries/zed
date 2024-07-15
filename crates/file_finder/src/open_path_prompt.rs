@@ -178,8 +178,8 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
-            if !suffix.starts_with(".") {
-                match_candidates.retain(|m| !m.string.starts_with("."));
+            if !suffix.starts_with('.') {
+                match_candidates.retain(|m| !m.string.starts_with('.'));
             }
 
             if suffix == "" {
