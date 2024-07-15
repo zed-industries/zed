@@ -4012,13 +4012,11 @@ impl Workspace {
             workspace.update(&mut cx, |workspace, cx| {
                 for item in all_deserialized_items {
                     if let Some(serializable_item) = item.to_serializable_item_handle(cx) {
-                        // TODO: Maybe send this to serialize hcannel there
-                        if let Some(task) = serializable_item.serialize(workspace, cx) {
-                            task.detach();
-                        }
+                        workspace.enqueue_item_serialization(serializable_item)?;
                     }
                 }
-            })?;
+                anyhow::Ok(())
+            })??;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace
