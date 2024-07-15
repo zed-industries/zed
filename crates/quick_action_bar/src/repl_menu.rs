@@ -196,35 +196,23 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
-                    .separator()
-                    // TODO:
-                    // Check if there is a selection in the editor
-                    // If there is, label is "Run Selection"
-                    // otherwise, label is "Run Line" (Cell?)
-                    .action(
-                        if has_nonempty_selection {
-                            "Run Selection"
-                        } else {
-                            "Run Line"
-                        },
-                        Box::new(repl::Run),
-                    )
-                    .custom_row(move |_cx| {
-                        ButtonLike::new_rounded_left("toggle_repl_icon")
-                            .child(IconButton::new("foo", IconName::ReplNeutral).into_any_element())
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Subtle)
-                            .on_click({
-                                let panel_clone = panel_clone.clone();
-                                let editor_clone = editor_clone.clone();
-                                move |_, cx| {
-                                    panel_clone.update(cx, |this, cx| {
-                                        this.run(editor_clone.clone(), cx).log_err();
-                                    });
-                                }
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new(if has_nonempty_selection {
+                                "Run Selection"
+                            } else {
+                                "Run Line"
                             })
                             .into_any_element()
-                    })
+                        },
+                        move |cx| {
+                            let panel_clone = panel_clone.clone();
+                            let editor_clone = editor_clone.clone();
+                            panel_clone.update(cx, |this, cx| {
+                                this.run(editor_clone.clone(), cx).log_err();
+                            });
+                        },
+                    )
                     // TODO: Add action
                     // .action("Interrupt", Box::new(gpui::NoAction))
                     // TODO: Add action
