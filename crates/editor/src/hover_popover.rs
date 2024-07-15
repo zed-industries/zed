@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent, Tooltip};
+use ui::{prelude::*, window_is_transparent};
 use util::TryFutureExt;
 use workspace::Workspace;
 pub const HOVER_DELAY_MILLIS: u64 = 350;
