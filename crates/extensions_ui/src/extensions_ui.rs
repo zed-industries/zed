@@ -28,7 +28,7 @@ use workspace::{
     Workspace, WorkspaceId,
 };
 
-use crate::components::ExtensionCard;
+use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
@@ -138,7 +138,7 @@ pub struct ExtensionsPage {
     query_contains_error: bool,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
-    notices: BTreeMap<Arc<str>, Arc<str>>,
+    upsells: BTreeMap<Arc<str>, FeatureUpsell>,
 }
 
 impl ExtensionsPage {
@@ -177,7 +177,7 @@ impl ExtensionsPage {
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
-                notices: BTreeMap::default(),
+                upsells: BTreeMap::default(),
             };
             this.fetch_extensions(None, cx);
             this
@@ -800,18 +800,25 @@ impl ExtensionsPage {
 
             if let Some(search) = self.search_query(cx) {
                 if search.contains("git") {
-                    self.notices
-                        .insert("git".into(), "Git support is built-in to Zed!".into());
+                    self.upsells.insert(
+                        "git".into(),
+                        FeatureUpsell::new("Git support is built-in to Zed!"),
+                    );
                 } else {
-                    self.notices.remove("git");
+                    self.upsells.remove("git");
                 }
 
                 if search.contains("vim") {
-                    self.notices
-                        .insert("vim".into(), "Vim support is built-in to Zed!".into());
+                    self.upsells.insert(
+                        "vim".into(),
+                        FeatureUpsell::new("Vim support is built-in to Zed!")
+                            .docs_url("https://zed.dev/docs/vim"),
+                    );
                 } else {
-                    self.notices.remove("vim");
+                    self.upsells.remove("vim");
                 }
+            } else {
+                self.upsells.clear();
             }
         }
     }
@@ -967,16 +974,13 @@ impl Render for ExtensionsPage {
                     ),
             )
             .child(
-                v_flex()
-                    .gap_2()
-                    .children(self.notices.values().enumerate().map(|(ix, notice)| {
-                        h_flex()
-                            .p_4()
-                            .when(ix > 0, |el| el.border_t_1())
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(Label::new(notice))
-                    })),
+                v_flex().gap_2().children(
+                    self.upsells
+                        .values()
+                        .cloned()
+                        .enumerate()
+                        .map(|(ix, upsell)| upsell.is_first(ix == 0)),
+                ),
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
