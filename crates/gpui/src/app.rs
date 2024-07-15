@@ -31,8 +31,8 @@ use crate::{
     Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, TrayItem, View,
+    ViewContext, Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -1149,6 +1149,19 @@ impl AppContext {
             || self
                 .global_action_listeners
                 .contains_key(&action.as_any().type_id())
+    }
+
+    /// Sets a single tray item in the System tray. This will replace any existing tray item.
+    pub fn set_tray_item(&mut self, mut item: TrayItem) {
+        if let Some(mut fun) = item.event.take() {
+            self.platform.on_tray_event(Box::new({
+                let cx = self.to_async();
+                move |event| {
+                    cx.update(|cx| fun(event, cx)).log_err();
+                }
+            }));
+        }
+        self.platform.set_tray_item(item);
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.

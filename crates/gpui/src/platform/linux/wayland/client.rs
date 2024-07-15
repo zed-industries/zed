@@ -63,6 +63,11 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
+use crate::platform::linux::dbus::dbusmenu::{DBusMenu, DBusMenuEvents};
+use crate::platform::linux::dbus::status_notifier::{
+    StatusNotifierItem, StatusNotifierItemEvents, StatusNotifierItemOptions,
+};
+use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::clipboard::{
     Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
 };
@@ -72,13 +77,12 @@ use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
+    get_xkb_compose_state, open_uri_internal, read_fd, reveal_path_internal,
 };
 use crate::platform::PlatformWindow;
 use crate::{
     point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    TrayEvent, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -592,6 +596,71 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: Option<DBusMenu>) {
+        self.0
+            .borrow()
+            .common
+            .foreground_executor
+            .spawn({
+                let state = self.0.clone();
+                async move {
+                    let item = StatusNotifierItem::new(1, options, menu).await.log_err();
+                    if let Some(item) = item {
+                        let mut state = state.borrow_mut();
+                        if let Some(token) = state.common.tray_item_token {
+                            state.loop_handle.remove(token);
+                        }
+                        state.common.tray_item_token = state
+                            .loop_handle
+                            .insert_source(item, |event, _, client| {
+                                let client = client.get_client();
+                                let Some(mut tray_event) =
+                                    client.borrow_mut().common.callbacks.tray_event.take()
+                                else {
+                                    return;
+                                };
+                                match event {
+                                    StatusNotifierItemEvents::Activate(x, y) => {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Left,
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::SecondaryActivate(x, y) => {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Middle,
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::XdgActivationToken(_token) => {
+                                        // Should we ignore this?
+                                    }
+                                    StatusNotifierItemEvents::Scroll(delta, orientation) => {
+                                        match orientation.as_str() {
+                                            "Vertical" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(0, delta),
+                                            }),
+                                            "Horizontal" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(delta, 0),
+                                            }),
+                                            _ => {}
+                                        }
+                                    }
+                                    StatusNotifierItemEvents::MenuEvent(event) => match event {
+                                        DBusMenuEvents::MenuClick(id) => {
+                                            tray_event(TrayEvent::MenuClick { id });
+                                        }
+                                    },
+                                }
+                                client.borrow_mut().common.callbacks.tray_event = Some(tray_event);
+                            })
+                            .log_err();
+                    }
+                }
+            })
+            .detach();
     }
 
     fn open_window(

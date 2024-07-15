@@ -242,6 +242,8 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn set_tray_item(&self, _item: crate::TrayItem) {}
+
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
@@ -252,6 +254,8 @@ impl Platform for TestPlatform {
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
+
+    fn on_tray_event(&self, _callback: Box<dyn FnMut(crate::TrayEvent)>) {}
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

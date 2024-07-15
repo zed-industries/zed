@@ -26,12 +26,17 @@ use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
 
+use crate::platform::linux::dbus::dbusmenu::{DBusMenu, DBusMenuEvents};
+use crate::platform::linux::dbus::status_notifier::{
+    StatusNotifierItem, StatusNotifierItemEvents, StatusNotifierItemOptions,
+};
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, TrayEvent, WindowParams,
+    X11Window,
 };
 
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
@@ -1056,6 +1061,71 @@ impl LinuxClient for X11Client {
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
+    }
+
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: Option<DBusMenu>) {
+        self.0
+            .borrow()
+            .common
+            .foreground_executor
+            .spawn({
+                let state = self.0.clone();
+                async move {
+                    let item = StatusNotifierItem::new(1, options, menu).await.log_err();
+                    if let Some(item) = item {
+                        let mut state = state.borrow_mut();
+                        if let Some(token) = state.common.tray_item_token {
+                            state.loop_handle.remove(token);
+                        }
+                        state.common.tray_item_token = state
+                            .loop_handle
+                            .insert_source(item, |event, _, client| {
+                                let Some(mut tray_event) =
+                                    client.0.borrow_mut().common.callbacks.tray_event.take()
+                                else {
+                                    return;
+                                };
+                                match event {
+                                    StatusNotifierItemEvents::Activate(x, y) => {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Left,
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::SecondaryActivate(x, y) => {
+                                        tray_event(TrayEvent::TrayClick {
+                                            button: MouseButton::Middle,
+                                            position: Point::new(x, y),
+                                        });
+                                    }
+                                    StatusNotifierItemEvents::XdgActivationToken(_token) => {
+                                        // Should we ignore this?
+                                    }
+                                    StatusNotifierItemEvents::Scroll(delta, orientation) => {
+                                        match orientation.as_str() {
+                                            "Vertical" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(delta, 0),
+                                            }),
+                                            "Horizontal" => tray_event(TrayEvent::Scroll {
+                                                scroll_detal: Point::new(0, delta),
+                                            }),
+                                            _ => {}
+                                        }
+                                    }
+                                    StatusNotifierItemEvents::MenuEvent(event) => match event {
+                                        DBusMenuEvents::MenuClick(id) => {
+                                            tray_event(TrayEvent::MenuClick { id });
+                                        }
+                                    },
+                                }
+                                client.0.borrow_mut().common.callbacks.tray_event =
+                                    Some(tray_event);
+                            })
+                            .log_err();
+                    }
+                }
+            })
+            .detach();
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
