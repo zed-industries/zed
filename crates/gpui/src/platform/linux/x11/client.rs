@@ -947,18 +947,16 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
-        if !state.composing {
-            if let Some(keystroke) = state.pre_ime_key_down.take() {
-                drop(state);
-                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                }));
-                return Some(());
-            }
-        }
+        let keystroke = state.pre_ime_key_down.take();
         state.composing = false;
         drop(state);
+        if let Some(mut keystroke) = keystroke {
+            keystroke.ime_key = Some(text.clone());
+            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                keystroke,
+                is_held: false,
+            }));
+        }
 
         window.handle_ime_commit(text);
         Some(())
