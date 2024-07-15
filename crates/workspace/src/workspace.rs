@@ -454,12 +454,12 @@ impl SerializableItemRegistry {
     }
 
     fn view_to_serializable_item_handle(
-        item: AnyView,
+        view: AnyView,
         cx: &AppContext,
     ) -> Option<Box<dyn SerializableItemHandle>> {
         let this = cx.try_global::<Self>()?;
-        let descriptor = this.descriptors_by_type.get(&item.entity_type())?;
-        Some((descriptor.view_to_serializable_item)(item))
+        let descriptor = this.descriptors_by_type.get(&view.entity_type())?;
+        Some((descriptor.view_to_serializable_item)(view))
     }
 
     fn descriptor(item_kind: &str, cx: &AppContext) -> Option<SerializableItemDescriptor> {

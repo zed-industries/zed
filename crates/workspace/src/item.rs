@@ -796,10 +796,6 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
-    // fn serialized_item_kind(&self) -> Option<&'static str> {
-    //     T::serialized_item_kind()
-    // }
-
     fn show_toolbar(&self, cx: &AppContext) -> bool {
         self.read(cx).show_toolbar()
     }
@@ -818,32 +814,6 @@ impl<T: Item> ItemHandle for View<T> {
     ) -> Option<Box<dyn SerializableItemHandle>> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
-
-    // fn can_serialize_content(&self, cx: &AppContext) -> bool {
-    //     self.read(cx).can_serialize_content(cx)
-    // }
-
-    // fn serialize_content(
-    //     &self,
-    //     workspace: &mut Workspace,
-    //     cx: &mut WindowContext,
-    // ) -> Task<anyhow::Result<()>> {
-    //     let item_id = self.entity_id().as_u64() as ItemId;
-    //     self.update(cx, |item, cx| {
-    //         item.serialize_content(workspace, item_id, cx)
-    //     })
-    // }
-
-    // fn delete_serialized_content(
-    //     &self,
-    //     workspace: &mut Workspace,
-    //     cx: &mut WindowContext,
-    // ) -> Task<anyhow::Result<()>> {
-    //     let item_id = self.entity_id().as_u64() as ItemId;
-    //     self.update(cx, |item, cx| {
-    //         item.delete_serialized_content(workspace, item_id, cx)
-    //     })
-    // }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyView {

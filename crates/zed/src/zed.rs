@@ -571,9 +571,6 @@ fn quit(_: &Quit, cx: &mut AppContext) {
             }
         }
 
-        // TODO: Ensure that all workspace items and unpersisted
-        // changes are persisted
-
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window

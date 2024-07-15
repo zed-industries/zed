@@ -1486,27 +1486,6 @@ impl Pane {
         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
     }
 
-    // fn delete_serialized_content(
-    //     pane: &WeakView<Pane>,
-    //     item: &dyn ItemHandle,
-    //     cx: &mut AsyncWindowContext,
-    // ) -> Option<Task<Result<()>>> {
-    //     let task = pane.update(cx, |pane, cx| {
-    //         pane.workspace.update(cx, |workspace, cx| {
-    //             if item.can_serialize_content(cx) {
-    //                 Some(item.delete_serialized_content(workspace, cx))
-    //             } else {
-    //                 None
-    //             }
-    //         })
-    //     });
-    //     if let Ok(Ok(task)) = task {
-    //         task
-    //     } else {
-    //         None
-    //     }
-    // }
-
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: Model<Project>,
