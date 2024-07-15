@@ -699,7 +699,7 @@ impl DiagnosticPopover {
                 .rounded_lg();
         }
 
-        let mut d = div()
+        let d = div()
             .id("diagnostic")
             .block()
             .max_h(max_size.height)
