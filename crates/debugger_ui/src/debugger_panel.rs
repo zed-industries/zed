@@ -279,7 +279,7 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let all_threads = event.all_threads_continued.unwrap_or(false);
-        let client = this.debug_client_by_id(client_id.clone(), cx);
+        let client = this.debug_client_by_id(*client_id, cx);
 
         if all_threads {
             for thread in client.thread_states().values_mut() {
@@ -288,6 +288,8 @@ impl DebugPanel {
         } else {
             client.update_thread_state_status(event.thread_id, ThreadStatus::Running);
         }
+
+        cx.notify();
     }
 
     fn handle_stopped_event(
