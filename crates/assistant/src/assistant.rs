@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, tabs_command,
-    term_command,
+    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
+    tabs_command, term_command,
 };
 use std::{
     fmt::{self, Display},
@@ -367,6 +367,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
+    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
