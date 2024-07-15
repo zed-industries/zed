@@ -11,32 +11,6 @@ use ui::{
 
 use gpui::ElementId;
 
-// No session && no support known
-
-// No session && no kernel installed for languages of known support
-// - [ ] Intro to REPL
-// - [x] Link to docs
-
-// No session but can start one
-// - [x] Start REPL
-// - [ ] More info -> Docs?
-
-// Yes Session
-// - [ ] [Default kernel changed - restart (this kernel) to apply] // todo!(kyle): need some kind of state thing that says if this has happened
-// - [x] Info: Kernel name, language
-//   example: chatlab-3.7-adsf87fsa (Python)
-//   example: condapy-3.7 (Python)
-// - [x] Change Kernel -> https://zed.dev/docs/repl#change-kernel
-// - ---
-// - [ ] Run
-// - [ ] Interrupt
-// - [ ] Clear Outputs
-// - ---
-// - [ ] Restart
-// - [ ] Shutdown
-// - ---
-// - [ ] Shutdown all kernels
-
 use crate::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
