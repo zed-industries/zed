@@ -1009,6 +1009,13 @@ impl SerializableItem for Editor {
             .map(|file| file.abs_path(cx));
         let snapshot = buffer.read(cx).snapshot();
 
+        #[cfg(feature = "test-support")]
+        if path.as_ref().map_or(false, |p| {
+            p.to_string_lossy().contains("does-not-serialize")
+        }) {
+            return None;
+        }
+
         Some(cx.spawn(|_this, cx| async move {
             cx.background_executor()
                 .spawn(async move {
