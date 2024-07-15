@@ -90,10 +90,10 @@ impl EditorDb {
     }
 
     query! {
-        pub async fn delete_contents(workspace: WorkspaceId, item_id: ItemId) -> Result<()> {
+        pub async fn delete_contents(item_id: ItemId, workspace: WorkspaceId) -> Result<()> {
             DELETE FROM editor_contents
-            WHERE workspace_id = ?
-            AND item_id = ?
+            WHERE item_id = ?1
+            AND workspace_id = ?2
         }
     }
 

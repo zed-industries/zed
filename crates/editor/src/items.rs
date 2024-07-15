@@ -1029,8 +1029,7 @@ impl SerializableItem for Editor {
                         let contents = snapshot.text();
                         DB.save_contents(item_id, workspace_id, contents).await
                     } else {
-                        // TODO: unspice
-                        DB.delete_contents(workspace_id, item_id).await
+                        DB.delete_contents(item_id, workspace_id).await
                     }
                 })
                 .await
