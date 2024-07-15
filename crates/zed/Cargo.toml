@@ -103,7 +103,6 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-candle-core = "0.6.0"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
