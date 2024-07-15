@@ -366,7 +366,6 @@ fn show_hover(
                             soft_break_delim: String::from("\n"),
                             ..Default::default()
                         };
-                        println!("{:?}", text);
                         Markdown::new(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
