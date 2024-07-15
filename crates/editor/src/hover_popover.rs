@@ -5,12 +5,10 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, Hover, RangeToAnchorExt,
 };
-use chrono::Local;
 use gpui::{
-    black, blue, div, green, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla,
-    InteractiveElement, InteractiveText, IntoElement, Length, MouseButton, ParentElement, Pixels,
-    ScrollHandle, SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled,
-    StyledText, Task, TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
+    div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, ScrollHandle, Size, StatefulInteractiveElement,
+    StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext, WeakView,
 };
 
 use itertools::Itertools;
@@ -18,7 +16,7 @@ use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
@@ -47,15 +45,10 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
         if show_keyboard_hover(editor, cx) {
             return;
         }
-        let now = Local::now();
 
         if let Some(anchor) = anchor {
-            // print!("Show{}, ", now.format("%S").to_string());
-
             show_hover(editor, anchor, false, cx);
         } else {
-            // print!("Hide{}, ", now.format("%S").to_string());
-
             hide_hover(editor, cx);
         }
     }
@@ -359,15 +352,18 @@ fn show_hover(
                             }
                         };
                         let settings = ThemeSettings::get_global(cx);
+                        let mut base_text_style = cx.text_style();
+                        base_text_style.refine(&TextStyleRefinement {
+                            font_family: Some(settings.ui_font.family.clone()),
+                            font_size: Some(settings.ui_font_size.into()),
+                            color: Some(cx.theme().colors().editor_foreground),
+                            background_color: Some(background_color.unwrap()),
+                            ..Default::default()
+                        });
                         let markdown_style = MarkdownStyle {
-                            base_text_style: TextStyle {
-                                font_family: settings.ui_font.family.clone(),
-                                font_size: settings.ui_font_size.into(),
-                                color: cx.theme().colors().editor_foreground,
-                                background_color: Some(background_color.unwrap()),
-                                ..Default::default()
-                            },
+                            base_text_style,
                             selection_background_color: { cx.theme().players().local().selection },
+                            soft_break_delim: String::from("\n"),
                             ..Default::default()
                         };
                         println!("{:?}", text);
@@ -526,6 +522,7 @@ async fn parse_blocks(
                     .text_base()
                     .mt(rems(1.))
                     .mb_0(),
+                ..Default::default()
             };
 
             Markdown::new(
@@ -557,7 +554,7 @@ impl HoverState {
     pub fn render(
         &mut self,
         snapshot: &EditorSnapshot,
-        style: &EditorStyle,
+        _style: &EditorStyle,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
         _workspace: Option<WeakView<Workspace>>,

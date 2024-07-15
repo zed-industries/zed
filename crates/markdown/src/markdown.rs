@@ -30,6 +30,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub break_style: StyleRefinement,
     pub heading: StyleRefinement,
+    pub soft_break_delim: String,
 }
 
 impl Default for MarkdownStyle {
@@ -46,6 +47,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             break_style: Default::default(),
             heading: Default::default(),
+            soft_break_delim: String::from(" "),
         }
     }
 }
@@ -696,7 +698,9 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
+                MarkdownEvent::SoftBreak => {
+                    builder.push_text(self.style.soft_break_delim.as_str(), range.start)
+                }
                 MarkdownEvent::HardBreak => {
                     let mut d = div().py_3();
                     d.style().refine(&self.style.break_style);
