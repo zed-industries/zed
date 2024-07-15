@@ -50,6 +50,10 @@ The `repl: run` command will be executed on your selection(s), and the result wi
 
 Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
 
+## Changing Kernels {#changing-kernels}
+
+Work in Progress!
+
 ## Language specific instructions
 
 ### Python {#python}
