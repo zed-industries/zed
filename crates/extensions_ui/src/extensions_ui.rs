@@ -12,7 +12,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    actions, uniform_list, AnyElement, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -24,7 +24,6 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
-use util::ResultExt as _;
 use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
@@ -58,9 +57,23 @@ pub fn init(cx: &mut AppContext) {
                     multiple: false,
                 });
 
+                let workspace_handle = cx.view().downgrade();
                 cx.deref_mut()
                     .spawn(|mut cx| async move {
-                        let extension_path = prompt.await.log_err()??.pop()?;
+                        let extension_path =
+                            match Flatten::flatten(prompt.await.map_err(|e| e.into())) {
+                                Ok(Some(mut paths)) => paths.pop()?,
+                                Ok(None) => return None,
+                                Err(err) => {
+                                    workspace_handle
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.show_portal_error(err.to_string(), cx);
+                                        })
+                                        .ok();
+                                    return None;
+                                }
+                            };
+
                         store
                             .update(&mut cx, |store, cx| {
                                 store
