@@ -110,7 +110,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .overflow_hidden()
                     .flex_none()
                     .h_9()
-                    .px_4()
+                    .px_3()
                     .child(editor.clone()),
             )
             .child(Divider::horizontal())
@@ -527,7 +527,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py_2()
+            .py_1()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
             ElementContainer::List(state) => list(state.clone())

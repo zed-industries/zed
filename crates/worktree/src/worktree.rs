@@ -37,7 +37,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::proto::{self, EnvelopedMessage as _, RequestMessage};
+use rpc::proto::{self, AnyProtoClient};
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
@@ -131,7 +131,7 @@ pub struct RemoteWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
     project_id: u64,
-    client: Box<dyn RemoteWorktreeClient>,
+    client: AnyProtoClient,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     update_observer: Arc<
         Mutex<Option<Box<dyn Send + FnMut(proto::UpdateWorktree) -> BoxFuture<'static, bool>>>>,
@@ -140,14 +140,6 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
-}
-
-pub trait RemoteWorktreeClient {
-    fn request(
-        &self,
-        envelope: proto::Envelope,
-        request_type: &'static str,
-    ) -> BoxFuture<'static, Result<proto::Envelope>>;
 }
 
 #[derive(Clone)]
@@ -461,7 +453,7 @@ impl Worktree {
         project_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
-        client: Box<dyn RemoteWorktreeClient>,
+        client: AnyProtoClient,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -706,7 +698,7 @@ impl Worktree {
             Worktree::Local(this) => this.create_entry(path, is_directory, cx),
             Worktree::Remote(this) => {
                 let project_id = this.project_id;
-                let request = this.rpc_request(proto::CreateProjectEntry {
+                let request = this.client.request(proto::CreateProjectEntry {
                     worktree_id: worktree_id.to_proto(),
                     project_id,
                     path: path.to_string_lossy().into(),
@@ -748,7 +740,7 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => {
-                let response = this.rpc_request(proto::DeleteProjectEntry {
+                let response = this.client.request(proto::DeleteProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                     use_trash: trash,
@@ -778,7 +770,7 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.rename_entry(entry_id, new_path, cx),
             Worktree::Remote(this) => {
-                let response = this.rpc_request(proto::RenameProjectEntry {
+                let response = this.client.request(proto::RenameProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                     new_path: new_path.to_string_lossy().into(),
@@ -820,7 +812,7 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.copy_entry(entry_id, new_path, cx),
             Worktree::Remote(this) => {
-                let response = this.rpc_request(proto::CopyProjectEntry {
+                let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                     new_path: new_path.to_string_lossy().into(),
@@ -870,7 +862,7 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.expand_entry(entry_id, cx),
             Worktree::Remote(this) => {
-                let response = this.rpc_request(proto::ExpandProjectEntry {
+                let response = this.client.request(proto::ExpandProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                 });
@@ -1811,22 +1803,18 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
+    pub fn project_id(&self) -> u64 {
+        self.project_id
+    }
+
+    pub fn client(&self) -> AnyProtoClient {
+        self.client.clone()
+    }
+
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
         self.disconnected = true;
-    }
-
-    fn rpc_request<T: RequestMessage>(
-        &self,
-        request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
-        let envelope = request.into_envelope(0, None, None);
-        let response = self.client.request(envelope, T::NAME);
-        async move {
-            T::Response::from_envelope(response.await?)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))
-        }
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {

@@ -4,7 +4,7 @@ use std::fs;
 use zed::lsp::CompletionKind;
 use zed::{
     CodeLabel, CodeLabelSpan, HttpRequest, KeyValueStore, LanguageServerId, SlashCommand,
-    SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
 
@@ -154,12 +154,24 @@ impl zed::Extension for GleamExtension {
         &self,
         command: SlashCommand,
         _query: String,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         match command.name.as_str() {
             "gleam-project" => Ok(vec![
-                "apple".to_string(),
-                "banana".to_string(),
-                "cherry".to_string(),
+                SlashCommandArgumentCompletion {
+                    label: "apple".to_string(),
+                    new_text: "Apple".to_string(),
+                    run_command: false,
+                },
+                SlashCommandArgumentCompletion {
+                    label: "banana".to_string(),
+                    new_text: "Banana".to_string(),
+                    run_command: false,
+                },
+                SlashCommandArgumentCompletion {
+                    label: "cherry".to_string(),
+                    new_text: "Cherry".to_string(),
+                    run_command: true,
+                },
             ]),
             _ => Ok(Vec::new()),
         }

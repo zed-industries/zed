@@ -66,6 +66,7 @@ impl TextSystem {
                 // We should allow GPUI users to provide their own fallback font stack.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
+                font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
@@ -654,26 +655,6 @@ impl Hash for RenderGlyphParams {
         self.glyph_id.0.hash(state);
         self.font_size.0.to_bits().hash(state);
         self.subpixel_variant.hash(state);
-        self.scale_factor.to_bits().hash(state);
-    }
-}
-
-/// The parameters for rendering an emoji glyph.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RenderEmojiParams {
-    pub(crate) font_id: FontId,
-    pub(crate) glyph_id: GlyphId,
-    pub(crate) font_size: Pixels,
-    pub(crate) scale_factor: f32,
-}
-
-impl Eq for RenderEmojiParams {}
-
-impl Hash for RenderEmojiParams {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.font_id.0.hash(state);
-        self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
         self.scale_factor.to_bits().hash(state);
     }
 }

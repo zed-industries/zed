@@ -82,7 +82,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -659,6 +659,13 @@ fn handle_calc_client_size(
     requested_client_rect[0].left += frame_x + padding;
     requested_client_rect[0].bottom -= frame_y + padding;
 
+    if state_ptr.state.borrow().is_maximized() {
+        requested_client_rect[0].top += frame_y + padding;
+    } else {
+        // Magic number that calculates the width of the border
+        requested_client_rect[0].top += frame_y - 3;
+    }
+
     Some(0)
 }
 
@@ -725,7 +732,10 @@ fn handle_dpi_changed_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let new_dpi = wparam.loword() as f32;
-    state_ptr.state.borrow_mut().scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+    lock.border_offset.udpate(handle).log_err();
+    drop(lock);
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
     let width = rect.right - rect.left;
@@ -794,6 +804,9 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    if !state_ptr.is_movable {
+        return None;
+    }
     if !state_ptr.hide_title_bar {
         return None;
     }
@@ -821,14 +834,14 @@ fn handle_hit_test_msg(
 
     let dpi = unsafe { GetDpiForWindow(handle) };
     let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
 
     let mut cursor_point = POINT {
         x: lparam.signed_loword().into(),
         y: lparam.signed_hiword().into(),
     };
     unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-    if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
+    if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
+    {
         return Some(HTTOP as _);
     }
 
@@ -1040,10 +1053,17 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     Some(1)
 }
 
-fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_system_settings_changed(
+    handle: HWND,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
+    // mouse double click
+    lock.click_state.system_update();
+    // window border offset
+    lock.border_offset.udpate(handle).log_err();
     Some(0)
 }
 
@@ -1259,7 +1279,7 @@ fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
 }
 
 #[inline]
-fn current_modifiers() -> Modifiers {
+pub(crate) fn current_modifiers() -> Modifiers {
     Modifiers {
         control: is_virtual_key_pressed(VK_CONTROL),
         alt: is_virtual_key_pressed(VK_MENU),

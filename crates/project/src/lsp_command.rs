@@ -1,3 +1,5 @@
+mod signature_help;
+
 use crate::{
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
@@ -6,6 +8,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
+use clock::Global;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
@@ -20,8 +23,13 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
     OneOf, ServerCapabilities,
 };
+use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
+
+pub use signature_help::{
+    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
+};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -118,6 +126,11 @@ pub(crate) struct GetReferences {
 }
 
 pub(crate) struct GetDocumentHighlights {
+    pub position: PointUtf16,
+}
+
+#[derive(Clone)]
+pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
 }
 
@@ -397,16 +410,18 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         project: Model<Project>,
         _: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
-        project
-            .update(&mut cx, |project, cx| {
-                project.deserialize_project_transaction(message, self.push_to_history, cx)
-            })?
-            .await
+        Project::deserialize_project_transaction(
+            project.downgrade(),
+            message,
+            self.push_to_history,
+            cx,
+        )
+        .await
     }
 
     fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {
@@ -1221,6 +1236,116 @@ impl LspCommand for GetDocumentHighlights {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetSignatureHelp {
+    type Response = Option<SignatureHelp>;
+    type LspRequest = lsp::SignatureHelpRequest;
+    type ProtoRequest = proto::GetSignatureHelp;
+
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        capabilities.signature_help_provider.is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _cx: &AppContext,
+    ) -> lsp::SignatureHelpParams {
+        let url_result = lsp::Url::from_file_path(path);
+        if url_result.is_err() {
+            log::error!("an invalid file path has been specified");
+        }
+
+        lsp::SignatureHelpParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: url_result.expect("invalid file path"),
+                },
+                position: point_to_lsp(self.position),
+            },
+            context: None,
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::SignatureHelp>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        _: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        let offset = buffer.point_utf16_to_offset(self.position);
+        proto::GetSignatureHelp {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(serialize_anchor(&buffer.anchor_after(offset))),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        payload: Self::ProtoRequest,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&payload.version))
+            })?
+            .await
+            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
+        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        Ok(Self {
+            position: payload
+                .position
+                .and_then(deserialize_anchor)
+                .context("invalid position")?
+                .to_point_utf16(&buffer_snapshot),
+        })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut Project,
+        _: PeerId,
+        _: &Global,
+        _: &mut AppContext,
+    ) -> proto::GetSignatureHelpResponse {
+        proto::GetSignatureHelpResponse {
+            signature_help: response
+                .map(|signature_help| lsp_to_proto_signature(signature_help.original_data)),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        response: proto::GetSignatureHelpResponse,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        Ok(response
+            .signature_help
+            .map(|proto_help| proto_to_lsp_signature(proto_help))
+            .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
@@ -2471,7 +2596,7 @@ impl LspCommand for InlayHints {
             lsp_adapter.name.0.as_ref() == "typescript-language-server";
 
         let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if InlayHints::can_resolve_inlays(lsp_server.capabilities()) {
+            let resolve_state = if InlayHints::can_resolve_inlays(&lsp_server.capabilities()) {
                 ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
             } else {
                 ResolveState::Resolved

@@ -319,7 +319,6 @@ jobs:
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@v1
-        if: ${{ env.RELEASE_CHANNEL == 'preview' }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}

@@ -20,7 +20,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
-    zed::extension::slash_command::SlashCommandOutput,
+    zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
@@ -49,10 +49,9 @@ pub fn is_supported_wasm_api_version(
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
 pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
-    let max_version = if release_channel == ReleaseChannel::Dev {
-        latest::MAX_VERSION
-    } else {
-        since_v0_0_6::MAX_VERSION
+    let max_version = match release_channel {
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_0_6::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -263,7 +262,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         query: &str,
-    ) -> Result<Result<Vec<String>, String>> {
+    ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
         match self {
             Extension::V007(ext) => {
                 ext.call_complete_slash_command_argument(store, command, query)

@@ -612,10 +612,11 @@ impl AppContext {
     /// Displays a platform modal for selecting paths.
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
+    /// May return an error on Linux if the file picker couldn't be opened.
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         self.platform.prompt_for_paths(options)
     }
 
@@ -623,7 +624,11 @@ impl AppContext {
     /// The provided directory will be used to set the initial location.
     /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
-    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    /// May return an error on Linux if the file picker couldn't be opened.
+    pub fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         self.platform.prompt_for_new_path(directory)
     }
 

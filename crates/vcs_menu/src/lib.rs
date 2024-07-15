@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WindowContext,
+    actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
@@ -268,11 +268,14 @@ impl PickerDelegate for BranchListDelegate {
                 .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
         )
     }
+
     fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
-            h_flex()
+            Label::new("Recent Branches")
+                .size(LabelSize::Small)
+                .mt_1()
                 .ml_3()
-                .child(Label::new("Recent Branches").size(LabelSize::Small))
+                .into_any_element()
         } else {
             let match_label = self.matches.is_empty().not().then(|| {
                 let suffix = if self.matches.len() == 1 { "" } else { "es" };
@@ -285,43 +288,51 @@ impl PickerDelegate for BranchListDelegate {
                 .justify_between()
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)
+                .into_any_element()
         };
-        Some(label.mt_1().into_any())
+        Some(v_flex().mt_1().child(label).into_any_element())
     }
+
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         if self.last_query.is_empty() {
             return None;
         }
 
         Some(
-            h_flex().mr_3().pb_2().child(h_flex().w_full()).child(
-            Button::new("branch-picker-create-branch-button", "Create branch").on_click(
-                cx.listener(|_, _, cx| {
-                    cx.spawn(|picker, mut cx| async move {
-                                        picker.update(&mut cx, |this, cx| {
-                                            let project = this.delegate.workspace.read(cx).project().read(cx);
-                                            let current_pick = &this.delegate.last_query;
-                                            let repo = project
-                                                .get_first_worktree_root_repo(cx)
-                                                .context("failed to get root repository for first worktree")?;
-                                            let status = repo
-                                                .create_branch(&current_pick);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
-                                            let status = repo.change_branch(&current_pick);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
-                                            this.cancel(&Default::default(), cx);
-                                            Ok::<(), anyhow::Error>(())
+            h_flex()
+                .mr_3()
+                .pb_2()
+                .child(h_flex().w_full())
+                .child(
+                    Button::new("branch-picker-create-branch-button", "Create branch")
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.spawn(|picker, mut cx| async move {
+                                picker.update(&mut cx, |this, cx| {
+                                    let project =
+                                        this.delegate.workspace.read(cx).project().read(cx);
+                                    let current_pick = &this.delegate.last_query;
+                                    let repo = project.get_first_worktree_root_repo(cx).context(
+                                        "failed to get root repository for first worktree",
+                                    )?;
+                                    let status = repo.create_branch(&current_pick);
+                                    if status.is_err() {
+                                        this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                        status?;
+                                    }
+                                    let status = repo.change_branch(&current_pick);
+                                    if status.is_err() {
+                                        this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                        status?;
+                                    }
+                                    this.cancel(&Default::default(), cx);
+                                    Ok::<(), anyhow::Error>(())
                                 })
-
-                    }).detach_and_log_err(cx);
-                }),
-            ).style(ui::ButtonStyle::Filled)).into_any_element(),
+                            })
+                            .detach_and_log_err(cx);
+                        }))
+                        .style(ui::ButtonStyle::Filled),
+                )
+                .into_any_element(),
         )
     }
 }

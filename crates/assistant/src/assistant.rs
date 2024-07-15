@@ -1,7 +1,8 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod completion_provider;
-mod context_store;
+mod context;
+pub mod context_store;
 mod inline_assistant;
 mod model_selector;
 mod prompt_library;
@@ -16,8 +17,9 @@ use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaMo
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-pub(crate) use completion_provider::*;
-pub(crate) use context_store::*;
+pub use completion_provider::*;
+pub use context::*;
+pub use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
@@ -27,8 +29,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
+    active_command, default_command, diagnostics_command, docs_command, fetch_command,
+    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
+    tabs_command, term_command,
 };
 use std::{
     fmt::{self, Display},
@@ -48,17 +51,22 @@ actions!(
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleHistory,
+        DeployHistory,
+        DeployPromptLibrary,
         ApplyEdit,
         ConfirmCommand,
         ToggleModelSelector
     ]
 );
 
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-struct MessageId(usize);
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct MessageId(clock::Lamport);
+
+impl MessageId {
+    pub fn as_u64(self) -> u64 {
+        self.0.as_u64()
+    }
+}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -69,8 +77,26 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn cycle(&mut self) {
-        *self = match self {
+    pub fn from_proto(role: i32) -> Role {
+        match proto::LanguageModelRole::from_i32(role) {
+            Some(proto::LanguageModelRole::LanguageModelUser) => Role::User,
+            Some(proto::LanguageModelRole::LanguageModelAssistant) => Role::Assistant,
+            Some(proto::LanguageModelRole::LanguageModelSystem) => Role::System,
+            Some(proto::LanguageModelRole::LanguageModelTool) => Role::System,
+            None => Role::User,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::LanguageModelRole {
+        match self {
+            Role::User => proto::LanguageModelRole::LanguageModelUser,
+            Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
+            Role::System => proto::LanguageModelRole::LanguageModelSystem,
+        }
+    }
+
+    pub fn cycle(self) -> Role {
+        match self {
             Role::User => Role::Assistant,
             Role::Assistant => Role::System,
             Role::System => Role::User,
@@ -149,11 +175,7 @@ pub struct LanguageModelRequestMessage {
 impl LanguageModelRequestMessage {
     pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
         proto::LanguageModelRequestMessage {
-            role: match self.role {
-                Role::User => proto::LanguageModelRole::LanguageModelUser,
-                Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
-                Role::System => proto::LanguageModelRole::LanguageModelSystem,
-            } as i32,
+            role: self.role.to_proto() as i32,
             content: self.content.clone(),
             tool_calls: Vec::new(),
             tool_call_id: None,
@@ -161,7 +183,7 @@ impl LanguageModelRequestMessage {
     }
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LanguageModelRequest {
     pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,
@@ -220,17 +242,46 @@ pub struct LanguageModelChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MessageMetadata {
-    role: Role,
-    status: MessageStatus,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum MessageStatus {
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
+}
+
+impl MessageStatus {
+    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
+        match status.variant {
+            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
+            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
+            Some(proto::context_message_status::Variant::Error(error)) => {
+                MessageStatus::Error(error.message.into())
+            }
+            None => MessageStatus::Pending,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ContextMessageStatus {
+        match self {
+            MessageStatus::Pending => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Pending(
+                    proto::context_message_status::Pending {},
+                )),
+            },
+            MessageStatus::Done => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Done(
+                    proto::context_message_status::Done {},
+                )),
+            },
+            MessageStatus::Error(message) => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Error(
+                    proto::context_message_status::Error {
+                        message: message.to_string(),
+                    },
+                )),
+            },
+        }
+    }
 }
 
 /// The state pertaining to the Assistant.
@@ -285,6 +336,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     })
     .detach();
 
+    context_store::init(&client);
     prompt_library::init(cx);
     completion_provider::init(client.clone(), cx);
     assistant_slash_command::init(cx);
@@ -315,6 +367,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
+    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
@@ -322,8 +375,8 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
-    slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
-    slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
+    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 

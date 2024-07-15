@@ -203,6 +203,16 @@ impl TextInput {
             .find_map(|(idx, _)| (idx > offset).then_some(idx))
             .unwrap_or(self.content.len())
     }
+
+    fn reset(&mut self) {
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_bounds = None;
+        self.is_selecting = false;
+    }
 }
 
 impl ViewInputHandler for TextInput {
@@ -468,6 +478,7 @@ impl Render for TextInput {
             .flex()
             .key_context("TextInput")
             .track_focus(&self.focus_handle)
+            .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -499,6 +510,73 @@ impl Render for TextInput {
     }
 }
 
+impl FocusableView for TextInput {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+struct InputExample {
+    text_input: View<TextInput>,
+    recent_keystrokes: Vec<Keystroke>,
+}
+
+impl InputExample {
+    fn on_reset_click(&mut self, _: &MouseUpEvent, cx: &mut ViewContext<Self>) {
+        self.recent_keystrokes.clear();
+        self.text_input
+            .update(cx, |text_input, _cx| text_input.reset());
+        cx.notify();
+    }
+}
+
+impl Render for InputExample {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let num_keystrokes = self.recent_keystrokes.len();
+        div()
+            .bg(rgb(0xaaaaaa))
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                div()
+                    .bg(white())
+                    .border_b_1()
+                    .border_color(black())
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .child(format!("Keystrokes: {}", num_keystrokes))
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(black())
+                            .px_2()
+                            .bg(yellow())
+                            .child("Reset")
+                            .hover(|style| {
+                                style
+                                    .bg(yellow().blend(opaque_grey(0.5, 0.5)))
+                                    .cursor_pointer()
+                            })
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
+                    ),
+            )
+            .child(self.text_input.clone())
+            .children(self.recent_keystrokes.iter().rev().map(|ks| {
+                format!(
+                    "{:} {}",
+                    ks,
+                    if let Some(ime_key) = ks.ime_key.as_ref() {
+                        format!("-> {}", ime_key)
+                    } else {
+                        "".to_owned()
+                    }
+                )
+            }))
+    }
+}
+
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
@@ -521,7 +599,7 @@ fn main() {
                     ..Default::default()
                 },
                 |cx| {
-                    cx.new_view(|cx| TextInput {
+                    let text_input = cx.new_view(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
                         placeholder: "Type here...".into(),
@@ -531,14 +609,27 @@ fn main() {
                         last_layout: None,
                         last_bounds: None,
                         is_selecting: false,
+                    });
+                    cx.new_view(|_| InputExample {
+                        text_input,
+                        recent_keystrokes: vec![],
                     })
                 },
             )
             .unwrap();
+        cx.observe_keystrokes(move |ev, cx| {
+            window
+                .update(cx, |view, cx| {
+                    view.recent_keystrokes.push(ev.keystroke.clone());
+                    cx.notify();
+                })
+                .unwrap();
+        })
+        .detach();
         window
             .update(cx, |view, cx| {
-                view.focus_handle.focus(cx);
-                cx.activate(true)
+                cx.focus_view(&view.text_input);
+                cx.activate(true);
             })
             .unwrap();
     });

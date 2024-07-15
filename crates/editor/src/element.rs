@@ -382,6 +382,7 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, Editor::show_signature_help);
         register_action(view, cx, Editor::next_inline_completion);
         register_action(view, cx, Editor::previous_inline_completion);
         register_action(view, cx, Editor::show_inline_completion);
@@ -407,8 +408,10 @@ impl EditorElement {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-
                 editor.update(cx, |editor, cx| {
+                    if editor.hover_state.focused(cx) {
+                        return;
+                    }
                     Self::modifiers_changed(editor, event, &position_map, &text_hitbox, cx)
                 })
             }
@@ -709,18 +712,24 @@ impl EditorElement {
         let Some(hub) = editor.collaboration_hub() else {
             return;
         };
-        let range = DisplayPoint::new(point.row(), point.column().saturating_sub(1))
-            ..DisplayPoint::new(
+        let start = snapshot.display_snapshot.clip_point(
+            DisplayPoint::new(point.row(), point.column().saturating_sub(1)),
+            Bias::Left,
+        );
+        let end = snapshot.display_snapshot.clip_point(
+            DisplayPoint::new(
                 point.row(),
                 (point.column() + 1).min(snapshot.line_len(point.row())),
-            );
+            ),
+            Bias::Right,
+        );
 
         let range = snapshot
             .buffer_snapshot
-            .anchor_at(range.start.to_point(&snapshot.display_snapshot), Bias::Left)
+            .anchor_at(start.to_point(&snapshot.display_snapshot), Bias::Left)
             ..snapshot
                 .buffer_snapshot
-                .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
+                .anchor_at(end.to_point(&snapshot.display_snapshot), Bias::Right);
 
         let Some(selection) = snapshot.remote_selections_in_range(&range, hub, cx).next() else {
             return;
@@ -2629,6 +2638,73 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn layout_signature_help(
+        &self,
+        hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        newest_selection_head: Option<DisplayPoint>,
+        start_row: DisplayRow,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        em_width: Pixels,
+        cx: &mut WindowContext,
+    ) {
+        let Some(newest_selection_head) = newest_selection_head else {
+            return;
+        };
+        let selection_row = newest_selection_head.row();
+        if selection_row < start_row {
+            return;
+        }
+        let Some(cursor_row_layout) = line_layouts.get(selection_row.minus(start_row) as usize)
+        else {
+            return;
+        };
+
+        let start_x = cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
+            - scroll_pixel_position.x
+            + content_origin.x;
+        let start_y =
+            selection_row.as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
+
+        let max_size = size(
+            (120. * em_width) // Default size
+                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
+                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+            (16. * line_height) // Default size
+                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
+                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        );
+
+        let maybe_element = self.editor.update(cx, |editor, cx| {
+            if let Some(popover) = editor.signature_help_state.popover_mut() {
+                let element = popover.render(
+                    &self.style,
+                    max_size,
+                    editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                    cx,
+                );
+                Some(element)
+            } else {
+                None
+            }
+        });
+        if let Some(mut element) = maybe_element {
+            let window_size = cx.viewport_size();
+            let size = element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            let mut point = point(start_x, start_y - size.height);
+
+            // Adjusting to ensure the popover does not overflow in the X-axis direction.
+            if point.x + size.width >= window_size.width {
+                point.x = window_size.width - size.width;
+            }
+
+            cx.defer_draw(element, point, 1)
+        }
+    }
+
     fn paint_background(&self, layout: &EditorLayout, cx: &mut WindowContext) {
         cx.paint_layer(layout.hitbox.bounds, |cx| {
             let scroll_top = layout.position_map.snapshot.scroll_position().y;
@@ -3660,6 +3736,11 @@ impl EditorElement {
                         if scroll_position != current_scroll_position {
                             editor.scroll(scroll_position, axis, cx);
                             cx.stop_propagation();
+                        } else if y < 0. {
+                            // Due to clamping, we may fail to detect cases of overscroll to the top;
+                            // We want the scroll manager to get an update in such cases and detect the change of direction
+                            // on the next frame.
+                            cx.notify();
                         }
                     });
                 }
@@ -3729,6 +3810,9 @@ impl EditorElement {
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
+                        if editor.hover_state.focused(cx) {
+                            return;
+                        }
                         if event.pressed_button == Some(MouseButton::Left)
                             || event.pressed_button == Some(MouseButton::Middle)
                         {
@@ -5057,6 +5141,18 @@ impl Element for EditorElement {
                     } else {
                         vec![]
                     };
+
+                    self.layout_signature_help(
+                        &hitbox,
+                        content_origin,
+                        scroll_pixel_position,
+                        newest_selection_head,
+                        start_row,
+                        &line_layouts,
+                        line_height,
+                        em_width,
+                        cx,
+                    );
 
                     if !cx.has_active_drag() {
                         self.layout_hover_popovers(

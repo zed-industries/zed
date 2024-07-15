@@ -63,6 +63,7 @@ shlex.workspace = true
 similar = "1.3"
 smol.workspace = true
 snippet.workspace = true
+snippet_provider.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true

@@ -26,7 +26,7 @@ impl zed::Extension for OcamlExtension {
         Ok(zed::Command {
             command: path,
             args: Vec::new(),
-            env: Default::default(),
+            env: worktree.shell_env(),
         })
     }
 
