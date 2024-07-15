@@ -30,10 +30,10 @@ use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
-    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
-    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
-    WindowOptions,
+    EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
+    ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
+    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -307,13 +307,31 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             if let Some(app_state) = app_state.upgrade() {
                 cx.spawn(move |cx| async move {
-                    if let Some(paths) = paths.await.log_err().flatten() {
-                        cx.update(|cx| {
-                            open_paths(&paths, app_state, OpenOptions::default(), cx)
-                                .detach_and_log_err(cx)
-                        })
-                        .ok();
-                    }
+                    match Flatten::flatten(paths.await.map_err(|e| e.into())) {
+                        Ok(Some(paths)) => {
+                            cx.update(|cx| {
+                                open_paths(&paths, app_state, OpenOptions::default(), cx)
+                                    .detach_and_log_err(cx)
+                            })
+                            .ok();
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            cx.update(|cx| {
+                                if let Some(workspace_window) = cx
+                                    .active_window()
+                                    .and_then(|window| window.downcast::<Workspace>())
+                                {
+                                    workspace_window
+                                        .update(cx, |workspace, cx| {
+                                            workspace.show_portal_error(err.to_string(), cx);
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .ok();
+                        }
+                    };
                 })
                 .detach();
             }
@@ -1296,7 +1314,15 @@ impl Workspace {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_new_path(&start_abs_path);
             cx.spawn(|this, mut cx| async move {
-                let abs_path = abs_path.await?;
+                let abs_path: Option<PathBuf> =
+                    Flatten::flatten(abs_path.await.map_err(|e| e.into())).map_err(|err| {
+                        this.update(&mut cx, |this, cx| {
+                            this.show_portal_error(err.to_string(), cx);
+                        })
+                        .ok();
+                        err
+                    })?;
+
                 let project_path = abs_path.and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
@@ -1585,8 +1611,16 @@ impl Workspace {
         });
 
         cx.spawn(|this, mut cx| async move {
-            let Some(paths) = paths.await.log_err().flatten() else {
-                return;
+            let paths = match Flatten::flatten(paths.await.map_err(|e| e.into())) {
+                Ok(Some(paths)) => paths,
+                Ok(None) => return,
+                Err(err) => {
+                    this.update(&mut cx, |this, cx| {
+                        this.show_portal_error(err.to_string(), cx);
+                    })
+                    .ok();
+                    return;
+                }
             };
 
             if let Some(task) = this
@@ -1748,7 +1782,14 @@ impl Workspace {
             multiple: true,
         });
         cx.spawn(|this, mut cx| async move {
-            if let Some(paths) = paths.await.log_err().flatten() {
+            let paths = Flatten::flatten(paths.await.map_err(|e| e.into())).map_err(|err| {
+                this.update(&mut cx, |this, cx| {
+                    this.show_portal_error(err.to_string(), cx);
+                })
+                .ok();
+                err
+            })?;
+            if let Some(paths) = paths {
                 let results = this
                     .update(&mut cx, |this, cx| {
                         this.open_paths(paths, OpenVisible::All, None, cx)

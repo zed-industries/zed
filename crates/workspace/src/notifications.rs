@@ -160,12 +160,21 @@ impl Workspace {
         self.show_notification(
             NotificationId::unique::<WorkspaceErrorNotification>(),
             cx,
-            |cx| {
-                cx.new_view(|_cx| {
-                    simple_message_notification::MessageNotification::new(format!("Error: {err:#}"))
-                })
-            },
+            |cx| cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
         );
+    }
+
+    pub fn show_portal_error(&mut self, err: String, cx: &mut ViewContext<Self>) {
+        struct PortalError;
+
+        self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
+            cx.new_view(|_cx| {
+                ErrorMessagePrompt::new(err.to_string()).with_link_button(
+                    "See docs",
+                    "https://zed.dev/docs/linux#i-cant-open-any-files",
+                )
+            })
+        });
     }
 
     pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
@@ -348,6 +357,84 @@ impl Render for LanguageServerPrompt {
 }
 
 impl EventEmitter<DismissEvent> for LanguageServerPrompt {}
+
+pub struct ErrorMessagePrompt {
+    message: SharedString,
+    label_and_url_button: Option<(SharedString, SharedString)>,
+}
+
+impl ErrorMessagePrompt {
+    pub fn new<S>(message: S) -> Self
+    where
+        S: Into<SharedString>,
+    {
+        Self {
+            message: message.into(),
+            label_and_url_button: None,
+        }
+    }
+
+    pub fn with_link_button<S>(mut self, label: S, url: S) -> Self
+    where
+        S: Into<SharedString>,
+    {
+        self.label_and_url_button = Some((label.into(), url.into()));
+        self
+    }
+}
+
+impl Render for ErrorMessagePrompt {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .id("error_message_prompt_notification")
+            .occlude()
+            .elevation_3(cx)
+            .items_start()
+            .justify_between()
+            .p_2()
+            .gap_2()
+            .w_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                svg()
+                                    .size(cx.text_style().font_size)
+                                    .flex_none()
+                                    .mr_2()
+                                    .mt(px(-2.0))
+                                    .map(|icon| {
+                                        icon.path(IconName::ExclamationTriangle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    }),
+                            )
+                            .child(
+                                ui::IconButton::new("close", ui::IconName::Close)
+                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .max_w_80()
+                            .child(Label::new(self.message.clone()).size(LabelSize::Small)),
+                    )
+                    .when_some(self.label_and_url_button.clone(), |elm, (label, url)| {
+                        elm.child(
+                            div().mt_2().child(
+                                ui::Button::new("error_message_prompt_notification_button", label)
+                                    .on_click(move |_, cx| cx.open_url(&url)),
+                            ),
+                        )
+                    }),
+            )
+    }
+}
+
+impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use gpui::{
