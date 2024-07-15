@@ -960,8 +960,11 @@ impl SerializableItem for Editor {
                                 anyhow!("Project item at stored path was not a buffer")
                             })?;
 
-                            // TODO: This is a bit wasteful: we're loading the whole buffer from
-                            // disk and then overwrite
+                            // This is a bit wasteful: we're loading the whole buffer from
+                            // disk and then overwrite the content.
+                            // But for now, it keeps the implementation of the content serialization
+                            // simple, because we don't have to persist all of the metadata that we get
+                            // by loading the file (git diff base, mtime, ...).
                             if let Some(contents) = contents {
                                 buffer.update(&mut cx, |buffer, cx| {
                                     buffer.set_text(contents, cx);
