@@ -944,7 +944,7 @@ impl ExtensionsPage {
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
             let upsell = match feature {
-                Feature::Git => FeatureUpsell::new("Git support is built-in to Zed!"),
+                Feature::Git => FeatureUpsell::new("Zed comes with basic Git support for diffs and branches. More Git features are coming in the future."),
                 Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(

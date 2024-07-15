@@ -49,7 +49,7 @@ impl RenderOnce for FeatureUpsell {
             .p_4()
             .justify_between()
             .border_color(cx.theme().colors().border)
-            .child(Label::new(self.text))
+            .child(v_flex().overflow_hidden().child(Label::new(self.text)))
             .child(h_flex().gap_2().children(self.children).when_some(
                 self.docs_url,
                 |el, docs_url| {
