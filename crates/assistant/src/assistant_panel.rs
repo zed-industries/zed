@@ -18,6 +18,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use breadcrumbs::Breadcrumbs;
+use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -58,7 +59,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::{BreadcrumbText, Item, ItemHandle},
+    item::{self, BreadcrumbText, FollowableItem, Item, ItemHandle},
     pane,
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -66,6 +67,7 @@ use workspace::{
 use workspace::{searchable::SearchableItemHandle, NewFile};
 
 pub fn init(cx: &mut AppContext) {
+    workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
@@ -374,7 +376,7 @@ impl AssistantPanel {
 
     fn handle_pane_event(
         &mut self,
-        _pane: View<Pane>,
+        pane: View<Pane>,
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -384,14 +386,25 @@ impl AssistantPanel {
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
             pane::Event::AddItem { item } => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
+                self.workspace
+                    .update(cx, |workspace, cx| {
                         item.added_to_pane(workspace, self.pane.clone(), cx)
-                    });
-                }
+                    })
+                    .ok();
             }
 
-            pane::Event::RemoveItem { .. } | pane::Event::ActivateItem { .. } => {
+            pane::Event::ActivateItem { local } => {
+                if *local {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.unfollow_in_pane(&pane, cx);
+                        })
+                        .ok();
+                }
+                cx.emit(AssistantPanelEvent::ContextEdited);
+            }
+
+            pane::Event::RemoveItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
             }
 
@@ -613,12 +626,13 @@ impl AssistantPanel {
     fn handle_context_editor_event(
         &mut self,
         _: View<ContextEditor>,
-        event: &ContextEditorEvent,
+        event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ContextEditorEvent::TabContentChanged => cx.notify(),
-            ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
+            EditorEvent::TitleChanged { .. } => cx.notify(),
+            EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
+            _ => {}
         }
     }
 
@@ -722,14 +736,17 @@ impl AssistantPanel {
         &mut self,
         id: ContextId,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<View<ContextEditor>>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
                 .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
-                this.update(&mut cx, |this, cx| this.show_context(existing_context, cx))
+                this.update(&mut cx, |this, cx| {
+                    this.show_context(existing_context.clone(), cx)
+                })?;
+                Ok(existing_context)
             });
         }
 
@@ -755,10 +772,9 @@ impl AssistantPanel {
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
                 });
-                this.show_context(editor, cx);
-                anyhow::Ok(())
-            })??;
-            Ok(())
+                this.show_context(editor.clone(), cx);
+                anyhow::Ok(editor)
+            })?
         })
     }
 
@@ -878,6 +894,14 @@ impl Panel for AssistantPanel {
         }
     }
 
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
+    }
+
+    fn remote_id() -> Option<proto::PanelId> {
+        Some(proto::PanelId::AssistantPanel)
+    }
+
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
@@ -924,6 +948,7 @@ pub struct ContextEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
+    remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
@@ -971,6 +996,7 @@ impl ContextEditor {
             lsp_adapter_delegate,
             blocks: Default::default(),
             scroll_position: None,
+            remote_id: None,
             fs,
             workspace: workspace.downgrade(),
             pending_slash_command_creases: HashMap::default(),
@@ -1213,7 +1239,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::SummaryChanged => {
-                cx.emit(ContextEditorEvent::TabContentChanged);
+                cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
                     context.save(None, self.fs.clone(), cx);
                 });
@@ -1472,9 +1498,9 @@ impl ContextEditor {
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
-            EditorEvent::BufferEdited => cx.emit(ContextEditorEvent::Edited),
             _ => {}
         }
+        cx.emit(event.clone());
     }
 
     fn handle_editor_search_event(
@@ -1935,7 +1961,7 @@ impl ContextEditor {
     }
 }
 
-impl EventEmitter<ContextEditorEvent> for ContextEditor {}
+impl EventEmitter<EditorEvent> for ContextEditor {}
 impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
@@ -1977,13 +2003,9 @@ impl FocusableView for ContextEditor {
 }
 
 impl Item for ContextEditor {
-    type Event = ContextEditorEvent;
+    type Event = editor::EditorEvent;
 
-    fn tab_content(
-        &self,
-        params: workspace::item::TabContentParams,
-        cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: item::TabContentParams, cx: &WindowContext) -> AnyElement {
         let color = if params.selected {
             Color::Default
         } else {
@@ -1997,15 +2019,16 @@ impl Item for ContextEditor {
         .into_any_element()
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
         match event {
-            ContextEditorEvent::Edited => {
-                f(workspace::item::ItemEvent::Edit);
-                f(workspace::item::ItemEvent::UpdateBreadcrumbs);
+            EditorEvent::Edited { .. } => {
+                f(item::ItemEvent::Edit);
+                f(item::ItemEvent::UpdateBreadcrumbs);
             }
-            ContextEditorEvent::TabContentChanged => {
-                f(workspace::item::ItemEvent::UpdateTab);
+            EditorEvent::TitleChanged => {
+                f(item::ItemEvent::UpdateTab);
             }
+            _ => {}
         }
     }
 
@@ -2021,7 +2044,7 @@ impl Item for ContextEditor {
         &self,
         theme: &theme::Theme,
         cx: &AppContext,
-    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+    ) -> Option<Vec<item::BreadcrumbText>> {
         let editor = self.editor.read(cx);
         let cursor = editor.selections.newest_anchor().head();
         let multibuffer = &editor.buffer().read(cx);
@@ -2130,6 +2153,127 @@ impl SearchableItem for ContextEditor {
     ) -> Option<usize> {
         self.editor
             .update(cx, |editor, cx| editor.active_match_index(matches, cx))
+    }
+}
+
+impl FollowableItem for ContextEditor {
+    fn remote_id(&self) -> Option<workspace::ViewId> {
+        self.remote_id
+    }
+
+    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
+        let context = self.context.read(cx);
+        Some(proto::view::Variant::ContextEditor(
+            proto::view::ContextEditor {
+                context_id: context.id().to_proto(),
+                editor: if let Some(proto::view::Variant::Editor(proto)) =
+                    self.editor.read(cx).to_state_proto(cx)
+                {
+                    Some(proto)
+                } else {
+                    None
+                },
+            },
+        ))
+    }
+
+    fn from_state_proto(
+        workspace: View<Workspace>,
+        id: workspace::ViewId,
+        state: &mut Option<proto::view::Variant>,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<View<Self>>>> {
+        let proto::view::Variant::ContextEditor(_) = state.as_ref()? else {
+            return None;
+        };
+        let Some(proto::view::Variant::ContextEditor(state)) = state.take() else {
+            unreachable!()
+        };
+
+        let context_id = ContextId::from_proto(state.context_id);
+        let editor_state = state.editor?;
+
+        let (project, panel) = workspace.update(cx, |workspace, cx| {
+            Some((
+                workspace.project().clone(),
+                workspace.panel::<AssistantPanel>(cx)?,
+            ))
+        })?;
+
+        let context_editor =
+            panel.update(cx, |panel, cx| panel.open_remote_context(context_id, cx));
+
+        Some(cx.spawn(|mut cx| async move {
+            let context_editor = context_editor.await?;
+            context_editor
+                .update(&mut cx, |context_editor, cx| {
+                    context_editor.remote_id = Some(id);
+                    context_editor.editor.update(cx, |editor, cx| {
+                        editor.apply_update_proto(
+                            &project,
+                            proto::update_view::Variant::Editor(proto::update_view::Editor {
+                                selections: editor_state.selections,
+                                pending_selection: editor_state.pending_selection,
+                                scroll_top_anchor: editor_state.scroll_top_anchor,
+                                scroll_x: editor_state.scroll_y,
+                                scroll_y: editor_state.scroll_y,
+                                ..Default::default()
+                            }),
+                            cx,
+                        )
+                    })
+                })?
+                .await?;
+            Ok(context_editor)
+        }))
+    }
+
+    fn to_follow_event(event: &Self::Event) -> Option<item::FollowEvent> {
+        Editor::to_follow_event(event)
+    }
+
+    fn add_event_to_update_proto(
+        &self,
+        event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &WindowContext,
+    ) -> bool {
+        self.editor
+            .read(cx)
+            .add_event_to_update_proto(event, update, cx)
+    }
+
+    fn apply_update_proto(
+        &mut self,
+        project: &Model<Project>,
+        message: proto::update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor.update(cx, |editor, cx| {
+            editor.apply_update_proto(project, message, cx)
+        })
+    }
+
+    fn is_project_item(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+
+    fn set_leader_peer_id(
+        &mut self,
+        leader_peer_id: Option<proto::PeerId>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_leader_peer_id(leader_peer_id, cx)
+        })
+    }
+
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<item::Dedup> {
+        if existing.context.read(cx).id() == self.context.read(cx).id() {
+            Some(item::Dedup::KeepExisting)
+        } else {
+            None
+        }
     }
 }
 
@@ -2369,11 +2513,7 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content(
-        &self,
-        params: workspace::item::TabContentParams,
-        _: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: item::TabContentParams, _: &WindowContext) -> AnyElement {
         let color = if params.selected {
             Color::Default
         } else {

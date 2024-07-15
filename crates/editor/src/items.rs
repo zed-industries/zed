@@ -19,7 +19,7 @@ use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{ItemSettings, TabContentParams};
+use workspace::item::{Dedup, ItemSettings, TabContentParams};
 
 use std::{
     any::TypeId,
@@ -34,7 +34,7 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
+use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -49,7 +49,6 @@ impl FollowableItem for Editor {
     }
 
     fn from_state_proto(
-        pane: View<workspace::Pane>,
         workspace: View<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
@@ -63,7 +62,6 @@ impl FollowableItem for Editor {
             unreachable!()
         };
 
-        let client = project.read(cx).client();
         let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
             .excerpts
@@ -77,71 +75,54 @@ impl FollowableItem for Editor {
                 .collect::<Result<Vec<_>>>()
         });
 
-        let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
             let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
 
-            let editor = pane.update(&mut cx, |pane, cx| {
-                let mut editors = pane.items_of_type::<Self>();
-                editors.find(|editor| {
-                    let ids_match = editor.remote_id(&client, cx) == Some(remote_id);
-                    let singleton_buffer_matches = state.singleton
-                        && buffers.first()
-                            == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
-                    ids_match || singleton_buffer_matches
+            let editor = cx.update(|cx| {
+                let multibuffer = cx.new_model(|cx| {
+                    let mut multibuffer;
+                    if state.singleton && buffers.len() == 1 {
+                        multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
+                    } else {
+                        multibuffer = MultiBuffer::new(replica_id, project.read(cx).capability());
+                        let mut excerpts = state.excerpts.into_iter().peekable();
+                        while let Some(excerpt) = excerpts.peek() {
+                            let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
+                                continue;
+                            };
+                            let buffer_excerpts = iter::from_fn(|| {
+                                let excerpt = excerpts.peek()?;
+                                (excerpt.buffer_id == u64::from(buffer_id))
+                                    .then(|| excerpts.next().unwrap())
+                            });
+                            let buffer =
+                                buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
+                            if let Some(buffer) = buffer {
+                                multibuffer.push_excerpts(
+                                    buffer.clone(),
+                                    buffer_excerpts.filter_map(deserialize_excerpt_range),
+                                    cx,
+                                );
+                            }
+                        }
+                    };
+
+                    if let Some(title) = &state.title {
+                        multibuffer = multibuffer.with_title(title.clone())
+                    }
+
+                    multibuffer
+                });
+
+                cx.new_view(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx);
+                    editor.remote_id = Some(remote_id);
+                    editor
                 })
             })?;
-
-            let editor = if let Some(editor) = editor {
-                editor
-            } else {
-                pane.update(&mut cx, |_, cx| {
-                    let multibuffer = cx.new_model(|cx| {
-                        let mut multibuffer;
-                        if state.singleton && buffers.len() == 1 {
-                            multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
-                        } else {
-                            multibuffer =
-                                MultiBuffer::new(replica_id, project.read(cx).capability());
-                            let mut excerpts = state.excerpts.into_iter().peekable();
-                            while let Some(excerpt) = excerpts.peek() {
-                                let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
-                                    continue;
-                                };
-                                let buffer_excerpts = iter::from_fn(|| {
-                                    let excerpt = excerpts.peek()?;
-                                    (excerpt.buffer_id == u64::from(buffer_id))
-                                        .then(|| excerpts.next().unwrap())
-                                });
-                                let buffer =
-                                    buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
-                                if let Some(buffer) = buffer {
-                                    multibuffer.push_excerpts(
-                                        buffer.clone(),
-                                        buffer_excerpts.filter_map(deserialize_excerpt_range),
-                                        cx,
-                                    );
-                                }
-                            }
-                        };
-
-                        if let Some(title) = &state.title {
-                            multibuffer = multibuffer.with_title(title.clone())
-                        }
-
-                        multibuffer
-                    });
-
-                    cx.new_view(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx);
-                        editor.remote_id = Some(remote_id);
-                        editor
-                    })
-                })?
-            };
 
             update_editor_from_message(
                 editor.downgrade(),
@@ -326,6 +307,16 @@ impl FollowableItem for Editor {
 
     fn is_project_item(&self, _cx: &WindowContext) -> bool {
         true
+    }
+
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+        let self_singleton = self.buffer.read(cx).as_singleton()?;
+        let other_singleton = existing.buffer.read(cx).as_singleton()?;
+        if self_singleton == other_singleton {
+            Some(Dedup::KeepExisting)
+        } else {
+            None
+        }
     }
 }
 

@@ -1629,7 +1629,7 @@ message Follow {
 
 message FollowResponse {
     View active_view = 3;
-    // TODO: after 0.124.0 is retired, remove these.
+    // TODO: Remove after version 0.145.x stabilizes.
     optional ViewId active_view_id = 1;
     repeated View views = 2;
 }
@@ -1640,7 +1640,7 @@ message UpdateFollowers {
     reserved 3;
     oneof variant {
         View create_view = 5;
-        // TODO: after 0.124.0 is retired, remove these.
+        // TODO: Remove after version 0.145.x stabilizes.
         UpdateActiveView update_active_view = 4;
         UpdateView update_view = 6;
     }
@@ -1673,6 +1673,10 @@ message UpdateActiveView {
     View view = 3;
 }
 
+enum PanelId {
+    AssistantPanel = 0;
+}
+
 message UpdateView {
     ViewId id = 1;
     optional PeerId leader_id = 2;
@@ -1695,10 +1699,12 @@ message UpdateView {
 message View {
     ViewId id = 1;
     optional PeerId leader_id = 2;
+    optional PanelId panel_id = 6;
 
     oneof variant {
         Editor editor = 3;
         ChannelView channel_view = 4;
+        ContextEditor context_editor = 5;
     }
 
     message Editor {
@@ -1714,6 +1720,11 @@ message View {
 
     message ChannelView {
         uint64 channel_id = 1;
+        Editor editor = 2;
+    }
+
+    message ContextEditor {
+        string context_id = 1;
         Editor editor = 2;
     }
 }
