@@ -267,7 +267,6 @@ impl QuickActionBar {
                     // TODO: Add Restart action
                     // .action("Restart", Box::new(gpui::NoAction))
                     // Shut down kernel
-                    // TODO: Redo
                     .custom_entry(
                         move |_cx| {
                             Label::new("Shut Down Kernel")
