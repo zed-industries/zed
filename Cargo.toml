@@ -284,7 +284,6 @@ async-trait = "0.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
-bincode = "1.2.1"
 bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
