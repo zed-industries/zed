@@ -314,8 +314,7 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(search_button)
-
+                    .children(search_button),
             )
             .child(
                 h_flex()
