@@ -357,7 +357,9 @@ fn show_hover(
                             font_family: Some(settings.ui_font.family.clone()),
                             font_size: Some(settings.ui_font_size.into()),
                             color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(background_color.unwrap()),
+                            // background_color: Some(background_color.unwrap()),
+                            background_color: Some(gpui::transparent_black()),
+
                             ..Default::default()
                         });
                         let markdown_style = MarkdownStyle {
@@ -681,12 +683,26 @@ pub struct DiagnosticPopover {
 impl DiagnosticPopover {
     pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
+        let mut markdown_div = div().py_1().px_2();
+        if let Some(markdown) = &self.parsed_content {
+            markdown_div = markdown_div.child(markdown.clone());
+        }
+
+        if let Some(background_color) = &self.background_color {
+            markdown_div = markdown_div.bg(background_color.clone());
+        }
+
+        if let Some(border_color) = &self.border_color {
+            markdown_div = markdown_div
+                .border_1()
+                .border_color(border_color.clone())
+                .rounded_lg();
+        }
+
         let mut d = div()
             .id("diagnostic")
             .block()
             .max_h(max_size.height)
-            .py_1()
-            .px_2()
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
@@ -702,19 +718,9 @@ impl DiagnosticPopover {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
-            });
+            })
+            .child(markdown_div);
 
-        if let Some(markdown) = &self.parsed_content {
-            d = d.child(markdown.clone());
-        }
-
-        if let Some(background_color) = &self.background_color {
-            d = d.bg(background_color.clone());
-        }
-
-        if let Some(border_color) = &self.border_color {
-            d = d.border_1().border_color(border_color.clone()).rounded_lg();
-        }
         d.into_any_element()
     }
 
