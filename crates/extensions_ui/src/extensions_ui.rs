@@ -2,12 +2,14 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
-use crate::components::ExtensionCard;
-use crate::extension_version_selector::{
-    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
-};
+use std::ops::DerefMut;
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::{ops::Range, sync::Arc};
+
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
+use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -19,15 +21,18 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
 use settings::Settings;
-use std::ops::DerefMut;
-use std::time::Duration;
-use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use vim::VimModeSetting;
 use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
+};
+
+use crate::components::{ExtensionCard, FeatureUpsell};
+use crate::extension_version_selector::{
+    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
 actions!(zed, [Extensions, InstallDevExtension]);
@@ -122,6 +127,30 @@ impl ExtensionFilter {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum Feature {
+    Git,
+    Vim,
+    LanguageC,
+    LanguageCpp,
+    LanguagePython,
+    LanguageRust,
+}
+
+fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
+    static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
+    KEYWORDS_BY_FEATURE.get_or_init(|| {
+        BTreeMap::from_iter([
+            (Feature::Git, vec!["git"]),
+            (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageC, vec!["c", "clang"]),
+            (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageRust, vec!["rust", "rs"]),
+        ])
+    })
+}
+
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     list: UniformListScrollHandle,
@@ -135,6 +164,7 @@ pub struct ExtensionsPage {
     query_contains_error: bool,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
+    upsells: BTreeSet<Feature>,
 }
 
 impl ExtensionsPage {
@@ -173,6 +203,7 @@ impl ExtensionsPage {
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
+                upsells: BTreeSet::default(),
             };
             this.fetch_extensions(None, cx);
             this
@@ -792,6 +823,7 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
+            self.refresh_feature_upsells(cx);
         }
     }
 
@@ -862,6 +894,91 @@ impl ExtensionsPage {
         };
 
         Label::new(message)
+    }
+
+    fn update_settings<T: Settings>(
+        &mut self,
+        selection: &Selection,
+        cx: &mut ViewContext<Self>,
+        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let selection = *selection;
+            settings::update_settings_file::<T>(fs, cx, move |settings| {
+                let value = match selection {
+                    Selection::Unselected => false,
+                    Selection::Selected => true,
+                    _ => return,
+                };
+
+                callback(settings, value)
+            });
+        }
+    }
+
+    fn refresh_feature_upsells(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(search) = self.search_query(cx) else {
+            self.upsells.clear();
+            return;
+        };
+
+        let search = search.to_lowercase();
+        let search_terms = search
+            .split_whitespace()
+            .map(|term| term.trim())
+            .collect::<Vec<_>>();
+
+        for (feature, keywords) in keywords_by_feature() {
+            if keywords
+                .iter()
+                .any(|keyword| search_terms.contains(keyword))
+            {
+                self.upsells.insert(*feature);
+            } else {
+                self.upsells.remove(&feature);
+            }
+        }
+    }
+
+    fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let upsells_count = self.upsells.len();
+
+        v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+            let upsell = match feature {
+                Feature::Git => FeatureUpsell::new("Zed comes with basic Git support for diffs and branches. More Git features are coming in the future."),
+                Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/vim")
+                    .child(CheckboxWithLabel::new(
+                        "enable-vim",
+                        Label::new("Enable vim mode"),
+                        if VimModeSetting::get_global(cx).0 {
+                            ui::Selection::Selected
+                        } else {
+                            ui::Selection::Unselected
+                        },
+                        cx.listener(move |this, selection, cx| {
+                            this.telemetry
+                                .report_app_event("extensions: toggle vim".to_string());
+                            this.update_settings::<VimModeSetting>(
+                                selection,
+                                cx,
+                                |setting, value| *setting = Some(value),
+                            );
+                        }),
+                    )),
+                Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/c"),
+                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/cpp"),
+                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/python"),
+                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/rust"),
+            };
+
+            upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
+        }))
     }
 }
 
@@ -945,6 +1062,7 @@ impl Render for ExtensionsPage {
                             ),
                     ),
             )
+            .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
                 if self.filter.include_dev_extensions() {
