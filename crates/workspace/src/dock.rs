@@ -50,7 +50,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn pane(&self) -> Option<View<Pane>> {
         None
     }
-    fn id_proto() -> Option<proto::PanelId> {
+    fn remote_id() -> Option<proto::PanelId> {
         None
     }
 }
@@ -64,7 +64,7 @@ pub trait PanelHandle: Send + Sync {
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
-    fn id_proto(&self) -> Option<proto::PanelId>;
+    fn remote_id(&self) -> Option<proto::PanelId>;
     fn pane(&self, cx: &WindowContext) -> Option<View<Pane>>;
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
@@ -116,8 +116,8 @@ where
         self.read(cx).pane()
     }
 
-    fn id_proto(&self) -> Option<PanelId> {
-        T::id_proto()
+    fn remote_id(&self) -> Option<PanelId> {
+        T::remote_id()
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
@@ -318,7 +318,7 @@ impl Dock {
     pub fn panel_index_for_proto_id(&self, panel_id: PanelId) -> Option<usize> {
         self.panel_entries
             .iter()
-            .position(|entry| entry.panel.id_proto() == Some(panel_id))
+            .position(|entry| entry.panel.remote_id() == Some(panel_id))
     }
 
     pub fn active_panel_index(&self) -> usize {

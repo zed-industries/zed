@@ -1629,16 +1629,18 @@ message Follow {
 
 message FollowResponse {
     View active_view = 3;
-    reserved 1;
-    reserved 2;
+    // TODO: Remove after version 0.145.x stabilizes.
+    optional ViewId active_view_id = 1;
+    repeated View views = 2;
 }
 
 message UpdateFollowers {
     uint64 room_id = 1;
     optional uint64 project_id = 2;
     reserved 3;
-    reserved 5;
     oneof variant {
+        View create_view = 5;
+        // TODO: Remove after version 0.145.x stabilizes.
         UpdateActiveView update_active_view = 4;
         UpdateView update_view = 6;
     }
@@ -1666,14 +1668,13 @@ message ViewId {
 }
 
 message UpdateActiveView {
-    reserved 1;
-    reserved 2;
+    optional ViewId id = 1;
+    optional PeerId leader_id = 2;
     View view = 3;
 }
 
 enum PanelId {
     AssistantPanel = 0;
-    TerminalPanel = 1;
 }
 
 message UpdateView {

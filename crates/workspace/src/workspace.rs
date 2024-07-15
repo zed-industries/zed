@@ -3131,9 +3131,14 @@ impl Workspace {
         follower_project_id: Option<u64>,
         cx: &mut ViewContext<Self>,
     ) -> proto::FollowResponse {
+        let active_view = self.active_view_for_follower(follower_project_id, cx);
+
         cx.notify();
         proto::FollowResponse {
-            active_view: self.active_view_for_follower(follower_project_id, cx),
+            // TODO: Remove after version 0.145.x stabilizes.
+            active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
+            views: active_view.iter().cloned().collect(),
+            active_view,
         }
     }
 
@@ -3155,6 +3160,20 @@ impl Workspace {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+            proto::update_followers::Variant::CreateView(view) => {
+                let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
+                let should_add_view = this.update(cx, |this, _| {
+                    if let Some(state) = this.follower_states.get_mut(&leader_id) {
+                        anyhow::Ok(!state.items_by_leader_view_id.contains_key(&view_id))
+                    } else {
+                        anyhow::Ok(false)
+                    }
+                })??;
+
+                if should_add_view {
+                    Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
+                }
+            }
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 let should_add_view = this.update(cx, |this, _| {
                     if let Some(state) = this.follower_states.get_mut(&leader_id) {
@@ -3329,7 +3348,12 @@ impl Workspace {
                                 });
 
                                 is_project_item = item.is_project_item(cx);
-                                update = proto::UpdateActiveView { view };
+                                update = proto::UpdateActiveView {
+                                    view,
+                                    // TODO: Remove after version 0.145.x stabilizes.
+                                    id: Some(id.clone()),
+                                    leader_id,
+                                };
                             }
                         };
                     }
@@ -3360,7 +3384,7 @@ impl Workspace {
                     if let Some(pane) = panel.pane(cx) {
                         if let Some(item) = pane.read(cx).active_item() {
                             active_item = Some(item);
-                            panel_id = panel.id_proto();
+                            panel_id = panel.remote_id();
                             break;
                         }
                     }

@@ -898,7 +898,7 @@ impl Panel for AssistantPanel {
         Some(self.pane.clone())
     }
 
-    fn id_proto() -> Option<proto::PanelId> {
+    fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
     }
 
