@@ -23,18 +23,18 @@ use gpui::ElementId;
 
 // Yes Session
 // - [ ] [Default kernel changed - restart (this kernel) to apply] // todo!(kyle): need some kind of state thing that says if this has happened
-// - [ ] Info: Kernel name, language
+// - [x] Info: Kernel name, language
 //   example: chatlab-3.7-adsf87fsa (Python)
 //   example: condapy-3.7 (Python)
-// - [ ] Change Kernel -> https://zed.dev/docs/repl#change-kernel
-// - [ ] ---`
+// - [x] Change Kernel -> https://zed.dev/docs/repl#change-kernel
+// - ---
 // - [ ] Run
 // - [ ] Interrupt
 // - [ ] Clear Outputs
-// - [ ] ---
+// - ---
 // - [ ] Restart
 // - [ ] Shutdown
-// - [ ] ---
+// - ---
 // - [ ] Shutdown all kernels
 
 use crate::QuickActionBar;
@@ -218,7 +218,7 @@ impl QuickActionBar {
                     .link(
                         "Change Kernel",
                         Box::new(zed_actions::OpenBrowser {
-                            url: ZED_REPL_DOCUMENTATION.into(),
+                            url: format!("{}#change-kernel", ZED_REPL_DOCUMENTATION),
                         }),
                     )
                     // TODO: Add action
@@ -307,7 +307,7 @@ impl QuickActionBar {
                 .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                .on_click(|_, cx| cx.open_url(&format!("{}/Installation", ZED_REPL_DOCUMENTATION)))
+                .on_click(|_, cx| cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION)))
                 .into_any_element(),
         )
     }
