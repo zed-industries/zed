@@ -2471,7 +2471,7 @@ impl LspCommand for InlayHints {
             lsp_adapter.name.0.as_ref() == "typescript-language-server";
 
         let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if InlayHints::can_resolve_inlays(lsp_server.capabilities()) {
+            let resolve_state = if InlayHints::can_resolve_inlays(&lsp_server.capabilities()) {
                 ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
             } else {
                 ResolveState::Resolved
