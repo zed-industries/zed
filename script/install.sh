@@ -1,11 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
+# Downloads the latest tarball from https://zed.dev/releases and unpacks it
+# into ~/.local/. If you'd prefer to do this manually, instructions are at
+# https://zed.dev/docs/linux.
+
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
-    temp="$(mktemp -d "/tmp/zed-XXXXX")"
+    temp="$(mktemp -d "/tmp/zed-XXXXXX")"
 
     if [ "$platform" = "Darwin" ]; then
         platform="macos"

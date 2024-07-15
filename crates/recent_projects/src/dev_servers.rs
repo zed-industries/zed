@@ -114,25 +114,31 @@ impl DevServerProjects {
             cx.notify();
         });
 
+        let mut base_style = cx.text_style();
+        base_style.refine(&gpui::TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            ..Default::default()
+        });
+
         let markdown_style = MarkdownStyle {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Plex Mono".into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
+            base_text_style: base_style,
+            code_block: gpui::StyleRefinement {
+                text: Some(gpui::TextStyleRefinement {
+                    font_family: Some("Zed Plex Mono".into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
-            inline_code: Default::default(),
-            block_quote: Default::default(),
             link: gpui::TextStyleRefinement {
                 color: Some(Color::Accent.color(cx)),
                 ..Default::default()
             },
-            rule_color: Default::default(),
-            block_quote_border_color: Default::default(),
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
+        let markdown =
+            cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx, None));
 
         Self {
             mode: Mode::Default(None),

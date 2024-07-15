@@ -102,18 +102,21 @@ impl Render for QuickActionBar {
             inlay_hints_enabled,
             supports_inlay_hints,
             git_blame_inline_enabled,
+            auto_signature_help_enabled,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
             let supports_inlay_hints = editor.supports_inlay_hints(cx);
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+            let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
 
             (
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
                 git_blame_inline_enabled,
+                auto_signature_help_enabled,
             )
         };
 
@@ -260,6 +263,23 @@ impl Render for QuickActionBar {
                                                 &editor::actions::ToggleSelectionMenu,
                                                 cx,
                                             )
+                                        });
+                                    }
+                                },
+                            );
+
+                            menu = menu.toggleable_entry(
+                                "Auto Signature Help",
+                                auto_signature_help_enabled,
+                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_auto_signature_help_menu(
+                                                &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
                                         });
                                     }
                                 },

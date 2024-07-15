@@ -218,9 +218,11 @@ impl_actions!(
     ]
 );
 
+#[derive(Clone)]
 pub struct Toast {
     id: NotificationId,
     msg: Cow<'static, str>,
+    autohide: bool,
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
@@ -230,6 +232,7 @@ impl Toast {
             id,
             msg: msg.into(),
             on_click: None,
+            autohide: false,
         }
     }
 
@@ -241,6 +244,11 @@ impl Toast {
         self.on_click = Some((message.into(), Arc::new(on_click)));
         self
     }
+
+    pub fn autohide(mut self) -> Self {
+        self.autohide = true;
+        self
+    }
 }
 
 impl PartialEq for Toast {
@@ -248,16 +256,6 @@ impl PartialEq for Toast {
         self.id == other.id
             && self.msg == other.msg
             && self.on_click.is_some() == other.on_click.is_some()
-    }
-}
-
-impl Clone for Toast {
-    fn clone(&self) -> Self {
-        Toast {
-            id: self.id.clone(),
-            msg: self.msg.clone(),
-            on_click: self.on_click.clone(),
-        }
     }
 }
 

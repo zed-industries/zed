@@ -1237,7 +1237,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         }
 
-                        for buffer in guest_project.opened_buffers() {
+                        for buffer in guest_project.opened_buffers(cx) {
                             let buffer = buffer.read(cx);
                             assert_eq!(
                                 buffer.deferred_ops_len(),
@@ -1287,8 +1287,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                 for guest_buffer in guest_buffers {
                     let buffer_id =
                         guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
-                    let host_buffer = host_project.read_with(host_cx, |project, _| {
-                        project.buffer_for_id(buffer_id).unwrap_or_else(|| {
+                    let host_buffer = host_project.read_with(host_cx, |project, cx| {
+                        project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
                             panic!(
                                 "host does not have buffer for guest:{}, peer:{:?}, id:{}",
                                 client.username,

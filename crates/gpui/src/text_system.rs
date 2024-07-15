@@ -66,6 +66,7 @@ impl TextSystem {
                 // We should allow GPUI users to provide their own fallback font stack.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
+                font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
