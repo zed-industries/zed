@@ -13,8 +13,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, ActiveTheme, Context as _, IntoElement, Label, ParentElement, Pixels, RenderOnce, Styled,
-    ViewContext, VisualContext, WindowContext,
+    div, h_flex, ActiveTheme, ButtonLike, Context as _, ContextMenu, Icon, IconName, IntoElement,
+    Label, ParentElement, Pixels, RenderOnce, Styled, ViewContext, VisualContext, WindowContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -713,6 +713,21 @@ impl RenderOnce for HunkPopover {
             .min_h(Pixels(40.0))
             .min_w(Pixels(40.0))
             .bg(gpui::red())
-            .child(Label::new("test"))
+            .child(ContextMenu::build(cx, move |menu, cx| {
+                menu.context(cx.focus_handle())
+                    .custom_row(|_cx| Label::new("Hello World").into_any_element())
+                    .custom_row(|_cx| {
+                        {
+                            ButtonLike::new("hide-hunks")
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Icon::new(IconName::Visible))
+                                        .child(Label::new("Hide Git Hunks")),
+                                )
+                                .into_any_element()
+                        }
+                    })
+            }))
     }
 }
