@@ -14,7 +14,7 @@ pub struct WorkspaceSettings {
     pub restore_on_startup: RestoreOnStartupBehaviour,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
-    pub use_system_path_picker: bool,
+    pub use_system_path_prompts: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -88,7 +88,7 @@ pub struct WorkspaceSettingsContent {
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
     /// Default: true
-    pub use_system_path_picker: Option<bool>,
+    pub use_system_path_prompts: Option<bool>,
 }
 
 #[derive(Deserialize)]
