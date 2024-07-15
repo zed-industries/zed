@@ -270,7 +270,7 @@ mod persistence {
     use anyhow::Result;
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     define_connection! {
@@ -326,16 +326,23 @@ mod persistence {
             workspace: WorkspaceId,
             alive_items: Vec<ItemId>,
         ) -> Result<()> {
-            let ids_string = alive_items
+            let placeholders = alive_items
                 .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<String>>()
+                .map(|_| "?")
+                .collect::<Vec<&str>>()
                 .join(", ");
 
-            let workspace_id: i64 = workspace.into();
+            let query = format!("DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
 
-            let query = format!("DELETE FROM image_viewers WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
-            self.write(move |conn| conn.exec(&query).unwrap()()).await
+            self.write(move |conn| {
+                let mut statement = Statement::prepare(conn, query)?;
+                let mut next_index = statement.bind(&workspace, 1)?;
+                for id in alive_items {
+                    next_index = statement.bind(&id, next_index)?;
+                }
+                statement.exec()
+            })
+            .await
         }
     }
 }

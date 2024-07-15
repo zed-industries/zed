@@ -127,13 +127,9 @@ impl EditorDb {
     pub async fn delete_unloaded_items(
         &self,
         workspace: WorkspaceId,
-        loaded_item_ids: Vec<ItemId>,
+        alive_items: Vec<ItemId>,
     ) -> Result<()> {
-        if loaded_item_ids.is_empty() {
-            return Ok(());
-        }
-
-        let placeholders = loaded_item_ids
+        let placeholders = alive_items
             .iter()
             .map(|_| "?")
             .collect::<Vec<&str>>()
@@ -144,7 +140,7 @@ impl EditorDb {
         self.write(move |conn| {
             let mut statement = Statement::prepare(conn, query)?;
             let mut next_index = statement.bind(&workspace, 1)?;
-            for id in loaded_item_ids {
+            for id in alive_items {
                 next_index = statement.bind(&id, next_index)?;
             }
             statement.exec()
