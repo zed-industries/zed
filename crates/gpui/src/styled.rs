@@ -24,8 +24,8 @@ pub trait Styled: Sized {
     gpui_macros::position_style_methods!();
     gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
-    gpui_macros::box_shadow_style_methods!();
     gpui_macros::border_style_methods!();
+    gpui_macros::box_shadow_style_methods!();
 
     /// Sets the display type of the element to `block`.
     /// [Docs](https://tailwindcss.com/docs/display)
