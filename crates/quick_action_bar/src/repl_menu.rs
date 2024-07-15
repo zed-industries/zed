@@ -126,12 +126,15 @@ impl QuickActionBar {
         let kernel = &session.kernel;
         let status_borrow = &kernel.status();
         let status = status_borrow.clone();
-
+        let stupid_panel = repl_panel.clone();
+        let stupid_editor = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
                 let kernel_name = kernel_name.clone();
                 let kernel_language = kernel_language.clone();
                 let status = status.clone();
+                let stupid_panel = stupid_panel.clone();
+                let stupid_editor = stupid_editor.clone();
                 ContextMenu::build(cx, move |menu, _cx| {
                     let kernel_name = kernel_name.clone();
                     let kernel_language = kernel_language.clone();
@@ -184,8 +187,24 @@ impl QuickActionBar {
                     // If there is, label is "Run Selection"
                     // otherwise, label is "Run Line" (Cell?)
                     .action("Run", Box::new(repl::Run))
+                    .custom_row(move |cx| {
+                        ButtonLike::new_rounded_left("toggle_repl_icon")
+                            .child(IconButton::new("foo", IconName::ReplNeutral).into_any_element())
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Subtle)
+                            .on_click({
+                                let stupid_panel = stupid_panel.clone();
+                                let stupid_editor = stupid_editor.clone();
+                                move |_, cx| {
+                                    stupid_panel.update(cx, |this, cx| {
+                                        this.run(stupid_editor.clone(), cx);
+                                    });
+                                }
+                            })
+                            .into_any_element()
+                    })
                     // TODO: Add action
-                    .action("Interrupt", Box::new(gpui::NoAction))
+                    // .action("Interrupt", Box::new(gpui::NoAction))
                     // TODO: Add action
                     .action("Clear Outputs", Box::new(repl::ClearOutputs))
                     .separator()
@@ -196,12 +215,12 @@ impl QuickActionBar {
                         }),
                     )
                     // TODO: Add action
-                    .action("Restart", Box::new(gpui::NoAction))
+                    // .action("Restart", Box::new(gpui::NoAction))
                     // TODO: Add action
-                    .action("Shut Down", Box::new(gpui::NoAction))
-                    .separator()
+                    // .action("Shut Down", Box::new(gpui::NoAction))
+                    // .separator()
                     // TODO: Add action
-                    .action("Shut Down all Kernels", Box::new(gpui::NoAction))
+                    // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
                 .into()
             })
@@ -238,7 +257,6 @@ impl QuickActionBar {
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
             .tooltip(move |cx| Tooltip::text(menu_state.tooltip.clone(), cx))
-            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .into_any_element();
 
