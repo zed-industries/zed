@@ -27,6 +27,8 @@ pub enum CloudModel {
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
+    Gemini15Pro,
+    Gemini15Flash,
     Custom(String),
 }
 
@@ -109,6 +111,8 @@ impl CloudModel {
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
+            Self::Gemini15Pro => "gemini-1.5-pro",
+            Self::Gemini15Flash => "gemini-1.5-flash",
             Self::Custom(id) => id,
         }
     }
@@ -123,6 +127,8 @@ impl CloudModel {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
+            Self::Gemini15Pro => "Gemini 1.5 Pro",
+            Self::Gemini15Flash => "Gemini 1.5 Flash",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -136,6 +142,8 @@ impl CloudModel {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200000,
+            Self::Gemini15Pro => 128000,
+            Self::Gemini15Flash => 32000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
