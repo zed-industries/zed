@@ -14,28 +14,28 @@ use gpui::ElementId;
 // No session && no support known
 
 // No session && no kernel installed for languages of known support
-// - Intro to REPL
-// - Link to docs
+// - [ ] Intro to REPL
+// - [x] Link to docs
 
 // No session but can start one
-// - Start REPL
-// - More info -> Docs?
+// - [x] Start REPL
+// - [ ] More info -> Docs?
 
 // Yes Session
-// - [Default kernel changed - restart (this kernel) to apply] // todo!(kyle): need some kind of state thing that says if this has happened
-// - Info: Kernel name, language
+// - [ ] [Default kernel changed - restart (this kernel) to apply] // todo!(kyle): need some kind of state thing that says if this has happened
+// - [ ] Info: Kernel name, language
 //   example: chatlab-3.7-adsf87fsa (Python)
 //   example: condapy-3.7 (Python)
-// - Change Kernel -> https://zed.dev/docs/repl#change-kernel
-// - ---
-// - Run
-// - Interrupt
-// - Clear Outputs
-// - ---
-// - Restart
-// - Shutdown
-// - ---
-// - Shutdown all kernels
+// - [ ] Change Kernel -> https://zed.dev/docs/repl#change-kernel
+// - [ ] ---`
+// - [ ] Run
+// - [ ] Interrupt
+// - [ ] Clear Outputs
+// - [ ] ---
+// - [ ] Restart
+// - [ ] Shutdown
+// - [ ] ---
+// - [ ] Shutdown all kernels
 
 use crate::QuickActionBar;
 
@@ -236,7 +236,7 @@ impl QuickActionBar {
                     .child(
                         Icon::new(IconName::ChevronDownSmall)
                             .size(IconSize::XSmall)
-                            .color(menu_state.icon_color),
+                            .color(Color::Muted),
                     )
                     .tooltip(move |cx| Tooltip::text("REPL Menu", cx))
                     .width(rems(1.).into())
@@ -307,7 +307,7 @@ impl QuickActionBar {
                 .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                .on_click(|_, cx| cx.open_url(ZED_REPL_DOCUMENTATION))
+                .on_click(|_, cx| cx.open_url(&format!("{}/Installation", ZED_REPL_DOCUMENTATION)))
                 .into_any_element(),
         )
     }
