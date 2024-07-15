@@ -130,6 +130,7 @@ impl ExtensionFilter {
 enum Feature {
     Git,
     Vim,
+    Python,
 }
 
 pub struct ExtensionsPage {
@@ -817,6 +818,12 @@ impl ExtensionsPage {
                 } else {
                     self.upsells.remove(&Feature::Vim);
                 }
+
+                if search.contains("python") {
+                    self.upsells.insert(Feature::Python);
+                } else {
+                    self.upsells.remove(&Feature::Python);
+                }
             } else {
                 self.upsells.clear();
             }
@@ -939,6 +946,8 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
+                Feature::Python => FeatureUpsell::new("Python support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/python"),
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
