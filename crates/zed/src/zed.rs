@@ -1259,12 +1259,12 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree("/root", json!({"does-not-serialize": "hey"}))
+            .insert_tree("/root", json!({"a": "hey"}))
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/does-not-serialize")],
+                &[PathBuf::from("/root/a")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,

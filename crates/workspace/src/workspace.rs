@@ -1614,7 +1614,7 @@ impl Workspace {
                         for (pane, item) in dirty_items {
                             if let Some(task) = item
                                 .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, cx))
+                                .and_then(|handle| handle.serialize(workspace, true, cx))
                             {
                                 serialize_tasks.push(task);
                             } else {
@@ -3877,7 +3877,7 @@ impl Workspace {
 
             for (_, item) in unique_items {
                 if let Ok(Some(task)) =
-                    this.update(cx, |workspace, cx| item.serialize(workspace, cx))
+                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
                 {
                     cx.background_executor()
                         .spawn(async move { task.await.log_err() })

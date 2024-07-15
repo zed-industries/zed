@@ -92,7 +92,7 @@ impl Item for ImageView {
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let item_id = cx.entity_id().as_u64();
-        if let Some(serialize_task) = self.serialize(workspace, item_id, cx) {
+        if let Some(serialize_task) = self.serialize(workspace, item_id, false, cx) {
             cx.spawn(|_, _| async move { serialize_task.await.log_err() })
                 .detach();
         };
@@ -149,6 +149,7 @@ impl SerializableItem for ImageView {
         &mut self,
         workspace: &mut Workspace,
         item_id: ItemId,
+        _closing: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

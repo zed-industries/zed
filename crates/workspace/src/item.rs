@@ -270,6 +270,7 @@ pub trait SerializableItem: Item {
         &mut self,
         workspace: &mut Workspace,
         item_id: ItemId,
+        closing: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>>;
 
@@ -281,6 +282,7 @@ pub trait SerializableItemHandle: ItemHandle {
     fn serialize(
         &self,
         workspace: &mut Workspace,
+        closing: bool,
         cx: &mut WindowContext,
     ) -> Option<Task<Result<()>>>;
     fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool;
@@ -297,10 +299,11 @@ where
     fn serialize(
         &self,
         workspace: &mut Workspace,
+        closing: bool,
         cx: &mut WindowContext,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), cx)
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
         })
     }
 
@@ -1257,6 +1260,7 @@ pub mod test {
             &mut self,
             _workspace: &mut Workspace,
             _item_id: ItemId,
+            _closing: bool,
             _cx: &mut ViewContext<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
             None

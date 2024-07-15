@@ -24,6 +24,10 @@ pub struct ProjectSettings {
     /// Configuration for how direnv configuration should be loaded
     #[serde(default)]
     pub load_direnv: DirenvSettings,
+
+    /// Configuration for session-related features
+    #[serde(default)]
+    pub session: SessionSettings,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -107,6 +111,10 @@ const fn true_value() -> bool {
     true
 }
 
+const fn false_value() -> bool {
+    false
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct BinarySettings {
     pub path: Option<String>,
@@ -120,6 +128,18 @@ pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSettings {
+    /// Whether or not to restore unsaved buffers on restart.
+    ///
+    /// If this is true, user won't be prompted whether to save/discard
+    /// dirty files when closing the application.
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub restore_unsaved_sessions: bool,
 }
 
 impl Settings for ProjectSettings {

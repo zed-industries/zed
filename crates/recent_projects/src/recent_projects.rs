@@ -700,7 +700,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_prompts_on_dirty_before_submit(cx: &mut TestAppContext) {
-        let filename = "does-not-serialize-main.ts";
         let app_state = init_test(cx);
         app_state
             .fs
@@ -708,13 +707,13 @@ mod tests {
             .insert_tree(
                 "/dir",
                 json!({
-                    filename: "a"
+                    "main.ts": "a"
                 }),
             )
             .await;
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(format!("/dir/{}", filename))],
+                &[PathBuf::from("/dir/main.ts")],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,

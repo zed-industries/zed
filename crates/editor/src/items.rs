@@ -991,12 +991,19 @@ impl SerializableItem for Editor {
         &mut self,
         workspace: &mut Workspace,
         item_id: ItemId,
+        closing: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
+
         let project = self.project.clone()?;
         if project.read(cx).worktrees().next().is_none() {
             // If we don't have a worktree, we don't serialize, because
             // if we don't have a worktree, we can't deserialize ourselves.
+            serialize_dirty_buffers = false;
+        }
+
+        if closing && !serialize_dirty_buffers {
             return None;
         }
 
@@ -1012,13 +1019,6 @@ impl SerializableItem for Editor {
             .map(|file| file.abs_path(cx));
         let snapshot = buffer.read(cx).snapshot();
 
-        #[cfg(feature = "test-support")]
-        if path.as_ref().map_or(false, |p| {
-            p.to_string_lossy().contains("does-not-serialize")
-        }) {
-            return None;
-        }
-
         Some(cx.spawn(|_this, cx| async move {
             cx.background_executor()
                 .spawn(async move {
@@ -1028,12 +1028,16 @@ impl SerializableItem for Editor {
                             .context("failed to save path of buffer")?
                     }
 
-                    if is_dirty {
-                        let contents = snapshot.text();
-                        DB.save_contents(item_id, workspace_id, contents).await
-                    } else {
-                        DB.delete_contents(item_id, workspace_id).await
+                    if serialize_dirty_buffers {
+                        if is_dirty {
+                            let contents = snapshot.text();
+                            DB.save_contents(item_id, workspace_id, contents).await?;
+                        } else {
+                            DB.delete_contents(item_id, workspace_id).await?;
+                        }
                     }
+
+                    anyhow::Ok(())
                 })
                 .await
                 .context("failed to save contents of buffer")?;

@@ -1089,6 +1089,7 @@ impl SerializableItem for TerminalView {
         &mut self,
         _workspace: &mut Workspace,
         item_id: workspace::ItemId,
+        _closing: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
