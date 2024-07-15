@@ -5,7 +5,7 @@ use crate::{
     ToggleModelSelector,
 };
 use fs::Fs;
-use language_model::registry::LanguageModelRegistry;
+use language_model::{registry::LanguageModelRegistry, AvailableLanguageModel};
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -27,38 +27,71 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for available_model in LanguageModelRegistry::global(cx)
+                    for (provider, available_models) in LanguageModelRegistry::global(cx)
                         .read(cx)
-                        .available_models(cx)
+                        .available_models_grouped_by_provider(cx)
                     {
-                        menu = menu.custom_entry(
-                            {
-                                let model_name = available_model.model.name.0.clone();
-                                let provider = available_model.provider.0.clone();
-                                move |_| {
-                                    h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new(model_name.clone()))
-                                        .child(div().ml_4().child(
-                                            Label::new(provider.clone()).color(Color::Muted),
-                                        ))
-                                        .into_any()
-                                }
-                            },
-                            {
-                                let fs = self.fs.clone();
-                                let model = available_model.clone();
-                                move |cx| {
-                                    let model = model.clone();
-                                    update_settings_file::<AssistantSettings>(
-                                        fs.clone(),
-                                        cx,
-                                        move |settings| settings.set_model(model),
-                                    );
-                                }
-                            },
-                        );
+                        menu = menu.header(provider.0.clone());
+
+                        if available_models.is_empty() {
+                            menu = menu.custom_entry(
+                                {
+                                    move |_| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .child(Icon::new(IconName::Settings))
+                                            .child(Label::new("Configure"))
+                                            .into_any()
+                                    }
+                                },
+                                {
+                                    let provider = provider.clone();
+                                    move |cx| {
+                                        LanguageModelCompletionProvider::global(cx).update(
+                                            cx,
+                                            |completion_provider, cx| {
+                                                completion_provider
+                                                    .set_active_provider(provider.clone(), cx)
+                                            },
+                                        );
+                                    }
+                                },
+                            );
+                        }
+
+                        for available_model in available_models {
+                            menu = menu.custom_entry(
+                                {
+                                    let model_name = available_model.name.0.clone();
+                                    move |_| {
+                                        h_flex()
+                                            .w_full()
+                                            .child(Label::new(model_name.clone()))
+                                            .into_any()
+                                    }
+                                },
+                                {
+                                    let fs = self.fs.clone();
+                                    let provider = provider.clone();
+                                    let model = available_model.clone();
+                                    move |cx| {
+                                        let provider = provider.clone();
+                                        let model = model.clone();
+                                        update_settings_file::<AssistantSettings>(
+                                            fs.clone(),
+                                            cx,
+                                            move |settings| {
+                                                settings.set_model(AvailableLanguageModel {
+                                                    provider: provider.clone(),
+                                                    model: model.clone(),
+                                                })
+                                            },
+                                        );
+                                    }
+                                },
+                            );
+                        }
                     }
                     menu
                 })

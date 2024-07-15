@@ -72,6 +72,16 @@ impl LanguageModelRegistry {
             .collect()
     }
 
+    pub fn available_models_grouped_by_provider(
+        &self,
+        cx: &AppContext,
+    ) -> Vec<(LanguageModelProviderName, Vec<ProvidedLanguageModel>)> {
+        self.providers
+            .values()
+            .map(|provider| (provider.name(cx), provider.provided_models(cx)))
+            .collect()
+    }
+
     pub fn model(
         &mut self,
         requested: &AvailableLanguageModel,

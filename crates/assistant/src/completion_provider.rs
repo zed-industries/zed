@@ -61,6 +61,7 @@ struct GlobalLanguageModelCompletionProvider(Model<LanguageModelCompletionProvid
 impl Global for GlobalLanguageModelCompletionProvider {}
 
 pub struct LanguageModelCompletionProvider {
+    active_provider: Option<Arc<dyn LanguageModelProvider>>,
     active_model: Option<Arc<dyn LanguageModel>>,
     request_limiter: Arc<Semaphore>,
 }
@@ -92,9 +93,25 @@ impl LanguageModelCompletionProvider {
         .detach();
 
         Self {
+            active_provider: None,
             active_model: None,
             request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_COMPLETION_REQUESTS)),
         }
+    }
+
+    pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.active_provider.clone()
+    }
+
+    pub fn set_active_provider(
+        &mut self,
+        provider_name: LanguageModelProviderName,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.active_provider = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .provider(&provider_name);
+        cx.notify();
     }
 
     pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
@@ -102,29 +119,28 @@ impl LanguageModelCompletionProvider {
     }
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+        self.active_provider = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .provider(&model.provider_name());
         self.active_model = Some(model);
         cx.notify();
     }
 
-    pub fn current_provider(&self, cx: &AppContext) -> Option<Arc<dyn LanguageModelProvider>> {
-        let provider_name = self.active_model.as_ref()?.provider_name();
-        LanguageModelRegistry::global(cx)
-            .read(cx)
-            .provider(&provider_name)
-    }
-
     pub fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.current_provider(cx)
+        self.active_provider
+            .as_ref()
             .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.current_provider(cx)
+        self.active_provider
+            .as_ref()
             .map_or(Task::ready(Ok(())), |provider| provider.authenticate(cx))
     }
 
     pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.current_provider(cx)
+        self.active_provider
+            .as_ref()
             .map_or(Task::ready(Ok(())), |provider| {
                 provider.reset_credentials(cx)
             })

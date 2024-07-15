@@ -374,9 +374,7 @@ impl AssistantPanel {
     }
 
     fn authentification_prompt(cx: &mut WindowContext) -> Option<AnyView> {
-        if let Some(provider) =
-            LanguageModelCompletionProvider::read_global(cx).current_provider(cx)
-        {
+        if let Some(provider) = LanguageModelCompletionProvider::read_global(cx).active_provider() {
             if !provider.is_authenticated(cx) {
                 return Some(provider.authentication_prompt(cx));
             }
