@@ -3446,6 +3446,7 @@ impl Workspace {
 
         let (panel_id, item) = item_to_activate?;
 
+        let mut transfer_focus = state.center_pane.read(cx).has_focus(cx);
         let pane;
         if let Some(panel_id) = panel_id {
             pane = self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?;
@@ -3454,18 +3455,20 @@ impl Workspace {
         } else {
             pane = state.center_pane.clone();
             let state = self.follower_states.get_mut(&leader_id)?;
-            state.dock_pane = None;
+            if let Some(dock_pane) = state.dock_pane.take() {
+                transfer_focus |= dock_pane.focus_handle(cx).contains_focused(cx);
+            }
         }
 
         pane.update(cx, |pane, cx| {
-            let pane_was_focused = pane.has_focus(cx);
+            let focus_active_item = pane.has_focus(cx) || transfer_focus;
             if let Some(index) = pane.index_for_item(item.as_ref()) {
                 pane.activate_item(index, false, false, cx);
             } else {
                 pane.add_item(item.boxed_clone(), false, false, None, cx)
             }
 
-            if pane_was_focused {
+            if focus_active_item {
                 pane.focus_active_item(cx)
             }
         });
