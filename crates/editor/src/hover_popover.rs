@@ -684,11 +684,9 @@ impl DiagnosticPopover {
         let mut d = div()
             .id("diagnostic")
             .block()
-            .max_w_96()
             .max_h(max_size.height)
             .py_1()
             .px_2()
-            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
