@@ -1334,9 +1334,9 @@ impl Workspace {
         path_prompt_options: PathPromptOptions,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        if
-        /* self.project.read(cx).is_remote() */
-        true {
+        if self.project.read(cx).is_remote()
+            || !WorkspaceSettings::get_global(cx).use_system_path_picker
+        {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
             let rx = prompt(self, cx);
             self.on_prompt_for_open_path = Some(prompt);
@@ -1379,7 +1379,9 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if self.project.read(cx).is_remote() {
+        if self.project.read(cx).is_remote()
+            || !WorkspaceSettings::get_global(cx).use_system_path_picker
+        {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
             let rx = prompt(self, cx);
             self.on_prompt_for_new_path = Some(prompt);
