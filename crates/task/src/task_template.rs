@@ -71,7 +71,7 @@ pub enum TaskType {
 
 /// Represents the type of the debugger adapter connection
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "lowercase")]
 pub enum DebugConnectionType {
     /// Connect to the debug adapter via TCP
     #[default]
