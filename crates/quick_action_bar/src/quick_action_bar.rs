@@ -304,7 +304,7 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(search_button)
+                    .children(self.render_repl_menu(cx))
                     .when(
                         AssistantSettings::get_global(cx).enabled
                             && AssistantSettings::get_global(cx).button,
@@ -314,7 +314,11 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(self.render_repl_menu(cx))
+                    .children(search_button),
+            )
+            .child(
+                h_flex()
+                    .gap(Spacing::Medium.rems(cx))
                     .children(editor_selections_dropdown)
                     .child(editor_settings_dropdown),
             )

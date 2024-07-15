@@ -22,6 +22,7 @@ actions!(
 struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
+    placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -84,7 +85,12 @@ impl TextInput {
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut ViewContext<Self>) {
         self.is_selecting = true;
-        self.move_to(self.index_for_mouse_position(event.position), cx)
+
+        if event.modifiers.shift {
+            self.select_to(self.index_for_mouse_position(event.position), cx);
+        } else {
+            self.move_to(self.index_for_mouse_position(event.position), cx)
+        }
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut ViewContext<Self>) {
@@ -115,6 +121,10 @@ impl TextInput {
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        if self.content.is_empty() {
+            return 0;
+        }
+
         let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
         else {
             return 0;
@@ -348,10 +358,17 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = cx.text_style();
+
+        let (display_text, text_color) = if content.is_empty() {
+            (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
+        } else {
+            (content.clone(), style.color)
+        };
+
         let run = TextRun {
-            len: input.content.len(),
+            len: display_text.len(),
             font: style.font(),
-            color: style.color,
+            color: text_color,
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -372,7 +389,7 @@ impl Element for TextElement {
                     ..run.clone()
                 },
                 TextRun {
-                    len: input.content.len() - marked_range.end,
+                    len: display_text.len() - marked_range.end,
                     ..run.clone()
                 },
             ]
@@ -386,7 +403,7 @@ impl Element for TextElement {
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let line = cx
             .text_system()
-            .shape_line(content, font_size, &runs)
+            .shape_line(display_text, font_size, &runs)
             .unwrap();
 
         let cursor_pos = line.x_for_index(cursor);
@@ -585,6 +602,7 @@ fn main() {
                     let text_input = cx.new_view(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
+                        placeholder: "Type here...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,

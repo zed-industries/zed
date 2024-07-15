@@ -317,6 +317,55 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn border_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+
+    let mut methods = Vec::new();
+
+    for border_style_prefix in border_prefixes() {
+        methods.push(generate_custom_value_setter(
+            visibility.clone(),
+            border_style_prefix.prefix,
+            quote! { AbsoluteLength },
+            &border_style_prefix.fields,
+            border_style_prefix.doc_string_prefix,
+        ));
+
+        for border_style_suffix in border_suffixes() {
+            methods.push(generate_predefined_setter(
+                visibility.clone(),
+                border_style_prefix.prefix,
+                border_style_suffix.suffix,
+                &border_style_prefix.fields,
+                &border_style_suffix.width_tokens,
+                false,
+                &format!(
+                    "{prefix}\n\n{suffix}",
+                    prefix = border_style_prefix.doc_string_prefix,
+                    suffix = border_style_suffix.doc_string_suffix,
+                ),
+            ));
+        }
+    }
+
+    let output = quote! {
+        /// Sets the border color of the element.
+        #visibility fn border_color<C>(mut self, border_color: C) -> Self
+        where
+            C: Into<Hsla>,
+            Self: Sized,
+        {
+            self.style().border_color = Some(border_color.into());
+            self
+        }
+
+        #(#methods)*
+    };
+
+    output.into()
+}
+
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let visibility = input.method_visibility;
@@ -564,31 +613,6 @@ fn generate_methods() -> Vec<TokenStream2> {
         }
     }
 
-    for border_style_prefix in border_prefixes() {
-        methods.push(generate_custom_value_setter(
-            visibility.clone(),
-            border_style_prefix.prefix,
-            quote! { AbsoluteLength },
-            &border_style_prefix.fields,
-            border_style_prefix.doc_string_prefix,
-        ));
-
-        for border_style_suffix in border_suffixes() {
-            methods.push(generate_predefined_setter(
-                visibility.clone(),
-                border_style_prefix.prefix,
-                border_style_suffix.suffix,
-                &border_style_prefix.fields,
-                &border_style_suffix.width_tokens,
-                false,
-                &format!(
-                    "{prefix}\n\n{suffix}",
-                    prefix = border_style_prefix.doc_string_prefix,
-                    suffix = border_style_suffix.doc_string_suffix,
-                ),
-            ));
-        }
-    }
     methods
 }
 
