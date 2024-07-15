@@ -2549,10 +2549,13 @@ fn render_slash_command_output_toggle(
     fold: ToggleFold,
     _cx: &mut WindowContext,
 ) -> AnyElement {
-    Disclosure::new(("slash-command-output-fold-indicator", row.0), !is_folded)
-        .selected(is_folded)
-        .on_click(move |_e, cx| fold(!is_folded, cx))
-        .into_any_element()
+    Disclosure::new(
+        ("slash-command-output-fold-indicator", row.0 as u64),
+        !is_folded,
+    )
+    .selected(is_folded)
+    .on_click(move |_e, cx| fold(!is_folded, cx))
+    .into_any_element()
 }
 
 fn render_pending_slash_command_gutter_decoration(

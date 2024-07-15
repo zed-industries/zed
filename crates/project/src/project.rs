@@ -11720,7 +11720,7 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
     });
 }
 
-fn compare_paths(
+pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
 ) -> cmp::Ordering {
