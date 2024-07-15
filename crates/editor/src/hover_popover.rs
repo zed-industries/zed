@@ -357,7 +357,6 @@ fn show_hover(
                             font_family: Some(settings.ui_font.family.clone()),
                             font_size: Some(settings.ui_font_size.into()),
                             color: Some(cx.theme().colors().editor_foreground),
-                            // background_color: Some(background_color.unwrap()),
                             background_color: Some(gpui::transparent_black()),
 
                             ..Default::default()
@@ -699,7 +698,7 @@ impl DiagnosticPopover {
                 .rounded_lg();
         }
 
-        let d = div()
+        let diagnostic_div = div()
             .id("diagnostic")
             .block()
             .max_h(max_size.height)
@@ -721,8 +720,7 @@ impl DiagnosticPopover {
             })
             .child(markdown_div);
 
-        d.into_any_element()
-
+        diagnostic_div.into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
