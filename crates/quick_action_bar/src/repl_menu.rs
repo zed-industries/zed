@@ -157,7 +157,7 @@ impl QuickActionBar {
                     let kernel_language = kernel_language.clone();
                     let status = status.clone();
                     menu.when_else(
-                        status.is_running(),
+                        status.is_connected(),
                         |running| {
                             let status = status.clone();
                             running

@@ -83,17 +83,27 @@ pub enum Kernel {
 
 #[derive(Debug, Clone)]
 pub enum KernelStatus {
-    Running,
+    Idle,
+    Busy,
     Starting,
     Error,
     ShuttingDown,
     Shutdown,
 }
+impl KernelStatus {
+    pub fn is_connected(&self) -> bool {
+        match self {
+            KernelStatus::Idle | KernelStatus::Busy => true,
+            _ => false,
+        }
+    }
+}
 
 impl ToString for KernelStatus {
     fn to_string(&self) -> String {
         match self {
-            KernelStatus::Running => "Running".to_string(),
+            KernelStatus::Idle => "Idle".to_string(),
+            KernelStatus::Busy => "Busy".to_string(),
             KernelStatus::Starting => "Starting".to_string(),
             KernelStatus::Error => "Error".to_string(),
             KernelStatus::ShuttingDown => "Shutting Down".to_string(),
@@ -105,20 +115,14 @@ impl ToString for KernelStatus {
 impl From<&Kernel> for KernelStatus {
     fn from(kernel: &Kernel) -> Self {
         match kernel {
-            Kernel::RunningKernel(_) => KernelStatus::Running,
+            Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                ExecutionState::Idle => KernelStatus::Idle,
+                ExecutionState::Busy => KernelStatus::Busy,
+            },
             Kernel::StartingKernel(_) => KernelStatus::Starting,
             Kernel::ErroredLaunch(_) => KernelStatus::Error,
             Kernel::ShuttingDown => KernelStatus::ShuttingDown,
             Kernel::Shutdown => KernelStatus::Shutdown,
-        }
-    }
-}
-
-impl KernelStatus {
-    pub fn is_running(&self) -> bool {
-        match self {
-            KernelStatus::Running | KernelStatus::Error => true,
-            _ => false,
         }
     }
 }
