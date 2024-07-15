@@ -3,12 +3,13 @@ mod extension_suggest;
 mod extension_version_selector;
 
 use std::ops::DerefMut;
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
-use collections::BTreeSet;
+use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -130,7 +131,22 @@ impl ExtensionFilter {
 enum Feature {
     Git,
     Vim,
-    Python,
+    LanguageC,
+    LanguageCpp,
+    LanguagePython,
+}
+
+fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
+    static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
+    KEYWORDS_BY_FEATURE.get_or_init(|| {
+        BTreeMap::from_iter([
+            (Feature::Git, vec!["git"]),
+            (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageC, vec!["c", "clang"]),
+            (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguagePython, vec!["python", "py"]),
+        ])
+    })
 }
 
 pub struct ExtensionsPage {
@@ -805,28 +821,7 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
-
-            if let Some(search) = self.search_query(cx) {
-                if search.contains("git") {
-                    self.upsells.insert(Feature::Git);
-                } else {
-                    self.upsells.remove(&Feature::Git);
-                }
-
-                if search.contains("vim") {
-                    self.upsells.insert(Feature::Vim);
-                } else {
-                    self.upsells.remove(&Feature::Vim);
-                }
-
-                if search.contains("python") {
-                    self.upsells.insert(Feature::Python);
-                } else {
-                    self.upsells.remove(&Feature::Python);
-                }
-            } else {
-                self.upsells.clear();
-            }
+            self.refresh_feature_upsells(cx);
         }
     }
 
@@ -920,6 +915,30 @@ impl ExtensionsPage {
         }
     }
 
+    fn refresh_feature_upsells(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(search) = self.search_query(cx) else {
+            self.upsells.clear();
+            return;
+        };
+
+        let search = search.to_lowercase();
+        let search_terms = search
+            .split_whitespace()
+            .map(|term| term.trim())
+            .collect::<Vec<_>>();
+
+        for (feature, keywords) in keywords_by_feature() {
+            if keywords
+                .iter()
+                .any(|keyword| search_terms.contains(keyword))
+            {
+                self.upsells.insert(*feature);
+            } else {
+                self.upsells.remove(&feature);
+            }
+        }
+    }
+
     fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let upsells_count = self.upsells.len();
 
@@ -946,7 +965,11 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
-                Feature::Python => FeatureUpsell::new("Python support is built-in to Zed!")
+                Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/c"),
+                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/cpp"),
+                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/languages/python"),
             };
 
