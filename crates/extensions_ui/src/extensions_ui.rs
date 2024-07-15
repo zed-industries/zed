@@ -134,6 +134,7 @@ enum Feature {
     LanguageC,
     LanguageCpp,
     LanguagePython,
+    LanguageRust,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
@@ -145,6 +146,7 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageRust, vec!["rust", "rs"]),
         ])
     })
 }
@@ -971,6 +973,8 @@ impl ExtensionsPage {
                     .docs_url("https://zed.dev/docs/languages/cpp"),
                 Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/languages/python"),
+                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/rust"),
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
