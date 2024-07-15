@@ -1,10 +1,10 @@
 use anyhow::Result;
-use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
+use dap::client::{self, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    DisconnectArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments, StoppedEvent,
-    TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
+    ContinuedEvent, DisconnectArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments,
+    StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -134,7 +134,7 @@ impl DebugPanel {
                 .detach_and_log_err(cx);
             }
             Events::Stopped(event) => Self::handle_stopped_event(this, client_id, event, cx),
-            Events::Continued(_) => {}
+            Events::Continued(event) => Self::handle_continued_event(this, client_id, event, cx),
             Events::Exited(_) => {}
             Events::Terminated(event) => Self::handle_terminated_event(this, client_id, event, cx),
             Events::Thread(event) => Self::handle_thread_event(this, client_id, event, cx),
@@ -270,6 +270,26 @@ impl DebugPanel {
         editor.update(&mut cx, |editor, _| {
             editor.clear_row_highlights::<DebugCurrentRowHighlight>();
         })
+    }
+
+    fn handle_continued_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        event: &ContinuedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let all_threads = event.all_threads_continued.unwrap_or(false);
+        let client = this.debug_client_by_id(*client_id, cx);
+
+        if all_threads {
+            for thread in client.thread_states().values_mut() {
+                thread.status = ThreadStatus::Running;
+            }
+        } else {
+            client.update_thread_state_status(event.thread_id, ThreadStatus::Running);
+        }
+
+        cx.notify();
     }
 
     fn handle_stopped_event(

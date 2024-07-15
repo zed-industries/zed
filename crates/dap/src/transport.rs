@@ -106,7 +106,7 @@ impl Transport {
         loop {
             buffer.truncate(0);
             if reader.read_line(buffer).await? == 0 {
-                return Err(anyhow!("stream closed"));
+                return Err(anyhow!("reader stream closed"));
             };
 
             if buffer == "\r\n" {
@@ -140,7 +140,7 @@ impl Transport {
     ) -> Result<()> {
         buffer.truncate(0);
         if err.read_line(buffer).await? == 0 {
-            return Err(anyhow!("stream closed"));
+            return Err(anyhow!("error stream closed"));
         };
 
         Ok(())

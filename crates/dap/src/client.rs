@@ -130,14 +130,49 @@ impl DebugAdapterClient {
     }
 
     async fn create_stdio_client(
-        _id: DebugAdapterClientId,
-        _config: DebugAdapterConfig,
-        _command: &str,
-        _args: Vec<&str>,
-        _project_path: PathBuf,
-        _cx: &mut AsyncAppContext,
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
+        command: &str,
+        args: Vec<&str>,
+        project_path: PathBuf,
+        cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        todo!("not implemented")
+        let mut command = process::Command::new(command);
+        command
+            .current_dir(project_path)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut process = command
+            .spawn()
+            .with_context(|| "failed to spawn command.")?;
+
+        // give the adapter some time to start std
+        cx.background_executor()
+            .timer(Duration::from_millis(1000))
+            .await;
+
+        let stdin = process
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
+        let stdout = process
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stderr = process
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stderr"))?;
+
+        let stdin = Box::new(stdin);
+        let stdout = Box::new(BufReader::new(stdout));
+        let stderr = Box::new(BufReader::new(stderr));
+
+        Self::handle_transport(id, config, stdout, stdin, Some(stderr), Some(process), cx)
     }
 
     pub fn handle_transport(
