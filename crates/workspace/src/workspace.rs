@@ -22,7 +22,10 @@ use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
-    channel::{mpsc, oneshot},
+    channel::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
@@ -680,6 +683,8 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     render_disconnected_overlay:
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
+    serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    _items_serializer: Task<Result<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -860,6 +865,12 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
+        let (serializable_items_tx, serializable_items_rx) =
+            mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
+        let _items_serializer = cx.spawn(|this, mut cx| async move {
+            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
+        });
+
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |this, cx| {
@@ -959,6 +970,8 @@ impl Workspace {
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
             render_disconnected_overlay: None,
+            serializable_items_tx,
+            _items_serializer,
         }
     }
 
@@ -3840,6 +3853,52 @@ impl Workspace {
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
+    }
+
+    async fn serialize_items(
+        this: &WeakView<Self>,
+        items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        const CHUNK_SIZE: usize = 200;
+        const THROTTLE_TIME: Duration = Duration::from_millis(200);
+
+        let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
+
+        while let Some(items_received) = serializable_items.next().await {
+            let unique_items =
+                items_received
+                    .into_iter()
+                    .fold(HashMap::default(), |mut acc, item| {
+                        acc.entry(item.serialized_item_kind().to_string())
+                            .or_insert(item);
+                        acc
+                    });
+
+            for (kind, item) in unique_items {
+                if let Ok(Some(task)) =
+                    this.update(cx, |workspace, cx| item.serialize(workspace, cx))
+                {
+                    println!("serializing item of kind: {}", kind);
+                    cx.background_executor()
+                        .spawn(async move { task.await.log_err() })
+                        .detach();
+                }
+            }
+
+            cx.background_executor().timer(THROTTLE_TIME).await;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn enqueue_item_serialization(
+        &mut self,
+        item: Box<dyn SerializableItemHandle>,
+    ) -> Result<()> {
+        self.serializable_items_tx
+            .unbounded_send(item)
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
     }
 
     pub(crate) fn load_workspace(

@@ -32,7 +32,6 @@ use std::{
 };
 use theme::Theme;
 use ui::Element as _;
-use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -619,38 +618,7 @@ impl<T: Item> ItemHandle for View<T> {
 
                     if let Some(item) = item.to_serializable_item_handle(cx) {
                         if item.should_serialize(event, cx) {
-                            // send to channel on workspace
-                            // items_to_serialize.send(item);
-
-                            // workspace.send_netw
-
-                            /*
-
-                            ready_chunks
-
-                            throttle isntead of debounce
-
-                            background_task.spawn({
-
-                            let items_received = vec![];
-
-                            recv().await;
-                            try_recv a bunch to see what needs to be serialized
-
-                            group_by item.item_id()
-
-                            })
-
-                            */
-
-                            // let task = item.seriali
-                            // todo!("");
-                            if let Some(task) = item.serialize(workspace, cx) {
-                                println!("TODO: move all the serialization logic into one spot. publish here to wake up that spot.");
-                                cx.background_executor()
-                                    .spawn(async move { task.await.log_err() })
-                                    .detach();
-                            }
+                            workspace.enqueue_item_serialization(item).ok();
                         }
                     }
 

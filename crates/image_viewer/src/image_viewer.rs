@@ -92,22 +92,10 @@ impl Item for ImageView {
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let item_id = cx.entity_id().as_u64();
-        let workspace_id = workspace.database_id();
-        let image_path = self.path.clone();
-
-        if let Some(workspace_id) = workspace_id {
-            cx.background_executor()
-                .spawn({
-                    let image_path = image_path.clone();
-                    async move {
-                        IMAGE_VIEWER
-                            .save_image_path(item_id, workspace_id, image_path)
-                            .await
-                            .log_err();
-                    }
-                })
+        if let Some(serialize_task) = self.serialize(workspace, item_id, cx) {
+            cx.spawn(|_, _| async move { serialize_task.await.log_err() })
                 .detach();
-        }
+        };
     }
 
     fn clone_on_split(
@@ -171,7 +159,6 @@ impl SerializableItem for ImageView {
         }))
     }
 
-    // TODO: Should we serialize on an "added to workspace" event?
     fn should_serialize(&self, _event: &Self::Event) -> bool {
         false
     }
