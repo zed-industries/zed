@@ -31,7 +31,11 @@ use gpui::{
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use normal::{mark::create_visual_marks, normal_replace};
+use normal::{
+    mark::create_visual_marks,
+    normal_replace,
+    repeat::{observe_action, observe_insertion, record_register, replay_register},
+};
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -72,6 +76,7 @@ struct SelectRegister(String);
 actions!(
     vim,
     [
+        ClearOperators,
         Tab,
         Enter,
         Object,
@@ -125,6 +130,9 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator.clone(), cx))
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &ClearOperators, cx| {
+        Vim::update(cx, |vim, cx| vim.clear_operator(cx))
+    });
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
@@ -170,18 +178,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         .as_ref()
         .map(|action| action.boxed_clone())
     {
-        Vim::update(cx, |vim, _| {
-            if vim.workspace_state.recording {
-                vim.workspace_state
-                    .recorded_actions
-                    .push(ReplayableAction::Action(action.boxed_clone()));
-
-                if vim.workspace_state.stop_recording_after_next_action {
-                    vim.workspace_state.recording = false;
-                    vim.workspace_state.stop_recording_after_next_action = false;
-                }
-            }
-        });
+        observe_action(action.boxed_clone(), cx);
 
         // Keystroke is handled by the vim system, so continue forward
         if action.name().starts_with("vim::") {
@@ -201,7 +198,9 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::DeleteSurrounds
             | Operator::Mark
             | Operator::Jump { .. }
-            | Operator::Register,
+            | Operator::Register
+            | Operator::RecordRegister
+            | Operator::ReplayRegister,
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -254,12 +253,12 @@ impl Vim {
             }
             EditorEvent::InputIgnored { text } => {
                 Vim::active_editor_input_ignored(text.clone(), cx);
-                Vim::record_insertion(text, None, cx)
+                observe_insertion(text, None, cx)
             }
             EditorEvent::InputHandled {
                 text,
                 utf16_range_to_replace: range_to_replace,
-            } => Vim::record_insertion(text, range_to_replace.clone(), cx),
+            } => observe_insertion(text, range_to_replace.clone(), cx),
             EditorEvent::TransactionBegun { transaction_id } => Vim::update(cx, |vim, cx| {
                 vim.transaction_begun(*transaction_id, cx);
             }),
@@ -288,27 +287,6 @@ impl Vim {
         self.sync_vim_settings(cx);
     }
 
-    fn record_insertion(
-        text: &Arc<str>,
-        range_to_replace: Option<Range<isize>>,
-        cx: &mut WindowContext,
-    ) {
-        Vim::update(cx, |vim, _| {
-            if vim.workspace_state.recording {
-                vim.workspace_state
-                    .recorded_actions
-                    .push(ReplayableAction::Insertion {
-                        text: text.clone(),
-                        utf16_range_to_replace: range_to_replace,
-                    });
-                if vim.workspace_state.stop_recording_after_next_action {
-                    vim.workspace_state.recording = false;
-                    vim.workspace_state.stop_recording_after_next_action = false;
-                }
-            }
-        });
-    }
-
     fn update_active_editor<S>(
         &mut self,
         cx: &mut WindowContext,
@@ -333,8 +311,8 @@ impl Vim {
     /// When doing an action that modifies the buffer, we start recording so that `.`
     /// will replay the action.
     pub fn start_recording(&mut self, cx: &mut WindowContext) {
-        if !self.workspace_state.replaying {
-            self.workspace_state.recording = true;
+        if !self.workspace_state.dot_replaying {
+            self.workspace_state.dot_recording = true;
             self.workspace_state.recorded_actions = Default::default();
             self.workspace_state.recorded_count = None;
 
@@ -376,15 +354,18 @@ impl Vim {
         }
     }
 
-    pub fn stop_replaying(&mut self) {
-        self.workspace_state.replaying = false;
+    pub fn stop_replaying(&mut self, _: &mut WindowContext) {
+        self.workspace_state.dot_replaying = false;
+        if let Some(replayer) = self.workspace_state.replayer.take() {
+            replayer.stop();
+        }
     }
 
     /// When finishing an action that modifies the buffer, stop recording.
     /// as you usually call this within a keystroke handler we also ensure that
     /// the current action is recorded.
     pub fn stop_recording(&mut self) {
-        if self.workspace_state.recording {
+        if self.workspace_state.dot_recording {
             self.workspace_state.stop_recording_after_next_action = true;
         }
     }
@@ -394,11 +375,11 @@ impl Vim {
     ///
     /// This doesn't include the current action.
     pub fn stop_recording_immediately(&mut self, action: Box<dyn Action>) {
-        if self.workspace_state.recording {
+        if self.workspace_state.dot_recording {
             self.workspace_state
                 .recorded_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
-            self.workspace_state.recording = false;
+            self.workspace_state.dot_recording = false;
             self.workspace_state.stop_recording_after_next_action = false;
         }
     }
@@ -511,7 +492,7 @@ impl Vim {
     }
 
     fn take_count(&mut self, cx: &mut WindowContext) -> Option<usize> {
-        if self.workspace_state.replaying {
+        if self.workspace_state.dot_replaying {
             return self.workspace_state.recorded_count;
         }
 
@@ -522,7 +503,7 @@ impl Vim {
                 state.post_count.take().unwrap_or(1) * state.pre_count.take().unwrap_or(1)
             }))
         };
-        if self.workspace_state.recording {
+        if self.workspace_state.dot_recording {
             self.workspace_state.recorded_count = count;
         }
         self.sync_vim_settings(cx);
@@ -898,6 +879,8 @@ impl Vim {
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
             }),
+            Some(Operator::RecordRegister) => record_register(text.chars().next().unwrap(), cx),
+            Some(Operator::ReplayRegister) => replay_register(text.chars().next().unwrap(), cx),
             Some(Operator::Register) => Vim::update(cx, |vim, cx| match vim.state().mode {
                 Mode::Insert => {
                     vim.update_active_editor(cx, |vim, editor, cx| {
@@ -994,7 +977,7 @@ impl Vim {
             editor.set_cursor_shape(state.cursor_shape(), cx);
             editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
-            editor.set_input_enabled(!state.vim_controlled());
+            editor.set_input_enabled(state.editor_input_enabled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {

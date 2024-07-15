@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
 use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
@@ -229,6 +229,21 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
         },
         buffer_id: anchor.buffer_id.map(Into::into),
     }
+}
+
+pub fn serialize_anchor_range(range: Range<Anchor>) -> proto::AnchorRange {
+    proto::AnchorRange {
+        start: Some(serialize_anchor(&range.start)),
+        end: Some(serialize_anchor(&range.end)),
+    }
+}
+
+/// Deserializes an [`Range<Anchor>`] from the RPC representation.
+pub fn deserialize_anchor_range(range: proto::AnchorRange) -> Result<Range<Anchor>> {
+    Ok(
+        deserialize_anchor(range.start.context("invalid anchor")?).context("invalid anchor")?
+            ..deserialize_anchor(range.end.context("invalid anchor")?).context("invalid anchor")?,
+    )
 }
 
 // This behavior is currently copied in the collab database, for snapshotting channel notes

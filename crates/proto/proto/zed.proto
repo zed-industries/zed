@@ -204,8 +204,8 @@ message Envelope {
         CompleteWithLanguageModel complete_with_language_model = 166;
         LanguageModelResponse language_model_response = 167;
 
-        CacheLanguageModelContent cache_language_model_content = 211;
-        CacheLanguageModelContentResponse cache_language_model_content_response = 212;  // current max
+        CacheLanguageModelContent cache_language_model_content = 219;
+        CacheLanguageModelContentResponse cache_language_model_content_response = 220;  // current max
 
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
@@ -260,6 +260,16 @@ message Envelope {
 
         LinkedEditingRange linked_editing_range = 209;
         LinkedEditingRangeResponse linked_editing_range_response = 210;
+
+        AdvertiseContexts advertise_contexts = 211;
+        OpenContext open_context = 212;
+        OpenContextResponse open_context_response = 213;
+        UpdateContext update_context = 214;
+        SynchronizeContexts synchronize_contexts = 215;
+        SynchronizeContextsResponse synchronize_contexts_response = 216;
+
+        GetSignatureHelp get_signature_help = 217;
+        GetSignatureHelpResponse get_signature_help_response = 218;
     }
 
     reserved 158 to 161;
@@ -929,6 +939,55 @@ message GetCodeActions {
 message GetCodeActionsResponse {
     repeated CodeAction actions = 1;
     repeated VectorClockEntry version = 2;
+}
+
+message GetSignatureHelp {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message GetSignatureHelpResponse {
+    optional SignatureHelp signature_help = 1;
+}
+
+message SignatureHelp {
+    repeated SignatureInformation signatures = 1;
+    optional uint32 active_signature = 2;
+    optional uint32 active_parameter = 3;
+}
+
+message SignatureInformation {
+    string label = 1;
+    optional Documentation documentation = 2;
+    repeated ParameterInformation parameters = 3;
+    optional uint32 active_parameter = 4;
+}
+
+message Documentation {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+enum MarkupKind {
+    PlainText = 0;
+    Markdown = 1;
+}
+
+message ParameterInformation {
+    oneof label {
+        string simple = 1;
+        LabelOffsets label_offsets = 2;
+    }
+    optional Documentation documentation = 3;
+}
+
+message LabelOffsets {
+    uint32 start = 1;
+    uint32 end = 2;
 }
 
 message GetHover {
@@ -2151,6 +2210,7 @@ message MultiLspQuery {
     oneof request {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
     }
 }
 
@@ -2169,6 +2229,7 @@ message LspResponse {
     oneof response {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
+        GetSignatureHelpResponse get_signature_help_response = 3;
     }
 }
 
@@ -2244,4 +2305,118 @@ message TaskSourceKind {
     message Language {
         string name = 1;
     }
+}
+
+message ContextMessageStatus {
+    oneof variant {
+        Done done = 1;
+        Pending pending = 2;
+        Error error = 3;
+    }
+
+    message Done {}
+
+    message Pending {}
+
+    message Error {
+        string message = 1;
+    }
+}
+
+message ContextMessage {
+    LamportTimestamp id = 1;
+    Anchor start = 2;
+    LanguageModelRole role = 3;
+    ContextMessageStatus status = 4;
+}
+
+message SlashCommandOutputSection {
+    AnchorRange range = 1;
+    string icon_name = 2;
+    string label = 3;
+}
+
+message ContextOperation {
+    oneof variant {
+        InsertMessage insert_message = 1;
+        UpdateMessage update_message = 2;
+        UpdateSummary update_summary = 3;
+        SlashCommandFinished slash_command_finished = 4;
+        BufferOperation buffer_operation = 5;
+    }
+
+    message InsertMessage {
+        ContextMessage message = 1;
+        repeated VectorClockEntry version = 2;
+    }
+
+    message UpdateMessage {
+        LamportTimestamp message_id = 1;
+        LanguageModelRole role = 2;
+        ContextMessageStatus status = 3;
+        LamportTimestamp timestamp = 4;
+        repeated VectorClockEntry version = 5;
+    }
+
+    message UpdateSummary {
+        string summary = 1;
+        bool done = 2;
+        LamportTimestamp timestamp = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandFinished {
+        LamportTimestamp id = 1;
+        AnchorRange output_range = 2;
+        repeated SlashCommandOutputSection sections = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message BufferOperation {
+        Operation operation = 1;
+    }
+}
+
+message Context {
+    repeated ContextOperation operations = 1;
+}
+
+message ContextMetadata {
+    string context_id = 1;
+    optional string summary = 2;
+}
+
+message AdvertiseContexts {
+    uint64 project_id = 1;
+    repeated ContextMetadata contexts = 2;
+}
+
+message OpenContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+}
+
+message OpenContextResponse {
+    Context context = 1;
+}
+
+message UpdateContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+    ContextOperation operation = 3;
+}
+
+message ContextVersion {
+    string context_id = 1;
+    repeated VectorClockEntry context_version = 2;
+    repeated VectorClockEntry buffer_version = 3;
+}
+
+message SynchronizeContexts {
+    uint64 project_id = 1;
+    repeated ContextVersion contexts = 2;
+}
+
+message SynchronizeContextsResponse {
+    repeated ContextVersion contexts = 1;
 }

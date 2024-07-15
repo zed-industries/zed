@@ -1,8 +1,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::project_settings::ProjectSettings;
+use serde_json::Value;
+use settings::Settings;
 use std::{
     any::Any,
     borrow::Cow,
@@ -24,6 +29,8 @@ pub struct PythonLspAdapter {
 }
 
 impl PythonLspAdapter {
+    const SERVER_NAME: &'static str = "pyright";
+
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         PythonLspAdapter { node }
     }
@@ -32,14 +39,18 @@ impl PythonLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("pyright".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(self.node.npm_package_latest_version("pyright").await?) as Box<_>)
+        Ok(Box::new(
+            self.node
+                .npm_package_latest_version(Self::SERVER_NAME)
+                .await?,
+        ) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -50,7 +61,7 @@ impl LspAdapter for PythonLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "pyright";
+        let package_name = Self::SERVER_NAME;
 
         let should_install_language_server = self
             .node
@@ -163,6 +174,20 @@ impl LspAdapter for PythonLspAdapter {
             filter_range,
         })
     }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
+        })
+    }
 }
 
 async fn get_cached_server_binary(
@@ -220,7 +245,11 @@ impl ContextProvider for PythonContextProvider {
         Ok(task::TaskVariables::from_iter([unittest_target]))
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn language::File>>,
+        _: &AppContext,
+    ) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: "execute selection".to_owned(),

@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 
-use std::{any::TypeId, ops::DerefMut};
+use std::{any::TypeId, ops::DerefMut, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 
@@ -174,7 +174,7 @@ impl Workspace {
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
         self.dismiss_notification(&toast.id, cx);
-        self.show_notification(toast.id, cx, |cx| {
+        self.show_notification(toast.id.clone(), cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
@@ -184,7 +184,20 @@ impl Workspace {
                 }
                 None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
-        })
+        });
+        if toast.autohide {
+            cx.spawn(|workspace, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(5000))
+                    .await;
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.dismiss_toast(&toast.id, cx)
+                    })
+                    .ok();
+            })
+            .detach();
+        }
     }
 
     pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {

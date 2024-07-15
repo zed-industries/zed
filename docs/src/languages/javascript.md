@@ -1,5 +1,7 @@
 # JavaScript
 
+JavaScript support is available natively in Zed.
+
 - Tree Sitter: [tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
 - Language Server: [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
@@ -140,3 +142,7 @@ You can configure ESLint's `rulesCustomizations` setting:
   }
 }
 ```
+
+
+## Yarn integration
+See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.

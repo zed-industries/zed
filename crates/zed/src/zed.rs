@@ -90,6 +90,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .find(|display| display.uuid().ok() == Some(uuid))
     });
     let app_id = ReleaseChannel::global(cx).app_id();
+    let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+        Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+        Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+        _ => gpui::WindowDecorations::Client,
+    };
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -105,6 +110,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
             height: px(240.0),
@@ -191,6 +197,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.spawn(|workspace_handle, mut cx| async move {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
+
+            let runtime_panel = repl::RuntimePanel::load(workspace_handle.clone(), cx.clone());
+
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -208,6 +217,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
+                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -216,6 +226,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
+                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -223,6 +234,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
+                workspace.add_panel(runtime_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
@@ -946,8 +958,9 @@ fn open_settings_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use assets::Assets;
-    use collections::HashSet;
+    use collections::{HashMap, HashSet};
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
@@ -958,6 +971,7 @@ mod tests {
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
     use std::path::{Path, PathBuf};
+    use task::{RevealStrategy, SpawnInTerminal};
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
@@ -3155,11 +3169,96 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| {
-            env_logger::builder().is_test(true).try_init().ok();
+    #[gpui::test]
+    async fn test_spawn_terminal_task_real_fs(cx: &mut TestAppContext) {
+        let mut app_state = cx.update(|cx| AppState::test(cx));
+        let state = Arc::get_mut(&mut app_state).unwrap();
+        state.fs = Arc::new(fs::RealFs::default());
+        let app_state = init_test_with_state(cx, app_state);
 
-            let mut app_state = AppState::test(cx);
+        cx.executor().allow_parking();
+        let project_root = util::test::temp_tree(json!({
+            "sample.txt": ""
+        }));
+
+        let spawn_in_terminal = SpawnInTerminal {
+            command: "echo SAMPLE-OUTPUT".to_string(),
+            cwd: None,
+            env: HashMap::default(),
+            id: task::TaskId(String::from("sample-id")),
+            full_label: String::from("sample-full_label"),
+            label: String::from("sample-label"),
+            args: vec![],
+            command_label: String::from("sample-command_label"),
+            use_new_terminal: false,
+            allow_concurrent_runs: false,
+            reveal: RevealStrategy::Always,
+        };
+        let project = Project::test(app_state.fs.clone(), [project_root.path()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            window
+                .update(cx, |_workspace, cx| {
+                    cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
+                })
+                .unwrap();
+        });
+        cx.run_until_parked();
+
+        run_until(|| {
+            cx.update(|cx| {
+                window
+                    .read_with(cx, |workspace, cx| {
+                        let terminal = workspace
+                            .project()
+                            .read(cx)
+                            .local_terminal_handles()
+                            .first()
+                            .unwrap()
+                            .upgrade()
+                            .unwrap()
+                            .read(cx);
+                        terminal
+                            .last_n_non_empty_lines(99)
+                            .join("")
+                            .contains("SAMPLE-OUTPUT")
+                    })
+                    .unwrap()
+            })
+        })
+        .await;
+    }
+
+    async fn run_until(predicate: impl Fn() -> bool) {
+        let timer = async { smol::Timer::after(std::time::Duration::from_secs(3)).await };
+
+        use futures::FutureExt as _;
+        use smol::future::FutureExt as _;
+
+        async {
+            loop {
+                if predicate() {
+                    return Ok(());
+                }
+                smol::Timer::after(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
+        .await
+        .unwrap();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
+    }
+
+    fn init_test_with_state(
+        cx: &mut TestAppContext,
+        mut app_state: Arc<AppState>,
+    ) -> Arc<AppState> {
+        cx.update(move |cx| {
+            env_logger::builder().is_test(true).try_init().ok();
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
@@ -3182,6 +3281,7 @@ mod tests {
             outline_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+            repl::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

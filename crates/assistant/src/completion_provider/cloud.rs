@@ -1,6 +1,6 @@
 use crate::{
     assistant_settings::CloudModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
-    LanguageModelRequest,
+    LanguageModelCompletionProvider, LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
 use client::{proto, Client};
@@ -30,11 +30,9 @@ impl CloudCompletionProvider {
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 let _ = cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::Cloud(provider) = provider {
+                    provider.update_current_as::<_, Self>(|provider| {
                         provider.status = status;
-                    } else {
-                        unreachable!()
-                    }
+                    });
                 });
             }
         });
@@ -51,49 +49,58 @@ impl CloudCompletionProvider {
         self.model = model;
         self.settings_version = settings_version;
     }
+}
 
-    pub fn available_models(&self) -> impl Iterator<Item = CloudModel> {
+impl LanguageModelCompletionProvider for CloudCompletionProvider {
+    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
             Some(custom_model)
         } else {
             None
         };
-        CloudModel::iter().filter_map(move |model| {
-            if let CloudModel::Custom(_) = model {
-                Some(CloudModel::Custom(custom_model.take()?))
-            } else {
-                Some(model)
-            }
-        })
+        CloudModel::iter()
+            .filter_map(move |model| {
+                if let CloudModel::Custom(_) = model {
+                    Some(CloudModel::Custom(custom_model.take()?))
+                } else {
+                    Some(model)
+                }
+            })
+            .map(LanguageModel::Cloud)
+            .collect()
     }
 
-    pub fn settings_version(&self) -> usize {
+    fn settings_version(&self) -> usize {
         self.settings_version
     }
 
-    pub fn model(&self) -> CloudModel {
-        self.model.clone()
-    }
-
-    pub fn is_authenticated(&self) -> bool {
+    fn is_authenticated(&self) -> bool {
         self.status.is_connected()
     }
 
-    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
     }
 
-    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|_cx| AuthenticationPrompt).into()
     }
 
-    pub fn count_tokens(
+    fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn model(&self) -> LanguageModel {
+        LanguageModel::Cloud(self.model.clone())
+    }
+
+    fn count_tokens(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        match request.model.clone() {
+        match request.model {
             LanguageModel::Cloud(CloudModel::Gpt4)
             | LanguageModel::Cloud(CloudModel::Gpt4Turbo)
             | LanguageModel::Cloud(CloudModel::Gpt4Omni)
@@ -109,17 +116,26 @@ impl CloudCompletionProvider {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::Cloud(CloudModel::Gemini15Pro | CloudModel::Gemini15Flash) => {
-                self.count_tokens_with_model(request.model.id().to_string(), &request)
-            }
             LanguageModel::Cloud(CloudModel::Custom(model)) => {
-                self.count_tokens_with_model(model, &request)
+                let request = self.client.request(proto::CountTokensWithLanguageModel {
+                    model,
+                    messages: request
+                        .messages
+                        .iter()
+                        .map(|message| message.to_proto())
+                        .collect(),
+                });
+                async move {
+                    let response = request.await?;
+                    Ok(response.token_count as usize)
+                }
+                .boxed()
             }
             _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }
     }
 
-    pub fn complete(
+    fn complete(
         &self,
         mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -136,7 +152,11 @@ impl CloudCompletionProvider {
             temperature: request.temperature,
             tools: Vec::new(),
             tool_choice: None,
-            cached_contents: request.cached_contents,
+            cached_contents: request
+                .cached_contents
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
         };
 
         self.client
@@ -154,24 +174,8 @@ impl CloudCompletionProvider {
             .boxed()
     }
 
-    fn count_tokens_with_model(
-        &self,
-        model: String,
-        request: &LanguageModelRequest,
-    ) -> BoxFuture<'static, Result<usize>> {
-        let request = self.client.request(proto::CountTokensWithLanguageModel {
-            model,
-            messages: request
-                .messages
-                .iter()
-                .map(|message| message.to_proto())
-                .collect(),
-        });
-        async move {
-            let response = request.await?;
-            Ok(response.token_count as usize)
-        }
-        .boxed()
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 

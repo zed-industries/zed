@@ -371,7 +371,7 @@ async fn update_editor_from_message(
                     continue;
                 };
                 let buffer_id = BufferId::new(excerpt.buffer_id)?;
-                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id) else {
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
                     continue;
                 };
 

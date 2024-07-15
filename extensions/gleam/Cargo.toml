@@ -13,4 +13,5 @@ path = "src/gleam.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+html_to_markdown = "0.1.0"
 zed_extension_api = { path = "../../crates/extension_api" }

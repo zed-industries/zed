@@ -38,16 +38,16 @@
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
-  //         "line_height": "comfortable"
+  //         "buffer_line_height": "comfortable"
   //  2. Use a standard line height, (1.3)
-  //         "line_height": "standard",
+  //         "buffer_line_height": "standard",
   //  3. Use a custom line height
-  //         "line_height": {
+  //         "buffer_line_height": {
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
+  // (On macOS) You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
@@ -116,6 +116,11 @@
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
+  // Show method signatures in the editor, when inside parentheses.
+  "auto_signature_help": false,
+  /// Whether to show the signature help after completion or a bracket pair inserted.
+  /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
+  "show_signature_help_after_edits": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if softwrap is set to 'preferred_line_length', and will show any
@@ -155,11 +160,11 @@
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
   // 2. Do not draw any tabs or spaces:
-  //   "none"
+  //    "none"
   // 3. Draw all invisible symbols:
-  //   "all"
+  //    "all"
   // 4. Draw whitespaces at boundaries only:
-  //   "boundaries"
+  //    "boundary"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -255,6 +260,8 @@
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
+  // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
+  "search_wrap": true,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -300,8 +307,8 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
-    /// Whether to fold directories automatically
-    /// when a directory has only one directory inside.
+    // Whether to fold directories automatically and show compact folders
+    // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": false,
     /// Scrollbar-related settings
     "scrollbar": {
@@ -532,6 +539,14 @@
       // "delay_ms": 600
     }
   },
+  // Configuration for how direnv configuration should be loaded. May take 2 values:
+  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "load_direnv": "shell_hook"
+  // 2. Load direnv configuration using `direnv export json` directly.
+  //    This can help with some shells that otherwise would not detect
+  //    the direnv environment, such as nushell or elvish.
+  //      "load_direnv": "direct"
+  "load_direnv": "shell_hook",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
@@ -666,6 +681,10 @@
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
+  /// Settings related to running tasks.
+  "tasks": {
+    "variables": {}
+  },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -679,6 +698,7 @@
   // }
   //
   "file_types": {
+    "JSON": ["flake.lock"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
   },
   // The extensions that Zed should automatically install on startup.
@@ -702,10 +722,12 @@
       }
     },
     "C": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "C++": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "CSS": {
       "prettier": {
@@ -757,6 +779,7 @@
     },
     "Markdown": {
       "format_on_save": "off",
+      "use_on_type_format": false,
       "prettier": {
         "allowed": true
       }
@@ -764,7 +787,8 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"]
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php"
       }
     },
     "Ruby": {
