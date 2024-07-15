@@ -10,6 +10,7 @@ use ui::{
 };
 
 use gpui::ElementId;
+use util::ResultExt;
 
 use crate::QuickActionBar;
 
@@ -29,6 +30,19 @@ impl QuickActionBar {
             (editor, repl_panel)
         } else {
             return None;
+        };
+
+        let has_nonempty_selection = {
+            editor.update(cx, |this, cx| {
+                this.selections
+                    .count()
+                    .ne(&0)
+                    .then(|| {
+                        let latest = this.selections.newest_display(cx);
+                        !latest.is_empty()
+                    })
+                    .unwrap_or_default()
+            })
         };
 
         let session = repl_panel.update(cx, |repl_panel, cx| {
@@ -126,15 +140,17 @@ impl QuickActionBar {
         let kernel = &session.kernel;
         let status_borrow = &kernel.status();
         let status = status_borrow.clone();
-        let stupid_panel = repl_panel.clone();
-        let stupid_editor = editor.downgrade();
+        let panel_clone = repl_panel.clone();
+        let editor_clone = editor.downgrade();
+        let has_nonempty_selection = has_nonempty_selection.clone();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
                 let kernel_name = kernel_name.clone();
                 let kernel_language = kernel_language.clone();
                 let status = status.clone();
-                let stupid_panel = stupid_panel.clone();
-                let stupid_editor = stupid_editor.clone();
+                let panel_clone = panel_clone.clone();
+                let editor_clone = editor_clone.clone();
+                let has_nonempty_selection = has_nonempty_selection.clone();
                 ContextMenu::build(cx, move |menu, _cx| {
                     let kernel_name = kernel_name.clone();
                     let kernel_language = kernel_language.clone();
@@ -186,18 +202,25 @@ impl QuickActionBar {
                     // Check if there is a selection in the editor
                     // If there is, label is "Run Selection"
                     // otherwise, label is "Run Line" (Cell?)
-                    .action("Run", Box::new(repl::Run))
-                    .custom_row(move |cx| {
+                    .action(
+                        if has_nonempty_selection {
+                            "Run Selection"
+                        } else {
+                            "Run Line"
+                        },
+                        Box::new(repl::Run),
+                    )
+                    .custom_row(move |_cx| {
                         ButtonLike::new_rounded_left("toggle_repl_icon")
                             .child(IconButton::new("foo", IconName::ReplNeutral).into_any_element())
                             .size(ButtonSize::Compact)
                             .style(ButtonStyle::Subtle)
                             .on_click({
-                                let stupid_panel = stupid_panel.clone();
-                                let stupid_editor = stupid_editor.clone();
+                                let panel_clone = panel_clone.clone();
+                                let editor_clone = editor_clone.clone();
                                 move |_, cx| {
-                                    stupid_panel.update(cx, |this, cx| {
-                                        this.run(stupid_editor.clone(), cx);
+                                    panel_clone.update(cx, |this, cx| {
+                                        this.run(editor_clone.clone(), cx).log_err();
                                     });
                                 }
                             })
