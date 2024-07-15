@@ -1,12 +1,12 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::ArgumentCompletion;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use editor::Editor;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::WindowContext;
+use ui::{IconName, WindowContext};
 use workspace::Workspace;
 
 pub(crate) struct OutlineSlashCommand;
@@ -64,10 +64,8 @@ impl SlashCommand for OutlineSlashCommand {
                     .outline(None)
                     .context("no outline for active tab")?;
 
-                let mut outline_text = format!(
-                    "Symbols for {}:\n",
-                    path.as_deref().unwrap_or(Path::new("untitled")).display()
-                );
+                let path = path.as_deref().unwrap_or(Path::new("untitled"));
+                let mut outline_text = format!("Symbols for {}:\n", path.display());
                 for item in &outline.path_candidates {
                     outline_text.push_str("- ");
                     outline_text.push_str(&item.string);
@@ -75,8 +73,12 @@ impl SlashCommand for OutlineSlashCommand {
                 }
 
                 Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: 0..outline_text.len(),
+                        icon: IconName::ListTree,
+                        label: path.to_string_lossy().to_string().into(),
+                    }],
                     text: outline_text,
-                    sections: Vec::new(),
                     run_commands_in_text: false,
                 })
             })
