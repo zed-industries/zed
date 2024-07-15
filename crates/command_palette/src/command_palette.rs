@@ -366,7 +366,9 @@ impl PickerDelegate for CommandPaletteDelegate {
             *hit_counts.0.entry(command.name).or_default() += 1;
         });
         let action = command.action;
-        cx.focus(&self.previous_focus_handle);
+        if cx.focus_handle_in_tree(&self.previous_focus_handle) {
+            cx.focus(&self.previous_focus_handle);
+        }
         self.dismissed(cx);
         cx.dispatch_action(action);
     }
@@ -379,6 +381,12 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> Option<Self::ListItem> {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;
+        let focus_handle = if cx.focus_handle_in_tree(&self.previous_focus_handle) {
+            &self.previous_focus_handle
+        } else {
+            &cx.focused()?
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -395,7 +403,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         ))
                         .children(KeyBinding::for_action_in(
                             &*command.action,
-                            &self.previous_focus_handle,
+                            focus_handle,
                             cx,
                         )),
                 ),

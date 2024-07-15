@@ -975,6 +975,15 @@ impl<'a> WindowContext<'a> {
         self.refresh();
     }
 
+    /// Check if the provided focus handle is in the dispatch tree
+    pub fn focus_handle_in_tree(&self, handle: &FocusHandle) -> bool {
+        self.window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(handle.id)
+            .is_some()
+    }
+
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self) {
         if !self.window.focus_enabled {
