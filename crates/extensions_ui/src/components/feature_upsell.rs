@@ -1,19 +1,19 @@
+use gpui::{Div, StyleRefinement};
 use ui::{prelude::*, ButtonLike};
 
-#[derive(IntoElement, Clone)]
+#[derive(IntoElement)]
 pub struct FeatureUpsell {
+    base: Div,
     text: SharedString,
     docs_url: Option<SharedString>,
-    /// Whether this is the first upsell being displayed.
-    is_first: bool,
 }
 
 impl FeatureUpsell {
     pub fn new(text: impl Into<SharedString>) -> Self {
         Self {
+            base: h_flex(),
             text: text.into(),
             docs_url: None,
-            is_first: false,
         }
     }
 
@@ -21,20 +21,24 @@ impl FeatureUpsell {
         self.docs_url = Some(docs_url.into());
         self
     }
+}
 
-    pub fn is_first(mut self, is_first: bool) -> Self {
-        self.is_first = is_first;
-        self
+// Style methods.
+impl FeatureUpsell {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
     }
+
+    gpui::border_style_methods!({
+        visibility: pub
+    });
 }
 
 impl RenderOnce for FeatureUpsell {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
+        self.base
             .p_4()
             .justify_between()
-            .when(!self.is_first, |el| el.border_t_1())
-            .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(Label::new(self.text))
             .when_some(self.docs_url, |el, docs_url| {

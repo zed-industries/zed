@@ -8,7 +8,7 @@ use std::{ops::Range, sync::Arc};
 
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
-use collections::BTreeMap;
+use collections::BTreeSet;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -125,6 +125,12 @@ impl ExtensionFilter {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum Feature {
+    Git,
+    Vim,
+}
+
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     list: UniformListScrollHandle,
@@ -138,7 +144,7 @@ pub struct ExtensionsPage {
     query_contains_error: bool,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
-    upsells: BTreeMap<Arc<str>, FeatureUpsell>,
+    upsells: BTreeSet<Feature>,
 }
 
 impl ExtensionsPage {
@@ -177,7 +183,7 @@ impl ExtensionsPage {
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
-                upsells: BTreeMap::default(),
+                upsells: BTreeSet::default(),
             };
             this.fetch_extensions(None, cx);
             this
@@ -800,22 +806,15 @@ impl ExtensionsPage {
 
             if let Some(search) = self.search_query(cx) {
                 if search.contains("git") {
-                    self.upsells.insert(
-                        "git".into(),
-                        FeatureUpsell::new("Git support is built-in to Zed!"),
-                    );
+                    self.upsells.insert(Feature::Git);
                 } else {
-                    self.upsells.remove("git");
+                    self.upsells.remove(&Feature::Git);
                 }
 
                 if search.contains("vim") {
-                    self.upsells.insert(
-                        "vim".into(),
-                        FeatureUpsell::new("Vim support is built-in to Zed!")
-                            .docs_url("https://zed.dev/docs/vim"),
-                    );
+                    self.upsells.insert(Feature::Vim);
                 } else {
-                    self.upsells.remove("vim");
+                    self.upsells.remove(&Feature::Vim);
                 }
             } else {
                 self.upsells.clear();
@@ -890,6 +889,22 @@ impl ExtensionsPage {
         };
 
         Label::new(message)
+    }
+
+    fn render_feature_upsells(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_2()
+            .children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+                let upsell = match feature {
+                    Feature::Git => FeatureUpsell::new("Git support is built-in to Zed!"),
+                    Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/vim"),
+                };
+
+                upsell
+                    .when(ix > 0, |upsell| upsell.border_t_1())
+                    .border_b_1()
+            }))
     }
 }
 
@@ -973,15 +988,7 @@ impl Render for ExtensionsPage {
                             ),
                     ),
             )
-            .child(
-                v_flex().gap_2().children(
-                    self.upsells
-                        .values()
-                        .cloned()
-                        .enumerate()
-                        .map(|(ix, upsell)| upsell.is_first(ix == 0)),
-                ),
-            )
+            .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
                 if self.filter.include_dev_extensions() {
