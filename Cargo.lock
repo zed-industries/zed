@@ -8077,6 +8077,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2 0.10.7",
+ "shellexpand 2.1.2",
  "shlex",
  "similar",
  "smol",

@@ -20,7 +20,7 @@ enum ElementContainer {
     UniformList(UniformListScrollHandle),
 }
 
-actions!(picker, [UseSelectedQuery]);
+actions!(picker, [ConfirmCompletion]);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
@@ -87,10 +87,10 @@ pub trait PickerDelegate: Sized + 'static {
         false
     }
 
+    /// Override if you want to have <enter> update the query instead of confirming.
     fn confirm_update_query(&mut self, _cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
         None
     }
-
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
@@ -99,7 +99,7 @@ pub trait PickerDelegate: Sized + 'static {
     fn should_dismiss(&self) -> bool {
         true
     }
-    fn selected_as_query(&self) -> Option<String> {
+    fn confirm_completion(&self, _query: String) -> Option<String> {
         None
     }
 
@@ -349,10 +349,11 @@ impl<D: PickerDelegate> Picker<D> {
         self.delegate.confirm_input(input.secondary, cx);
     }
 
-    fn use_selected_query(&mut self, _: &UseSelectedQuery, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.delegate.selected_as_query() {
+    fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx)) {
             self.set_query(new_query, cx);
-            cx.stop_propagation();
+        } else {
+            cx.propagate()
         }
     }
 
@@ -571,7 +572,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
-            .on_action(cx.listener(Self::use_selected_query))
+            .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
             .child(match &self.head {
                 Head::Editor(editor) => self.delegate.render_editor(&editor.clone(), cx),

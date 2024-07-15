@@ -59,6 +59,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
+shellexpand.workspace = true
 shlex.workspace = true
 similar = "1.3"
 smol.workspace = true
