@@ -688,13 +688,13 @@ impl DiagnosticPopover {
         }
 
         if let Some(background_color) = &self.background_color {
-            markdown_div = markdown_div.bg(background_color.clone());
+            markdown_div = markdown_div.bg(*background_color);
         }
 
         if let Some(border_color) = &self.border_color {
             markdown_div = markdown_div
                 .border_1()
-                .border_color(border_color.clone())
+                .border_color(*border_color)
                 .rounded_lg();
         }
 
