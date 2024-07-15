@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::path::PathBuf;
 
 use db::{define_connection, query, sqlez_macros::sql};
@@ -67,5 +68,22 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
+    }
+
+    pub async fn delete_unloaded_items(
+        &self,
+        workspace: WorkspaceId,
+        alive_items: Vec<ItemId>,
+    ) -> Result<()> {
+        let ids_string = alive_items
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let workspace_id: i64 = workspace.into();
+
+        let query = format!("DELETE FROM terminals WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
+        self.write(move |conn| conn.exec(&query).unwrap()()).await
     }
 }

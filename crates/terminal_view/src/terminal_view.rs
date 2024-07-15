@@ -1078,11 +1078,11 @@ impl SerializableItem for TerminalView {
     }
 
     fn cleanup(
-        _workspace_id: WorkspaceId,
-        _alive_items: Vec<workspace::ItemId>,
-        _cx: &mut WindowContext,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        cx: &mut WindowContext,
     ) -> Task<gpui::Result<()>> {
-        Task::ready(Ok(()))
+        cx.spawn(|_| TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items))
     }
 
     fn serialize(

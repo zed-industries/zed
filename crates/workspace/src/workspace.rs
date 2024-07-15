@@ -3879,7 +3879,6 @@ impl Workspace {
                 if let Ok(Some(task)) =
                     this.update(cx, |workspace, cx| item.serialize(workspace, cx))
                 {
-                    println!("serializing item of kind: {}", kind);
                     cx.background_executor()
                         .spawn(async move { task.await.log_err() })
                         .detach();

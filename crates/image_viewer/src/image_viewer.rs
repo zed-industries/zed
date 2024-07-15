@@ -137,8 +137,12 @@ impl SerializableItem for ImageView {
         })
     }
 
-    fn cleanup(_: WorkspaceId, _: Vec<ItemId>, _: &mut WindowContext) -> Task<gpui::Result<()>> {
-        Task::ready(Ok(()))
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<gpui::Result<()>> {
+        cx.spawn(|_| IMAGE_VIEWER.delete_unloaded_items(workspace_id, alive_items))
     }
 
     fn serialize(
@@ -262,6 +266,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 mod persistence {
+    use anyhow::Result;
     use std::path::PathBuf;
 
     use db::{define_connection, query, sqlez_macros::sql};
@@ -313,6 +318,23 @@ mod persistence {
                 FROM image_viewers
                 WHERE item_id = ? AND workspace_id = ?
             }
+        }
+
+        pub async fn delete_unloaded_items(
+            &self,
+            workspace: WorkspaceId,
+            alive_items: Vec<ItemId>,
+        ) -> Result<()> {
+            let ids_string = alive_items
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            let workspace_id: i64 = workspace.into();
+
+            let query = format!("DELETE FROM image_viewers WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
+            self.write(move |conn| conn.exec(&query).unwrap()()).await
         }
     }
 }
