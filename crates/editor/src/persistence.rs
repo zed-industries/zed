@@ -1,4 +1,5 @@
 use anyhow::Result;
+use db::sqlez::statement::Statement;
 use std::path::PathBuf;
 
 use db::sqlez_macros::sql;
@@ -128,15 +129,26 @@ impl EditorDb {
         workspace: WorkspaceId,
         loaded_item_ids: Vec<ItemId>,
     ) -> Result<()> {
-        let ids_string = loaded_item_ids
+        if loaded_item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let placeholders = loaded_item_ids
             .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<String>>()
+            .map(|_| "?")
+            .collect::<Vec<&str>>()
             .join(", ");
 
-        let workspace_id: i64 = workspace.into();
+        let query = format!("DELETE FROM editor_contents WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
 
-        let query = format!("DELETE FROM editor_contents WHERE workspace_id = {workspace_id} AND item_id NOT IN ({ids_string})");
-        self.write(move |conn| conn.exec(&query).unwrap()()).await
+        self.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&workspace, 1)?;
+            for id in loaded_item_ids {
+                next_index = statement.bind(&id, next_index)?;
+            }
+            statement.exec()
+        })
+        .await
     }
 }
