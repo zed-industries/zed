@@ -288,7 +288,7 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.foreground_executor.clone(),
             lock.current_cursor,
-        );
+        )?;
         drop(lock);
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
