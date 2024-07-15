@@ -7559,6 +7559,24 @@ impl Project {
         }
     }
 
+    pub fn completions_for_open_path_query(
+        &self,
+        query: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<PathBuf>>> {
+        let fs = self.fs.clone();
+        cx.background_executor().spawn(async move {
+            let mut results = vec![];
+            let expanded = shellexpand::tilde(&query);
+            let query = Path::new(expanded.as_ref());
+            let mut response = fs.read_dir(query).await?;
+            while let Some(path) = response.next().await {
+                results.push(path?);
+            }
+            Ok(results)
+        })
+    }
+
     fn create_local_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -11720,7 +11738,7 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
     });
 }
 
-fn compare_paths(
+pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
 ) -> cmp::Ordering {
