@@ -7,10 +7,10 @@ use crate::{
 };
 use chrono::Local;
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
-    InteractiveText, IntoElement, Length, MouseButton, ParentElement, Pixels, ScrollHandle,
-    SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled, StyledText, Task,
-    TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
+    black, blue, div, green, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla,
+    InteractiveElement, InteractiveText, IntoElement, Length, MouseButton, ParentElement, Pixels,
+    ScrollHandle, SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled,
+    StyledText, Task, TextStyle, TextStyleRefinement, View, ViewContext, WeakView,
 };
 
 use itertools::Itertools;
@@ -335,11 +335,8 @@ fn show_hover(
                 let parsed_content = cx
                     .new_view(|cx| {
                         let status_colors = cx.theme().status();
-                        // struct DiagnosticColors {
-                        //     pub background: Hsla,
-                        //     pub border: Hsla,
-                        // }
-                        let diagnostic_colors = match local_diagnostic.diagnostic.severity {
+
+                        match local_diagnostic.diagnostic.severity {
                             DiagnosticSeverity::ERROR => {
                                 background_color = Some(status_colors.error_background);
                                 border_color = Some(status_colors.error_border);
@@ -364,8 +361,8 @@ fn show_hover(
                         let settings = ThemeSettings::get_global(cx);
                         let markdown_style = MarkdownStyle {
                             base_text_style: TextStyle {
-                                font_family: settings.buffer_font.family.clone(),
-                                font_size: settings.buffer_font_size.into(),
+                                font_family: settings.ui_font.family.clone(),
+                                font_size: settings.ui_font_size.into(),
                                 color: cx.theme().colors().editor_foreground,
                                 background_color: Some(background_color.unwrap()),
                                 ..Default::default()
@@ -598,7 +595,9 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(max_size, cx));
+            let mut max_diagnostic_size = max_size.clone();
+            max_diagnostic_size.width.0 /= 1.5;
+            elements.push(diagnostic_popover.render(max_diagnostic_size, cx));
         }
         for info_popover in &mut self.info_popovers {
             elements.push(info_popover.render(max_size, cx));
@@ -688,21 +687,31 @@ pub struct DiagnosticPopover {
 impl DiagnosticPopover {
     pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
-        let mut d = div()
+        let mut d = div().max_w(max_size.width);
+
+        if let Some(markdown) = &self.parsed_content {
+            d = d.child(markdown.clone());
+        }
+
+        if let Some(background_color) = &self.background_color {
+            // d = d.bg(background_color.clone()).p_1();
+            // d = d.bg(green()).px_1()
+            d = d
+                .border_3()
+                .border_color(background_color.clone())
+                .rounded_lg()
+        }
+
+        let mut full_div = div()
             .id("diagnostic")
             .block()
+            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .max_w(Length::Definite(DefiniteLength::Absolute(
-                AbsoluteLength::Pixels(px(max_size.width.0 / 5.)),
-            )))
-            .max_h(max_size.height)
-            .cursor(CursorStyle::PointingHand)
-            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
@@ -712,17 +721,15 @@ impl DiagnosticPopover {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
-            });
-        if let Some(markdown) = &self.parsed_content {
-            d = d.child(markdown.clone());
-        }
+            })
+            .child(d);
         if let Some(border_color) = &self.border_color {
-            d = d.border_1().border_color(border_color.clone()).rounded_lg()
+            full_div = full_div
+                .border_1()
+                .border_color(border_color.clone())
+                .rounded_lg()
         }
-        if let Some(backgorund_color) = &self.background_color {
-            d = d.bg(backgorund_color.clone())
-        }
-        d.into_any_element()
+        full_div.into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
