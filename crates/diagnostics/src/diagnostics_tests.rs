@@ -2,12 +2,11 @@ use super::*;
 use collections::HashMap;
 use editor::{
     display_map::{BlockContext, DisplayRow, TransformBlock},
-    DisplayPoint, ExcerptRange, GutterDimensions,
+    DisplayPoint, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, Point, PointUtf16, Rope,
-    Unclipped,
+    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
 };
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -156,17 +155,16 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let editor = view.update(cx, |view, _| view.editor.clone());
 
     view.next_notification(cx).await;
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(15), EXCERPT_HEADER.into()),
-    //         (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(25), EXCERPT_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(15), EXCERPT_HEADER.into()),
+            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(25), EXCERPT_HEADER.into()),
+        ]
+    );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
         concat!(
@@ -242,19 +240,18 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     view.next_notification(cx).await;
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(7), FILE_HEADER.into()),
-    //         (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(22), EXCERPT_HEADER.into()),
-    //         (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(32), EXCERPT_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), FILE_HEADER.into()),
+            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(22), EXCERPT_HEADER.into()),
+            (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(32), EXCERPT_HEADER.into()),
+        ]
+    );
 
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -355,21 +352,20 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     view.next_notification(cx).await;
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(7), EXCERPT_HEADER.into()),
-    //         (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(13), FILE_HEADER.into()),
-    //         (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(28), EXCERPT_HEADER.into()),
-    //         (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(38), EXCERPT_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(13), FILE_HEADER.into()),
+            (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(28), EXCERPT_HEADER.into()),
+            (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(38), EXCERPT_HEADER.into()),
+        ]
+    );
 
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -494,14 +490,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor().run_until_parked();
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+        ]
+    );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
         concat!(
@@ -541,16 +536,15 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor().run_until_parked();
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(6), EXCERPT_HEADER.into()),
-    //         (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(6), EXCERPT_HEADER.into()),
+            (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
+        ]
+    );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
         concat!(
@@ -608,16 +602,15 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor().run_until_parked();
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(7), EXCERPT_HEADER.into()),
-    //         (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+        ]
+    );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
         concat!(
@@ -665,16 +658,15 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor().run_until_parked();
-    // TODO kb
-    // assert_eq!(
-    //     editor_blocks(&editor, cx),
-    //     [
-    //         (DisplayRow(0), FILE_HEADER.into()),
-    //         (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-    //         (DisplayRow(7), EXCERPT_HEADER.into()),
-    //         (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
-    //     ]
-    // );
+    assert_eq!(
+        editor_blocks(&editor, cx),
+        [
+            (DisplayRow(0), FILE_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+        ]
+    );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
         concat!(
@@ -868,18 +860,17 @@ fn get_diagnostics_excerpts(
             }
         });
 
-        // TODO kb
-        // for state in &view.path_states {
-        //     for group in &state.diagnostic_groups {
-        //         for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
-        //             let excerpt_ix = excerpt_indices_by_id[excerpt_id];
-        //             let excerpt = &mut result[excerpt_ix];
-        //             excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
-        //             excerpt.language_server = group.language_server_id;
-        //             excerpt.primary = ix == group.primary_excerpt_ix;
-        //         }
-        //     }
-        // }
+        for state in &view.path_states {
+            for group in &state.diagnostic_groups {
+                for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
+                    let excerpt_ix = excerpt_indices_by_id[excerpt_id];
+                    let excerpt = &mut result[excerpt_ix];
+                    excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
+                    excerpt.language_server = group.language_server_id;
+                    excerpt.primary = ix == group.primary_excerpt_ix;
+                }
+            }
+        }
 
         result
     })

@@ -4,49 +4,45 @@ mod toolbar_controls;
 
 #[cfg(test)]
 mod diagnostics_tests;
+mod grouped_diagnostics;
 
 use anyhow::Result;
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
-        TransformBlockId,
-    },
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
+    highlight_diagnostic_message,
     scroll::Autoscroll,
-    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint,
+    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
+use feature_flags::FeatureFlagAppExt;
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     StreamExt as _,
 };
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
+    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use language::{
-    Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
-    ToPoint as _,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
-use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection, MultiBufferRow};
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
+    mem,
     ops::Range,
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::{debug_panic, ResultExt};
+use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
@@ -58,6 +54,9 @@ pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
     cx.observe_new_views(ProjectDiagnosticsEditor::register)
         .detach();
+    if !cx.has_flag::<feature_flags::GroupedDiagnostics>() {
+        grouped_diagnostics::init(cx);
+    }
 }
 
 struct ProjectDiagnosticsEditor {
@@ -78,37 +77,16 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
-    first_excerpt_id: Option<ExcerptId>,
-    last_excerpt_id: Option<ExcerptId>,
-    diagnostics: Vec<(DiagnosticData, BlockId)>,
+    diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
-#[derive(Debug, Clone)]
-struct DiagnosticData {
+struct DiagnosticGroupState {
     language_server_id: LanguageServerId,
-    is_primary: bool,
-    entry: DiagnosticEntry<language::Anchor>,
-}
-
-impl DiagnosticData {
-    fn diagnostic_entries_equal(&self, other: &DiagnosticData) -> bool {
-        self.language_server_id == other.language_server_id
-            && self.is_primary == other.is_primary
-            && self.entry.range == other.entry.range
-            && equal_without_group_ids(&self.entry.diagnostic, &other.entry.diagnostic)
-    }
-}
-
-// `group_id` can differ between LSP server diagnostics output,
-// hence ignore it when checking diagnostics for updates.
-fn equal_without_group_ids(a: &language::Diagnostic, b: &language::Diagnostic) -> bool {
-    a.source == b.source
-        && a.code == b.code
-        && a.severity == b.severity
-        && a.message == b.message
-        && a.is_primary == b.is_primary
-        && a.is_disk_based == b.is_disk_based
-        && a.is_unnecessary == b.is_unnecessary
+    primary_diagnostic: DiagnosticEntry<language::Anchor>,
+    primary_excerpt_ix: usize,
+    excerpts: Vec<ExcerptId>,
+    blocks: HashSet<BlockId>,
+    block_count: usize,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -220,8 +198,8 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             focus_handle,
             editor,
-            path_states: Vec::new(),
-            paths_to_update: BTreeSet::new(),
+            path_states: Default::default(),
+            paths_to_update: Default::default(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             update_paths_tx: update_excerpts_tx,
             _update_excerpts_task: cx.spawn(move |this, mut cx| async move {
@@ -328,71 +306,283 @@ impl ProjectDiagnosticsEditor {
                 || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
-        // TODO kb change selections as in the old panel, to the next primary diagnostics
-        // TODO kb make [shift-]f8 to work, jump to the next block group
         let was_empty = self.path_states.is_empty();
-        let path_ix = match self.path_states.binary_search_by(|probe| {
-            project::compare_paths((&probe.path.path, true), (&path_to_update.path, true))
-        }) {
+        let snapshot = buffer.read(cx).snapshot();
+        let path_ix = match self
+            .path_states
+            .binary_search_by_key(&&path_to_update, |e| &e.path)
+        {
             Ok(ix) => ix,
             Err(ix) => {
                 self.path_states.insert(
                     ix,
                     PathState {
                         path: path_to_update.clone(),
-                        diagnostics: Vec::new(),
-                        last_excerpt_id: None,
-                        first_excerpt_id: None,
+                        diagnostic_groups: Default::default(),
                     },
                 );
                 ix
             }
         };
 
-        // TODO kb when warnings are turned off, there's a lot of refresh for many paths happening, why?
+        let mut prev_excerpt_id = if path_ix > 0 {
+            let prev_path_last_group = &self.path_states[path_ix - 1]
+                .diagnostic_groups
+                .last()
+                .unwrap();
+            *prev_path_last_group.excerpts.last().unwrap()
+        } else {
+            ExcerptId::min()
+        };
+
+        let path_state = &mut self.path_states[path_ix];
+        let mut new_group_ixs = Vec::new();
+        let mut blocks_to_add = Vec::new();
+        let mut blocks_to_remove = HashSet::default();
+        let mut first_excerpt_id = None;
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
             DiagnosticSeverity::ERROR
         };
+        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
+            let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
+                .into_iter()
+                .enumerate()
+                .peekable();
+            let mut new_groups = snapshot
+                .diagnostic_groups(server_to_update)
+                .into_iter()
+                .filter(|(_, group)| {
+                    group.entries[group.primary_ix].diagnostic.severity <= max_severity
+                })
+                .peekable();
+            loop {
+                let mut to_insert = None;
+                let mut to_remove = None;
+                let mut to_keep = None;
+                match (old_groups.peek(), new_groups.peek()) {
+                    (None, None) => break,
+                    (None, Some(_)) => to_insert = new_groups.next(),
+                    (Some((_, old_group)), None) => {
+                        if server_to_update.map_or(true, |id| id == old_group.language_server_id) {
+                            to_remove = old_groups.next();
+                        } else {
+                            to_keep = old_groups.next();
+                        }
+                    }
+                    (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
+                        let old_primary = &old_group.primary_diagnostic;
+                        let new_primary = &new_group.entries[new_group.primary_ix];
+                        match compare_diagnostics(old_primary, new_primary, &snapshot)
+                            .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
+                        {
+                            Ordering::Less => {
+                                if server_to_update
+                                    .map_or(true, |id| id == old_group.language_server_id)
+                                {
+                                    to_remove = old_groups.next();
+                                } else {
+                                    to_keep = old_groups.next();
+                                }
+                            }
+                            Ordering::Equal => {
+                                to_keep = old_groups.next();
+                                new_groups.next();
+                            }
+                            Ordering::Greater => to_insert = new_groups.next(),
+                        }
+                    }
+                }
 
-        let excerpt_borders = self.excerpt_borders_for_path(path_ix);
-        let path_state = &mut self.path_states[path_ix];
-        let buffer_snapshot = buffer.read(cx).snapshot();
+                if let Some((language_server_id, group)) = to_insert {
+                    let mut group_state = DiagnosticGroupState {
+                        language_server_id,
+                        primary_diagnostic: group.entries[group.primary_ix].clone(),
+                        primary_excerpt_ix: 0,
+                        excerpts: Default::default(),
+                        blocks: Default::default(),
+                        block_count: 0,
+                    };
+                    let mut pending_range: Option<(Range<Point>, usize)> = None;
+                    let mut is_first_excerpt_for_group = true;
+                    for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
+                        let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
+                        if let Some((range, start_ix)) = &mut pending_range {
+                            if let Some(entry) = resolved_entry.as_ref() {
+                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
+                                    range.end = range.end.max(entry.range.end);
+                                    continue;
+                                }
+                            }
 
-        let mut path_update = PathUpdate::new(
-            excerpt_borders,
-            &buffer_snapshot,
-            server_to_update,
-            max_severity,
-            path_state,
-        );
-        path_update.prepare_excerpt_data(
-            self.context,
-            self.excerpts.read(cx).snapshot(cx),
-            buffer.read(cx).snapshot(),
-            path_state.diagnostics.iter(),
-        );
-        self.excerpts.update(cx, |multi_buffer, cx| {
-            path_update.apply_excerpt_changes(
-                path_state,
-                self.context,
-                buffer_snapshot,
-                multi_buffer,
-                buffer,
+                            let excerpt_start =
+                                Point::new(range.start.row.saturating_sub(self.context), 0);
+                            let excerpt_end = snapshot.clip_point(
+                                Point::new(range.end.row + self.context, u32::MAX),
+                                Bias::Left,
+                            );
+
+                            let excerpt_id = excerpts
+                                .insert_excerpts_after(
+                                    prev_excerpt_id,
+                                    buffer.clone(),
+                                    [ExcerptRange {
+                                        context: excerpt_start..excerpt_end,
+                                        primary: Some(range.clone()),
+                                    }],
+                                    cx,
+                                )
+                                .pop()
+                                .unwrap();
+
+                            prev_excerpt_id = excerpt_id;
+                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                            group_state.excerpts.push(excerpt_id);
+                            let header_position = (excerpt_id, language::Anchor::MIN);
+
+                            if is_first_excerpt_for_group {
+                                is_first_excerpt_for_group = false;
+                                let mut primary =
+                                    group.entries[group.primary_ix].diagnostic.clone();
+                                primary.message =
+                                    primary.message.split('\n').next().unwrap().to_string();
+                                group_state.block_count += 1;
+                                blocks_to_add.push(BlockProperties {
+                                    position: header_position,
+                                    height: 2,
+                                    style: BlockStyle::Sticky,
+                                    render: diagnostic_header_renderer(primary),
+                                    disposition: BlockDisposition::Above,
+                                });
+                            }
+
+                            for entry in &group.entries[*start_ix..ix] {
+                                let mut diagnostic = entry.diagnostic.clone();
+                                if diagnostic.is_primary {
+                                    group_state.primary_excerpt_ix = group_state.excerpts.len() - 1;
+                                    diagnostic.message =
+                                        entry.diagnostic.message.split('\n').skip(1).collect();
+                                }
+
+                                if !diagnostic.message.is_empty() {
+                                    group_state.block_count += 1;
+                                    blocks_to_add.push(BlockProperties {
+                                        position: (excerpt_id, entry.range.start),
+                                        height: diagnostic.message.matches('\n').count() as u8 + 1,
+                                        style: BlockStyle::Fixed,
+                                        render: diagnostic_block_renderer(
+                                            diagnostic, None, true, true,
+                                        ),
+                                        disposition: BlockDisposition::Below,
+                                    });
+                                }
+                            }
+
+                            pending_range.take();
+                        }
+
+                        if let Some(entry) = resolved_entry {
+                            pending_range = Some((entry.range.clone(), ix));
+                        }
+                    }
+
+                    new_group_ixs.push(path_state.diagnostic_groups.len());
+                    path_state.diagnostic_groups.push(group_state);
+                } else if let Some((_, group_state)) = to_remove {
+                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx);
+                    blocks_to_remove.extend(group_state.blocks.iter().copied());
+                } else if let Some((_, group_state)) = to_keep {
+                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
+                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                    path_state.diagnostic_groups.push(group_state);
+                }
+            }
+
+            excerpts.snapshot(cx)
+        });
+
+        self.editor.update(cx, |editor, cx| {
+            editor.remove_blocks(blocks_to_remove, None, cx);
+            let block_ids = editor.insert_blocks(
+                blocks_to_add.into_iter().flat_map(|block| {
+                    let (excerpt_id, text_anchor) = block.position;
+                    Some(BlockProperties {
+                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        height: block.height,
+                        style: block.style,
+                        render: block.render,
+                        disposition: block.disposition,
+                    })
+                }),
+                Some(Autoscroll::fit()),
                 cx,
             );
+
+            let mut block_ids = block_ids.into_iter();
+            for ix in new_group_ixs {
+                let group_state = &mut path_state.diagnostic_groups[ix];
+                group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
+            }
         });
 
-        let new_multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
-        let blocks_to_insert =
-            path_update.prepare_blocks_to_insert(self.editor.clone(), new_multi_buffer_snapshot);
+        if path_state.diagnostic_groups.is_empty() {
+            self.path_states.remove(path_ix);
+        }
 
-        let new_block_ids = self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(std::mem::take(&mut path_update.blocks_to_remove), None, cx);
-            editor.insert_blocks(blocks_to_insert, Some(Autoscroll::fit()), cx)
+        self.editor.update(cx, |editor, cx| {
+            let groups;
+            let mut selections;
+            let new_excerpt_ids_by_selection_id;
+            if was_empty {
+                groups = self.path_states.first()?.diagnostic_groups.as_slice();
+                new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
+                selections = vec![Selection {
+                    id: 0,
+                    start: 0,
+                    end: 0,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }];
+            } else {
+                groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
+                new_excerpt_ids_by_selection_id =
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
+                selections = editor.selections.all::<usize>(cx);
+            }
+
+            // If any selection has lost its position, move it to start of the next primary diagnostic.
+            let snapshot = editor.snapshot(cx);
+            for selection in &mut selections {
+                if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
+                    let group_ix = match groups.binary_search_by(|probe| {
+                        probe
+                            .excerpts
+                            .last()
+                            .unwrap()
+                            .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
+                    }) {
+                        Ok(ix) | Err(ix) => ix,
+                    };
+                    if let Some(group) = groups.get(group_ix) {
+                        if let Some(offset) = excerpts_snapshot
+                            .anchor_in_excerpt(
+                                group.excerpts[group.primary_excerpt_ix],
+                                group.primary_diagnostic.range.start,
+                            )
+                            .map(|anchor| anchor.to_offset(&excerpts_snapshot))
+                        {
+                            selection.start = offset;
+                            selection.end = offset;
+                        }
+                    }
+                }
+            }
+            editor.change_selections(None, cx, |s| {
+                s.select(selections);
+            });
+            Some(())
         });
-        path_state.diagnostics = path_update.new_blocks(new_block_ids);
 
         if self.path_states.is_empty() {
             if self.editor.focus_handle(cx).is_focused(cx) {
@@ -407,22 +597,6 @@ impl ProjectDiagnosticsEditor {
         self.check_invariants(cx);
 
         cx.notify();
-    }
-
-    fn excerpt_borders_for_path(&self, path_ix: usize) -> (Option<ExcerptId>, Option<ExcerptId>) {
-        let previous_path_state_ix =
-            Some(path_ix.saturating_sub(1)).filter(|&previous_path_ix| previous_path_ix != path_ix);
-        let next_path_state_ix = path_ix + 1;
-        let start = previous_path_state_ix.and_then(|i| {
-            self.path_states[..=i]
-                .iter()
-                .rev()
-                .find_map(|state| state.last_excerpt_id)
-        });
-        let end = self.path_states[next_path_state_ix..]
-            .iter()
-            .find_map(|state| state.first_excerpt_id);
-        (start, end)
     }
 
     #[cfg(test)]
@@ -628,810 +802,96 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
-fn compare_data_locations(
-    old: &DiagnosticData,
-    new: &DiagnosticData,
-    snapshot: &BufferSnapshot,
-) -> Ordering {
-    compare_diagnostics(&old.entry, &new.entry, snapshot)
-        .then_with(|| old.language_server_id.cmp(&new.language_server_id))
+const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
+
+fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
+    let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
+    let message: SharedString = message;
+    Box::new(move |cx| {
+        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
+        h_flex()
+            .id(DIAGNOSTIC_HEADER)
+            .py_2()
+            .pl_10()
+            .pr_5()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .map(|stack| {
+                        stack.child(
+                            svg()
+                                .size(cx.text_style().font_size)
+                                .flex_none()
+                                .map(|icon| {
+                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        icon.path(IconName::XCircle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    } else {
+                                        icon.path(IconName::ExclamationTriangle.path())
+                                            .text_color(Color::Warning.color(cx))
+                                    }
+                                }),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                StyledText::new(message.clone()).with_highlights(
+                                    &cx.text_style(),
+                                    code_ranges
+                                        .iter()
+                                        .map(|range| (range.clone(), highlight_style)),
+                                ),
+                            )
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(
+                                    div()
+                                        .child(SharedString::from(format!("({code})")))
+                                        .text_color(cx.theme().colors().text_muted),
+                                )
+                            }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .when_some(diagnostic.source.as_ref(), |stack, source| {
+                        stack.child(
+                            div()
+                                .child(SharedString::from(source.clone()))
+                                .text_color(cx.theme().colors().text_muted),
+                        )
+                    }),
+            )
+            .into_any_element()
+    })
 }
 
 fn compare_diagnostics(
     old: &DiagnosticEntry<language::Anchor>,
     new: &DiagnosticEntry<language::Anchor>,
-    snapshot: &BufferSnapshot,
+    snapshot: &language::BufferSnapshot,
 ) -> Ordering {
-    compare_diagnostic_ranges(&old.range, &new.range, snapshot)
-        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
-}
+    use language::ToOffset;
 
-fn compare_diagnostic_ranges(
-    old: &Range<language::Anchor>,
-    new: &Range<language::Anchor>,
-    snapshot: &BufferSnapshot,
-) -> Ordering {
     // The diagnostics may point to a previously open Buffer for this file.
-    if !old.start.is_valid(snapshot) || !new.start.is_valid(snapshot) {
+    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
         return Ordering::Greater;
     }
 
-    old.start
+    old.range
+        .start
         .to_offset(snapshot)
-        .cmp(&new.start.to_offset(snapshot))
+        .cmp(&new.range.start.to_offset(snapshot))
         .then_with(|| {
-            old.end
+            old.range
+                .end
                 .to_offset(snapshot)
-                .cmp(&new.end.to_offset(snapshot))
+                .cmp(&new.range.end.to_offset(snapshot))
         })
-}
-
-// TODO kb wrong? What to do here instead?
-fn compare_diagnostic_range_edges(
-    old: &Range<language::Anchor>,
-    new: &Range<language::Anchor>,
-    snapshot: &BufferSnapshot,
-) -> (Ordering, Ordering) {
-    // The diagnostics may point to a previously open Buffer for this file.
-    let start_cmp = match (old.start.is_valid(snapshot), new.start.is_valid(snapshot)) {
-        (false, false) => old.start.offset.cmp(&new.start.offset),
-        (false, true) => Ordering::Greater,
-        (true, false) => Ordering::Less,
-        (true, true) => old.start.cmp(&new.start, snapshot),
-    };
-
-    let end_cmp = old
-        .end
-        .to_offset(snapshot)
-        .cmp(&new.end.to_offset(snapshot));
-    (start_cmp, end_cmp)
-}
-
-#[derive(Debug)]
-struct PathUpdate {
-    path_excerpts_borders: (Option<ExcerptId>, Option<ExcerptId>),
-    latest_excerpt_id: ExcerptId,
-    new_diagnostics: Vec<(DiagnosticData, Option<BlockId>)>,
-    diagnostics_by_row_label: BTreeMap<MultiBufferRow, (editor::Anchor, Vec<usize>)>,
-    blocks_to_remove: HashSet<BlockId>,
-    unchanged_blocks: HashMap<usize, BlockId>,
-    excerpts_with_new_diagnostics: HashSet<ExcerptId>,
-    excerpts_to_remove: Vec<ExcerptId>,
-    excerpt_expands: HashMap<(ExpandExcerptDirection, u32), Vec<ExcerptId>>,
-    excerpts_to_add: HashMap<ExcerptId, Vec<Range<language::Anchor>>>,
-    first_excerpt_id: Option<ExcerptId>,
-    last_excerpt_id: Option<ExcerptId>,
-}
-
-impl PathUpdate {
-    fn new(
-        path_excerpts_borders: (Option<ExcerptId>, Option<ExcerptId>),
-        buffer_snapshot: &BufferSnapshot,
-        server_to_update: Option<LanguageServerId>,
-        max_severity: DiagnosticSeverity,
-        path_state: &PathState,
-    ) -> Self {
-        let mut blocks_to_remove = HashSet::default();
-        let mut removed_groups = HashSet::default();
-        let mut new_diagnostics = path_state
-            .diagnostics
-            .iter()
-            .filter(|(diagnostic_data, _)| {
-                server_to_update.map_or(true, |server_id| {
-                    diagnostic_data.language_server_id != server_id
-                })
-            })
-            .filter(|(diagnostic_data, block_id)| {
-                let diagnostic = &diagnostic_data.entry.diagnostic;
-                let retain = !diagnostic.is_primary || diagnostic.severity <= max_severity;
-                if !retain {
-                    removed_groups.insert(diagnostic.group_id);
-                    blocks_to_remove.insert(*block_id);
-                }
-                retain
-            })
-            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(*block_id)))
-            .collect::<Vec<_>>();
-        new_diagnostics.retain(|(diagnostic_data, block_id)| {
-            let retain = !removed_groups.contains(&diagnostic_data.entry.diagnostic.group_id);
-            if !retain {
-                if let Some(block_id) = block_id {
-                    blocks_to_remove.insert(*block_id);
-                }
-            }
-            retain
-        });
-        for (server_id, group) in buffer_snapshot
-            .diagnostic_groups(server_to_update)
-            .into_iter()
-            .filter(|(_, group)| {
-                group.entries[group.primary_ix].diagnostic.severity <= max_severity
-            })
-        {
-            for (diagnostic_index, diagnostic) in group.entries.iter().enumerate() {
-                let new_data = DiagnosticData {
-                    language_server_id: server_id,
-                    is_primary: diagnostic_index == group.primary_ix,
-                    entry: diagnostic.clone(),
-                };
-                let (Ok(i) | Err(i)) = new_diagnostics.binary_search_by(|probe| {
-                    compare_data_locations(&probe.0, &new_data, &buffer_snapshot)
-                });
-                new_diagnostics.insert(i, (new_data, None));
-            }
-        }
-
-        let latest_excerpt_id = path_excerpts_borders.0.unwrap_or_else(|| ExcerptId::min());
-        Self {
-            latest_excerpt_id,
-            path_excerpts_borders,
-            new_diagnostics,
-            blocks_to_remove,
-            diagnostics_by_row_label: BTreeMap::new(),
-            excerpts_to_remove: Vec::new(),
-            excerpts_with_new_diagnostics: HashSet::default(),
-            unchanged_blocks: HashMap::default(),
-            excerpts_to_add: HashMap::default(),
-            excerpt_expands: HashMap::default(),
-            first_excerpt_id: None,
-            last_excerpt_id: None,
-        }
-    }
-
-    fn prepare_excerpt_data<'a>(
-        &'a mut self,
-        context: u32,
-        multi_buffer_snapshot: MultiBufferSnapshot,
-        buffer_snapshot: BufferSnapshot,
-        current_diagnostics: impl Iterator<Item = &'a (DiagnosticData, BlockId)> + 'a,
-    ) {
-        let mut current_diagnostics = current_diagnostics.fuse().peekable();
-        let mut excerpts_to_expand =
-            HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
-        let mut current_excerpts = path_state_excerpts(
-            self.path_excerpts_borders.0,
-            self.path_excerpts_borders.1,
-            &multi_buffer_snapshot,
-        )
-        .fuse()
-        .peekable();
-
-        for (diagnostic_index, (new_diagnostic, existing_block)) in
-            self.new_diagnostics.iter().enumerate()
-        {
-            if let Some(existing_block) = existing_block {
-                self.unchanged_blocks
-                    .insert(diagnostic_index, *existing_block);
-            }
-
-            loop {
-                match current_excerpts.peek() {
-                    None => {
-                        let excerpt_ranges = self
-                            .excerpts_to_add
-                            .entry(self.latest_excerpt_id)
-                            .or_default();
-                        let new_range = new_diagnostic.entry.range.clone();
-                        let (Ok(i) | Err(i)) = excerpt_ranges.binary_search_by(|probe| {
-                            compare_diagnostic_ranges(probe, &new_range, &buffer_snapshot)
-                        });
-                        excerpt_ranges.insert(i, new_range);
-                        break;
-                    }
-                    Some((current_excerpt_id, _, current_excerpt_range)) => {
-                        match compare_diagnostic_range_edges(
-                            &current_excerpt_range.context,
-                            &new_diagnostic.entry.range,
-                            &buffer_snapshot,
-                        ) {
-                            /*
-                                  new_s new_e
-                            ----[---->><<----]--
-                             cur_s         cur_e
-                            */
-                            (
-                                Ordering::Less | Ordering::Equal,
-                                Ordering::Greater | Ordering::Equal,
-                            ) => {
-                                self.excerpts_with_new_diagnostics
-                                    .insert(*current_excerpt_id);
-                                if self.first_excerpt_id.is_none() {
-                                    self.first_excerpt_id = Some(*current_excerpt_id);
-                                }
-                                self.last_excerpt_id = Some(*current_excerpt_id);
-                                break;
-                            }
-                            /*
-                                  cur_s cur_e
-                            ---->>>>>[--]<<<<<--
-                             new_s         new_e
-                            */
-                            (
-                                Ordering::Greater | Ordering::Equal,
-                                Ordering::Less | Ordering::Equal,
-                            ) => {
-                                let expand_up = current_excerpt_range
-                                    .context
-                                    .start
-                                    .to_point(&buffer_snapshot)
-                                    .row
-                                    .saturating_sub(
-                                        new_diagnostic
-                                            .entry
-                                            .range
-                                            .start
-                                            .to_point(&buffer_snapshot)
-                                            .row,
-                                    );
-                                let expand_down = new_diagnostic
-                                    .entry
-                                    .range
-                                    .end
-                                    .to_point(&buffer_snapshot)
-                                    .row
-                                    .saturating_sub(
-                                        current_excerpt_range
-                                            .context
-                                            .end
-                                            .to_point(&buffer_snapshot)
-                                            .row,
-                                    );
-                                let expand_value = excerpts_to_expand
-                                    .entry(*current_excerpt_id)
-                                    .or_default()
-                                    .entry(ExpandExcerptDirection::UpAndDown)
-                                    .or_default();
-                                *expand_value = (*expand_value).max(expand_up).max(expand_down);
-                                self.excerpts_with_new_diagnostics
-                                    .insert(*current_excerpt_id);
-                                if self.first_excerpt_id.is_none() {
-                                    self.first_excerpt_id = Some(*current_excerpt_id);
-                                }
-                                self.last_excerpt_id = Some(*current_excerpt_id);
-                                break;
-                            }
-                            /*
-                                    new_s   new_e
-                                     >       <
-                            ----[---->>>]<<<<<--
-                             cur_s    cur_e
-
-                            or
-                                      new_s new_e
-                                        >    <
-                            ----[----]-->>><<<--
-                             cur_s cur_e
-                            */
-                            (Ordering::Less, Ordering::Less) => {
-                                if current_excerpt_range
-                                    .context
-                                    .end
-                                    .cmp(&new_diagnostic.entry.range.start, &buffer_snapshot)
-                                    .is_ge()
-                                {
-                                    let expand_down = new_diagnostic
-                                        .entry
-                                        .range
-                                        .end
-                                        .to_point(&buffer_snapshot)
-                                        .row
-                                        .saturating_sub(
-                                            current_excerpt_range
-                                                .context
-                                                .end
-                                                .to_point(&buffer_snapshot)
-                                                .row,
-                                        );
-                                    let expand_value = excerpts_to_expand
-                                        .entry(*current_excerpt_id)
-                                        .or_default()
-                                        .entry(ExpandExcerptDirection::Down)
-                                        .or_default();
-                                    *expand_value = (*expand_value).max(expand_down);
-                                    self.excerpts_with_new_diagnostics
-                                        .insert(*current_excerpt_id);
-                                    if self.first_excerpt_id.is_none() {
-                                        self.first_excerpt_id = Some(*current_excerpt_id);
-                                    }
-                                    self.last_excerpt_id = Some(*current_excerpt_id);
-                                    break;
-                                } else if !self
-                                    .excerpts_with_new_diagnostics
-                                    .contains(current_excerpt_id)
-                                {
-                                    self.excerpts_to_remove.push(*current_excerpt_id);
-                                }
-                            }
-                            /*
-                                  cur_s      cur_e
-                            ---->>>>>[<<<<----]--
-                                >        <
-                               new_s    new_e
-
-                            or
-                                      cur_s cur_e
-                            ---->>><<<--[----]--
-                                >    <
-                               new_s new_e
-                            */
-                            (Ordering::Greater, Ordering::Greater) => {
-                                if current_excerpt_range
-                                    .context
-                                    .start
-                                    .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot)
-                                    .is_le()
-                                {
-                                    let expand_up = current_excerpt_range
-                                        .context
-                                        .start
-                                        .to_point(&buffer_snapshot)
-                                        .row
-                                        .saturating_sub(
-                                            new_diagnostic
-                                                .entry
-                                                .range
-                                                .start
-                                                .to_point(&buffer_snapshot)
-                                                .row,
-                                        );
-                                    let expand_value = excerpts_to_expand
-                                        .entry(*current_excerpt_id)
-                                        .or_default()
-                                        .entry(ExpandExcerptDirection::Up)
-                                        .or_default();
-                                    *expand_value = (*expand_value).max(expand_up);
-                                    self.excerpts_with_new_diagnostics
-                                        .insert(*current_excerpt_id);
-                                    if self.first_excerpt_id.is_none() {
-                                        self.first_excerpt_id = Some(*current_excerpt_id);
-                                    }
-                                    self.last_excerpt_id = Some(*current_excerpt_id);
-                                    break;
-                                } else {
-                                    let excerpt_ranges = self
-                                        .excerpts_to_add
-                                        .entry(self.latest_excerpt_id)
-                                        .or_default();
-                                    let new_range = new_diagnostic.entry.range.clone();
-                                    let (Ok(i) | Err(i)) =
-                                        excerpt_ranges.binary_search_by(|probe| {
-                                            compare_diagnostic_ranges(
-                                                probe,
-                                                &new_range,
-                                                &buffer_snapshot,
-                                            )
-                                        });
-                                    excerpt_ranges.insert(i, new_range);
-                                    break;
-                                }
-                            }
-                        }
-                        if let Some((next_id, ..)) = current_excerpts.next() {
-                            self.latest_excerpt_id = next_id;
-                        }
-                    }
-                }
-            }
-
-            loop {
-                match current_diagnostics.peek() {
-                    None => break,
-                    Some((current_diagnostic, current_block)) => {
-                        match compare_data_locations(
-                            current_diagnostic,
-                            new_diagnostic,
-                            &buffer_snapshot,
-                        ) {
-                            Ordering::Less => {
-                                self.blocks_to_remove.insert(*current_block);
-                            }
-                            Ordering::Equal => {
-                                if current_diagnostic.diagnostic_entries_equal(&new_diagnostic) {
-                                    self.unchanged_blocks
-                                        .insert(diagnostic_index, *current_block);
-                                } else {
-                                    self.blocks_to_remove.insert(*current_block);
-                                }
-                                let _ = current_diagnostics.next();
-                                break;
-                            }
-                            Ordering::Greater => break,
-                        }
-                        let _ = current_diagnostics.next();
-                    }
-                }
-            }
-        }
-
-        self.excerpts_to_remove.retain(|excerpt_id| {
-            !self.excerpts_with_new_diagnostics.contains(excerpt_id)
-                && !excerpts_to_expand.contains_key(excerpt_id)
-        });
-        self.excerpts_to_remove.extend(
-            current_excerpts
-                .filter(|(excerpt_id, ..)| {
-                    !self.excerpts_with_new_diagnostics.contains(excerpt_id)
-                        && !excerpts_to_expand.contains_key(excerpt_id)
-                })
-                .map(|(excerpt_id, ..)| excerpt_id),
-        );
-        let mut excerpt_expands = HashMap::default();
-        for (excerpt_id, directions) in excerpts_to_expand {
-            let excerpt_expand = if directions.len() > 1 {
-                Some((
-                    ExpandExcerptDirection::UpAndDown,
-                    directions
-                        .values()
-                        .max()
-                        .copied()
-                        .unwrap_or_default()
-                        .max(context),
-                ))
-            } else {
-                directions
-                    .into_iter()
-                    .next()
-                    .map(|(direction, expand)| (direction, expand.max(context)))
-            };
-            if let Some(expand) = excerpt_expand {
-                excerpt_expands
-                    .entry(expand)
-                    .or_insert_with(|| Vec::new())
-                    .push(excerpt_id);
-            }
-        }
-        self.blocks_to_remove
-            .extend(current_diagnostics.map(|(_, block_id)| block_id));
-    }
-
-    fn apply_excerpt_changes(
-        &mut self,
-        path_state: &mut PathState,
-        context: u32,
-        buffer_snapshot: BufferSnapshot,
-        multi_buffer: &mut MultiBuffer,
-        buffer: Model<Buffer>,
-        cx: &mut gpui::ModelContext<MultiBuffer>,
-    ) {
-        let max_point = buffer_snapshot.max_point();
-        for (after_excerpt_id, ranges) in std::mem::take(&mut self.excerpts_to_add) {
-            let ranges = ranges
-                .into_iter()
-                .map(|range| {
-                    let mut extended_point_range = range.to_point(&buffer_snapshot);
-                    extended_point_range.start.row =
-                        extended_point_range.start.row.saturating_sub(context);
-                    extended_point_range.start.column = 0;
-                    extended_point_range.end.row =
-                        (extended_point_range.end.row + context).min(max_point.row);
-                    extended_point_range.end.column = u32::MAX;
-                    let extended_start =
-                        buffer_snapshot.clip_point(extended_point_range.start, Bias::Left);
-                    let extended_end =
-                        buffer_snapshot.clip_point(extended_point_range.end, Bias::Right);
-                    extended_start..extended_end
-                })
-                .collect::<Vec<_>>();
-            let (joined_ranges, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context);
-            let excerpts = multi_buffer.insert_excerpts_after(
-                after_excerpt_id,
-                buffer.clone(),
-                joined_ranges,
-                cx,
-            );
-            if self.first_excerpt_id.is_none() {
-                self.first_excerpt_id = excerpts.first().copied();
-            }
-            self.last_excerpt_id = excerpts.last().copied();
-        }
-        for ((direction, line_count), excerpts) in std::mem::take(&mut self.excerpt_expands) {
-            multi_buffer.expand_excerpts(excerpts, line_count, direction, cx);
-        }
-        multi_buffer.remove_excerpts(std::mem::take(&mut self.excerpts_to_remove), cx);
-        path_state.first_excerpt_id = self.first_excerpt_id;
-        path_state.last_excerpt_id = self.last_excerpt_id;
-    }
-
-    fn prepare_blocks_to_insert(
-        &mut self,
-        editor: View<Editor>,
-        multi_buffer_snapshot: MultiBufferSnapshot,
-    ) -> Vec<BlockProperties<editor::Anchor>> {
-        let mut updated_excerpts = path_state_excerpts(
-            self.path_excerpts_borders.0,
-            self.path_excerpts_borders.1,
-            &multi_buffer_snapshot,
-        )
-        .fuse()
-        .peekable();
-        let mut used_labels = BTreeMap::new();
-        self.diagnostics_by_row_label = self.new_diagnostics.iter().enumerate().fold(
-            BTreeMap::new(),
-            |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
-                let new_diagnostic = &diagnostic.entry;
-                let block_position = new_diagnostic.range.start;
-                let excerpt_id = loop {
-                    match updated_excerpts.peek() {
-                        None => break None,
-                        Some((excerpt_id, excerpt_buffer_snapshot, excerpt_range)) => {
-                            let excerpt_range = &excerpt_range.context;
-                            match block_position.cmp(&excerpt_range.start, excerpt_buffer_snapshot)
-                            {
-                                Ordering::Less => break None,
-                                Ordering::Equal | Ordering::Greater => match block_position
-                                    .cmp(&excerpt_range.end, excerpt_buffer_snapshot)
-                                {
-                                    Ordering::Equal | Ordering::Less => break Some(*excerpt_id),
-                                    Ordering::Greater => {
-                                        let _ = updated_excerpts.next();
-                                    }
-                                },
-                            }
-                        }
-                    }
-                };
-
-                let Some(position_in_multi_buffer) = excerpt_id.and_then(|excerpt_id| {
-                    multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, block_position)
-                }) else {
-                    return diagnostics_by_row_label;
-                };
-
-                let multi_buffer_row = MultiBufferRow(
-                    position_in_multi_buffer
-                        .to_point(&multi_buffer_snapshot)
-                        .row,
-                );
-
-                let grouped_diagnostics = &mut diagnostics_by_row_label
-                    .entry(multi_buffer_row)
-                    .or_insert_with(|| (position_in_multi_buffer, Vec::new()))
-                    .1;
-                let new_label = used_labels
-                    .entry(multi_buffer_row)
-                    .or_insert_with(|| HashSet::default())
-                    .insert((
-                        new_diagnostic.diagnostic.source.as_deref(),
-                        new_diagnostic.diagnostic.message.as_str(),
-                    ));
-
-                if !new_label || !grouped_diagnostics.is_empty() {
-                    if let Some(existing_block) = existing_block {
-                        self.blocks_to_remove.insert(*existing_block);
-                    }
-                    if let Some(block_id) = self.unchanged_blocks.remove(&diagnostic_index) {
-                        self.blocks_to_remove.insert(block_id);
-                    }
-                }
-                if new_label {
-                    let (Ok(i) | Err(i)) = grouped_diagnostics.binary_search_by(|&probe| {
-                        let a = &self.new_diagnostics[probe].0.entry.diagnostic;
-                        let b = &self.new_diagnostics[diagnostic_index].0.entry.diagnostic;
-                        a.group_id
-                            .cmp(&b.group_id)
-                            .then_with(|| a.is_primary.cmp(&b.is_primary).reverse())
-                            .then_with(|| a.severity.cmp(&b.severity))
-                    });
-                    grouped_diagnostics.insert(i, diagnostic_index);
-                }
-
-                diagnostics_by_row_label
-            },
-        );
-
-        self.diagnostics_by_row_label
-            .values()
-            .filter_map(|(earliest_in_row_position, diagnostics_at_line)| {
-                let earliest_in_row_position = *earliest_in_row_position;
-                match diagnostics_at_line.len() {
-                    0 => None,
-                    len => {
-                        if len == 1 {
-                            let i = diagnostics_at_line.first().copied()?;
-                            if self.unchanged_blocks.contains_key(&i) {
-                                return None;
-                            }
-                        }
-                        let lines_in_first_message = diagnostic_text_lines(
-                            &self
-                                .new_diagnostics
-                                .get(diagnostics_at_line.first().copied()?)?
-                                .0
-                                .entry
-                                .diagnostic,
-                        );
-                        let folded_block_height = lines_in_first_message.max(1).min(2);
-                        let diagnostics_to_render = Arc::new(
-                            diagnostics_at_line
-                                .iter()
-                                .filter_map(|&index| self.new_diagnostics.get(index))
-                                .map(|(diagnostic_data, _)| {
-                                    diagnostic_data.entry.diagnostic.clone()
-                                })
-                                .collect::<Vec<_>>(),
-                        );
-                        Some(BlockProperties {
-                            position: earliest_in_row_position,
-                            height: folded_block_height,
-                            style: BlockStyle::Sticky,
-                            render: render_same_line_diagnostics(
-                                Arc::new(AtomicBool::new(false)),
-                                diagnostics_to_render,
-                                editor.clone(),
-                                earliest_in_row_position,
-                                folded_block_height,
-                            ),
-                            disposition: BlockDisposition::Above,
-                        })
-                    }
-                }
-            })
-            .collect()
-    }
-
-    fn new_blocks(mut self, new_block_ids: Vec<BlockId>) -> Vec<(DiagnosticData, BlockId)> {
-        let mut new_block_ids = new_block_ids.into_iter().fuse();
-        for (_, (_, grouped_diagnostics)) in self.diagnostics_by_row_label {
-            let mut created_block_id = None;
-            match grouped_diagnostics.len() {
-                0 => {
-                    debug_panic!("Unexpected empty diagnostics group");
-                    continue;
-                }
-                1 => {
-                    let index = grouped_diagnostics[0];
-                    if let Some(&block_id) = self.unchanged_blocks.get(&index) {
-                        self.new_diagnostics[index].1 = Some(block_id);
-                    } else {
-                        let Some(block_id) =
-                            created_block_id.get_or_insert_with(|| new_block_ids.next())
-                        else {
-                            debug_panic!("Expected a new block for each new diagnostic");
-                            continue;
-                        };
-                        self.new_diagnostics[index].1 = Some(*block_id);
-                    }
-                }
-                _ => {
-                    let Some(block_id) =
-                        created_block_id.get_or_insert_with(|| new_block_ids.next())
-                    else {
-                        debug_panic!("Expected a new block for each new diagnostic group");
-                        continue;
-                    };
-                    for i in grouped_diagnostics {
-                        self.new_diagnostics[i].1 = Some(*block_id);
-                    }
-                }
-            }
-        }
-
-        self.new_diagnostics
-            .into_iter()
-            .filter_map(|(diagnostic, block_id)| Some((diagnostic, block_id?)))
-            .collect()
-    }
-}
-
-fn render_same_line_diagnostics(
-    expanded: Arc<AtomicBool>,
-    diagnostics: Arc<Vec<language::Diagnostic>>,
-    editor_handle: View<Editor>,
-    row_position: editor::Anchor,
-    folded_block_height: u8,
-) -> RenderBlock {
-    Box::new(move |cx: &mut BlockContext| {
-        let block_id = match cx.transform_block_id {
-            TransformBlockId::Block(block_id) => block_id,
-            _ => {
-                debug_panic!("Expected a block id for the diagnostics block");
-                return div().into_any_element();
-            }
-        };
-        let Some(first_diagnostic) = diagnostics.first() else {
-            debug_panic!("Expected at least one diagnostic");
-            return div().into_any_element();
-        };
-        let button_expanded = expanded.clone();
-        let expanded = expanded.load(atomic::Ordering::Acquire);
-        let expand_label = if expanded { '-' } else { '+' };
-        let first_diagnostics_height = diagnostic_text_lines(first_diagnostic);
-        let extra_diagnostics = diagnostics.len() - 1;
-        let toggle_expand_label =
-            if folded_block_height == first_diagnostics_height && extra_diagnostics == 0 {
-                None
-            } else if extra_diagnostics > 0 {
-                Some(format!("{expand_label}{extra_diagnostics}"))
-            } else {
-                Some(expand_label.to_string())
-            };
-
-        let expanded_block_height = diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic_text_lines(diagnostic))
-            .sum::<u8>();
-        let editor_handle = editor_handle.clone();
-        let mut parent = v_flex();
-        let mut diagnostics_iter = diagnostics.iter().fuse();
-        if let Some(first_diagnostic) = diagnostics_iter.next() {
-            let mut renderer = diagnostic_block_renderer(
-                first_diagnostic.clone(),
-                Some(folded_block_height),
-                false,
-                true,
-            );
-            parent = parent.child(
-                h_flex()
-                    .when_some(toggle_expand_label, |parent, label| {
-                        parent.child(Button::new(cx.transform_block_id, label).on_click({
-                            let diagnostics = Arc::clone(&diagnostics);
-                            move |_, cx| {
-                                let new_expanded = !expanded;
-                                button_expanded.store(new_expanded, atomic::Ordering::Release);
-                                let new_size = if new_expanded {
-                                    expanded_block_height
-                                } else {
-                                    folded_block_height
-                                };
-                                editor_handle.update(cx, |editor, cx| {
-                                    editor.replace_blocks(
-                                        HashMap::from_iter(Some((
-                                            block_id,
-                                            (
-                                                Some(new_size),
-                                                render_same_line_diagnostics(
-                                                    Arc::clone(&button_expanded),
-                                                    Arc::clone(&diagnostics),
-                                                    editor_handle.clone(),
-                                                    row_position,
-                                                    folded_block_height,
-                                                ),
-                                            ),
-                                        ))),
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            }
-                        }))
-                    })
-                    .child(renderer(cx)),
-            );
-        }
-        if expanded {
-            for diagnostic in diagnostics_iter {
-                let mut renderer = diagnostic_block_renderer(diagnostic.clone(), None, false, true);
-                parent = parent.child(renderer(cx));
-            }
-        }
-        parent.into_any_element()
-    })
-}
-
-fn diagnostic_text_lines(diagnostic: &language::Diagnostic) -> u8 {
-    diagnostic.message.matches('\n').count() as u8 + 1
-}
-
-fn path_state_excerpts<'a>(
-    after_excerpt_id: Option<ExcerptId>,
-    before_excerpt_id: Option<ExcerptId>,
-    multi_buffer_snapshot: &'a editor::MultiBufferSnapshot,
-) -> impl Iterator<
-    Item = (
-        ExcerptId,
-        &'a BufferSnapshot,
-        ExcerptRange<language::Anchor>,
-    ),
-> {
-    multi_buffer_snapshot
-        .excerpts()
-        .skip_while(move |&(excerpt_id, ..)| match after_excerpt_id {
-            Some(after_excerpt_id) => after_excerpt_id != excerpt_id,
-            None => false,
-        })
-        .filter(move |&(excerpt_id, ..)| after_excerpt_id != Some(excerpt_id))
-        .take_while(move |&(excerpt_id, ..)| match before_excerpt_id {
-            Some(before_excerpt_id) => before_excerpt_id != excerpt_id,
-            None => true,
-        })
+        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
 }

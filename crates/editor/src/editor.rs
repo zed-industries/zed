@@ -12773,7 +12773,7 @@ pub fn diagnostic_block_renderer(
     })
 }
 
-fn highlight_diagnostic_message(
+pub fn highlight_diagnostic_message(
     diagnostic: &Diagnostic,
     mut max_message_rows: Option<u8>,
 ) -> (SharedString, Vec<Range<usize>>) {
