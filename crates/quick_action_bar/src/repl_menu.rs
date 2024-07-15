@@ -151,6 +151,8 @@ impl QuickActionBar {
                 let panel_clone = panel_clone.clone();
                 let editor_clone = editor_clone.clone();
                 ContextMenu::build(cx, move |menu, _cx| {
+                    let editor_clone = editor_clone.clone();
+                    let panel_clone = panel_clone.clone();
                     let kernel_name = kernel_name.clone();
                     let kernel_language = kernel_language.clone();
                     let status = status.clone();
@@ -196,6 +198,7 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
+                    // Run
                     .custom_entry(
                         move |_cx| {
                             Label::new(if has_nonempty_selection {
@@ -205,18 +208,55 @@ impl QuickActionBar {
                             })
                             .into_any_element()
                         },
-                        move |cx| {
+                        {
                             let panel_clone = panel_clone.clone();
                             let editor_clone = editor_clone.clone();
-                            panel_clone.update(cx, |this, cx| {
-                                this.run(editor_clone.clone(), cx).log_err();
-                            });
+                            move |cx| {
+                                let editor_clone = editor_clone.clone();
+                                panel_clone.update(cx, |this, cx| {
+                                    this.run(editor_clone.clone(), cx).log_err();
+                                });
+                            }
                         },
                     )
-                    // TODO: Add action
-                    // .action("Interrupt", Box::new(gpui::NoAction))
-                    // TODO: Add action
-                    .action("Clear Outputs", Box::new(repl::ClearOutputs))
+                    // Interrupt
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new("Interrupt")
+                                .size(LabelSize::Small)
+                                .color(Color::Error)
+                                .into_any_element()
+                        },
+                        {
+                            let panel_clone = panel_clone.clone();
+                            let editor_clone = editor_clone.clone();
+                            move |cx| {
+                                let editor_clone = editor_clone.clone();
+                                panel_clone.update(cx, |this, cx| {
+                                    this.interrupt(editor_clone, cx);
+                                });
+                            }
+                        },
+                    )
+                    // Clear Outputs
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new("Clear Outputs")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .into_any_element()
+                        },
+                        {
+                            let panel_clone = panel_clone.clone();
+                            let editor_clone = editor_clone.clone();
+                            move |cx| {
+                                let editor_clone = editor_clone.clone();
+                                panel_clone.update(cx, |this, cx| {
+                                    this.clear_outputs(editor_clone, cx);
+                                });
+                            }
+                        },
+                    )
                     .separator()
                     .link(
                         "Change Kernel",
@@ -224,12 +264,30 @@ impl QuickActionBar {
                             url: format!("{}#change-kernel", ZED_REPL_DOCUMENTATION),
                         }),
                     )
-                    // TODO: Add action
+                    // TODO: Add Restart action
                     // .action("Restart", Box::new(gpui::NoAction))
-                    // TODO: Add action
-                    // .action("Shut Down", Box::new(gpui::NoAction))
+                    // Shut down kernel
+                    // TODO: Redo
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new("Shut Down Kernel")
+                                .size(LabelSize::Small)
+                                .color(Color::Error)
+                                .into_any_element()
+                        },
+                        {
+                            let panel_clone = panel_clone.clone();
+                            let editor_clone = editor_clone.clone();
+                            move |cx| {
+                                let editor_clone = editor_clone.clone();
+                                panel_clone.update(cx, |this, cx| {
+                                    this.shutdown(editor_clone, cx);
+                                });
+                            }
+                        },
+                    )
                     // .separator()
-                    // TODO: Add action
+                    // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
                 .into()

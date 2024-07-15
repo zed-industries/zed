@@ -111,33 +111,37 @@ impl RuntimePanel {
                                     )
                                     .detach();
 
-                                let editor_view = cx.view().downgrade();
                                 editor
-                                    .register_action(
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
                                         move |_: &Interrupt, cx: &mut WindowContext| {
                                             if !JupyterSettings::enabled(cx) {
                                                 return;
                                             }
-                                            clear_event_tx
+                                            repl_editor_event_tx
                                                 .unbounded_send(ReplEvent::Interrupt(
-                                                    editor_view.clone(),
+                                                    editor.clone(),
                                                 ))
                                                 .ok();
-                                        },
-                                    )
+                                        }
+                                    })
                                     .detach();
 
-                                let editor_view = cx.view().downgrade();
                                 editor
-                                    .register_action(move |_: &Shutdown, cx: &mut WindowContext| {
-                                        if !JupyterSettings::enabled(cx) {
-                                            return;
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
+                                        move |_: &Shutdown, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            repl_editor_event_tx
+                                                .unbounded_send(ReplEvent::Shutdown(editor.clone()))
+                                                .ok();
                                         }
-                                        clear_event_tx
-                                            .unbounded_send(ReplEvent::Shutdown(
-                                                editor_view.clone(),
-                                            ))
-                                            .ok();
                                     })
                                     .detach();
                             },
@@ -369,12 +373,13 @@ impl RuntimePanel {
         }
     }
 
-    fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
+    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
         let entity_id = editor.entity_id();
         if let Some(session) = self.sessions.get(&entity_id) {
             session.update(cx, |session, cx| {
                 session.shutdown(cx);
             });
+            cx.notify();
         }
     }
 }
