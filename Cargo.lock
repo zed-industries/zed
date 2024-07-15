@@ -1583,16 +1583,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
 dependencies = [
- "bit-vec 0.6.3",
-]
-
-[[package]]
-name = "bit-set"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0481a0e032742109b1133a095184ee93d88f3dc9e0d28a5d033dc77a073f44f"
-dependencies = [
- "bit-vec 0.7.0",
+ "bit-vec",
 ]
 
 [[package]]
@@ -1600,12 +1591,6 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
-
-[[package]]
-name = "bit-vec"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit_field"
@@ -1649,7 +1634,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "ash",
  "ash-window",
@@ -1679,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1689,7 +1674,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -4018,7 +4003,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7493d4c459da9f84325ad297371a6b2b8a162800873a22e3b6b6512e61d18c05"
 dependencies = [
- "bit-set 0.5.3",
+ "bit-set",
  "regex",
 ]
 
@@ -6656,17 +6641,17 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "0.20.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=425526828f738c95ec50b016c6a761bc00d2fb25#425526828f738c95ec50b016c6a761bc00d2fb25"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae585df4b6514cf8842ac0f1ab4992edc975892704835b549cf818dc0191249e"
 dependencies = [
- "arrayvec",
- "bit-set 0.6.0",
+ "bit-set",
  "bitflags 2.6.0",
- "cfg_aliases",
  "codespan-reporting",
  "hexf-parse",
  "indexmap 2.2.6",
  "log",
+ "num-traits",
  "rustc-hash",
  "spirv",
  "termcolor",
@@ -9927,11 +9912,12 @@ dependencies = [
 
 [[package]]
 name = "spirv"
-version = "0.3.0+sdk-1.3.268.0"
+version = "0.2.0+1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
+checksum = "246bfa38fe3db3f1dfc8ca5a2cdeb7348c78be2112740cc0ec8ef18b6d94f830"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 1.3.2",
+ "num-traits",
 ]
 
 [[package]]
