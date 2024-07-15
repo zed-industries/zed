@@ -2488,11 +2488,23 @@ impl Project {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
+        let buffer_id = buffer.read(cx).remote_id();
         match event {
             BufferEvent::Operation(operation) => {
+                let operation = language::proto::serialize_operation(operation);
+
+                if let Some(ssh) = &self.ssh_session {
+                    ssh.send(proto::UpdateBuffer {
+                        project_id: 0,
+                        buffer_id: buffer_id.to_proto(),
+                        operations: vec![operation.clone()],
+                    })
+                    .ok();
+                }
+
                 self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
-                    buffer_id: buffer.read(cx).remote_id(),
-                    operation: language::proto::serialize_operation(operation),
+                    buffer_id,
+                    operation,
                 })
                 .ok();
             }

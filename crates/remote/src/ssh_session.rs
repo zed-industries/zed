@@ -324,6 +324,10 @@ impl SshSession {
             .ok_or_else(|| anyhow!("received a response of the wrong type"))
     }
 
+    pub fn send<T: EnvelopedMessage>(&self, payload: T) -> Result<()> {
+        self.send_dynamic(payload.into_envelope(0, None, None))
+    }
+
     pub fn request_dynamic(
         &self,
         mut envelope: proto::Envelope,
