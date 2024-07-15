@@ -23,7 +23,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ClearOutputs]);
+actions!(repl, [Run, ClearOutputs, Interrupt, Shutdown]);
 actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
@@ -51,6 +51,8 @@ pub struct RuntimePanel {
 pub enum ReplEvent {
     Run(WeakView<Editor>),
     ClearOutputs(WeakView<Editor>),
+    Interrupt(WeakView<Editor>),
+    Shutdown(WeakView<Editor>),
 }
 
 impl RuntimePanel {
@@ -108,6 +110,36 @@ impl RuntimePanel {
                                         },
                                     )
                                     .detach();
+
+                                let editor_view = cx.view().downgrade();
+                                editor
+                                    .register_action(
+                                        move |_: &Interrupt, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            clear_event_tx
+                                                .unbounded_send(ReplEvent::Interrupt(
+                                                    editor_view.clone(),
+                                                ))
+                                                .ok();
+                                        },
+                                    )
+                                    .detach();
+
+                                let editor_view = cx.view().downgrade();
+                                editor
+                                    .register_action(move |_: &Shutdown, cx: &mut WindowContext| {
+                                        if !JupyterSettings::enabled(cx) {
+                                            return;
+                                        }
+                                        clear_event_tx
+                                            .unbounded_send(ReplEvent::Shutdown(
+                                                editor_view.clone(),
+                                            ))
+                                            .ok();
+                                    })
+                                    .detach();
                             },
                         ),
                     ];
@@ -122,6 +154,12 @@ impl RuntimePanel {
                                     }
                                     ReplEvent::ClearOutputs(editor) => {
                                         runtime_panel.clear_outputs(editor, cx);
+                                    }
+                                    ReplEvent::Interrupt(editor) => {
+                                        runtime_panel.interrupt(editor, cx);
+                                    }
+                                    ReplEvent::Shutdown(editor) => {
+                                        runtime_panel.shutdown(editor, cx);
                                     }
                                 })
                                 .ok();
@@ -318,6 +356,25 @@ impl RuntimePanel {
                 session.clear_outputs(cx);
             });
             cx.notify();
+        }
+    }
+
+    pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get_mut(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.interrupt(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.shutdown(cx);
+            });
         }
     }
 }
