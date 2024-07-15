@@ -20,7 +20,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     registry::init(client, cx);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,

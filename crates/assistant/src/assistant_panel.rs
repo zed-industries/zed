@@ -334,6 +334,12 @@ impl AssistantPanel {
                         item.added_to_pane(workspace, self.pane.clone(), cx)
                     });
                 }
+                if let Some(context_editor) = item.downcast::<ContextEditor>() {
+                    let authentification_prompt = Self::authentification_prompt(cx);
+                    context_editor.update(cx, |context_editor, cx| {
+                        context_editor.set_authentification_prompt(authentification_prompt, cx);
+                    });
+                }
             }
 
             pane::Event::RemoveItem { .. } | pane::Event::ActivateItem { .. } => {
@@ -357,21 +363,25 @@ impl AssistantPanel {
             self.new_context(cx);
         }
 
-        if let Some(editor) = self.active_context_editor(cx) {
-            let provider = LanguageModelCompletionProvider::read_global(cx).current_provider(cx);
-            if let Some(provider) = provider {
-                let authentification_prompt = if provider.is_authenticated(cx) {
-                    None
-                } else {
-                    Some(provider.authentication_prompt(cx))
-                };
-                editor.update(cx, |editor, cx| {
-                    editor.set_authentification_prompt(authentification_prompt, cx);
-                });
-            }
+        let authentification_prompt = Self::authentification_prompt(cx);
+        for context_editor in self.context_editors(cx) {
+            context_editor.update(cx, |editor, cx| {
+                editor.set_authentification_prompt(authentification_prompt.clone(), cx);
+            });
         }
 
         cx.notify();
+    }
+
+    fn authentification_prompt(cx: &mut WindowContext) -> Option<AnyView> {
+        if let Some(provider) =
+            LanguageModelCompletionProvider::read_global(cx).current_provider(cx)
+        {
+            if !provider.is_authenticated(cx) {
+                return Some(provider.authentication_prompt(cx));
+            }
+        }
+        None
     }
 
     pub fn inline_assist(
@@ -601,6 +611,13 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
+    }
+
+    fn context_editors(&self, cx: &AppContext) -> Vec<View<ContextEditor>> {
+        self.pane
+            .read(cx)
+            .items_of_type::<ContextEditor>()
+            .collect()
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
@@ -3085,22 +3102,17 @@ impl Render for ContextEditor {
             .size_full()
             .v_flex()
             .child(
-                div()
-                    .flex_grow()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(self.editor.clone())
-                    .child(
-                        if let Some(authentification_prompt) = self.authentification_prompt.as_ref()
-                        {
-                            h_flex()
-                                .w_full()
-                                .absolute()
-                                .bottom_0()
-                                .p_4()
-                                .justify_end()
-                                .child(authentification_prompt.clone().into_any())
-                                .into_any()
-                        } else {
+                if let Some(authentification_prompt) = self.authentification_prompt.as_ref() {
+                    div()
+                        .flex_grow()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(authentification_prompt.clone().into_any())
+                } else {
+                    div()
+                        .flex_grow()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(self.editor.clone())
+                        .child(
                             h_flex()
                                 .w_full()
                                 .absolute()
@@ -3108,9 +3120,9 @@ impl Render for ContextEditor {
                                 .p_4()
                                 .justify_end()
                                 .child(self.render_send_button(cx))
-                                .into_any()
-                        },
-                    ),
+                                .into_any(),
+                        )
+                },
             )
     }
 }
