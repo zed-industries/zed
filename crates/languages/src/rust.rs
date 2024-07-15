@@ -683,6 +683,7 @@ mod tests {
     use crate::language;
     use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
+    use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
 
@@ -752,14 +753,17 @@ mod tests {
                     &lsp::CompletionItem {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
-                        detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: Some(" (use crate::foo)".into()),
+                            description: Some("fn(&mut Option<T>) -> Vec<T>".to_string())
+                        }),
                         ..Default::default()
                     },
                     &language
                 )
                 .await,
             Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
+                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 filter_range: 0..5,
                 runs: vec![
                     (0..5, highlight_function),
@@ -777,14 +781,17 @@ mod tests {
                     &lsp::CompletionItem {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
-                        detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: Some(" (use crate::foo)".into()),
+                            description: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        }),
                         ..Default::default()
                     },
                     &language
                 )
                 .await,
             Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
+                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 filter_range: 0..5,
                 runs: vec![
                     (0..5, highlight_function),
@@ -821,14 +828,18 @@ mod tests {
                     &lsp::CompletionItem {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
-                        detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: Some(" (use crate::foo)".to_string()),
+                            description: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        }),
+
                         ..Default::default()
                     },
                     &language
                 )
                 .await,
             Some(CodeLabel {
-                text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
+                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 filter_range: 0..5,
                 runs: vec![
                     (0..5, highlight_function),
