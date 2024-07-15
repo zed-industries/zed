@@ -268,7 +268,7 @@ impl PickerDelegate for PromptPickerDelegate {
             .flex_none()
             .py_1()
             .px_2()
-            .mx_2()
+            .mx_1()
             .child(editor.clone())
     }
 }
@@ -766,6 +766,7 @@ impl PromptLibrary {
             .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
+            .px_1()
             .w_1_3()
             .overflow_x_hidden()
             .child(
