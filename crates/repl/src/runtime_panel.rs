@@ -324,7 +324,7 @@ impl RuntimePanel {
 
 pub enum SessionSupport {
     ActiveSession(View<Session>),
-    Inactive(KernelSpecification),
+    Inactive(Box<KernelSpecification>),
     RequiresSetup(Arc<str>),
     Unsupported,
 }
@@ -350,7 +350,7 @@ impl RuntimePanel {
                 let kernelspec = self.kernelspec(&language, cx);
 
                 match kernelspec {
-                    Some(kernelspec) => SessionSupport::Inactive(kernelspec),
+                    Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
                     None => {
                         // If no kernelspec but language is one of typescript or python
                         // then we return RequiresSetup

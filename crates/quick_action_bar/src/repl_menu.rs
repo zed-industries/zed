@@ -52,6 +52,7 @@ impl QuickActionBar {
         let session = match session {
             SessionSupport::ActiveSession(session) => session.read(cx),
             SessionSupport::Inactive(spec) => {
+                let spec = *spec;
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
