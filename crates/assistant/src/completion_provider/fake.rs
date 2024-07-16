@@ -23,7 +23,7 @@ impl FakeCompletionProvider {
         this
     }
 
-    pub fn running_completions(&self) -> Vec<LanguageModelRequest> {
+    pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
         self.current_completion_txs
             .lock()
             .keys()
@@ -35,15 +35,8 @@ impl FakeCompletionProvider {
         self.current_completion_txs.lock().len()
     }
 
-    pub fn send_completion(&self, request: &LanguageModelRequest, chunk: String) {
+    pub fn send_completion_chunk(&self, request: &LanguageModelRequest, chunk: String) {
         let json = serde_json::to_string(request).unwrap();
-        dbg!(
-            &json,
-            self.current_completion_txs
-                .lock()
-                .keys()
-                .collect::<Vec<_>>()
-        );
         self.current_completion_txs
             .lock()
             .get(&json)
@@ -52,10 +45,22 @@ impl FakeCompletionProvider {
             .unwrap();
     }
 
+    pub fn send_last_completion_chunk(&self, chunk: String) {
+        if let Some(last_request) = self.pending_completions().last() {
+            self.send_completion_chunk(last_request, chunk);
+        }
+    }
+
     pub fn finish_completion(&self, request: &LanguageModelRequest) {
         self.current_completion_txs
             .lock()
             .remove(&serde_json::to_string(request).unwrap());
+    }
+
+    pub fn finish_last_completion(&self) {
+        if let Some(last_request) = self.pending_completions().last() {
+            self.finish_completion(last_request);
+        }
     }
 }
 

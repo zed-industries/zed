@@ -2734,13 +2734,12 @@ mod tests {
         ";
 
         // Simulate the assist method to trigger the LLM response
-        let request = context.read_with(cx, |context, cx| context.to_completion_request(cx));
         context.update(cx, |context, cx| context.assist(cx));
         cx.run_until_parked();
 
         // Simulate the LLM completion
-        fake_provider.send_completion(&request, llm_response.to_string());
-        fake_provider.finish_completion(&request);
+        fake_provider.send_last_completion_chunk(llm_response.to_string());
+        fake_provider.finish_last_completion();
 
         // Wait for the completion to be processed
         cx.run_until_parked();

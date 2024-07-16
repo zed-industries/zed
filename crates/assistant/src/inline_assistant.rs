@@ -2511,7 +2511,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
+            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
@@ -2569,7 +2569,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
+            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
@@ -2627,7 +2627,7 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
+            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }

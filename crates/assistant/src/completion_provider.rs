@@ -326,7 +326,7 @@ mod tests {
 
         // Get the first completion request that is in flight and mark it as completed.
         let completion = fake_provider
-            .running_completions()
+            .pending_completions()
             .into_iter()
             .next()
             .unwrap();
@@ -347,7 +347,7 @@ mod tests {
         );
 
         // Mark all completion requests as finished that are in flight.
-        for request in fake_provider.running_completions() {
+        for request in fake_provider.pending_completions() {
             fake_provider.finish_completion(&request);
         }
 
@@ -362,7 +362,7 @@ mod tests {
         );
 
         // Finish all remaining completion requests.
-        for request in fake_provider.running_completions() {
+        for request in fake_provider.pending_completions() {
             fake_provider.finish_completion(&request);
         }
 
