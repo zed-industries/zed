@@ -67,7 +67,10 @@ async fn get_extensions(
                 .first()
                 .cloned();
         }
-        extensions.splice(0..0, exact_match);
+
+        if let Some(exact_match) = exact_match {
+            extensions.insert(0, exact_match);
+        }
     };
 
     if let Some(query) = params.filter.as_deref() {
