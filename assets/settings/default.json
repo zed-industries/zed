@@ -436,7 +436,7 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": true
+    "file_icons": false
   },
   // Settings related to preview tabs.
   "preview_tabs": {

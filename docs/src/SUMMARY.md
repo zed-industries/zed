@@ -20,9 +20,10 @@
 - [Assistant Panel](./assistant-panel.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
+- [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
-- [Repl](./repl.md)
+- [REPL](./repl.md)
 
 # Language Support
 

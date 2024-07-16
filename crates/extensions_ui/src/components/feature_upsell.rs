@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use client::telemetry::Telemetry;
 use gpui::{AnyElement, Div, StyleRefinement};
 use smallvec::SmallVec;
 use ui::{prelude::*, ButtonLike};
@@ -5,15 +8,17 @@ use ui::{prelude::*, ButtonLike};
 #[derive(IntoElement)]
 pub struct FeatureUpsell {
     base: Div,
+    telemetry: Arc<Telemetry>,
     text: SharedString,
     docs_url: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
 impl FeatureUpsell {
-    pub fn new(text: impl Into<SharedString>) -> Self {
+    pub fn new(telemetry: Arc<Telemetry>, text: impl Into<SharedString>) -> Self {
         Self {
             base: h_flex(),
+            telemetry,
             text: text.into(),
             docs_url: None,
             children: SmallVec::new(),
@@ -62,8 +67,14 @@ impl RenderOnce for FeatureUpsell {
                                     .child(Icon::new(IconName::ArrowUpRight)),
                             )
                             .on_click({
+                                let telemetry = self.telemetry.clone();
                                 let docs_url = docs_url.clone();
-                                move |_event, cx| cx.open_url(&docs_url)
+                                move |_event, cx| {
+                                    telemetry.report_app_event(format!(
+                                        "feature upsell: viewed docs ({docs_url})"
+                                    ));
+                                    cx.open_url(&docs_url)
+                                }
                             }),
                     )
                 },
