@@ -48,11 +48,6 @@ async fn get_extensions(
         .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
         .await?;
 
-    if let Some(query) = params.filter.as_deref() {
-        let count = extensions.len();
-        tracing::info!(query, count, "extension_search")
-    }
-
     if let Some(filter) = params.filter.as_deref() {
         let extension_id = filter.to_lowercase();
         let mut exact_match = None;
@@ -74,6 +69,11 @@ async fn get_extensions(
         }
         extensions.splice(0..0, exact_match);
     };
+
+    if let Some(query) = params.filter.as_deref() {
+        let count = extensions.len();
+        tracing::info!(query, count, "extension_search")
+    }
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
