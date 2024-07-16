@@ -1009,8 +1009,11 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
 }
 
 fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
+    let _old_alloc_ptr = edits.as_ptr();
     let mut wrap_edits = edits.into_iter();
     let wrap_edits = if let Some(mut first_edit) = wrap_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = wrap_edits
             .scan(&mut first_edit, |prev_edit, edit| {
                 if prev_edit.old.end >= edit.old.start {
@@ -1022,10 +1025,10 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .flatten()
+            .filter_map(|x| x)
             .collect();
         v.push(first_edit.clone());
-
+        debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Wrap edits were reallocated");
         v
     } else {
         vec![]
