@@ -113,12 +113,15 @@ impl DebugAdapterClient {
 
         let process = command
             .spawn()
-            .with_context(|| "failed to spawn command.")?;
+            .with_context(|| "failed to start debug adapter.")?;
 
-        // give the adapter some time to spin up the tcp server
-        cx.background_executor()
-            .timer(Duration::from_millis(1000))
-            .await;
+        if let Some(delay) = host.delay {
+            // some debug adapters need some time to start the TCP server
+            // so we have to wait few milliseconds before we can connect to it
+            cx.background_executor()
+                .timer(Duration::from_millis(delay))
+                .await;
+        }
 
         let address = SocketAddrV4::new(
             host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1)),
