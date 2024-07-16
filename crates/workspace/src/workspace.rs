@@ -1419,7 +1419,7 @@ impl Workspace {
                 let project_path = abs_path.and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
-                            project.find_or_create_local_worktree(abs_path, true, cx)
+                            project.find_or_create_worktree(abs_path, true, cx)
                         })
                     })
                     .ok()
@@ -1857,9 +1857,10 @@ impl Workspace {
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
-        if self.project.read(cx).is_remote() {
+        let project = self.project.read(cx);
+        if project.is_remote() && project.dev_server_project_id().is_none() {
             self.show_error(
-                &anyhow!("Folders cannot yet be added to remote projects"),
+                &anyhow!("You cannot add folders to someone else's project"),
                 cx,
             );
             return;
@@ -1895,7 +1896,7 @@ impl Workspace {
         cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, cx| {
-            project.find_or_create_local_worktree(abs_path, visible, cx)
+            project.find_or_create_worktree(abs_path, visible, cx)
         });
         cx.spawn(|mut cx| async move {
             let (worktree, path) = entry.await?;
@@ -3852,7 +3853,8 @@ impl Workspace {
                 let dev_server_project = SerializedDevServerProject {
                     id: dev_server_project_id,
                     dev_server_name: dev_server.name.to_string(),
-                    path: project.path.to_string(),
+                    // todo!()
+                    path: project.paths[0].to_string(),
                 };
                 Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
             })
@@ -5506,7 +5508,7 @@ mod tests {
         // Add a project folder
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("root2", true, cx)
+                project.find_or_create_worktree("root2", true, cx)
             })
             .await
             .unwrap();

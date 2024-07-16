@@ -987,7 +987,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/root/dir", true, cx)
+            project.find_or_create_worktree("/root/dir", true, cx)
         })
         .await
         .unwrap();
@@ -995,7 +995,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/root/other.rs", false, cx)
+            project.find_or_create_worktree("/root/other.rs", false, cx)
         })
         .await
         .unwrap();

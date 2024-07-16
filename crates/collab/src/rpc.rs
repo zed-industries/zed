@@ -431,6 +431,7 @@ impl Server {
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(rejoin_dev_server_projects))
             .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(update_dev_server_project))
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(regenerate_dev_server_token))
@@ -2323,19 +2324,13 @@ async fn list_remote_directory(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id(dev_server_id);
+        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
 
     session
         .db()
         .await
         .get_dev_server_for_user(dev_server_id, session.user_id())
         .await?;
-
-    let Some(dev_server_connection_id) = dev_server_connection_id else {
-        Err(ErrorCode::DevServerOffline
-            .message("Cannot create a remote project when the dev server is offline".to_string())
-            .anyhow())?
-    };
 
     response.send(
         session
@@ -2344,6 +2339,43 @@ async fn list_remote_directory(
             .await?,
     )?;
     Ok(())
+}
+
+async fn update_dev_server_project(
+    request: proto::UpdateDevServerProject,
+    response: Response<proto::UpdateDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+
+    let (dev_server_project, update) = session
+        .db()
+        .await
+        .update_dev_server_project(dev_server_project_id, &request.paths, session.user_id())
+        .await?;
+
+    let projects = session
+        .db()
+        .await
+        .get_projects_for_dev_server(dev_server_project.dev_server_id)
+        .await?;
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id_supporting(
+            dev_server_project.dev_server_id,
+            ZedVersion::with_list_directory(),
+        )?;
+
+    session.peer.send(
+        dev_server_connection_id,
+        proto::DevServerInstructions { projects },
+    )?;
+
+    send_dev_server_projects_update(session.user_id(), update, &session).await;
+
+    response.send(proto::Ack {})
 }
 
 async fn create_dev_server_project(

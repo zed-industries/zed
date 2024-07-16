@@ -55,7 +55,9 @@ impl Project {
         } else {
             projects_store
                 .dev_server_project(dev_server_project_id)?
-                .path
+                .paths
+                .get(0)
+                .unwrap()
                 .to_string()
         };
 
@@ -81,8 +83,8 @@ impl Project {
                 .and_then(|cwd| cwd.local_path());
 
             terminal_cwd
-                .and_then(|terminal_cwd| self.find_local_worktree(&terminal_cwd, cx))
-                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(&spawn_cwd, cx)))
+                .and_then(|terminal_cwd| self.find_worktree(&terminal_cwd, cx))
+                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_worktree(&spawn_cwd, cx)))
         };
 
         let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {

@@ -267,7 +267,8 @@ message Envelope {
         GetSignatureHelp get_signature_help = 217;
         GetSignatureHelpResponse get_signature_help_response = 218;
         ListRemoteDirectory list_remote_directory = 219;
-        ListRemoteDirectoryResponse list_remote_directory_response = 220; // current max
+        ListRemoteDirectoryResponse list_remote_directory_response = 220;
+        UpdateDevServerProject update_dev_server_project = 221; // current max
     }
 
     reserved 158 to 161;
@@ -516,6 +517,11 @@ message ListRemoteDirectory {
 
 message ListRemoteDirectoryResponse {
     repeated string entries = 1;
+}
+
+message UpdateDevServerProject {
+    uint64 dev_server_project_id = 1;
+    repeated string paths = 2;
 }
 
 message CreateDevServer {
@@ -1345,7 +1351,8 @@ message DevServerProject {
     reserved 3;
     reserved 4;
     uint64 dev_server_id = 5;
-    string path = 6;
+    optional string path = 6;
+    repeated string paths = 7;
 }
 
 message DevServer {

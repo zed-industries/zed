@@ -935,7 +935,7 @@ impl Item for Editor {
                 .context("No path stored for this editor")?;
 
             let (worktree, path) = project
-                .find_local_worktree(&path, cx)
+                .find_worktree(&path, cx)
                 .with_context(|| format!("No worktree for path: {path:?}"))?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
