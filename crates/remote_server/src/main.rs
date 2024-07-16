@@ -52,7 +52,7 @@ fn main() {
                         Ok(message) => message,
                         Err(error) => {
                             log::warn!("error reading message: {:?}", error);
-                            break;
+                            std::process::exit(0);
                         }
                     };
                     incoming_tx.unbounded_send(message).ok();
