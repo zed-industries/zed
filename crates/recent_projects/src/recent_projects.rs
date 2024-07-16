@@ -112,9 +112,7 @@ impl RecentProjects {
             .dev_server_project_id()
             .is_some()
         {
-            dbg!("doing it...");
             workspace.register_action(|workspace, _: &workspace::Open, cx| {
-                dbg!("hi!");
                 if workspace.active_modal::<Self>(cx).is_some() {
                     cx.propagate();
                 } else {

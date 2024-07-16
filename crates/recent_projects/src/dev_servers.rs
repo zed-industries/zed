@@ -454,7 +454,7 @@ impl DevServerProjects {
     fn delete_dev_server_project(&mut self, id: DevServerProjectId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
             gpui::PromptLevel::Warning,
-            format!("Delete this project?").as_str(),
+            "Delete this project?",
             Some("This will delete the remote project. You can always re-add it later."),
             &["Delete", "Cancel"],
         );

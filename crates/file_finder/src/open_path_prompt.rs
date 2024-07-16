@@ -124,11 +124,8 @@ impl PickerDelegate for OpenPathDelegate {
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
-                                .filter_map(|(ix, path)| {
-                                    Some(StringMatchCandidate::new(
-                                        ix,
-                                        path.to_string_lossy().into(),
-                                    ))
+                                .map(|(ix, path)| {
+                                    StringMatchCandidate::new(ix, path.to_string_lossy().into())
                                 })
                                 .collect::<Vec<_>>();
 
