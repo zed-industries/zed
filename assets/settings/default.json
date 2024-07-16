@@ -299,7 +299,7 @@
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Whether to show file icons in the project panel.
-    "file_icons": false,
+    "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
     "folder_icons": true,
     // Whether to show the git status in the project panel.
@@ -436,7 +436,7 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": true
+    "file_icons": false
   },
   // Settings related to preview tabs.
   "preview_tabs": {
