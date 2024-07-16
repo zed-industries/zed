@@ -48,7 +48,14 @@ use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use std::{cmp, fmt::Write, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cmp::{self, Ordering},
+    fmt::Write,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use theme::ThemeSettings;
 use ui::{
@@ -1292,7 +1299,9 @@ impl ContextEditor {
                     }
                 });
             }
-            ContextEvent::EditStepsChanged => {}
+            ContextEvent::EditStepsChanged => {
+                cx.notify();
+            }
             ContextEvent::SummaryChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
@@ -2002,6 +2011,7 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
+        let button_text = self.send_button_text(cx);
         ButtonLike::new("send_button")
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ModalSurface)
@@ -2009,10 +2019,43 @@ impl ContextEditor {
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
             )
-            .child(Label::new("Send"))
+            .child(Label::new(button_text))
             .on_click(move |_event, cx| {
                 focus_handle.dispatch_action(&Assist, cx);
             })
+    }
+
+    fn send_button_text(&self, cx: &AppContext) -> &'static str {
+        let newest_cursor = self
+            .editor
+            .read(cx)
+            .selections
+            .newest_anchor()
+            .head()
+            .text_anchor;
+        let context = self.context.read(cx);
+        let buffer = context.buffer().read(cx);
+
+        let edit_steps = context.edit_steps();
+        let step_index = edit_steps.binary_search_by(|step| {
+            let step_range = step.source_range.clone();
+            if newest_cursor.cmp(&step_range.start, buffer).is_lt() {
+                Ordering::Greater
+            } else if newest_cursor.cmp(&step_range.end, buffer).is_gt() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        });
+
+        match step_index {
+            Ok(index) => match &edit_steps[index].operations {
+                Some(EditStepOperations::Pending(_)) => "Computing Changes...",
+                Some(EditStepOperations::Parsed { .. }) => "Apply Changes",
+                None => "Send",
+            },
+            Err(_) => "Send",
+        }
     }
 }
 
