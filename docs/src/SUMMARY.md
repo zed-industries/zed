@@ -52,6 +52,7 @@
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
+- [R](./languages/r.md)
 - [Racket](./languages/racket.md)
 - [Ruby](./languages/ruby.md)
 - [Rust](./languages/rust.md)
