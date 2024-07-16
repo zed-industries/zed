@@ -212,7 +212,7 @@ blockquote {
 
 blockquote > p {
   margin: 0;
-  padding-left: 2.4rem;
+  padding-left: 2.6rem;
   font-size: 1.4rem;
 }
 
@@ -244,7 +244,7 @@ blockquote .warning:before {
 
 .warning > p {
   margin: 0;
-  padding-left: 2.4rem;
+  padding-left: 2.6rem;
   font-size: 1.4rem;
 }
 
