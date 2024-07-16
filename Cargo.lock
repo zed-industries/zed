@@ -13870,7 +13870,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.0.6"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
