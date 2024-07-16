@@ -603,6 +603,52 @@ impl FormatTrigger {
     }
 }
 
+#[derive(Clone)]
+pub enum DirectoryLister {
+    Project(Model<Project>),
+    Local(Arc<dyn Fs>),
+}
+
+impl DirectoryLister {
+    pub fn is_local(&self, cx: &AppContext) -> bool {
+        match self {
+            DirectoryLister::Local(_) => true,
+            DirectoryLister::Project(project) => project.read(cx).is_local(),
+        }
+    }
+
+    pub fn default_query(&self, cx: &mut AppContext) -> String {
+        if let DirectoryLister::Project(project) = self {
+            if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
+                return worktree.read(cx).abs_path().to_string_lossy().to_string();
+            }
+        };
+        "~/".to_string()
+    }
+    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+        match self {
+            DirectoryLister::Project(project) => {
+                project.update(cx, |project, cx| project.list_directory(query, cx))
+            }
+            DirectoryLister::Local(fs) => {
+                let fs = fs.clone();
+                cx.background_executor().spawn(async move {
+                    let mut results = vec![];
+                    let expanded = shellexpand::tilde(&query);
+                    let query = Path::new(expanded.as_ref());
+                    let mut response = fs.read_dir(query).await?;
+                    while let Some(path) = response.next().await {
+                        if let Some(file_name) = path?.file_name() {
+                            results.push(PathBuf::from(file_name.to_os_string()));
+                        }
+                    }
+                    Ok(results)
+                })
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     OpenBuffer {
@@ -7564,19 +7610,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
         if self.is_local() {
-            let fs = self.fs.clone();
-            cx.background_executor().spawn(async move {
-                let mut results = vec![];
-                let expanded = shellexpand::tilde(&query);
-                let query = Path::new(expanded.as_ref());
-                let mut response = fs.read_dir(query).await?;
-                while let Some(path) = response.next().await {
-                    if let Some(file_name) = path?.file_name() {
-                        results.push(PathBuf::from(file_name.to_os_string()));
-                    }
-                }
-                Ok(results)
-            })
+            DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
             dev_server_projects::Store::global(cx)
                 .read(cx)

@@ -17,6 +17,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
+use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
@@ -49,13 +50,17 @@ pub fn init(cx: &mut AppContext) {
                     workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
                 }
             })
-            .register_action(move |_, _: &InstallDevExtension, cx| {
+            .register_action(move |workspace, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
-                let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: false,
-                });
+                let prompt = workspace.prompt_for_open_path(
+                    gpui::PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                    },
+                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    cx,
+                );
 
                 let workspace_handle = cx.view().downgrade();
                 cx.deref_mut()
