@@ -938,12 +938,14 @@ impl ExtensionsPage {
     fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let upsells_count = self.upsells.len();
 
-        const GIT_UPSELL_TEXT: &str = "Zed comes with basic Git support for diffs and branches. More Git features are coming in the future.";
-
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
             let telemetry = self.telemetry.clone();
             let upsell = match feature {
-                Feature::Git => FeatureUpsell::new(telemetry, GIT_UPSELL_TEXT),
+                Feature::Git => FeatureUpsell::new(
+                    telemetry,
+                    "Zed comes with basic Git support. More Git features are coming in the future.",
+                )
+                .docs_url("https://zed.dev/docs/git"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
