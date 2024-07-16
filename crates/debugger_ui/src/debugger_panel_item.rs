@@ -314,10 +314,6 @@ impl DebugPanelItem {
             .into_any()
     }
 
-    fn disable_button(&self) -> bool {
-        self.current_thread_state().status != ThreadStatus::Stopped
-    }
-
     fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
@@ -395,7 +391,7 @@ impl DebugPanelItem {
 
 impl Render for DebugPanelItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let disable_button = self.disable_button();
+        let thread_status = self.current_thread_state().status;
 
         v_flex()
             .key_context("DebugPanelItem")
@@ -413,44 +409,67 @@ impl Render for DebugPanelItem {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(
-                        IconButton::new("debug-continue", IconName::DebugContinue)
-                            .on_click(
-                                cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Continue))),
+                    .when(
+                        self.current_thread_state().status != ThreadStatus::Running,
+                        |this| {
+                            this.child(
+                                IconButton::new("debug-continue", IconName::DebugContinue)
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(Continue))
+                                    }))
+                                    .disabled(thread_status != ThreadStatus::Stopped)
+                                    .tooltip(move |cx| Tooltip::text("Continue program", cx)),
                             )
-                            .disabled(disable_button)
-                            .tooltip(move |cx| Tooltip::text("Continue debug", cx)),
+                        },
+                    )
+                    .when(
+                        self.current_thread_state().status == ThreadStatus::Running,
+                        |this| {
+                            this.child(
+                                IconButton::new("debug-pause", IconName::DebugPause)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Pause))),
+                                    )
+                                    .tooltip(move |cx| Tooltip::text("Pause program", cx)),
+                            )
+                        },
                     )
                     .child(
                         IconButton::new("debug-step-over", IconName::DebugStepOver)
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepOver))),
                             )
-                            .disabled(disable_button)
+                            .disabled(thread_status != ThreadStatus::Stopped)
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
                         IconButton::new("debug-step-in", IconName::DebugStepInto)
                             .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepIn))))
-                            .disabled(disable_button)
-                            .tooltip(move |cx| Tooltip::text("Go in", cx)),
+                            .disabled(thread_status != ThreadStatus::Stopped)
+                            .tooltip(move |cx| Tooltip::text("Step in", cx)),
                     )
                     .child(
                         IconButton::new("debug-step-out", IconName::DebugStepOut)
                             .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepOut))))
-                            .disabled(disable_button)
-                            .tooltip(move |cx| Tooltip::text("Go out", cx)),
+                            .disabled(thread_status != ThreadStatus::Stopped)
+                            .tooltip(move |cx| Tooltip::text("Step out", cx)),
                     )
                     .child(
                         IconButton::new("debug-restart", IconName::DebugRestart)
                             .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Restart))))
-                            .disabled(disable_button)
+                            .disabled(
+                                thread_status != ThreadStatus::Stopped
+                                    && thread_status != ThreadStatus::Running,
+                            )
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
                         IconButton::new("debug-stop", IconName::DebugStop)
                             .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Stop))))
-                            .disabled(disable_button)
+                            .disabled(
+                                thread_status != ThreadStatus::Stopped
+                                    && thread_status != ThreadStatus::Running,
+                            )
                             .tooltip(move |cx| Tooltip::text("Stop", cx)),
                     ),
             )
