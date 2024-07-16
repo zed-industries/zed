@@ -134,6 +134,15 @@ impl Item for DebugPanelItem {
         })
         .into_any_element()
     }
+
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+        Some(SharedString::from(format!(
+            "{} Thread {} - {:?}",
+            self.client.config().id,
+            self.thread_id,
+            self.current_thread_state().status
+        )))
+    }
 }
 
 impl DebugPanelItem {
