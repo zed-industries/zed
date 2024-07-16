@@ -136,11 +136,14 @@ impl ExtensionFilter {
 enum Feature {
     Git,
     Vim,
+    LanguageBash,
     LanguageC,
     LanguageCpp,
     LanguageGo,
     LanguagePython,
+    LanguageReact,
     LanguageRust,
+    LanguageTypescript,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
@@ -149,11 +152,17 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
             (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
             (Feature::LanguageGo, vec!["go", "golang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
             (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
         ])
     })
 }
@@ -973,6 +982,10 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
+                Feature::LanguageBash => {
+                    FeatureUpsell::new(telemetry, "Shell support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/bash")
+                }
                 Feature::LanguageC => {
                     FeatureUpsell::new(telemetry, "C support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/c")
@@ -989,9 +1002,17 @@ impl ExtensionsPage {
                     FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/python")
                 }
+                Feature::LanguageReact => {
+                    FeatureUpsell::new(telemetry, "React support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
                 Feature::LanguageRust => {
                     FeatureUpsell::new(telemetry, "Rust support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/rust")
+                }
+                Feature::LanguageTypescript => {
+                    FeatureUpsell::new(telemetry, "Typescript support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
                 }
             };
 
