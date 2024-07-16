@@ -46,9 +46,45 @@ The `repl: run` command will be executed on your selection(s), and the result wi
 
 Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
 
-## Changing Kernels {#changing-kernels}
+## Changing which kernel is used per language {#changing-kernels}
 
-Work in Progress!
+Assign kernels by name to languages in your `settings.json`.
+
+```jsonc
+{
+  "jupyter": {
+    "kernels": {
+      "python": "conda-env",
+      "typescript": "deno-debug"
+    }
+  }
+}
+```
+
+If you have `jupyter` installed, you can run `juptyer kernelspec list` to see the available kernels. Note that only
+
+````
+$ jupyter kernelspec list
+Available kernels:
+  ark                   /Users/z/Library/Jupyter/kernels/ark
+  conda-base            /Users/z/Library/Jupyter/kernels/conda-base
+  deno                  /Users/z/Library/Jupyter/kernels/deno
+  deno-debug            /Users/z/Library/Jupyter/kernels/deno-debug
+  deno-release          /Users/z/Library/Jupyter/kernels/deno-release
+  python-chatlab-dev    /Users/z/Library/Jupyter/kernels/python-chatlab-dev
+  python3               /Users/z/Library/Jupyter/kernels/python3
+  ruby                  /Users/z/Library/Jupyter/kernels/ruby
+  rust                  /Users/z/Library/Jupyter/kernels/rust
+```
+
+Note: Zed will not find kernels nested within your Python `sys.prefix`, shown here as `/Users/z/.pyenv/versions/miniconda3-latest/`.
+
+```
+$ jupyter kernelspec list
+Available kernels:
+  conda-base            /Users/z/Library/Jupyter/kernels/conda-base
+  python3               /Users/z/.pyenv/versions/miniconda3-latest/share/jupyter/kernels/python3
+```
 
 ## Language specific instructions
 
