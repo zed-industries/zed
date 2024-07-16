@@ -269,6 +269,7 @@ impl TerminalInlineAssistant {
             messages,
             stop: Vec::new(),
             temperature: 1.0,
+            cached_contents: Vec::new(), // todo!
         })
     }
 

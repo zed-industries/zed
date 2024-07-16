@@ -189,7 +189,11 @@ pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
     pub temperature: f32,
+    pub cached_contents: Vec<CachedContentId>,
 }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CachedContentId(String);
 
 impl LanguageModelRequest {
     pub fn to_proto(&self) -> proto::CompleteWithLanguageModel {
@@ -200,6 +204,7 @@ impl LanguageModelRequest {
             temperature: self.temperature,
             tool_choice: None,
             tools: Vec::new(),
+            cached_contents: self.cached_contents.iter().map(|id| id.0.clone()).collect(),
         }
     }
 

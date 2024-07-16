@@ -152,6 +152,11 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
             temperature: request.temperature,
             tools: Vec::new(),
             tool_choice: None,
+            cached_contents: request
+                .cached_contents
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
         };
 
         self.client

@@ -203,6 +203,10 @@ message Envelope {
 
         CompleteWithLanguageModel complete_with_language_model = 166;
         LanguageModelResponse language_model_response = 167;
+
+        CacheLanguageModelContent cache_language_model_content = 219;
+        CacheLanguageModelContentResponse cache_language_model_content_response = 220;  // current max
+
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -265,7 +269,7 @@ message Envelope {
         SynchronizeContextsResponse synchronize_contexts_response = 216;
 
         GetSignatureHelp get_signature_help = 217;
-        GetSignatureHelpResponse get_signature_help_response = 218; // current max
+        GetSignatureHelpResponse get_signature_help_response = 218;
     }
 
     reserved 158 to 161;
@@ -2036,6 +2040,25 @@ message CompleteWithLanguageModel {
     float temperature = 4;
     repeated ChatCompletionTool tools = 5;
     optional string tool_choice = 6;
+    repeated string cached_contents = 7;
+}
+
+message CacheLanguageModelContent {
+    string model = 1;
+    repeated LanguageModelRequestMessage messages = 2;
+    repeated string stop = 3;
+    float temperature = 4;
+    repeated ChatCompletionTool tools = 5;
+    optional string tool_choice = 6;
+    optional uint64 ttl_seconds = 7;
+}
+
+message CacheLanguageModelContentResponse {
+    string name = 1;
+    uint64 create_time = 2;
+    uint64 update_time = 3;
+    optional uint64 expire_time = 4;
+    uint32 total_token_count = 5;
 }
 
 // A tool presented to the language model for its use

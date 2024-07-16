@@ -194,6 +194,8 @@ messages!(
     (ApplyCompletionAdditionalEditsResponse, Background),
     (BufferReloaded, Foreground),
     (BufferSaved, Foreground),
+    (CacheLanguageModelContent, Background),
+    (CacheLanguageModelContentResponse, Background),
     (Call, Foreground),
     (CallCanceled, Foreground),
     (CancelCall, Foreground),
@@ -400,6 +402,7 @@ request_messages!(
         ApplyCompletionAdditionalEdits,
         ApplyCompletionAdditionalEditsResponse
     ),
+    (CacheLanguageModelContent, CacheLanguageModelContentResponse),
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
