@@ -206,7 +206,16 @@ impl PickerDelegate for OpenPathDelegate {
                 this.delegate
                     .matches
                     .extend(matches.into_iter().map(|m| m.candidate_id));
-                this.delegate.matches.sort();
+                this.delegate.matches.sort_by_key(|m| {
+                    (
+                        this.delegate.directory_state.as_ref().and_then(|d| {
+                            d.match_candidates
+                                .get(*m)
+                                .map(|c| !c.string.starts_with(&suffix))
+                        }),
+                        *m,
+                    )
+                });
                 cx.notify();
             })
             .ok();
