@@ -49,7 +49,6 @@ use std::{
     slice, str,
     sync::Arc,
 };
-use time::UtcOffset;
 
 use super::renderer;
 
@@ -757,14 +756,6 @@ impl Platform for MacPlatform {
                 let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
                 let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
             }
-        }
-    }
-
-    fn local_timezone(&self) -> UtcOffset {
-        unsafe {
-            let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
-            let seconds_from_gmt: NSInteger = msg_send![local_timezone, secondsFromGMT];
-            UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
 

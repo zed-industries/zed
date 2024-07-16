@@ -31,6 +31,7 @@ test-support = [
 aho-corasick = "1.1"
 anyhow.workspace = true
 assets.workspace = true
+chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
