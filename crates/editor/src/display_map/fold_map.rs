@@ -513,7 +513,7 @@ impl FoldMap {
                     });
                 }
 
-                consolidate_fold_edits(&mut fold_edits);
+                fold_edits = consolidate_fold_edits(fold_edits);
             }
 
             self.snapshot.transforms = new_transforms;
@@ -832,7 +832,7 @@ fn consolidate_inlay_edits(edits: &mut Vec<InlayEdit>) {
     }
 }
 
-fn consolidate_fold_edits(edits: &mut Vec<FoldEdit>) {
+fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
     edits.sort_unstable_by(|a, b| {
         a.old
             .start
@@ -840,19 +840,30 @@ fn consolidate_fold_edits(edits: &mut Vec<FoldEdit>) {
             .then_with(|| b.old.end.cmp(&a.old.end))
     });
 
-    let mut i = 1;
-    while i < edits.len() {
-        let edit = edits[i].clone();
-        let prev_edit = &mut edits[i - 1];
-        if prev_edit.old.end >= edit.old.start {
-            prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
-            prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
-            prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
-            edits.remove(i);
-            continue;
-        }
-        i += 1;
-    }
+    let mut fold_edits = edits.into_iter();
+    let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+        let mut v: Vec<_> = fold_edits
+            .scan(&mut first_edit, |prev_edit, edit| {
+                if prev_edit.old.end >= edit.old.start {
+                    prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
+                    prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
+                    prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
+                    Some(None) // Skip this edit, it's merged
+                } else {
+                    let prev = std::mem::replace(*prev_edit, edit);
+                    Some(Some(prev)) // Yield the previous edit
+                }
+            })
+            .filter_map(|x| x)
+            .collect();
+        v.push(first_edit.clone());
+
+        v
+    } else {
+        vec![]
+    };
+
+    fold_edits
 }
 
 #[derive(Clone, Debug, Default)]
