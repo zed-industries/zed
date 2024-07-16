@@ -1986,7 +1986,7 @@ impl Codegen {
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
         let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).complete(prompt, cx);
+        let response = CompletionProvider::global(cx).stream_completion(prompt, cx);
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
         self.diff = Diff::default();
@@ -2003,7 +2003,7 @@ impl Codegen {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
-                                let chunks = StripInvalidSpans::new(response.inner.await?);
+                                let chunks = StripInvalidSpans::new(response?);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
 

@@ -12,12 +12,14 @@ use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
+use indoc::formatdoc;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
+    fmt::Debug,
     iter, mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -327,10 +329,42 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditStep<R> {
-    pub id: usize,
-    pub source_range: Range<R>,
+#[derive(Debug)]
+pub struct EditStep {
+    pub source_range: Range<language::Anchor>,
+    pub operations: Option<EditStepOperations>,
+}
+
+pub enum EditStepOperations {
+    Pending(Task<Result<()>>),
+    Parsed(Vec<EditOperation>),
+}
+
+impl Debug for EditStepOperations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
+            EditStepOperations::Parsed(operations) => f
+                .debug_tuple("EditStepOperations::Parsed")
+                .field(operations)
+                .finish(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EditOperation {
+    pub path: String,
+    pub kind: EditOperationKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum EditOperationKind {
+    Update { symbol: String },
+    Create,
+    InsertAfter { symbol: String },
+    InsertBefore { symbol: String },
+    Delete { symbol: String },
 }
 
 pub struct Context {
@@ -359,7 +393,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    edit_steps: Vec<EditStep<language::Anchor>>,
+    edit_steps: Vec<EditStep>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -748,7 +782,7 @@ impl Context {
         &self.edit_suggestions
     }
 
-    pub fn edit_steps(&self) -> &[EditStep<language::Anchor>] {
+    pub fn edit_steps(&self) -> &[EditStep] {
         &self.edit_steps
     }
 
@@ -952,78 +986,154 @@ impl Context {
         cx.notify();
     }
 
-    fn reparse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
-        self.buffer.update(cx, |buffer, _| {
-            let range_start = buffer.anchor_before(range.start);
-            let range_end = buffer.anchor_after(range.end);
-            let start_ix = self
-                .edit_steps
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .end
-                        .cmp(&range_start, buffer)
-                        .then(Ordering::Greater)
-                })
-                .unwrap_err();
-            let end_ix = self
-                .edit_steps
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .start
-                        .cmp(&range_end, buffer)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
+    fn parse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+        let mut new_edit_steps = Vec::new();
 
-            let mut new_edit_steps = Vec::new();
+        self.buffer.update(cx, |buffer, _cx| {
             let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
             let mut in_step = false;
             let mut step_start = 0;
-            let mut current_id: Option<usize> = None;
             let mut line_start_offset = message_lines.offset();
 
             while let Some(line) = message_lines.next() {
-                if let Some(step_start_index) = line.find("<step") {
+                if let Some(step_start_index) = line.find("<step>") {
                     if !in_step {
-                        if let Some(id_start) = line[step_start_index..].find("id=\"") {
-                            let id_start = step_start_index + id_start + 4;
-                            if let Some(id_end) = line[id_start..].find('"') {
-                                if line[id_start + id_end + 1..].contains('>') {
-                                    if let Ok(id) =
-                                        line[id_start..id_start + id_end].parse::<usize>()
-                                    {
-                                        in_step = true;
-                                        step_start = line_start_offset + step_start_index;
-                                        current_id = Some(id);
-                                    }
-                                }
-                            }
-                        }
+                        in_step = true;
+                        step_start = line_start_offset + step_start_index;
                     }
                 } else if let Some(step_end_index) = line.find("</step>") {
                     if in_step {
                         let start_anchor = buffer.anchor_after(step_start);
                         let end_anchor = buffer
                             .anchor_before(line_start_offset + step_end_index + "</step>".len());
-                        if let Some(id) = current_id {
-                            new_edit_steps.push(EditStep {
-                                id,
-                                source_range: start_anchor..end_anchor,
-                            });
+                        let source_range = start_anchor..end_anchor;
+
+                        // Check if a step with the same range already exists
+                        let existing_step_index = self.edit_steps.binary_search_by(|probe| {
+                            probe.source_range.cmp(&source_range, buffer)
+                        });
+
+                        if let Err(ix) = existing_step_index {
+                            // Step doesn't exist, so add it
+                            new_edit_steps.push((
+                                ix,
+                                EditStep {
+                                    source_range,
+                                    operations: None,
+                                },
+                            ));
                         }
+
                         in_step = false;
-                        current_id = None;
                     }
                 }
 
                 line_start_offset = message_lines.offset();
             }
-            self.edit_steps.splice(start_ix..end_ix, new_edit_steps);
         });
+
+        // Insert new steps and generate their corresponding tasks
+        for (index, mut step) in new_edit_steps {
+            let task = self.generate_edit_step_operations(&step, cx);
+            step.operations = Some(EditStepOperations::Pending(task));
+            self.edit_steps.insert(index, step);
+        }
+
         cx.emit(ContextEvent::EditStepsChanged);
         cx.notify();
+    }
+
+    fn generate_edit_step_operations(
+        &self,
+        edit_step: &EditStep,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let completion_provider = CompletionProvider::global(cx);
+
+        let mut request = self.to_completion_request(cx);
+        let edit_step_range = edit_step.source_range.clone();
+        let step_text = self
+            .buffer
+            .read(cx)
+            .text_for_range(edit_step_range.clone())
+            .collect::<String>();
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: formatdoc!{r#"
+                Your task is to map a step from the conversation above to operations on symbols inside the provided source files.
+                For each symbol, specify whether to update it, delete it, or insert a new symbol before or after it.
+                You can also create new files.
+                There's no need to describe *what* to do, just *where* to do it.
+                If creating a file, assume any subsequent updates are included at the time of creation.
+                Don't create and then update a file.
+                We'll create it in one shot.
+                Prefer updating symbols lower in the syntax tree if possible.
+                Don't select overlapping symbols.
+                When updating a parent symbol, avoid operations on its children.
+
+                Example:
+
+                <update path="foo/bar.rs" symbol="impl Foo fn bar"/>
+                <create path="foo/baz.rs"/>
+                <insert_after path="foo/qux.rs" symbol="impl Qux fn foo"/>
+                <insert_before path="foo/qux.rs" symbol="impl Qux fn qux"/>
+                <delete path="foo/qux.rs" symbol="struct Waldo"/>
+
+                Don't output anything other than XML. Do this now for the following step:
+
+                {step_text}
+            "#}
+        });
+
+        let completion = completion_provider.complete(request, cx);
+        cx.spawn(|this, mut cx| async move {
+            let completion = completion.await?;
+            let operations = Self::parse_edit_operations(&completion);
+            this.update(&mut cx, |this, cx| {
+                let step_index = this
+                    .edit_steps
+                    .binary_search_by(|step| {
+                        step.source_range
+                            .cmp(&edit_step_range, this.buffer.read(cx))
+                    })
+                    .map_err(|_| anyhow!("edit step not found"))?;
+                if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
+                    edit_step.operations = Some(EditStepOperations::Parsed(operations));
+                    cx.emit(ContextEvent::EditStepsChanged);
+                }
+                anyhow::Ok(())
+            })?
+        })
+    }
+
+    fn parse_edit_operations(xml: &str) -> Vec<EditOperation> {
+        let doc = roxmltree::Document::parse(xml).ok();
+        doc.map_or(Vec::new(), |doc| {
+            doc.root_element()
+                .children()
+                .filter_map(|node| {
+                    let tag_name = node.tag_name().name();
+                    let path = node.attribute("path")?.to_string();
+                    let kind = match tag_name {
+                        "update" => EditOperationKind::Update {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        "create" => EditOperationKind::Create,
+                        "insert_after" => EditOperationKind::InsertAfter {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        "insert_before" => EditOperationKind::InsertBefore {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        "delete" => EditOperationKind::Delete {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        _ => return None,
+                    };
+                    Some(EditOperation { path, kind })
+                })
+                .collect()
+        })
     }
 
     pub fn pending_command_for_position(
@@ -1193,7 +1303,7 @@ impl Context {
         }
 
         let request = self.to_completion_request(cx);
-        let stream = CompletionProvider::global(cx).complete(request, cx);
+        let stream = CompletionProvider::global(cx).stream_completion(request, cx);
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
@@ -1209,7 +1319,7 @@ impl Context {
                 let mut response_latency = None;
                 let stream_completion = async {
                     let request_start = Instant::now();
-                    let mut chunks = stream.await.inner.await?;
+                    let mut chunks = stream.await?;
 
                     while let Some(chunk) = chunks.next().await {
                         if response_latency.is_none() {
@@ -1240,7 +1350,7 @@ impl Context {
                                 message_start_offset..message_new_end_offset
                             });
                             this.reparse_edit_suggestions_in_range(message_range.clone(), cx);
-                            this.reparse_edit_steps_in_range(message_range, cx);
+                            this.parse_edit_steps_in_range(message_range, cx);
                             cx.emit(ContextEvent::StreamedCompletion);
 
                             Some(())
@@ -1564,10 +1674,10 @@ impl Context {
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request, cx);
+            let stream = CompletionProvider::global(cx).stream_completion(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await.inner.await?;
+                    let mut messages = stream.await?;
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
@@ -2752,31 +2862,19 @@ mod tests {
             assert_eq!(
                 edit_steps(context, cx),
                 vec![
-                    EditStep {
-                        id: 1,
-                        source_range: Point::new(response_start_row + 2, 0)
-                            ..Point::new(response_start_row + 14, 7),
-                    },
-                    EditStep {
-                        id: 2,
-                        source_range: Point::new(response_start_row + 16, 0)
-                            ..Point::new(response_start_row + 28, 7),
-                    },
+                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 14, 7),
+                    Point::new(response_start_row + 16, 0)..Point::new(response_start_row + 28, 7),
                 ]
             );
         });
 
-        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<EditStep<Point>> {
+        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
             context
                 .edit_steps
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    EditStep {
-                        id: step.id,
-                        source_range: step.source_range.start.to_point(buffer)
-                            ..step.source_range.end.to_point(buffer),
-                    }
+                    step.source_range.to_point(buffer)
                 })
                 .collect()
         }

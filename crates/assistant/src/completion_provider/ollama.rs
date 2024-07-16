@@ -91,7 +91,7 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
         async move { Ok(token_count) }.boxed()
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

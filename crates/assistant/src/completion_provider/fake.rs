@@ -101,7 +101,7 @@ impl LanguageModelCompletionProvider for FakeCompletionProvider {
         futures::future::ready(Ok(0)).boxed()
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         _request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

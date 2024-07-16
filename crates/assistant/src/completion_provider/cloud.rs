@@ -135,7 +135,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
         }
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

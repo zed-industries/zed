@@ -20,11 +20,10 @@ use crate::{
 };
 use anyhow::Result;
 use client::Client;
-use futures::{future::BoxFuture, stream::BoxStream};
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AnyView, AppContext, BorrowAppContext, Task, WindowContext};
 use settings::{Settings, SettingsStore};
-use std::time::Duration;
-use std::{any::Any, sync::Arc};
+use std::{any::Any, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
 /// Choose which model to use for openai provider.
 /// If the model is not available, try to use the first available model, or fallback to the original model.
@@ -55,8 +54,19 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 }
 
 pub struct CompletionResponse {
-    pub inner: BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>,
+    inner: BoxStream<'static, Result<String>>,
     _lock: SemaphoreGuardArc,
+}
+
+impl futures::Stream for CompletionResponse {
+    type Item = Result<String>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
 }
 
 pub trait LanguageModelCompletionProvider: Send + Sync {
@@ -72,7 +82,7 @@ pub trait LanguageModelCompletionProvider: Send + Sync {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>>;
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
@@ -136,20 +146,33 @@ impl CompletionProvider {
         self.provider.read().count_tokens(request, cx)
     }
 
-    pub fn complete(
+    pub fn stream_completion(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
-    ) -> Task<CompletionResponse> {
+    ) -> Task<Result<CompletionResponse>> {
         let rate_limiter = self.request_limiter.clone();
         let provider = self.provider.clone();
-        cx.background_executor().spawn(async move {
+        cx.foreground_executor().spawn(async move {
             let lock = rate_limiter.acquire_arc().await;
-            let response = provider.read().complete(request);
-            CompletionResponse {
+            let response = provider.read().stream_completion(request).await?;
+            Ok(CompletionResponse {
                 inner: response,
                 _lock: lock,
+            })
+        })
+    }
+
+    pub fn complete(&self, request: LanguageModelRequest, cx: &AppContext) -> Task<Result<String>> {
+        let response = self.stream_completion(request, cx);
+        cx.foreground_executor().spawn(async move {
+            let mut chunks = response.await?;
+            let mut completion = String::new();
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk?;
+                completion.push_str(&chunk);
             }
+            Ok(completion)
         })
     }
 }
@@ -300,7 +323,7 @@ mod tests {
 
         // Enqueue some requests
         for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {
-            let response = provider.complete(
+            let response = provider.stream_completion(
                 LanguageModelRequest {
                     temperature: i as f32 / 10.0,
                     ..Default::default()
@@ -309,8 +332,7 @@ mod tests {
             );
             cx.background_executor()
                 .spawn(async move {
-                    let response = response.await;
-                    let mut stream = response.inner.await.unwrap();
+                    let mut stream = response.await.unwrap();
                     while let Some(message) = stream.next().await {
                         message.unwrap();
                     }
