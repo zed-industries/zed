@@ -87,10 +87,9 @@ impl DebugPanelItem {
             return;
         }
 
-        if let Some(thread_state) = this.current_thread_state() {
-            this.stack_frame_list.reset(thread_state.stack_frames.len());
-            cx.notify();
-        };
+        this.stack_frame_list
+            .reset(this.current_thread_state().stack_frames.len());
+        cx.notify();
     }
 
     fn handle_thread_event(
@@ -155,8 +154,12 @@ impl DebugPanelItem {
             .unwrap()
     }
 
-    fn current_thread_state(&self) -> Option<ThreadState> {
-        self.client.thread_states().get(&self.thread_id).cloned()
+    fn current_thread_state(&self) -> ThreadState {
+        self.client
+            .thread_states()
+            .get(&self.thread_id)
+            .cloned()
+            .unwrap()
     }
 
     fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -225,11 +228,8 @@ impl DebugPanelItem {
             .into_any()
     }
 
-    fn render_scopes(
-        &self,
-        thread_state: &ThreadState,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    fn render_scopes(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let thread_state = self.current_thread_state();
         let Some(scopes) = thread_state
             .current_stack_frame_id
             .and_then(|id| thread_state.scopes.get(&id))
@@ -244,7 +244,7 @@ impl DebugPanelItem {
             .children(
                 scopes
                     .iter()
-                    .map(|scope| self.render_scope(thread_state, scope, cx)),
+                    .map(|scope| self.render_scope(&thread_state, scope, cx)),
             )
             .into_any()
     }
@@ -308,10 +308,7 @@ impl DebugPanelItem {
     }
 
     fn disable_button(&self) -> bool {
-        let thread_state = self.current_thread_state();
-        thread_state
-            .and_then(|s| Some(s.status != ThreadStatus::Stopped))
-            .unwrap_or(true)
+        self.current_thread_state().status != ThreadStatus::Stopped
     }
 
     fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
@@ -423,13 +420,15 @@ impl Render for DebugPanelItem {
                             .tooltip(move |cx| Tooltip::text("Pause", cx)),
                     ),
             )
-            .child(h_flex().size_full().items_start().p_1().gap_4().when_some(
-                self.current_thread_state(),
-                |this, thread_state| {
-                    this.child(self.render_stack_frames(cx))
-                        .child(self.render_scopes(&thread_state, cx))
-                },
-            ))
+            .child(
+                h_flex()
+                    .size_full()
+                    .items_start()
+                    .p_1()
+                    .gap_4()
+                    .child(self.render_stack_frames(cx))
+                    .child(self.render_scopes(cx)),
+            )
             .into_any()
     }
 }
