@@ -135,7 +135,7 @@ x11rb = { version = "0.13.0", features = [
     "resource_manager",
     "sync",
 ] }
-xkbcommon = { git = "https://github.com/ConradIrwin/xkbcommon-rs", rev = "2d4c4439160c7846ede0f0ece93bf73b1e613339", features = [
+xkbcommon = { git = "https://github.com/ConradIrwin/xkbcommon-rs", rev = "fcbb4612185cc129ceeff51d22f7fb51810a03b2", features = [
     "wayland",
     "x11",
 ] }
