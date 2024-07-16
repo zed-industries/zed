@@ -2171,24 +2171,22 @@ impl ProjectPanel {
                                     });
                                 }
                             } else if event.down.modifiers.secondary() {
-                                if !this.marked_entries.insert(selection) {
+                                if event.down.click_count > 1 {
+                                    this.split_entry(entry_id, cx);
+                                } else if !this.marked_entries.insert(selection) {
                                     this.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
                                 let click_count = event.up.click_count;
-                                if click_count > 1 && event.down.modifiers.secondary() {
-                                    this.split_entry(entry_id, cx);
-                                } else {
-                                    this.open_entry(
-                                        entry_id,
-                                        cx.modifiers().secondary(),
-                                        click_count > 1,
-                                        click_count == 1,
-                                        cx,
-                                    );
-                                }
+                                this.open_entry(
+                                    entry_id,
+                                    cx.modifiers().secondary(),
+                                    click_count > 1,
+                                    click_count == 1,
+                                    cx,
+                                );
                             }
                         }
                     }))
