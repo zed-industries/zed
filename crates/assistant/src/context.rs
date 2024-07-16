@@ -9,13 +9,16 @@ use assistant_slash_command::{
 use client::{proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use editor::{ExcerptRange, MultiBuffer};
 use fs::Fs;
 use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
 };
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
-use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
+use language::{
+    AnchorRangeExt, Bias, Buffer, Capability, LanguageRegistry, OffsetRangeExt, Point, ToOffset,
+};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
@@ -31,7 +34,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -344,10 +347,36 @@ pub struct EditLocation {
 }
 
 impl EditStep {
+    pub fn edit_locations_multibuffer(
+        &self,
+        project: &Model<Project>,
+        cx: &AppContext,
+    ) -> Task<Result<Model<MultiBuffer>>> {
+        let replica_id = project.read(cx).replica_id();
+        let edit_locations = self.edit_locations(project, cx);
+        cx.spawn(|mut cx| async move {
+            let edit_locations = edit_locations.await;
+            cx.new_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
+                for location in edit_locations {
+                    multibuffer.push_excerpts(
+                        location.buffer,
+                        [ExcerptRange {
+                            context: location.range,
+                            primary: None,
+                        }],
+                        cx,
+                    );
+                }
+                multibuffer
+            })
+        })
+    }
+
     pub fn edit_locations(
         &self,
         project: &Model<Project>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Task<Vec<EditLocation>> {
         let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
             return Task::ready(Vec::new());
@@ -369,7 +398,7 @@ impl EditStep {
             future::join_all(location_tasks)
                 .await
                 .into_iter()
-                .flatten()
+                .filter_map(|location| location.log_err())
                 .collect()
         })
     }
@@ -379,7 +408,7 @@ impl EditStep {
         path: String,
         operation: EditOperationKind,
         project: Model<Project>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Task<Result<EditLocation>> {
         let path = path.to_string();
         cx.spawn(move |mut cx| async move {

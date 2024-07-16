@@ -969,6 +969,7 @@ pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
+    project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
@@ -977,6 +978,7 @@ pub struct ContextEditor {
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
+    active_edit_step_start: Option<language::Anchor>,
 }
 
 impl ContextEditor {
@@ -1005,7 +1007,7 @@ impl ContextEditor {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
-            editor.set_collaboration_hub(Box::new(project));
+            editor.set_collaboration_hub(Box::new(project.clone()));
             editor
         });
 
@@ -1026,9 +1028,11 @@ impl ContextEditor {
             remote_id: None,
             fs,
             workspace: workspace.downgrade(),
+            project,
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
+            active_edit_step_start: None,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -1572,10 +1576,49 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
+                let new_active_step = self
+                    .edit_step_for_cursor(cx)
+                    .map(|step| step.source_range.start);
+                if new_active_step != self.active_edit_step_start {
+                    self.active_edit_step_start = new_active_step;
+                    self.open_multibuffer_for_active_edit_step(cx)
+                        .detach_and_log_err(cx);
+                }
             }
             _ => {}
         }
         cx.emit(event.clone());
+    }
+
+    fn open_multibuffer_for_active_edit_step(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let Some(active_edit_step_start) = self.active_edit_step_start.clone() else {
+            return Task::ready(Err(anyhow!("no active edit step")));
+        };
+
+        let context = self.context.read(cx);
+        let buffer = context.buffer().read(cx);
+        let active_edit_step = match context
+            .edit_steps()
+            .binary_search_by(|step| step.source_range.start.cmp(&active_edit_step_start, buffer))
+        {
+            Ok(index) => &context.edit_steps()[index],
+            Err(_) => return Task::ready(Err(anyhow!("active edit step not found"))),
+        };
+
+        let multibuffer = active_edit_step.edit_locations_multibuffer(&self.project, cx);
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        cx.spawn(|this, mut cx| async move {
+            let buffer = multibuffer.await?;
+            let editor =
+                cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor), None, cx)
+            })
+        })
     }
 
     fn handle_editor_search_event(
