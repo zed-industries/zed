@@ -2870,6 +2870,8 @@ mod tests {
             );
         });
 
+        // todo!("add tests for parsing operations")
+
         fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
             context
                 .edit_steps
