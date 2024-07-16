@@ -299,7 +299,7 @@
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Whether to show file icons in the project panel.
-    "file_icons": true,
+    "file_icons": false,
     // Whether to show folder icons or chevrons for directories in the project panel.
     "folder_icons": true,
     // Whether to show the git status in the project panel.
