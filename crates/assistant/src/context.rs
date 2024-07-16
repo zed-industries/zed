@@ -10,14 +10,18 @@ use client::{proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{
+    future::{self, Shared},
+    FutureExt, StreamExt,
+};
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
+use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
+    cmp::{self, Ordering},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -334,6 +338,107 @@ pub struct EditStep {
     pub operations: Option<EditStepOperations>,
 }
 
+pub struct EditLocation {
+    pub buffer: Model<Buffer>,
+    pub range: Range<language::Anchor>,
+}
+
+impl EditStep {
+    pub fn edit_locations(
+        &self,
+        project: &Model<Project>,
+        cx: &mut AppContext,
+    ) -> Task<Vec<EditLocation>> {
+        let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
+            return Task::ready(Vec::new());
+        };
+
+        let location_tasks: Vec<_> = operations
+            .iter()
+            .map(|operation| {
+                self.locate_symbol(
+                    operation.path.clone(),
+                    operation.kind.clone(),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .collect();
+
+        cx.spawn(|_| async move {
+            future::join_all(location_tasks)
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
+        })
+    }
+
+    fn locate_symbol(
+        &self,
+        path: String,
+        operation: EditOperationKind,
+        project: Model<Project>,
+        cx: &mut AppContext,
+    ) -> Task<Result<EditLocation>> {
+        let path = path.to_string();
+        cx.spawn(move |mut cx| async move {
+            let buffer = if let EditOperationKind::Create = operation {
+                // todo!("assign path to buffer")
+                project
+                    .update(&mut cx, |project, cx| project.create_buffer(cx))?
+                    .await?
+            } else {
+                project
+                    .update(&mut cx, |project, cx| {
+                        let project_path = project
+                            .project_path_for_full_path(Path::new(&path), cx)
+                            .with_context(|| format!("worktree not found for {:?}", path))?;
+                        anyhow::Ok(project.open_buffer(project_path, cx))
+                    })??
+                    .await?
+            };
+
+            let range = if let Some(symbol) = operation.symbol() {
+                let outline = buffer
+                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
+                    .context("no outline for buffer")?;
+                let candidate = outline
+                    .path_candidates
+                    .iter()
+                    .find(|item| item.string == symbol)
+                    .context("symbol not found")?;
+                outline.items[candidate.id].range.clone()
+            } else {
+                match operation {
+                    EditOperationKind::PrependChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let start = language::Anchor::MIN;
+                            let end = buffer
+                                .anchor_after(cmp::min(Point::new(10, 0), buffer.max_point()));
+                            start..end
+                        })?
+                    }
+                    EditOperationKind::AppendChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let start = buffer.anchor_before(Point::new(
+                                buffer.max_point().row.saturating_sub(10),
+                                0,
+                            ));
+                            let end = language::Anchor::MAX;
+                            start..end
+                        })?
+                    }
+                    EditOperationKind::Create => language::Anchor::MIN..language::Anchor::MAX,
+                    _ => unreachable!("All other operations should have a symbol"),
+                }
+            };
+
+            Ok(EditLocation { buffer, range })
+        })
+    }
+}
+
 pub enum EditStepOperations {
     Pending(Task<Result<()>>),
     Parsed {
@@ -370,9 +475,23 @@ pub enum EditOperationKind {
     Create,
     InsertSiblingBefore { symbol: String },
     InsertSiblingAfter { symbol: String },
-    PrependChild { symbol: String },
-    AppendChild { symbol: String },
+    PrependChild { symbol: Option<String> },
+    AppendChild { symbol: Option<String> },
     Delete { symbol: String },
+}
+
+impl EditOperationKind {
+    pub fn symbol(&self) -> Option<&str> {
+        match self {
+            Self::Update { symbol } => Some(symbol),
+            Self::InsertSiblingBefore { symbol } => Some(symbol),
+            Self::InsertSiblingAfter { symbol } => Some(symbol),
+            Self::PrependChild { symbol } => symbol.as_deref(),
+            Self::AppendChild { symbol } => symbol.as_deref(),
+            Self::Delete { symbol } => Some(symbol),
+            Self::Create => None,
+        }
+    }
 }
 
 pub struct Context {
@@ -1122,10 +1241,10 @@ impl Context {
                             symbol: node.attribute("symbol")?.to_string(),
                         },
                         "prepend_child" => EditOperationKind::PrependChild {
-                            symbol: node.attribute("symbol")?.to_string(),
+                            symbol: node.attribute("symbol").map(String::from),
                         },
                         "append_child" => EditOperationKind::AppendChild {
-                            symbol: node.attribute("symbol")?.to_string(),
+                            symbol: node.attribute("symbol").map(String::from),
                         },
                         "delete" => EditOperationKind::Delete {
                             symbol: node.attribute("symbol")?.to_string(),
