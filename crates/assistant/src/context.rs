@@ -1001,7 +1001,9 @@ impl Context {
                         in_step = true;
                         step_start = line_start_offset + step_start_index;
                     }
-                } else if let Some(step_end_index) = line.find("</step>") {
+                }
+
+                if let Some(step_end_index) = line.find("</step>") {
                     if in_step {
                         let start_anchor = buffer.anchor_after(step_start);
                         let end_anchor = buffer
@@ -1073,11 +1075,13 @@ impl Context {
 
                 Example:
 
-                <update path="foo/bar.rs" symbol="impl Foo fn bar"/>
-                <create path="foo/baz.rs"/>
-                <insert_after path="foo/qux.rs" symbol="impl Qux fn foo"/>
-                <insert_before path="foo/qux.rs" symbol="impl Qux fn qux"/>
-                <delete path="foo/qux.rs" symbol="struct Waldo"/>
+                <operations>
+                    <update path="foo/bar.rs" symbol="impl Foo fn bar"/>
+                    <create path="foo/baz.rs"/>
+                    <insert_after path="foo/qux.rs" symbol="impl Qux fn foo"/>
+                    <insert_before path="foo/qux.rs" symbol="impl Qux fn qux"/>
+                    <delete path="foo/qux.rs" symbol="struct Waldo"/>
+                </operations>
 
                 Don't output anything other than XML. Do this now for the following step:
 
@@ -1088,6 +1092,7 @@ impl Context {
         let completion = completion_provider.complete(request, cx);
         cx.spawn(|this, mut cx| async move {
             let completion = completion.await?;
+            dbg!(&completion);
             let operations = Self::parse_edit_operations(&completion);
             this.update(&mut cx, |this, cx| {
                 let step_index = this
