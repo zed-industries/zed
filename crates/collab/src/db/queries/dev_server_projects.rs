@@ -285,7 +285,6 @@ impl Database {
         dev_server_id: DevServerId,
         connection: ConnectionId,
     ) -> crate::Result<Vec<ResharedProject>> {
-        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
         self.transaction(|tx| async move {
             let mut ret = Vec::new();
             for reshared_project in reshared_projects {
@@ -349,7 +348,6 @@ impl Database {
         user_id: UserId,
         connection_id: ConnectionId,
     ) -> crate::Result<Vec<RejoinedProject>> {
-        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
         self.transaction(|tx| async move {
             let mut ret = Vec::new();
             for rejoined_project in rejoined_projects {

@@ -3858,8 +3858,7 @@ impl Workspace {
                 let dev_server_project = SerializedDevServerProject {
                     id: dev_server_project_id,
                     dev_server_name: dev_server.name.to_string(),
-                    // todo!()
-                    path: project.paths[0].to_string(),
+                    paths: project.paths.iter().map(|path| path.clone()).collect(),
                 };
                 Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
             })

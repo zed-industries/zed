@@ -250,7 +250,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                         format!(
                             "{}{}",
-                            dev_server_project.dev_server_name, dev_server_project.path
+                            dev_server_project.dev_server_name,
+                            dev_server_project.paths.join("")
                         )
                     }
                 };
@@ -416,7 +417,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
-                    dev_server_project.dev_server_name, dev_server_project.path
+                    dev_server_project.dev_server_name,
+                    dev_server_project.paths.join(", ")
                 ))])
             }
         };
