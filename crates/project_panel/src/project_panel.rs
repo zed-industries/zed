@@ -137,7 +137,7 @@ actions!(
         CopyPath,
         CopyRelativePath,
         Duplicate,
-        RevealInFinder,
+        RevealInFileManager,
         Cut,
         Paste,
         Rename,
@@ -477,7 +477,12 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .action("Reveal in Finder", Box::new(RevealInFinder))
+                            .when(cfg!(target_os = "macos"), |menu| {
+                                menu.action("Reveal in Finder", Box::new(RevealInFileManager))
+                            })
+                            .when(cfg!(not(target_os = "macos")), |menu| {
+                                menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                            })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1353,7 +1358,7 @@ impl ProjectPanel {
         }
     }
 
-    fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+    fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }
@@ -2166,24 +2171,22 @@ impl ProjectPanel {
                                     });
                                 }
                             } else if event.down.modifiers.secondary() {
-                                if !this.marked_entries.insert(selection) {
+                                if event.down.click_count > 1 {
+                                    this.split_entry(entry_id, cx);
+                                } else if !this.marked_entries.insert(selection) {
                                     this.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
                                 let click_count = event.up.click_count;
-                                if click_count > 1 && event.down.modifiers.secondary() {
-                                    this.split_entry(entry_id, cx);
-                                } else {
-                                    this.open_entry(
-                                        entry_id,
-                                        cx.modifiers().secondary(),
-                                        click_count > 1,
-                                        click_count == 1,
-                                        cx,
-                                    );
-                                }
+                                this.open_entry(
+                                    entry_id,
+                                    cx.modifiers().secondary(),
+                                    click_count > 1,
+                                    click_count == 1,
+                                    cx,
+                                );
                             }
                         }
                     }))
@@ -2288,7 +2291,7 @@ impl ProjectPanel {
                 .right_0()
                 .top_0()
                 .bottom_0()
-                .w_3()
+                .w(px(12.))
                 .cursor_default()
                 .child(ProjectPanelScrollbar::new(
                     percentage as f32..end_offset as f32,

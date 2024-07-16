@@ -1,6 +1,5 @@
 use std::fs;
-use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, serde_json, settings::LspSettings, LanguageServerId, Result};
 
 struct ZigExtension {
     cached_binary_path: Option<String>,
@@ -9,6 +8,7 @@ struct ZigExtension {
 #[derive(Clone)]
 struct ZlsBinary {
     path: String,
+    args: Option<Vec<String>>,
     environment: Option<Vec<(String, String)>>,
 }
 
@@ -18,11 +18,27 @@ impl ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
+        let mut args: Option<Vec<String>> = None;
+        let environment = Some(worktree.shell_env());
+
+        if let Ok(lsp_settings) = LspSettings::for_worktree("zls", worktree) {
+            if let Some(binary) = lsp_settings.binary {
+                args = binary.arguments;
+                if let Some(path) = binary.path {
+                    return Ok(ZlsBinary {
+                        path: path.clone(),
+                        args,
+                        environment,
+                    });
+                }
+            }
+        }
+
         if let Some(path) = worktree.which("zls") {
-            let environment = worktree.shell_env();
             return Ok(ZlsBinary {
                 path,
-                environment: Some(environment),
+                args,
+                environment,
             });
         }
 
@@ -30,7 +46,8 @@ impl ZigExtension {
             if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
                 return Ok(ZlsBinary {
                     path: path.clone(),
-                    environment: None,
+                    args,
+                    environment,
                 });
             }
         }
@@ -104,7 +121,8 @@ impl ZigExtension {
         self.cached_binary_path = Some(binary_path.clone());
         Ok(ZlsBinary {
             path: binary_path,
-            environment: None,
+            args,
+            environment,
         })
     }
 }
@@ -124,9 +142,21 @@ impl zed::Extension for ZigExtension {
         let zls_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
             command: zls_binary.path,
-            args: vec![],
+            args: zls_binary.args.unwrap_or_default(),
             env: zls_binary.environment.unwrap_or_default(),
         })
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("zls", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 }
 

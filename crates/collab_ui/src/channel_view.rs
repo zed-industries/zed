@@ -22,10 +22,9 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
+use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
-    register_followable_item,
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
@@ -33,7 +32,7 @@ use workspace::{
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    register_followable_item::<ChannelView>(cx)
+    workspace::FollowableViewRegistry::register::<ChannelView>(cx)
 }
 
 pub struct ChannelView {
@@ -84,6 +83,56 @@ impl ChannelView {
         workspace: View<Workspace>,
         cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>> {
+        let channel_view = Self::load(channel_id, workspace, cx);
+        cx.spawn(|mut cx| async move {
+            let channel_view = channel_view.await?;
+
+            pane.update(&mut cx, |pane, cx| {
+                let buffer_id = channel_view.read(cx).channel_buffer.read(cx).remote_id(cx);
+
+                let existing_view = pane
+                    .items_of_type::<Self>()
+                    .find(|view| view.read(cx).channel_buffer.read(cx).remote_id(cx) == buffer_id);
+
+                // If this channel buffer is already open in this pane, just return it.
+                if let Some(existing_view) = existing_view.clone() {
+                    if existing_view.read(cx).channel_buffer == channel_view.read(cx).channel_buffer
+                    {
+                        if let Some(link_position) = link_position {
+                            existing_view.update(cx, |channel_view, cx| {
+                                channel_view.focus_position_from_link(link_position, true, cx)
+                            });
+                        }
+                        return existing_view;
+                    }
+                }
+
+                // If the pane contained a disconnected view for this channel buffer,
+                // replace that.
+                if let Some(existing_item) = existing_view {
+                    if let Some(ix) = pane.index_for_item(&existing_item) {
+                        pane.close_item_by_id(existing_item.entity_id(), SaveIntent::Skip, cx)
+                            .detach();
+                        pane.add_item(Box::new(channel_view.clone()), true, true, Some(ix), cx);
+                    }
+                }
+
+                if let Some(link_position) = link_position {
+                    channel_view.update(cx, |channel_view, cx| {
+                        channel_view.focus_position_from_link(link_position, true, cx)
+                    });
+                }
+
+                channel_view
+            })
+        })
+    }
+
+    pub fn load(
+        channel_id: ChannelId,
+        workspace: View<Workspace>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<View<Self>>> {
         let weak_workspace = workspace.downgrade();
         let workspace = workspace.read(cx);
         let project = workspace.project().to_owned();
@@ -107,49 +156,11 @@ impl ChannelView {
                 })
             })?;
 
-            pane.update(&mut cx, |pane, cx| {
-                let buffer_id = channel_buffer.read(cx).remote_id(cx);
-
-                let existing_view = pane
-                    .items_of_type::<Self>()
-                    .find(|view| view.read(cx).channel_buffer.read(cx).remote_id(cx) == buffer_id);
-
-                // If this channel buffer is already open in this pane, just return it.
-                if let Some(existing_view) = existing_view.clone() {
-                    if existing_view.read(cx).channel_buffer == channel_buffer {
-                        if let Some(link_position) = link_position {
-                            existing_view.update(cx, |channel_view, cx| {
-                                channel_view.focus_position_from_link(link_position, true, cx)
-                            });
-                        }
-                        return existing_view;
-                    }
-                }
-
-                let view = cx.new_view(|cx| {
-                    let mut this =
-                        Self::new(project, weak_workspace, channel_store, channel_buffer, cx);
-                    this.acknowledge_buffer_version(cx);
-                    this
-                });
-
-                // If the pane contained a disconnected view for this channel buffer,
-                // replace that.
-                if let Some(existing_item) = existing_view {
-                    if let Some(ix) = pane.index_for_item(&existing_item) {
-                        pane.close_item_by_id(existing_item.entity_id(), SaveIntent::Skip, cx)
-                            .detach();
-                        pane.add_item(Box::new(view.clone()), true, true, Some(ix), cx);
-                    }
-                }
-
-                if let Some(link_position) = link_position {
-                    view.update(cx, |channel_view, cx| {
-                        channel_view.focus_position_from_link(link_position, true, cx)
-                    });
-                }
-
-                view
+            cx.new_view(|cx| {
+                let mut this =
+                    Self::new(project, weak_workspace, channel_store, channel_buffer, cx);
+                this.acknowledge_buffer_version(cx);
+                this
             })
         })
     }
@@ -478,7 +489,6 @@ impl FollowableItem for ChannelView {
     }
 
     fn from_state_proto(
-        pane: View<workspace::Pane>,
         workspace: View<workspace::Workspace>,
         remote_id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
@@ -491,8 +501,7 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open =
-            ChannelView::open_in_pane(ChannelId(state.channel_id), None, pane, workspace, cx);
+        let open = ChannelView::load(ChannelId(state.channel_id), workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;
@@ -562,6 +571,19 @@ impl FollowableItem for ChannelView {
 
     fn to_follow_event(event: &Self::Event) -> Option<workspace::item::FollowEvent> {
         Editor::to_follow_event(event)
+    }
+
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+        let existing = existing.channel_buffer.read(cx);
+        if self.channel_buffer.read(cx).channel_id == existing.channel_id {
+            if existing.is_connected() {
+                Some(Dedup::KeepExisting)
+            } else {
+                Some(Dedup::ReplaceExisting)
+            }
+        } else {
+            None
+        }
     }
 }
 

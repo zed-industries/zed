@@ -12,7 +12,7 @@ More themes are available from the Extensions page. You can open the Extensions 
 
 ## Configuring a Theme
 
-Your selected theme is stored in your settings file. You can open your settings file from the command palette with "zed: Open Settings" (bound to `cmd,` on macOS and `ctrl,` on Linux).
+Your selected theme is stored in your settings file. You can open your settings file from the command palette with "zed: Open Settings" (bound to `cmd-,` on macOS and `ctrl-,` on Linux).
 
 By default, Zed maintains two themes: one for light mode and one for dark mode. You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 

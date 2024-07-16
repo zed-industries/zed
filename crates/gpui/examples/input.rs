@@ -22,10 +22,13 @@ actions!(
 struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
+    placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    is_selecting: bool,
 }
 
 impl TextInput {
@@ -80,6 +83,26 @@ impl TextInput {
         self.replace_text_in_range(None, "", cx)
     }
 
+    fn on_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut ViewContext<Self>) {
+        self.is_selecting = true;
+
+        if event.modifiers.shift {
+            self.select_to(self.index_for_mouse_position(event.position), cx);
+        } else {
+            self.move_to(self.index_for_mouse_position(event.position), cx)
+        }
+    }
+
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut ViewContext<Self>) {
+        self.is_selecting = false;
+    }
+
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut ViewContext<Self>) {
+        if self.is_selecting {
+            self.select_to(self.index_for_mouse_position(event.position), cx);
+        }
+    }
+
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
         cx.show_character_palette();
     }
@@ -95,6 +118,24 @@ impl TextInput {
         } else {
             self.selected_range.end
         }
+    }
+
+    fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        if self.content.is_empty() {
+            return 0;
+        }
+
+        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
+            return 0;
+        };
+        if position.y < bounds.top() {
+            return 0;
+        }
+        if position.y > bounds.bottom() {
+            return self.content.len();
+        }
+        line.closest_index_for_x(position.x - bounds.left())
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
@@ -161,6 +202,16 @@ impl TextInput {
             .grapheme_indices(true)
             .find_map(|(idx, _)| (idx > offset).then_some(idx))
             .unwrap_or(self.content.len())
+    }
+
+    fn reset(&mut self) {
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_bounds = None;
+        self.is_selecting = false;
     }
 }
 
@@ -307,10 +358,17 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = cx.text_style();
+
+        let (display_text, text_color) = if content.is_empty() {
+            (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
+        } else {
+            (content.clone(), style.color)
+        };
+
         let run = TextRun {
-            len: input.content.len(),
+            len: display_text.len(),
             font: style.font(),
-            color: style.color,
+            color: text_color,
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -331,7 +389,7 @@ impl Element for TextElement {
                     ..run.clone()
                 },
                 TextRun {
-                    len: input.content.len() - marked_range.end,
+                    len: display_text.len() - marked_range.end,
                     ..run.clone()
                 },
             ]
@@ -345,7 +403,7 @@ impl Element for TextElement {
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let line = cx
             .text_system()
-            .shape_line(content, font_size, &runs)
+            .shape_line(display_text, font_size, &runs)
             .unwrap();
 
         let cursor_pos = line.x_for_index(cursor);
@@ -409,6 +467,7 @@ impl Element for TextElement {
         }
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
+            input.last_bounds = Some(bounds);
         });
     }
 }
@@ -419,6 +478,7 @@ impl Render for TextInput {
             .flex()
             .key_context("TextInput")
             .track_focus(&self.focus_handle)
+            .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -429,6 +489,10 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
             .size_full()
             .line_height(px(30.))
@@ -443,6 +507,73 @@ impl Render for TextInput {
                         input: cx.view().clone(),
                     }),
             )
+    }
+}
+
+impl FocusableView for TextInput {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+struct InputExample {
+    text_input: View<TextInput>,
+    recent_keystrokes: Vec<Keystroke>,
+}
+
+impl InputExample {
+    fn on_reset_click(&mut self, _: &MouseUpEvent, cx: &mut ViewContext<Self>) {
+        self.recent_keystrokes.clear();
+        self.text_input
+            .update(cx, |text_input, _cx| text_input.reset());
+        cx.notify();
+    }
+}
+
+impl Render for InputExample {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let num_keystrokes = self.recent_keystrokes.len();
+        div()
+            .bg(rgb(0xaaaaaa))
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                div()
+                    .bg(white())
+                    .border_b_1()
+                    .border_color(black())
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .child(format!("Keystrokes: {}", num_keystrokes))
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(black())
+                            .px_2()
+                            .bg(yellow())
+                            .child("Reset")
+                            .hover(|style| {
+                                style
+                                    .bg(yellow().blend(opaque_grey(0.5, 0.5)))
+                                    .cursor_pointer()
+                            })
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
+                    ),
+            )
+            .child(self.text_input.clone())
+            .children(self.recent_keystrokes.iter().rev().map(|ks| {
+                format!(
+                    "{:} {}",
+                    ks,
+                    if let Some(ime_key) = ks.ime_key.as_ref() {
+                        format!("-> {}", ime_key)
+                    } else {
+                        "".to_owned()
+                    }
+                )
+            }))
     }
 }
 
@@ -468,21 +599,37 @@ fn main() {
                     ..Default::default()
                 },
                 |cx| {
-                    cx.new_view(|cx| TextInput {
+                    let text_input = cx.new_view(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
+                        placeholder: "Type here...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
                         last_layout: None,
+                        last_bounds: None,
+                        is_selecting: false,
+                    });
+                    cx.new_view(|_| InputExample {
+                        text_input,
+                        recent_keystrokes: vec![],
                     })
                 },
             )
             .unwrap();
+        cx.observe_keystrokes(move |ev, cx| {
+            window
+                .update(cx, |view, cx| {
+                    view.recent_keystrokes.push(ev.keystroke.clone());
+                    cx.notify();
+                })
+                .unwrap();
+        })
+        .detach();
         window
             .update(cx, |view, cx| {
-                view.focus_handle.focus(cx);
-                cx.activate(true)
+                cx.focus_view(&view.text_input);
+                cx.activate(true);
             })
             .unwrap();
     });

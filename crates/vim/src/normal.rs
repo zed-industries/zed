@@ -65,6 +65,8 @@ actions!(
         Indent,
         Outdent,
         ToggleComments,
+        Undo,
+        Redo,
     ]
 );
 
@@ -178,6 +180,27 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                 vim.switch_mode(Mode::Normal, false, cx)
             }
         });
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Undo, cx| {
+        Vim::update(cx, |vim, cx| {
+            let times = vim.take_count(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                for _ in 0..times.unwrap_or(1) {
+                    editor.undo(&editor::actions::Undo, cx);
+                }
+            });
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &Redo, cx| {
+        Vim::update(cx, |vim, cx| {
+            let times = vim.take_count(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                for _ in 0..times.unwrap_or(1) {
+                    editor.redo(&editor::actions::Redo, cx);
+                }
+            });
+        })
     });
 
     paste::register(workspace, cx);

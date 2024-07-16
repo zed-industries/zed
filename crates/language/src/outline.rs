@@ -5,14 +5,14 @@ use gpui::{
 };
 use settings::Settings;
 use std::ops::Range;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{color_alpha, ActiveTheme, ThemeSettings};
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
-    path_candidates: Vec<StringMatchCandidate>,
+    pub path_candidates: Vec<StringMatchCandidate>,
     path_candidate_prefixes: Vec<usize>,
 }
 
@@ -146,9 +146,15 @@ impl<T> Outline<T> {
 
 pub fn render_item<T>(
     outline_item: &OutlineItem<T>,
-    custom_highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &AppContext,
 ) -> StyledText {
+    let mut highlight_style = HighlightStyle::default();
+    highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+    let custom_highlights = match_ranges
+        .into_iter()
+        .map(|range| (range, highlight_style));
+
     let settings = ThemeSettings::get_global(cx);
 
     // TODO: We probably shouldn't need to build a whole new text style here

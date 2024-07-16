@@ -7,7 +7,7 @@ use std::env;
 
 fn main() {
     let target = env::var("CARGO_CFG_TARGET_OS");
-
+    println!("cargo::rustc-check-cfg=cfg(gles)");
     match target.as_deref() {
         Ok("macos") => {
             #[cfg(target_os = "macos")]

@@ -12,19 +12,19 @@ channel=$(<crates/zed/RELEASE_CHANNEL)
 export CHANNEL="$channel"
 export ARCHIVE="$archive"
 if [[ "$channel" == "dev" ]]; then
-    export APP_ID="dev.zed.Zed-Dev"
+    export APP_ID="dev.zed.ZedDev"
     export APP_NAME="Zed Devel"
     export BRANDING_LIGHT="#99c1f1"
     export BRANDING_DARK="#1a5fb4"
     export ICON_FILE="app-icon-dev"
 elif [[ "$channel" == "nightly" ]]; then
-    export APP_ID="dev.zed.Zed-Nightly"
+    export APP_ID="dev.zed.ZedNightly"
     export APP_NAME="Zed Nightly"
     export BRANDING_LIGHT="#e9aa6a"
     export BRANDING_DARK="#1a5fb4"
     export ICON_FILE="app-icon-nightly"
 elif [[ "$channel" == "preview" ]]; then
-    export APP_ID="dev.zed.Zed-Preview"
+    export APP_ID="dev.zed.ZedPreview"
     export APP_NAME="Zed Preview"
     export BRANDING_LIGHT="#99c1f1"
     export BRANDING_DARK="#1a5fb4"

@@ -319,12 +319,18 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        cx: &mut AppContext,
     ) -> Result<TerminalBuilder> {
         // TODO: Properly set the current locale,
         env.entry("LC_ALL".to_string())
             .or_insert_with(|| "en_US.UTF-8".to_string());
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert(
+            "TERM_PROGRAM_VERSION".to_string(),
+            release_channel::AppVersion::global(cx).to_string(),
+        );
 
         let pty_options = {
             let alac_shell = match shell.clone() {
@@ -340,6 +346,10 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
+                #[cfg(target_os = "linux")]
+                hold: !matches!(shell.clone(), Shell::System),
+                // with hold: true, macOS gets tasks stuck on ctrl-c interrupts periodically
+                #[cfg(not(target_os = "linux"))]
                 hold: false,
                 env: env.into_iter().collect(),
             }

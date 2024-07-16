@@ -13,8 +13,9 @@ use async_tungstenite::tungstenite::{
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
@@ -23,6 +24,7 @@ use http::{HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
+use proto::ProtoClient;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -217,6 +219,9 @@ pub struct Client {
             >,
         >,
     >,
+
+    #[cfg(any(test, feature = "test-support"))]
+    rpc_url: RwLock<Option<Url>>,
 }
 
 #[derive(Error, Debug)]
@@ -527,6 +532,8 @@ impl Client {
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            rpc_url: RwLock::default(),
         })
     }
 
@@ -581,6 +588,12 @@ impl Client {
             + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
+        self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn override_rpc_url(&self, url: Url) -> &Self {
+        *self.rpc_url.write() = Some(url);
         self
     }
 
@@ -1086,38 +1099,50 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
-    async fn get_rpc_url(
+    fn rpc_url(
+        &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> Result<Url> {
-        if let Some(url) = &*ZED_RPC_URL {
-            return Url::parse(url).context("invalid rpc url");
-        }
+    ) -> impl Future<Output = Result<Url>> {
+        #[cfg(any(test, feature = "test-support"))]
+        let url_override = self.rpc_url.read().clone();
 
-        let mut url = http.build_url("/rpc");
-        if let Some(preview_param) =
-            release_channel.and_then(|channel| channel.release_query_param())
-        {
-            url += "?";
-            url += preview_param;
-        }
-        let response = http.get(&url, Default::default(), false).await?;
-        let collab_url = if response.status().is_redirection() {
-            response
-                .headers()
-                .get("Location")
-                .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                .to_str()
-                .map_err(EstablishConnectionError::other)?
-                .to_string()
-        } else {
-            Err(anyhow!(
-                "unexpected /rpc response status {}",
-                response.status()
-            ))?
-        };
+        async move {
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some(url) = url_override {
+                return Ok(url);
+            }
 
-        Url::parse(&collab_url).context("invalid rpc url")
+            if let Some(url) = &*ZED_RPC_URL {
+                return Url::parse(url).context("invalid rpc url");
+            }
+
+            let mut url = http.build_url("/rpc");
+            if let Some(preview_param) =
+                release_channel.and_then(|channel| channel.release_query_param())
+            {
+                url += "?";
+                url += preview_param;
+            }
+
+            let response = http.get(&url, Default::default(), false).await?;
+            let collab_url = if response.status().is_redirection() {
+                response
+                    .headers()
+                    .get("Location")
+                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                    .to_str()
+                    .map_err(EstablishConnectionError::other)?
+                    .to_string()
+            } else {
+                Err(anyhow!(
+                    "unexpected /rpc response status {}",
+                    response.status()
+                ))?
+            };
+
+            Url::parse(&collab_url).context("invalid rpc url")
+        }
     }
 
     fn establish_websocket_connection(
@@ -1144,8 +1169,9 @@ impl Client {
             );
 
         let http = self.http.clone();
+        let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http, release_channel).await?;
+            let mut rpc_url = rpc_url.await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
@@ -1186,6 +1212,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> Task<Result<Credentials>> {
         let http = self.http.clone();
+        let this = self.clone();
         cx.spawn(|cx| async move {
             let background = cx.background_executor().clone();
 
@@ -1215,7 +1242,8 @@ impl Client {
                     {
                         eprintln!("authenticate as admin {login}, {token}");
 
-                        return Self::authenticate_as_admin(http, login.clone(), token.clone())
+                        return this
+                            .authenticate_as_admin(http, login.clone(), token.clone())
                             .await;
                     }
 
@@ -1303,6 +1331,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
+        self: &Arc<Self>,
         http: Arc<HttpClientWithUrl>,
         login: String,
         mut api_token: String,
@@ -1319,7 +1348,7 @@ impl Client {
 
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
-        let mut url = Self::get_rpc_url(http.clone(), None).await?;
+        let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
         let request = Request::get(url.as_str())
@@ -1379,6 +1408,11 @@ impl Client {
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
         log::debug!("rpc send. client_id:{}, name:{}", self.id(), T::NAME);
         self.peer.send(self.connection_id()?, message)
+    }
+
+    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
     }
 
     pub fn request<T: RequestMessage>(
@@ -1576,6 +1610,20 @@ impl Client {
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
         &self.telemetry
+    }
+}
+
+impl ProtoClient for Client {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+        self.send_dynamic(envelope)
     }
 }
 

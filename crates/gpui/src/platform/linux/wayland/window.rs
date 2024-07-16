@@ -36,6 +36,7 @@ pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -76,6 +77,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -96,6 +98,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    hovered: bool,
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
@@ -158,6 +161,7 @@ impl WaylandWindowState {
             acknowledged_first_configure: false,
             surface,
             decoration,
+            app_id: None,
             blur: None,
             toplevel,
             viewport,
@@ -179,6 +183,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            hovered: false,
             in_progress_window_controls: None,
             // Assume that we can do anything, unless told otherwise
             window_controls: WindowControls {
@@ -698,6 +703,12 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hover_status_change {
+            fun(focus);
+        }
+    }
+
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
 
@@ -823,11 +834,28 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        log::info!("Wayland does not support this API");
+        // Try to request an activation token. Even though the activation is likely going to be rejected,
+        // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
+        let state = self.borrow();
+        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
+        {
+            state.client.set_pending_activation(state.surface.id());
+            let token = activation.get_activation_token(&state.globals.qh, ());
+            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
+            let serial = state.client.get_serial(SerialKind::MousePress);
+            token.set_app_id(app_id);
+            token.set_serial(serial, &state.globals.seat);
+            token.set_surface(&state.surface);
+            token.commit();
+        }
     }
 
     fn is_active(&self) -> bool {
         self.borrow().active
+    }
+
+    fn is_hovered(&self) -> bool {
+        self.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -835,7 +863,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow().toplevel.set_app_id(app_id.to_owned());
+        let mut state = self.borrow_mut();
+        state.toplevel.set_app_id(app_id.to_owned());
+        state.app_id = Some(app_id.to_owned());
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
@@ -880,6 +910,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hover_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {

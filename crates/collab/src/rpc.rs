@@ -595,6 +595,14 @@ impl Server {
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
             .add_request_handler(user_handler(get_supermaven_api_key))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::OpenContext>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::SynchronizeContexts>,
+            ))
+            .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
+            .add_message_handler(update_context)
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -3053,6 +3061,53 @@ async fn update_buffer(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_context(message: proto::UpdateContext, session: Session) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+
+    let operation = message.operation.as_ref().context("invalid operation")?;
+    let capability = match operation.variant.as_ref() {
+        Some(proto::context_operation::Variant::BufferOperation(buffer_op)) => {
+            if let Some(buffer_op) = buffer_op.operation.as_ref() {
+                match buffer_op.variant {
+                    None | Some(proto::operation::Variant::UpdateSelections(_)) => {
+                        Capability::ReadOnly
+                    }
+                    _ => Capability::ReadWrite,
+                }
+            } else {
+                Capability::ReadWrite
+            }
+        }
+        Some(_) => Capability::ReadWrite,
+        None => Capability::ReadOnly,
+    };
+
+    let guard = session
+        .db()
+        .await
+        .connections_for_buffer_update(
+            project_id,
+            session.principal_id(),
+            session.connection_id,
+            capability,
+        )
+        .await?;
+
+    let (host, guests) = &*guard;
+
+    broadcast(
+        Some(session.connection_id),
+        guests.iter().chain([host]).copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, message.clone())
+        },
+    );
+
     Ok(())
 }
 

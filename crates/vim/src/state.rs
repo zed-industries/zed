@@ -228,21 +228,19 @@ impl EditorState {
         }
     }
 
-    pub fn vim_controlled(&self) -> bool {
-        let is_insert_mode = matches!(self.mode, Mode::Insert);
-        if !is_insert_mode {
-            return true;
+    pub fn editor_input_enabled(&self) -> bool {
+        match self.mode {
+            Mode::Insert => {
+                if let Some(operator) = self.operator_stack.last() {
+                    !operator.is_waiting(self.mode)
+                } else {
+                    true
+                }
+            }
+            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                false
+            }
         }
-        matches!(
-            self.operator_stack.last(),
-            Some(Operator::FindForward { .. })
-                | Some(Operator::FindBackward { .. })
-                | Some(Operator::Mark)
-                | Some(Operator::Register)
-                | Some(Operator::RecordRegister)
-                | Some(Operator::ReplayRegister)
-                | Some(Operator::Jump { .. })
-        )
     }
 
     pub fn should_autoindent(&self) -> bool {
@@ -264,48 +262,39 @@ impl EditorState {
 
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
-        context.set(
-            "vim_mode",
-            match self.mode {
-                Mode::Normal => "normal",
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
-                Mode::Insert => "insert",
-                Mode::Replace => "replace",
-            },
-        );
 
-        if self.vim_controlled() {
-            context.add("VimControl");
+        let mut mode = match self.mode {
+            Mode::Normal => "normal",
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
+            Mode::Insert => "insert",
+            Mode::Replace => "replace",
         }
+        .to_string();
 
-        if self.active_operator().is_none() && self.pre_count.is_some()
-            || self.active_operator().is_some() && self.post_count.is_some()
+        let mut operator_id = "none";
+
+        let active_operator = self.active_operator();
+        if active_operator.is_none() && self.pre_count.is_some()
+            || active_operator.is_some() && self.post_count.is_some()
         {
             context.add("VimCount");
         }
 
-        let active_operator = self.active_operator();
-
-        if let Some(active_operator) = active_operator.clone() {
-            for context_flag in active_operator.context_flags().into_iter() {
-                context.add(*context_flag);
+        if let Some(active_operator) = active_operator {
+            if active_operator.is_waiting(self.mode) {
+                mode = "waiting".to_string();
+            } else {
+                mode = "operator".to_string();
+                operator_id = active_operator.id();
             }
         }
 
-        context.set(
-            "vim_operator",
-            active_operator
-                .clone()
-                .map(|op| op.id())
-                .unwrap_or_else(|| "none"),
-        );
-
-        if self.mode == Mode::Replace
-            || (matches!(active_operator, Some(Operator::AddSurrounds { .. }))
-                && self.mode.is_visual())
-        {
-            context.add("VimWaiting");
+        if mode != "waiting" && mode != "insert" && mode != "replace" {
+            context.add("VimControl");
         }
+        context.set("vim_mode", mode);
+        context.set("vim_operator", operator_id);
+
         context
     }
 }
@@ -340,9 +329,9 @@ impl Operator {
         }
     }
 
-    pub fn context_flags(&self) -> &'static [&'static str] {
+    pub fn is_waiting(&self, mode: Mode) -> bool {
         match self {
-            Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => &["VimObject"],
+            Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
             Operator::FindForward { .. }
             | Operator::Mark
             | Operator::Jump { .. }
@@ -351,10 +340,18 @@ impl Operator {
             | Operator::RecordRegister
             | Operator::ReplayRegister
             | Operator::Replace
-            | Operator::AddSurrounds { target: Some(_) }
-            | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds => &["VimWaiting"],
-            _ => &[],
+            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::DeleteSurrounds => true,
+            Operator::Change
+            | Operator::Delete
+            | Operator::Yank
+            | Operator::Indent
+            | Operator::Outdent
+            | Operator::Lowercase
+            | Operator::Uppercase
+            | Operator::Object { .. }
+            | Operator::ChangeSurrounds { target: None }
+            | Operator::OppositeCase => false,
         }
     }
 }

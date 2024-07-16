@@ -4,6 +4,7 @@
 
 - [Getting Started](./getting-started.md)
   - [System Requirements](./system-requirements.md)
+  - [Linux](./linux.md)
   - [Telemetry](./telemetry.md)
   - [Additional Learning Materials](./additional-learning-materials.md)
 
@@ -19,8 +20,10 @@
 - [Assistant Panel](./assistant-panel.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
+- [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [REPL](./repl.md)
 
 # Language Support
 
@@ -60,6 +63,7 @@
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
 - [YAML](./languages/yaml.md)
+- [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
 # Developing Zed

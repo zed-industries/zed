@@ -1,7 +1,13 @@
 use std::sync::OnceLock;
 
 use ::util::ResultExt;
-use windows::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
+use windows::{
+    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
+    UI::{
+        Color,
+        ViewManagement::{UIColorType, UISettings},
+    },
+};
 
 use crate::*;
 
@@ -117,4 +123,23 @@ pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> 
         x: px(x / scale_factor),
         y: px(y / scale_factor),
     }
+}
+
+// https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
+#[inline]
+pub(crate) fn system_appearance() -> Result<WindowAppearance> {
+    let ui_settings = UISettings::new()?;
+    let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
+    // If the foreground is light, then is_color_light will evaluate to true,
+    // meaning Dark mode is enabled.
+    if is_color_light(&foreground_color) {
+        Ok(WindowAppearance::Dark)
+    } else {
+        Ok(WindowAppearance::Light)
+    }
+}
+
+#[inline(always)]
+fn is_color_light(color: &Color) -> bool {
+    ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }
