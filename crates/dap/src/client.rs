@@ -42,6 +42,7 @@ pub enum ThreadStatus {
     #[default]
     Running,
     Stopped,
+    Exited,
     Ended,
 }
 

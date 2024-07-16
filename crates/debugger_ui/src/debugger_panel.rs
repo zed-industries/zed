@@ -3,8 +3,9 @@ use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    ContinuedEvent, DisconnectArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments,
-    StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
+    Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, Scope, ScopesArguments,
+    StackFrame, StackTraceArguments, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
+    Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -118,7 +119,7 @@ impl DebugPanel {
             }
             Events::Stopped(event) => Self::handle_stopped_event(this, client_id, event, cx),
             Events::Continued(event) => Self::handle_continued_event(this, client_id, event, cx),
-            Events::Exited(_) => {}
+            Events::Exited(event) => Self::handle_exited_event(this, client_id, event, cx),
             Events::Terminated(event) => Self::handle_terminated_event(this, client_id, event, cx),
             Events::Thread(event) => Self::handle_thread_event(this, client_id, event, cx),
             Events::Output(_) => {}
@@ -468,6 +469,21 @@ impl DebugPanel {
         }
 
         cx.emit(DebugPanelEvent::Thread((*client_id, event.clone())));
+    }
+
+    fn handle_exited_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        _: &ExitedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let client = this.debug_client_by_id(*client_id, cx);
+        cx.spawn(|_, _| async move {
+            for thread_state in client.thread_states().values_mut() {
+                thread_state.status = ThreadStatus::Exited;
+            }
+        })
+        .detach();
     }
 
     fn handle_terminated_event(
