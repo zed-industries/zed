@@ -5,16 +5,17 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{AppContext, Hsla, Model, Task, View};
+use gpui::{AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::Buffer;
 use multi_buffer::{
-    Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, ActiveTheme, ButtonLike, Context as _, ContextMenu, Icon, IconName, IntoElement,
-    Label, ParentElement, Pixels, RenderOnce, Styled, ViewContext, VisualContext, WindowContext,
+    div, h_flex, ActiveTheme, ButtonLike, Context as _, ContextMenu, FluentBuilder, Icon, IconName,
+    InteractiveElement, IntoElement, Label, ParentElement, Pixels, RenderOnce, Styled, ViewContext,
+    VisualContext, WindowContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -78,6 +79,36 @@ pub(super) struct ExpandedHunk {
 }
 
 impl Editor {
+    pub(super) fn toggle_hovered_hunk(
+        &mut self,
+        hovered_hunk: &HoveredHunk,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let buffer_id = hovered_hunk
+            .multi_buffer_range
+            .start
+            .buffer_id
+            .or_else(|| hovered_hunk.multi_buffer_range.end.buffer_id);
+        if let Some(buffer_id) = buffer_id {
+            let buffer_range = hovered_hunk.multi_buffer_range.start.text_anchor
+                ..hovered_hunk.multi_buffer_range.end.text_anchor;
+            let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+            let point_range = hovered_hunk
+                .multi_buffer_range
+                .to_point(&multi_buffer_snapshot);
+            self.toggle_hunks_expanded(
+                vec![DiffHunk {
+                    associated_range: MultiBufferRow(point_range.start.row)
+                        ..MultiBufferRow(point_range.end.row),
+                    buffer_id,
+                    buffer_range,
+                    diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
+                }],
+                cx,
+            );
+        }
+    }
+
     pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let selections = self.selections.disjoint_anchors();
@@ -324,7 +355,9 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
+        let editor = cx.view().clone();
         let editor_model = cx.model().clone();
+        let hunk = hunk.clone();
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
@@ -332,10 +365,27 @@ impl Editor {
                 style: BlockStyle::Flex,
                 render: Box::new(move |cx| {
                     let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
+                    let click_editor = editor.clone();
+                    let global_modifiers = cx.modifiers();
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
                         .pl(gutter_dimensions.full_width())
+                        .when(
+                            global_modifiers.control || global_modifiers.platform,
+                            |gutter_div| gutter_div.cursor(CursorStyle::PointingHand),
+                        )
+                        .on_mouse_down(MouseButton::Left, {
+                            let click_hunk = hunk.clone();
+                            move |e, cx| {
+                                let modifiers = e.modifiers;
+                                if modifiers.control || modifiers.platform {
+                                    click_editor.update(cx, |editor, cx| {
+                                        editor.toggle_hovered_hunk(&click_hunk, cx);
+                                    });
+                                }
+                            }
+                        })
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),

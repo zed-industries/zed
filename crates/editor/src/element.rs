@@ -458,7 +458,11 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.clicked_hunk = Some(hovered_hunk);
+            if modifiers.control || modifiers.platform {
+                editor.toggle_hovered_hunk(&hovered_hunk, cx);
+            } else {
+                editor.clicked_hunk = Some(hovered_hunk);
+            }
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
