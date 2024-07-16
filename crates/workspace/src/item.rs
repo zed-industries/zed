@@ -32,6 +32,7 @@ use std::{
 };
 use theme::Theme;
 use ui::Element as _;
+use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -525,6 +526,12 @@ impl<T: Item> ItemHandle for View<T> {
             this.set_nav_history(history, cx);
             this.added_to_workspace(workspace, cx);
         });
+
+        if let Some(serializable_item) = self.to_serializable_item_handle(cx) {
+            workspace
+                .enqueue_item_serialization(serializable_item)
+                .log_err();
+        }
 
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {

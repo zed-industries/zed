@@ -90,14 +90,6 @@ impl Item for ImageView {
             .into_any_element()
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        let item_id = cx.entity_id().as_u64();
-        if let Some(serialize_task) = self.serialize(workspace, item_id, false, cx) {
-            cx.spawn(|_, _| async move { serialize_task.await.log_err() })
-                .detach();
-        };
-    }
-
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,

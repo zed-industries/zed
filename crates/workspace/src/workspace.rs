@@ -3989,6 +3989,8 @@ impl Workspace {
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid
             // the database filling up, we delete items that haven't been loaded now.
+            //
+            // The items that have been loaded, have been saved after they've been added to the workspace.
             let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
                 item_ids_by_kind
                     .into_iter()
@@ -4005,17 +4007,6 @@ impl Workspace {
             })?;
 
             futures::future::join_all(clean_up_tasks).await;
-
-            // If the item we loaded is dirty, it's possible that we might have just cleaned it up,
-            // because our IDs aren't stable. In that case, serialize its content again.
-            workspace.update(&mut cx, |workspace, cx| {
-                for item in all_deserialized_items {
-                    if let Some(serializable_item) = item.to_serializable_item_handle(cx) {
-                        workspace.enqueue_item_serialization(serializable_item)?;
-                    }
-                }
-                anyhow::Ok(())
-            })??;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace
