@@ -50,7 +50,7 @@ impl DebugPanelItem {
             move |this: &mut Self, _, event: &DebugPanelEvent, cx| {
                 match event {
                     DebugPanelEvent::Stopped((client_id, event)) => {
-                        Self::handle_stopped_event(this, client_id, event)
+                        Self::handle_stopped_event(this, client_id, event, cx)
                     }
                     DebugPanelEvent::Thread((client_id, event)) => {
                         Self::handle_thread_event(this, client_id, event, cx)
@@ -81,6 +81,7 @@ impl DebugPanelItem {
         this: &mut Self,
         client_id: &DebugAdapterClientId,
         event: &StoppedEvent,
+        cx: &mut ViewContext<Self>,
     ) {
         if Self::should_skip_event(this, client_id, event.thread_id.unwrap_or_default()) {
             return;
@@ -88,6 +89,7 @@ impl DebugPanelItem {
 
         if let Some(thread_state) = this.current_thread_state() {
             this.stack_frame_list.reset(thread_state.stack_frames.len());
+            cx.notify();
         };
     }
 
@@ -95,7 +97,7 @@ impl DebugPanelItem {
         this: &mut Self,
         client_id: &DebugAdapterClientId,
         event: &ThreadEvent,
-        _: &mut ViewContext<DebugPanelItem>,
+        _: &mut ViewContext<Self>,
     ) {
         if Self::should_skip_event(this, client_id, event.thread_id) {
             return;
