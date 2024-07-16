@@ -939,12 +939,14 @@ impl ExtensionsPage {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+            let telemetry = self.telemetry.clone();
             let upsell = match feature {
                 Feature::Git => FeatureUpsell::new(
+                    telemetry,
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
                 .docs_url("https://zed.dev/docs/git"),
-                Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
+                Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
                         "enable-vim",
@@ -956,7 +958,7 @@ impl ExtensionsPage {
                         },
                         cx.listener(move |this, selection, cx| {
                             this.telemetry
-                                .report_app_event("extensions: toggle vim".to_string());
+                                .report_app_event("feature upsell: toggle vim".to_string());
                             this.update_settings::<VimModeSetting>(
                                 selection,
                                 cx,
@@ -964,14 +966,22 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
-                Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/c"),
-                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/cpp"),
-                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/python"),
-                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/rust"),
+                Feature::LanguageC => {
+                    FeatureUpsell::new(telemetry, "C support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/c")
+                }
+                Feature::LanguageCpp => {
+                    FeatureUpsell::new(telemetry, "C++ support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/cpp")
+                }
+                Feature::LanguagePython => {
+                    FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/python")
+                }
+                Feature::LanguageRust => {
+                    FeatureUpsell::new(telemetry, "Rust support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/rust")
+                }
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
