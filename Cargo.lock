@@ -5069,6 +5069,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "extension",
  "fs",
  "futures 0.3.28",
  "gpui",
