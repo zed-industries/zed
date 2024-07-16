@@ -1770,6 +1770,8 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
+            .detach();
         cx.on_focus_out(&focus_handle, Self::handle_focus_out)
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -11632,6 +11634,10 @@ impl Editor {
         }
     }
 
+    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(EditorEvent::FocusedIn)
+    }
+
     fn handle_focus_out(&mut self, event: FocusOutEvent, _cx: &mut ViewContext<Self>) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
@@ -12236,6 +12242,7 @@ pub enum EditorEvent {
     },
     Reparsed(BufferId),
     Focused,
+    FocusedIn,
     Blurred,
     DirtyChanged,
     Saved,
