@@ -3870,8 +3870,7 @@ impl Workspace {
                 items_received
                     .into_iter()
                     .fold(HashMap::default(), |mut acc, item| {
-                        acc.entry(item.serialized_item_kind().to_string())
-                            .or_insert(item);
+                        acc.entry(item.item_id()).or_insert(item);
                         acc
                     });
 
