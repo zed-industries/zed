@@ -284,6 +284,10 @@ impl Session {
             return;
         };
 
+        if code.is_empty() {
+            return;
+        }
+
         let execute_request = ExecuteRequest {
             code: code.to_string(),
             ..ExecuteRequest::default()
