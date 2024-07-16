@@ -3874,7 +3874,7 @@ impl Workspace {
                         acc
                     });
 
-            for (_, item) in unique_items {
+            for (kind, item) in unique_items {
                 if let Ok(Some(task)) =
                     this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
                 {

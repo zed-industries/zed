@@ -16,7 +16,10 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
 use multi_buffer::AnchorRangeExt;
-use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
+use project::{
+    project_settings::ProjectSettings, search::SearchQuery, FormatTrigger, Item as _, Project,
+    ProjectPath,
+};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{ItemSettings, SerializableItem, TabContentParams};
@@ -905,41 +908,56 @@ impl SerializableItem for Editor {
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
-        let path = match DB
-            .get_path(item_id, workspace_id)
+        let path_content_language = match DB
+            .get_path_and_contents(item_id, workspace_id)
             .context("Failed to query editor state")
         {
-            Ok(path) => path,
+            Ok(Some((path, content, language))) => {
+                if ProjectSettings::get_global(cx)
+                    .session
+                    .restore_unsaved_buffers
+                {
+                    (path, content, language)
+                } else {
+                    (path, None, None)
+                }
+            }
+            Ok(None) => {
+                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+            }
             Err(error) => {
                 return Task::ready(Err(error));
             }
         };
 
-        let contents = match DB
-            .get_contents(item_id, workspace_id)
-            .context("Failed to query editor content")
-        {
-            Ok(contents) => contents,
-            Err(error) => {
-                return Task::ready(Err(error));
-            }
-        };
+        match path_content_language {
+            (None, Some(content), language_name) => cx.spawn(|_, mut cx| async move {
+                let language = if let Some(language_name) = language_name {
+                    let language_registry =
+                        project.update(&mut cx, |project, _| project.languages().clone())?;
 
-        match (path, contents) {
-            (None, Some(contents)) => {
-                let buffer = cx.new_model(|cx| {
-                    let mut buffer = Buffer::local("", cx);
-                    buffer.set_text(contents, cx);
-                    buffer
-                });
-                let view = cx.new_view(|cx| {
+                    Some(language_registry.language_for_name(&language_name).await?)
+                } else {
+                    None
+                };
+
+                // First create the empty buffer
+                let buffer = project.update(&mut cx, |project, cx| {
+                    project.create_local_buffer("", language, cx)
+                })?;
+
+                // Then set the text so that the language is set correctly
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_text(content, cx);
+                })?;
+
+                cx.new_view(|cx| {
                     let mut editor = Editor::for_buffer(buffer, Some(project), cx);
                     editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                     editor
-                });
-                Task::ready(Ok(view))
-            }
-            (Some(path), contents) => {
+                })
+            }),
+            (Some(path), contents, _) => {
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
                         .find_local_worktree(&path, cx)
@@ -965,9 +983,9 @@ impl SerializableItem for Editor {
                             // But for now, it keeps the implementation of the content serialization
                             // simple, because we don't have to persist all of the metadata that we get
                             // by loading the file (git diff base, mtime, ...).
-                            if let Some(contents) = contents {
+                            if let Some(buffer_text) = contents {
                                 buffer.update(&mut cx, |buffer, cx| {
-                                    buffer.set_text(contents, cx);
+                                    buffer.set_text(buffer_text, cx);
                                 })?;
                             }
 
@@ -983,7 +1001,7 @@ impl SerializableItem for Editor {
                     })
                     .unwrap_or_else(|error| Task::ready(Err(error)))
             }
-            (None, None) => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            _ => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
         }
     }
 
@@ -1031,7 +1049,10 @@ impl SerializableItem for Editor {
                     if serialize_dirty_buffers {
                         if is_dirty {
                             let contents = snapshot.text();
-                            DB.save_contents(item_id, workspace_id, contents).await?;
+                            let language = snapshot.language().map(|lang| lang.name().to_string());
+                            println!("saving dirty buffer with language {:?}", language);
+                            DB.save_contents(item_id, workspace_id, contents, language)
+                                .await?;
                         } else {
                             DB.delete_contents(item_id, workspace_id).await?;
                         }

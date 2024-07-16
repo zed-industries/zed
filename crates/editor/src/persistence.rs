@@ -12,10 +12,12 @@ define_connection!(
     // editors(
     //   item_id: usize,
     //   workspace_id: usize,
-    //   path: PathBuf,
+    //   path: Option<PathBuf>,
     //   scroll_top_row: usize,
     //   scroll_vertical_offset: f32,
     //   scroll_horizontal_offset: f32,
+    //   content: Option<String>,
+    //   language: Option<String>,
     // )
     pub static ref DB: EditorDb<WorkspaceDb> =
         &[sql! (
@@ -35,22 +37,37 @@ define_connection!(
             ALTER TABLE editors ADD COLUMN scroll_vertical_offset REAL NOT NULL DEFAULT 0;
         ),
         sql! (
-            CREATE TABLE editor_contents (
+            // Since sqlite3 doesn't support ALTER TABLE, we create a new
+            // table, move the data over, drop the old table, rename new table.
+            CREATE TABLE new_editors_tmp (
                 item_id INTEGER NOT NULL,
                 workspace_id INTEGER NOT NULL,
-                contents TEXT NOT NULL,
+                path BLOB, // <-- No longer "NOT NULL"
+                scroll_top_row INTEGER NOT NULL DEFAULT 0,
+                scroll_horizontal_offset REAL NOT NULL DEFAULT 0,
+                scroll_vertical_offset REAL NOT NULL DEFAULT 0,
+                contents TEXT, // New
+                language TEXT, // New
                 PRIMARY KEY(item_id, workspace_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                 ON DELETE CASCADE
                 ON UPDATE CASCADE
             ) STRICT;
+
+            INSERT INTO new_editors_tmp(item_id, workspace_id, path, scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset)
+            SELECT item_id, workspace_id, path, scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset
+            FROM editors;
+
+            DROP TABLE editors;
+
+            ALTER TABLE new_editors_tmp RENAME TO editors;
         )];
 );
 
 impl EditorDb {
     query! {
-        pub fn get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            SELECT path FROM editors
+        pub fn get_path_and_contents(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(Option<PathBuf>, Option<String>, Option<String>)>> {
+            SELECT path, contents, language FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
@@ -69,30 +86,25 @@ impl EditorDb {
     }
 
     query! {
-        pub fn get_contents(item_id: ItemId, workspace: WorkspaceId) -> Result<Option<String>> {
-            SELECT contents
-            FROM editor_contents
-            WHERE item_id = ?1
-            AND workspace_id = ?2
-        }
-    }
-
-    query! {
-        pub async fn save_contents(item_id: ItemId, workspace: WorkspaceId, contents: String) -> Result<()> {
-            INSERT INTO editor_contents
-                (item_id, workspace_id, contents)
+        pub async fn save_contents(item_id: ItemId, workspace: WorkspaceId, contents: String, language: Option<String>) -> Result<()> {
+            INSERT INTO editors
+                (item_id, workspace_id, contents, language)
             VALUES
-                (?1, ?2, ?3)
+                (?1, ?2, ?3, ?4)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
-                contents = ?3
+                contents = ?3,
+                language = ?4
         }
     }
 
     query! {
         pub async fn delete_contents(item_id: ItemId, workspace: WorkspaceId) -> Result<()> {
-            DELETE FROM editor_contents
+            UPDATE editors
+            SET
+                contents = NULL,
+                language = NULL
             WHERE item_id = ?1
             AND workspace_id = ?2
         }
@@ -135,7 +147,9 @@ impl EditorDb {
             .collect::<Vec<&str>>()
             .join(", ");
 
-        let query = format!("DELETE FROM editor_contents WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
+        let query = format!(
+            "DELETE FROM editors WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+        );
 
         self.write(move |conn| {
             let mut statement = Statement::prepare(conn, query)?;

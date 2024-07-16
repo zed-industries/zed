@@ -9,7 +9,6 @@ use ui::prelude::*;
 
 use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
-use util::ResultExt;
 use workspace::{
     item::{Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
