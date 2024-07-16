@@ -16,11 +16,11 @@ use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use task::DebugRequestType;
 use ui::prelude::*;
+use workspace::Pane;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use workspace::{NewFile, Pane};
 
 use crate::debugger_panel_item::DebugPanelItem;
 
@@ -51,7 +51,7 @@ impl DebugPanel {
                     workspace.project().clone(),
                     Default::default(),
                     None,
-                    NewFile.boxed_clone(),
+                    None,
                     cx,
                 );
                 pane.set_can_split(false, cx);
