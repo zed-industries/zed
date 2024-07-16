@@ -1052,31 +1052,18 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        let cursors = self.cursors(cx);
-
-        let user_messages = self.context.update(cx, |context, cx| {
-            let selected_messages = context
-                .messages_for_offsets(cursors, cx)
-                .into_iter()
-                .map(|message| message.id)
-                .collect();
-            context.assist(selected_messages, cx)
-        });
-        let new_selections = user_messages
-            .iter()
-            .map(|message| {
-                let cursor = message
+        if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
+            let new_selection = {
+                let cursor = user_message
                     .start
                     .to_offset(self.context.read(cx).buffer().read(cx));
                 cursor..cursor
-            })
-            .collect::<Vec<_>>();
-        if !new_selections.is_empty() {
+            };
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(
                     Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
                     cx,
-                    |selections| selections.select_ranges(new_selections),
+                    |selections| selections.select_ranges([new_selection]),
                 );
             });
             // Avoid scrolling to the new cursor position so the assistant's output is stable.

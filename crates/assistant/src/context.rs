@@ -1190,160 +1190,121 @@ impl Context {
         self.count_remaining_tokens(cx);
     }
 
-    pub fn assist(
-        &mut self,
-        selected_messages: HashSet<MessageId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<MessageAnchor> {
-        let mut user_messages = Vec::new();
+    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let last_message_id = self.message_anchors.iter().rev().find_map(|message| {
+            message
+                .start
+                .is_valid(self.buffer.read(cx))
+                .then_some(message.id)
+        })?;
 
-        let last_message_id = if let Some(last_message_id) =
-            self.message_anchors.iter().rev().find_map(|message| {
-                message
-                    .start
-                    .is_valid(self.buffer.read(cx))
-                    .then_some(message.id)
-            }) {
-            last_message_id
-        } else {
-            return Default::default();
-        };
-
-        let mut should_assist = false;
-        for selected_message_id in selected_messages {
-            let selected_message_role =
-                if let Some(metadata) = self.messages_metadata.get(&selected_message_id) {
-                    metadata.role
-                } else {
-                    continue;
-                };
-
-            if selected_message_role == Role::Assistant {
-                if let Some(user_message) = self.insert_message_after(
-                    selected_message_id,
-                    Role::User,
-                    MessageStatus::Done,
-                    cx,
-                ) {
-                    user_messages.push(user_message);
-                }
-            } else {
-                should_assist = true;
-            }
+        if !CompletionProvider::global(cx).is_authenticated() {
+            log::info!("completion provider has no credentials");
+            return None;
         }
 
-        if should_assist {
-            if !CompletionProvider::global(cx).is_authenticated() {
-                log::info!("completion provider has no credentials");
-                return Default::default();
-            }
+        let request = self.to_completion_request(cx);
+        let stream = CompletionProvider::global(cx).complete(request, cx);
+        let assistant_message = self
+            .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
+            .unwrap();
 
-            let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request, cx);
-            let assistant_message = self
-                .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
-                .unwrap();
+        // Queue up the user's next reply.
+        let user_message = self
+            .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
+            .unwrap();
 
-            // Queue up the user's next reply.
-            let user_message = self
-                .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
-                .unwrap();
-            user_messages.push(user_message);
+        let task = cx.spawn({
+            |this, mut cx| async move {
+                let assistant_message_id = assistant_message.id;
+                let mut response_latency = None;
+                let stream_completion = async {
+                    let request_start = Instant::now();
+                    let mut chunks = stream.await.inner.await?;
 
-            let task = cx.spawn({
-                |this, mut cx| async move {
-                    let assistant_message_id = assistant_message.id;
-                    let mut response_latency = None;
-                    let stream_completion = async {
-                        let request_start = Instant::now();
-                        let mut chunks = stream.await.inner.await?;
-
-                        while let Some(chunk) = chunks.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
-                            }
-                            let chunk = chunk?;
-
-                            this.update(&mut cx, |this, cx| {
-                                let message_ix = this
-                                    .message_anchors
-                                    .iter()
-                                    .position(|message| message.id == assistant_message_id)?;
-                                let message_range = this.buffer.update(cx, |buffer, cx| {
-                                    let message_start_offset =
-                                        this.message_anchors[message_ix].start.to_offset(buffer);
-                                    let message_old_end_offset = this.message_anchors
-                                        [message_ix + 1..]
-                                        .iter()
-                                        .find(|message| message.start.is_valid(buffer))
-                                        .map_or(buffer.len(), |message| {
-                                            message.start.to_offset(buffer).saturating_sub(1)
-                                        });
-                                    let message_new_end_offset =
-                                        message_old_end_offset + chunk.len();
-                                    buffer.edit(
-                                        [(message_old_end_offset..message_old_end_offset, chunk)],
-                                        None,
-                                        cx,
-                                    );
-                                    message_start_offset..message_new_end_offset
-                                });
-                                this.reparse_edit_suggestions_in_range(message_range.clone(), cx);
-                                this.reparse_edit_steps_in_range(message_range, cx);
-                                cx.emit(ContextEvent::StreamedCompletion);
-
-                                Some(())
-                            })?;
-                            smol::future::yield_now().await;
+                    while let Some(chunk) = chunks.next().await {
+                        if response_latency.is_none() {
+                            response_latency = Some(request_start.elapsed());
                         }
+                        let chunk = chunk?;
 
                         this.update(&mut cx, |this, cx| {
-                            this.pending_completions
-                                .retain(|completion| completion.id != this.completion_count);
-                            this.summarize(cx);
+                            let message_ix = this
+                                .message_anchors
+                                .iter()
+                                .position(|message| message.id == assistant_message_id)?;
+                            let message_range = this.buffer.update(cx, |buffer, cx| {
+                                let message_start_offset =
+                                    this.message_anchors[message_ix].start.to_offset(buffer);
+                                let message_old_end_offset = this.message_anchors[message_ix + 1..]
+                                    .iter()
+                                    .find(|message| message.start.is_valid(buffer))
+                                    .map_or(buffer.len(), |message| {
+                                        message.start.to_offset(buffer).saturating_sub(1)
+                                    });
+                                let message_new_end_offset = message_old_end_offset + chunk.len();
+                                buffer.edit(
+                                    [(message_old_end_offset..message_old_end_offset, chunk)],
+                                    None,
+                                    cx,
+                                );
+                                message_start_offset..message_new_end_offset
+                            });
+                            this.reparse_edit_suggestions_in_range(message_range.clone(), cx);
+                            this.reparse_edit_steps_in_range(message_range, cx);
+                            cx.emit(ContextEvent::StreamedCompletion);
+
+                            Some(())
                         })?;
-
-                        anyhow::Ok(())
-                    };
-
-                    let result = stream_completion.await;
+                        smol::future::yield_now().await;
+                    }
 
                     this.update(&mut cx, |this, cx| {
-                        let error_message = result
-                            .err()
-                            .map(|error| error.to_string().trim().to_string());
+                        this.pending_completions
+                            .retain(|completion| completion.id != this.completion_count);
+                        this.summarize(cx);
+                    })?;
 
-                        this.update_metadata(assistant_message_id, cx, |metadata| {
-                            if let Some(error_message) = error_message.as_ref() {
-                                metadata.status =
-                                    MessageStatus::Error(SharedString::from(error_message.clone()));
-                            } else {
-                                metadata.status = MessageStatus::Done;
-                            }
-                        });
+                    anyhow::Ok(())
+                };
 
-                        if let Some(telemetry) = this.telemetry.as_ref() {
-                            let model = CompletionProvider::global(cx).model();
-                            telemetry.report_assistant_event(
-                                Some(this.id.0.clone()),
-                                AssistantKind::Panel,
-                                model.telemetry_id(),
-                                response_latency,
-                                error_message,
-                            );
+                let result = stream_completion.await;
+
+                this.update(&mut cx, |this, cx| {
+                    let error_message = result
+                        .err()
+                        .map(|error| error.to_string().trim().to_string());
+
+                    this.update_metadata(assistant_message_id, cx, |metadata| {
+                        if let Some(error_message) = error_message.as_ref() {
+                            metadata.status =
+                                MessageStatus::Error(SharedString::from(error_message.clone()));
+                        } else {
+                            metadata.status = MessageStatus::Done;
                         }
-                    })
-                    .ok();
-                }
-            });
+                    });
 
-            self.pending_completions.push(PendingCompletion {
-                id: post_inc(&mut self.completion_count),
-                _task: task,
-            });
-        }
+                    if let Some(telemetry) = this.telemetry.as_ref() {
+                        let model = CompletionProvider::global(cx).model();
+                        telemetry.report_assistant_event(
+                            Some(this.id.0.clone()),
+                            AssistantKind::Panel,
+                            model.telemetry_id(),
+                            response_latency,
+                            error_message,
+                        );
+                    }
+                })
+                .ok();
+            }
+        });
 
-        user_messages
+        self.pending_completions.push(PendingCompletion {
+            id: post_inc(&mut self.completion_count),
+            _task: task,
+        });
+
+        Some(user_message)
     }
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
@@ -2774,10 +2735,7 @@ mod tests {
 
         // Simulate the assist method to trigger the LLM response
         let request = context.read_with(cx, |context, cx| context.to_completion_request(cx));
-        context.update(cx, |context, cx| {
-            let message_id = context.message_anchors[0].id;
-            context.assist(HashSet::from_iter([message_id]), cx);
-        });
+        context.update(cx, |context, cx| context.assist(cx));
         cx.run_until_parked();
 
         // Simulate the LLM completion
