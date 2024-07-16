@@ -790,6 +790,7 @@
       }
     },
     "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
