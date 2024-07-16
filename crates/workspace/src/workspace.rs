@@ -1339,7 +1339,7 @@ impl Workspace {
         lister: DirectoryLister,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_picker {
+        if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
             let rx = prompt(self, lister, cx);
             self.on_prompt_for_open_path = Some(prompt);
@@ -1383,7 +1383,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
         if self.project.read(cx).is_remote()
-            || !WorkspaceSettings::get_global(cx).use_system_path_picker
+            || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
             let rx = prompt(self, cx);

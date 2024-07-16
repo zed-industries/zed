@@ -68,12 +68,12 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
-    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
-    WeakView, WhiteSpace, WindowContext,
+    Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
+    FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
+    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -9762,7 +9762,7 @@ impl Editor {
                         *block_id,
                         (
                             None,
-                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                            diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
                         ),
                     );
                 }
@@ -9815,7 +9815,7 @@ impl Editor {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, true),
+                            render: diagnostic_block_renderer(diagnostic, None, true, true),
                             disposition: BlockDisposition::Below,
                         }
                     }),
@@ -12684,11 +12684,17 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> RenderBlock {
-    let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
+pub fn diagnostic_block_renderer(
+    diagnostic: Diagnostic,
+    max_message_rows: Option<u8>,
+    allow_closing: bool,
+    _is_valid: bool,
+) -> RenderBlock {
+    let (text_without_backticks, code_ranges) =
+        highlight_diagnostic_message(&diagnostic, max_message_rows);
 
     Box::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.block_id.to_string().into();
+        let group_id: SharedString = cx.transform_block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
@@ -12700,23 +12706,25 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 
-        let buttons = |diagnostic: &Diagnostic, block_id: usize| {
+        let buttons = |diagnostic: &Diagnostic, block_id: TransformBlockId| {
             if multi_line_diagnostic {
                 v_flex()
             } else {
                 h_flex()
             }
-            .children(diagnostic.is_primary.then(|| {
-                IconButton::new(("close-block", block_id), IconName::XCircle)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id.clone())
-                    .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
-                    .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
-            }))
+            .when(allow_closing, |div| {
+                div.children(diagnostic.is_primary.then(|| {
+                    IconButton::new(("close-block", EntityId::from(block_id)), IconName::XCircle)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .style(ButtonStyle::Transparent)
+                        .visible_on_hover(group_id.clone())
+                        .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
+                        .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
+                }))
+            })
             .child(
-                IconButton::new(("copy-block", block_id), IconName::Copy)
+                IconButton::new(("copy-block", EntityId::from(block_id)), IconName::Copy)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)
@@ -12729,12 +12737,12 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             )
         };
 
-        let icon_size = buttons(&diagnostic, cx.block_id)
+        let icon_size = buttons(&diagnostic, cx.transform_block_id)
             .into_any_element()
             .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
-            .id(cx.block_id)
+            .id(cx.transform_block_id)
             .group(group_id.clone())
             .relative()
             .size_full()
@@ -12746,7 +12754,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                     .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
-            .child(buttons(&diagnostic, cx.block_id))
+            .child(buttons(&diagnostic, cx.transform_block_id))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
@@ -12765,7 +12773,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
     })
 }
 
-pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, Vec<Range<usize>>) {
+pub fn highlight_diagnostic_message(
+    diagnostic: &Diagnostic,
+    mut max_message_rows: Option<u8>,
+) -> (SharedString, Vec<Range<usize>>) {
     let mut text_without_backticks = String::new();
     let mut code_ranges = Vec::new();
 
@@ -12777,18 +12788,45 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
 
     let mut prev_offset = 0;
     let mut in_code_block = false;
+    let mut newline_indices = diagnostic
+        .message
+        .match_indices('\n')
+        .map(|(ix, _)| ix)
+        .fuse()
+        .peekable();
     for (ix, _) in diagnostic
         .message
         .match_indices('`')
         .chain([(diagnostic.message.len(), "")])
     {
+        let mut trimmed_ix = ix;
+        while let Some(newline_index) = newline_indices.peek() {
+            if *newline_index < ix {
+                if let Some(rows_left) = &mut max_message_rows {
+                    if *rows_left == 0 {
+                        trimmed_ix = newline_index.saturating_sub(1);
+                        break;
+                    } else {
+                        *rows_left -= 1;
+                    }
+                }
+                let _ = newline_indices.next();
+            } else {
+                break;
+            }
+        }
         let prev_len = text_without_backticks.len();
-        text_without_backticks.push_str(&diagnostic.message[prev_offset..ix]);
-        prev_offset = ix + 1;
+        let new_text = &diagnostic.message[prev_offset..trimmed_ix];
+        text_without_backticks.push_str(new_text);
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
         }
+        prev_offset = trimmed_ix + 1;
         in_code_block = !in_code_block;
+        if trimmed_ix != ix {
+            text_without_backticks.push_str("...");
+            break;
+        }
     }
 
     (text_without_backticks.into(), code_ranges)

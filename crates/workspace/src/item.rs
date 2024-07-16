@@ -39,6 +39,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub file_icons: bool,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +76,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: right
     close_position: Option<ClosePosition>,
+    /// Whether to show the file icon for a tab.
+    ///
+    /// Default: true
+    file_icons: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

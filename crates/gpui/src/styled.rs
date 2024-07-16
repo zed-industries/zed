@@ -5,8 +5,9 @@ use crate::{
     SharedString, StyleRefinement, WhiteSpace,
 };
 pub use gpui_macros::{
-    box_shadow_style_methods, cursor_style_methods, margin_style_methods, overflow_style_methods,
-    padding_style_methods, position_style_methods, visibility_style_methods,
+    border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
+    overflow_style_methods, padding_style_methods, position_style_methods,
+    visibility_style_methods,
 };
 use taffy::style::{AlignContent, Display};
 
@@ -23,6 +24,7 @@ pub trait Styled: Sized {
     gpui_macros::position_style_methods!();
     gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
+    gpui_macros::border_style_methods!();
     gpui_macros::box_shadow_style_methods!();
 
     /// Sets the display type of the element to `block`.
@@ -300,16 +302,6 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
-        self
-    }
-
-    /// Sets the border color of the element.
-    fn border_color<C>(mut self, border_color: C) -> Self
-    where
-        C: Into<Hsla>,
-        Self: Sized,
-    {
-        self.style().border_color = Some(border_color.into());
         self
     }
 

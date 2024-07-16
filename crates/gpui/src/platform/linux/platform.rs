@@ -264,24 +264,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.multiple {
-                    if !options.files {
-                        "Open folders"
-                    } else {
-                        "Open files"
-                    }
+                let title = if options.directories {
+                    "Open Folder"
                 } else {
-                    if !options.files {
-                        "Open folder"
-                    } else {
-                        "Open file"
-                    }
+                    "Open File"
                 };
 
                 let request = match OpenFileRequest::default()
                     .modal(true)
                     .title(title)
-                    .accept_label("Select")
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
@@ -322,8 +313,7 @@ impl<P: LinuxClient + 'static> Platform for P {
             .spawn(async move {
                 let request = match SaveFileRequest::default()
                     .modal(true)
-                    .title("Select new path")
-                    .accept_label("Accept")
+                    .title("Save File")
                     .current_folder(directory)
                     .expect("pathbuf should not be nul terminated")
                     .send()

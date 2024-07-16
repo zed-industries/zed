@@ -435,6 +435,7 @@ List of `string` values
 ```json
 "tabs": {
   "close_position": "right",
+  "file_icons": true,
   "git_status": false
 },
 ```
@@ -462,6 +463,12 @@ List of `string` values
   "close_position": "left"
 }
 ```
+
+### File Icons
+
+- Description: Whether to show the file icon for a tab.
+- Setting: `file_icons`
+- Default: `true`
 
 ### Git Status
 

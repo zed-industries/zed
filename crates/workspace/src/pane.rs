@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use file_icons::FileIcons;
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
@@ -1595,6 +1596,14 @@ impl Pane {
         let is_last_item = ix == self.items.len() - 1;
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
+        let file_icon = ItemSettings::get_global(cx)
+            .file_icons
+            .then(|| {
+                item.project_path(cx)
+                    .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
+            })
+            .flatten();
+
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -1663,7 +1672,18 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
+            .map(|tab| match indicator {
+                Some(indicator) => tab.start_slot(indicator),
+                None => tab.start_slot::<Icon>(file_icon.map(|icon| {
+                    Icon::from_path(icon.to_string())
+                        .size(IconSize::XSmall)
+                        .color(if is_active {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                })),
+            })
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)

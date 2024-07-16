@@ -3402,11 +3402,13 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "feature_flags",
  "futures 0.3.28",
  "gpui",
  "language",
  "log",
  "lsp",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
@@ -3985,6 +3987,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "collections",
  "db",
  "editor",
  "extension",
@@ -4004,6 +4007,7 @@ dependencies = [
  "theme_selector",
  "ui",
  "util",
+ "vim",
  "workspace",
 ]
 
@@ -13332,6 +13336,7 @@ dependencies = [
  "derive_more",
  "dev_server_projects",
  "env_logger",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "gpui",
