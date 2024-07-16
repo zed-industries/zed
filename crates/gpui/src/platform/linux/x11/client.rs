@@ -986,7 +986,6 @@ impl X11Client {
             }));
         }
 
-        window.handle_ime_commit(text);
         Some(())
     }
 
