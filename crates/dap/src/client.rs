@@ -298,6 +298,10 @@ impl DebugAdapterClient {
         self.config.request.clone()
     }
 
+    pub fn capabilities(&self) -> Option<dap_types::Capabilities> {
+        self.capabilities.clone()
+    }
+
     pub fn next_request_id(&self) -> u64 {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
