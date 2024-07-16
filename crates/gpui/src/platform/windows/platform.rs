@@ -34,7 +34,6 @@ use windows::{
             Ole::*,
             SystemInformation::*,
             Threading::*,
-            Time::*,
         },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
