@@ -1877,7 +1877,7 @@ impl Editor {
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             serialize_dirty_buffers: ProjectSettings::get_global(cx)
                 .session
-                .restore_unsaved_sessions,
+                .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
             file_header_size,
@@ -11248,7 +11248,7 @@ impl Editor {
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
         let project_settings = ProjectSettings::get_global(cx);
-        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_sessions;
+        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();

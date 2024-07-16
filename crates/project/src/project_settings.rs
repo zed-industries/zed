@@ -111,10 +111,6 @@ const fn true_value() -> bool {
     true
 }
 
-const fn false_value() -> bool {
-    false
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct BinarySettings {
     pub path: Option<String>,
@@ -137,9 +133,9 @@ pub struct SessionSettings {
     /// If this is true, user won't be prompted whether to save/discard
     /// dirty files when closing the application.
     ///
-    /// Default: false
-    #[serde(default = "false_value")]
-    pub restore_unsaved_sessions: bool,
+    /// Default: true
+    #[serde(default = "true_value")]
+    pub restore_unsaved_buffers: bool,
 }
 
 impl Settings for ProjectSettings {
