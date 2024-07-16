@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
+use extension::ExtensionStore;
 use fs::Fs;
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
@@ -9,7 +10,7 @@ use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::Project;
 use rpc::{proto, ErrorCode, TypedEnvelope};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -82,6 +83,11 @@ impl DevServer {
             let client = client.clone();
             move |this, cx| Self::maintain_connection(this, client.clone(), cx).log_err()
         });
+
+        cx.observe_global::<SettingsStore>(|_, cx| {
+            ExtensionStore::global(cx).update(cx, |store, cx| store.auto_install_extensions(cx))
+        })
+        .detach();
 
         DevServer {
             _subscriptions: vec![
