@@ -1050,7 +1050,6 @@ impl SerializableItem for Editor {
                         if is_dirty {
                             let contents = snapshot.text();
                             let language = snapshot.language().map(|lang| lang.name().to_string());
-                            println!("saving dirty buffer with language {:?}", language);
                             DB.save_contents(item_id, workspace_id, contents, language)
                                 .await?;
                         } else {
