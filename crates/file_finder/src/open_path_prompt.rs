@@ -1,8 +1,7 @@
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
-use gpui::Model;
 use picker::{Picker, PickerDelegate};
-use project::{compare_paths, Project};
+use project::{compare_paths, DirectoryLister};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -19,7 +18,7 @@ pub(crate) struct OpenPathPrompt;
 
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
-    project: Model<Project>,
+    lister: DirectoryLister,
     selected_index: usize,
     directory_state: Option<DirectoryState>,
     matches: Vec<usize>,
@@ -35,23 +34,23 @@ struct DirectoryState {
 
 impl OpenPathPrompt {
     pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, cx| {
+        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, tx, cx);
+            Self::prompt_for_open_path(workspace, lister, tx, cx);
             rx
         }));
     }
 
     fn prompt_for_open_path(
         workspace: &mut Workspace,
+        lister: DirectoryLister,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let project = workspace.project().clone();
         workspace.toggle_modal(cx, |cx| {
             let delegate = OpenPathDelegate {
                 tx: Some(tx),
-                project: project.clone(),
+                lister: lister.clone(),
                 selected_index: 0,
                 directory_state: None,
                 matches: Vec::new(),
@@ -60,11 +59,7 @@ impl OpenPathPrompt {
             };
 
             let picker = Picker::uniform_list(delegate, cx).width(rems(34.));
-            let query = if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-                worktree.read(cx).abs_path().to_string_lossy().to_string()
-            } else {
-                "~/".to_string()
-            };
+            let query = lister.default_query(cx);
             picker.set_query(query, cx);
             picker
         });
@@ -92,7 +87,7 @@ impl PickerDelegate for OpenPathDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let project = self.project.clone();
+        let lister = self.lister.clone();
         let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
             (query[..index].to_string(), query[index + 1..].to_string())
         } else {
@@ -109,9 +104,7 @@ impl PickerDelegate for OpenPathDelegate {
         {
             None
         } else {
-            Some(project.update(cx, |project, cx| {
-                project.completions_for_open_path_query(dir.clone(), cx)
-            }))
+            Some(lister.list_directory(dir.clone(), cx))
         };
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -127,20 +120,12 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(&mut cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            paths.sort_by(|a, b| {
-                                compare_paths(
-                                    (a.strip_prefix(&dir).unwrap_or(Path::new("")), true),
-                                    (b.strip_prefix(&dir).unwrap_or(Path::new("")), true),
-                                )
-                            });
+                            paths.sort_by(|a, b| compare_paths((a, true), (b, true)));
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
-                                .filter_map(|(ix, path)| {
-                                    Some(StringMatchCandidate::new(
-                                        ix,
-                                        path.file_name()?.to_string_lossy().into(),
-                                    ))
+                                .map(|(ix, path)| {
+                                    StringMatchCandidate::new(ix, path.to_string_lossy().into())
                                 })
                                 .collect::<Vec<_>>();
 
@@ -213,7 +198,16 @@ impl PickerDelegate for OpenPathDelegate {
                 this.delegate
                     .matches
                     .extend(matches.into_iter().map(|m| m.candidate_id));
-                this.delegate.matches.sort();
+                this.delegate.matches.sort_by_key(|m| {
+                    (
+                        this.delegate.directory_state.as_ref().and_then(|d| {
+                            d.match_candidates
+                                .get(*m)
+                                .map(|c| !c.string.starts_with(&suffix))
+                        }),
+                        *m,
+                    )
+                });
                 cx.notify();
             })
             .ok();

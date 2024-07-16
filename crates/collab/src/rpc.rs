@@ -431,11 +431,13 @@ impl Server {
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(rejoin_dev_server_projects))
             .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(update_dev_server_project))
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(regenerate_dev_server_token))
             .add_request_handler(user_handler(rename_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
+            .add_request_handler(user_handler(list_remote_directory))
             .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_request_handler(dev_server_handler(reconnect_dev_server))
@@ -2311,6 +2313,69 @@ async fn join_hosted_project(
         .await?;
 
     join_project_internal(response, session, &mut project, &replica_id)
+}
+
+async fn list_remote_directory(
+    request: proto::ListRemoteDirectory,
+    response: Response<proto::ListRemoteDirectory>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+
+    session
+        .db()
+        .await
+        .get_dev_server_for_user(dev_server_id, session.user_id())
+        .await?;
+
+    response.send(
+        session
+            .peer
+            .forward_request(session.connection_id, dev_server_connection_id, request)
+            .await?,
+    )?;
+    Ok(())
+}
+
+async fn update_dev_server_project(
+    request: proto::UpdateDevServerProject,
+    response: Response<proto::UpdateDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+
+    let (dev_server_project, update) = session
+        .db()
+        .await
+        .update_dev_server_project(dev_server_project_id, &request.paths, session.user_id())
+        .await?;
+
+    let projects = session
+        .db()
+        .await
+        .get_projects_for_dev_server(dev_server_project.dev_server_id)
+        .await?;
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id_supporting(
+            dev_server_project.dev_server_id,
+            ZedVersion::with_list_directory(),
+        )?;
+
+    session.peer.send(
+        dev_server_connection_id,
+        proto::DevServerInstructions { projects },
+    )?;
+
+    send_dev_server_projects_update(session.user_id(), update, &session).await;
+
+    response.send(proto::Ack {})
 }
 
 async fn create_dev_server_project(

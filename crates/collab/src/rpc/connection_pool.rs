@@ -38,6 +38,10 @@ impl ZedVersion {
     pub fn with_save_as() -> ZedVersion {
         ZedVersion(SemanticVersion::new(0, 134, 0))
     }
+
+    pub fn with_list_directory() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 145, 0))
+    }
 }
 
 pub trait VersionedMessage {
@@ -185,6 +189,18 @@ impl ConnectionPool {
 
     pub fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<ConnectionId> {
         self.connected_dev_servers.get(&dev_server_id).copied()
+    }
+
+    pub fn dev_server_connection_id_supporting(
+        &self,
+        dev_server_id: DevServerId,
+        required: ZedVersion,
+    ) -> Result<ConnectionId> {
+        match self.connected_dev_servers.get(&dev_server_id) {
+            Some(cid) if self.connections[cid].zed_version >= required => Ok(*cid),
+            Some(_) => Err(anyhow!(proto::ErrorCode::RemoteUpgradeRequired)),
+            None => Err(anyhow!(proto::ErrorCode::DevServerOffline)),
+        }
     }
 
     pub fn channel_user_ids(

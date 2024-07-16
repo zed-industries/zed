@@ -93,7 +93,7 @@ impl RecentProjects {
         }
     }
 
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, open_recent.create_new_window, cx);
@@ -106,6 +106,20 @@ impl RecentProjects {
                     .update(cx, |picker, cx| picker.cycle_selection(cx))
             });
         });
+        if workspace
+            .project()
+            .read(cx)
+            .dev_server_project_id()
+            .is_some()
+        {
+            workspace.register_action(|workspace, _: &workspace::Open, cx| {
+                if workspace.active_modal::<Self>(cx).is_some() {
+                    cx.propagate();
+                } else {
+                    Self::open(workspace, true, cx);
+                }
+            });
+        }
     }
 
     pub fn open(
@@ -234,7 +248,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                         format!(
                             "{}{}",
-                            dev_server_project.dev_server_name, dev_server_project.path
+                            dev_server_project.dev_server_name,
+                            dev_server_project.paths.join("")
                         )
                     }
                 };
@@ -400,7 +415,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
-                    dev_server_project.dev_server_name, dev_server_project.path
+                    dev_server_project.dev_server_name,
+                    dev_server_project.paths.join(", ")
                 ))])
             }
         };

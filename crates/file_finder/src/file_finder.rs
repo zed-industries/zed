@@ -679,7 +679,7 @@ impl FileFinderDelegate {
                     let update_result = project
                         .update(&mut cx, |project, cx| {
                             if let Some((worktree, relative_path)) =
-                                project.find_local_worktree(query_path, cx)
+                                project.find_worktree(query_path, cx)
                             {
                                 path_matches.push(ProjectPanelOrdMatch(PathMatch {
                                     score: 1.0,

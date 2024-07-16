@@ -460,9 +460,8 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
-            let is_local = project.is_local();
             let is_read_only = project.is_read_only();
-            let is_remote = project.is_remote();
+            let is_remote = project.is_remote() && project.dev_server_project_id().is_none();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).when_else(
@@ -526,14 +525,12 @@ impl ProjectPanel {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                                     .action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(is_local & is_root, |menu| {
+                            .when(!is_remote & is_root, |menu| {
                                 menu.separator()
-                                    .when(!is_remote, |menu| {
-                                        menu.action(
-                                            "Add Folder to Project…",
-                                            Box::new(workspace::AddFolderToProject),
-                                        )
-                                    })
+                                    .action(
+                                        "Add Folder to Project…",
+                                        Box::new(workspace::AddFolderToProject),
+                                    )
                                     .entry(
                                         "Remove from Project",
                                         None,
@@ -544,7 +541,7 @@ impl ProjectPanel {
                                         }),
                                     )
                             })
-                            .when(is_local & is_root, |menu| {
+                            .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
                             })

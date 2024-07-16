@@ -29,7 +29,7 @@ use futures::{
     future::{join_all, try_join_all, Shared},
     select,
     stream::FuturesUnordered,
-    AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
+    AsyncWriteExt, Future, FutureExt, StreamExt,
 };
 use fuzzy::CharBag;
 use git::{blame::Blame, repository::GitRepository};
@@ -86,6 +86,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -202,7 +203,7 @@ pub struct Project {
     _subscriptions: Vec<gpui::Subscription>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
     #[allow(clippy::type_complexity)]
-    loading_local_worktrees:
+    loading_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<BufferId>,
@@ -602,6 +603,52 @@ impl FormatTrigger {
     }
 }
 
+#[derive(Clone)]
+pub enum DirectoryLister {
+    Project(Model<Project>),
+    Local(Arc<dyn Fs>),
+}
+
+impl DirectoryLister {
+    pub fn is_local(&self, cx: &AppContext) -> bool {
+        match self {
+            DirectoryLister::Local(_) => true,
+            DirectoryLister::Project(project) => project.read(cx).is_local(),
+        }
+    }
+
+    pub fn default_query(&self, cx: &mut AppContext) -> String {
+        if let DirectoryLister::Project(project) = self {
+            if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
+                return worktree.read(cx).abs_path().to_string_lossy().to_string();
+            }
+        };
+        "~/".to_string()
+    }
+    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+        match self {
+            DirectoryLister::Project(project) => {
+                project.update(cx, |project, cx| project.list_directory(query, cx))
+            }
+            DirectoryLister::Local(fs) => {
+                let fs = fs.clone();
+                cx.background_executor().spawn(async move {
+                    let mut results = vec![];
+                    let expanded = shellexpand::tilde(&query);
+                    let query = Path::new(expanded.as_ref());
+                    let mut response = fs.read_dir(query).await?;
+                    while let Some(path) = response.next().await {
+                        if let Some(file_name) = path?.file_name() {
+                            results.push(PathBuf::from(file_name.to_os_string()));
+                        }
+                    }
+                    Ok(results)
+                })
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     OpenBuffer {
@@ -727,7 +774,7 @@ impl Project {
                 collaborators: Default::default(),
                 buffer_store,
                 shared_buffers: Default::default(),
-                loading_local_worktrees: Default::default(),
+                loading_worktrees: Default::default(),
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
@@ -866,7 +913,7 @@ impl Project {
                 buffer_ordered_messages_tx: tx,
                 buffer_store,
                 shared_buffers: Default::default(),
-                loading_local_worktrees: Default::default(),
+                loading_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
@@ -1068,7 +1115,7 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    project.find_or_create_local_worktree(path, true, cx)
+                    project.find_or_create_worktree(path, true, cx)
                 })
                 .unwrap()
                 .await
@@ -1106,7 +1153,7 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    project.find_or_create_local_worktree(path, true, cx)
+                    project.find_or_create_worktree(path, true, cx)
                 })
                 .await
                 .unwrap();
@@ -1909,7 +1956,7 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_local_worktree(abs_path.as_ref(), cx) {
+        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
@@ -1976,7 +2023,7 @@ impl Project {
                 };
             let (worktree, relative_path) = if let Some(result) = this
                 .update(&mut cx, |this, cx| {
-                    this.find_local_worktree(&worktree_root_target, cx)
+                    this.find_worktree(&worktree_root_target, cx)
                 })? {
                 let relative_path =
                     known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
@@ -1984,7 +2031,7 @@ impl Project {
             } else {
                 let worktree = this
                     .update(&mut cx, |this, cx| {
-                        this.create_local_worktree(&worktree_root_target, false, cx)
+                        this.create_worktree(&worktree_root_target, false, cx)
                     })?
                     .await?;
                 this.update(&mut cx, |this, cx| {
@@ -4572,7 +4619,7 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
-            .find_local_worktree(&abs_path, cx)
+            .find_worktree(&abs_path, cx)
             .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
 
         let project_path = ProjectPath {
@@ -5440,9 +5487,7 @@ impl Project {
 
                                 let path;
                                 let worktree;
-                                if let Some((tree, rel_path)) =
-                                    this.find_local_worktree(&abs_path, cx)
-                                {
+                                if let Some((tree, rel_path)) = this.find_worktree(&abs_path, cx) {
                                     worktree = tree;
                                     path = rel_path;
                                 } else {
@@ -7516,23 +7561,23 @@ impl Project {
         Ok(())
     }
 
-    pub fn find_or_create_local_worktree(
+    pub fn find_or_create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
-        if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
+        if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
         } else {
-            let worktree = self.create_local_worktree(abs_path, visible, cx);
+            let worktree = self.create_worktree(abs_path, visible, cx);
             cx.background_executor()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
 
-    pub fn find_local_worktree(
+    pub fn find_worktree(
         &self,
         abs_path: &Path,
         cx: &AppContext,
@@ -7559,21 +7604,56 @@ impl Project {
         }
     }
 
-    pub fn completions_for_open_path_query(
+    pub fn list_directory(
         &self,
         query: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
-        let fs = self.fs.clone();
+        if self.is_local() {
+            DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
+        } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
+            dev_server_projects::Store::global(cx)
+                .read(cx)
+                .dev_server_for_project(id)
+        }) {
+            let request = proto::ListRemoteDirectory {
+                dev_server_id: dev_server.id.0,
+                path: query,
+            };
+            let response = self.client.request(request);
+            cx.background_executor().spawn(async move {
+                let response = response.await?;
+                Ok(response.entries.into_iter().map(PathBuf::from).collect())
+            })
+        } else {
+            Task::ready(Err(anyhow!("cannot list directory in remote project")))
+        }
+    }
+
+    fn create_worktree(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        visible: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Worktree>>> {
+        let path: Arc<Path> = abs_path.as_ref().into();
+        if !self.loading_worktrees.contains_key(&path) {
+            let task = if self.is_local() {
+                self.create_local_worktree(abs_path, visible, cx)
+            } else if self.dev_server_project_id.is_some() {
+                self.create_dev_server_worktree(abs_path, cx)
+            } else {
+                return Task::ready(Err(anyhow!("not a local project")));
+            };
+            self.loading_worktrees.insert(path.clone(), task.shared());
+        }
+        let task = self.loading_worktrees.get(&path).unwrap().clone();
         cx.background_executor().spawn(async move {
-            let mut results = vec![];
-            let expanded = shellexpand::tilde(&query);
-            let query = Path::new(expanded.as_ref());
-            let mut response = fs.read_dir(query).await?;
-            while let Some(path) = response.next().await {
-                results.push(path?);
-            }
-            Ok(results)
+            let result = match task.await {
+                Ok(worktree) => Ok(worktree),
+                Err(err) => Err(anyhow!("{}", err)),
+            };
+            result
         })
     }
 
@@ -7582,51 +7662,102 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Worktree>>> {
+    ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let fs = self.fs.clone();
         let next_entry_id = self.next_entry_id.clone();
         let path: Arc<Path> = abs_path.as_ref().into();
-        let task = self
-            .loading_local_worktrees
-            .entry(path.clone())
-            .or_insert_with(|| {
-                cx.spawn(move |project, mut cx| {
-                    async move {
-                        let worktree =
-                            Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx)
-                                .await;
 
-                        project.update(&mut cx, |project, _| {
-                            project.loading_local_worktrees.remove(&path);
-                        })?;
+        cx.spawn(move |project, mut cx| async move {
+            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
 
-                        let worktree = worktree?;
-                        project
-                            .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
+            project.update(&mut cx, |project, _| {
+                project.loading_worktrees.remove(&path);
+            })?;
 
-                        if visible {
-                            cx.update(|cx| {
-                                cx.add_recent_document(&path);
-                            })
-                            .log_err();
-                        }
+            let worktree = worktree?;
+            project.update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
 
-                        Ok(worktree)
-                    }
-                    .map_err(Arc::new)
+            if visible {
+                cx.update(|cx| {
+                    cx.add_recent_document(&path);
                 })
-                .shared()
-            })
-            .clone();
-        cx.background_executor().spawn(async move {
-            match task.await {
-                Ok(worktree) => Ok(worktree),
-                Err(err) => Err(anyhow!("{}", err)),
+                .log_err();
             }
+
+            Ok(worktree)
+        })
+    }
+
+    fn create_dev_server_worktree(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
+        let client = self.client.clone();
+        let path: Arc<Path> = abs_path.as_ref().into();
+        let mut paths: Vec<String> = self
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .collect();
+        paths.push(path.to_string_lossy().to_string());
+        let request = client.request(proto::UpdateDevServerProject {
+            dev_server_project_id: self.dev_server_project_id.unwrap().0,
+            paths,
+        });
+
+        let abs_path = abs_path.as_ref().to_path_buf();
+        cx.spawn(move |project, mut cx| async move {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            let tx = RefCell::new(Some(tx));
+            let Some(project) = project.upgrade() else {
+                return Err(anyhow!("project dropped"))?;
+            };
+            let observer = cx.update(|cx| {
+                cx.observe(&project, move |project, cx| {
+                    let abs_path = abs_path.clone();
+                    project.update(cx, |project, cx| {
+                        if let Some((worktree, _)) = project.find_worktree(&abs_path, cx) {
+                            if let Some(tx) = tx.borrow_mut().take() {
+                                tx.send(worktree).ok();
+                            }
+                        }
+                    })
+                })
+            })?;
+
+            request.await?;
+            let worktree = rx.await.map_err(|e| anyhow!(e))?;
+            drop(observer);
+            project.update(&mut cx, |project, _| {
+                project.loading_worktrees.remove(&path);
+            })?;
+            Ok(worktree)
         })
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        if let Some(dev_server_project_id) = self.dev_server_project_id {
+            let paths: Vec<String> = self
+                .visible_worktrees(cx)
+                .filter_map(|worktree| {
+                    if worktree.read(cx).id() == id_to_remove {
+                        None
+                    } else {
+                        Some(worktree.read(cx).abs_path().to_string_lossy().to_string())
+                    }
+                })
+                .collect();
+            if paths.len() > 0 {
+                let request = self.client.request(proto::UpdateDevServerProject {
+                    dev_server_project_id: dev_server_project_id.0,
+                    paths,
+                });
+                cx.background_executor()
+                    .spawn(request)
+                    .detach_and_log_err(cx);
+            }
+            return;
+        }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
 
@@ -8276,18 +8407,6 @@ impl Project {
         } else {
             workspace_root.join(project_path)
         })
-    }
-
-    pub fn project_path_for_absolute_path(
-        &self,
-        abs_path: &Path,
-        cx: &AppContext,
-    ) -> Option<ProjectPath> {
-        self.find_local_worktree(abs_path, cx)
-            .map(|(worktree, relative_path)| ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: relative_path.into(),
-            })
     }
 
     pub fn get_workspace_root(

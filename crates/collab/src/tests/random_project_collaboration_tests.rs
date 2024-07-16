@@ -581,7 +581,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 }
                 project
                     .update(cx, |project, cx| {
-                        project.find_or_create_local_worktree(&new_root_path, true, cx)
+                        project.find_or_create_worktree(&new_root_path, true, cx)
                     })
                     .await
                     .unwrap();

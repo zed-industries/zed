@@ -53,7 +53,7 @@ pub use persistence::{
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
-use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
@@ -605,7 +605,11 @@ type PromptForNewPath = Box<
 >;
 
 type PromptForOpenPath = Box<
-    dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
+    dyn Fn(
+        &mut Workspace,
+        DirectoryLister,
+        &mut ViewContext<Workspace>,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 /// Collects everything project-related for a certain window opened.
@@ -1332,13 +1336,12 @@ impl Workspace {
     pub fn prompt_for_open_path(
         &mut self,
         path_prompt_options: PathPromptOptions,
+        lister: DirectoryLister,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        if self.project.read(cx).is_remote()
-            || !WorkspaceSettings::get_global(cx).use_system_path_prompts
-        {
+        if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, cx);
+            let rx = prompt(self, lister, cx);
             self.on_prompt_for_open_path = Some(prompt);
             rx
         } else {
@@ -1358,7 +1361,7 @@ impl Workspace {
                         let rx = this.update(&mut cx, |this, cx| {
                             this.show_portal_error(err.to_string(), cx);
                             let prompt = this.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(this, cx);
+                            let rx = prompt(this, lister, cx);
                             this.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
@@ -1419,7 +1422,7 @@ impl Workspace {
                 let project_path = abs_path.and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
-                            project.find_or_create_local_worktree(abs_path, true, cx)
+                            project.find_or_create_worktree(abs_path, true, cx)
                         })
                     })
                     .ok()
@@ -1703,6 +1706,7 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
+            DirectoryLister::Local(self.app_state.fs.clone()),
             cx,
         );
 
@@ -1857,9 +1861,10 @@ impl Workspace {
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
-        if self.project.read(cx).is_remote() {
+        let project = self.project.read(cx);
+        if project.is_remote() && project.dev_server_project_id().is_none() {
             self.show_error(
-                &anyhow!("Folders cannot yet be added to remote projects"),
+                &anyhow!("You cannot add folders to someone else's project"),
                 cx,
             );
             return;
@@ -1870,6 +1875,7 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
+            DirectoryLister::Project(self.project.clone()),
             cx,
         );
         cx.spawn(|this, mut cx| async move {
@@ -1895,7 +1901,7 @@ impl Workspace {
         cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, cx| {
-            project.find_or_create_local_worktree(abs_path, visible, cx)
+            project.find_or_create_worktree(abs_path, visible, cx)
         });
         cx.spawn(|mut cx| async move {
             let (worktree, path) = entry.await?;
@@ -3852,7 +3858,7 @@ impl Workspace {
                 let dev_server_project = SerializedDevServerProject {
                     id: dev_server_project_id,
                     dev_server_name: dev_server.name.to_string(),
-                    path: project.path.to_string(),
+                    paths: project.paths.iter().map(|path| path.clone()).collect(),
                 };
                 Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
             })
@@ -3978,6 +3984,9 @@ impl Workspace {
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
+            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, cx);
@@ -4034,9 +4043,6 @@ impl Workspace {
                     workspace.clear_all_notifications(cx);
                 }),
             )
-            .on_action(cx.listener(Workspace::open))
-            .on_action(cx.listener(Workspace::close_window))
-            .on_action(cx.listener(Workspace::activate_pane_at_index))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
                     workspace.reopen_closed_item(cx).detach();
@@ -4083,13 +4089,7 @@ impl Workspace {
         self
     }
 
-    fn add_workspace_actions_listeners(&self, div: Div, cx: &mut ViewContext<Self>) -> Div {
-        let mut div = div
-            .on_action(cx.listener(Self::close_inactive_items_and_panes))
-            .on_action(cx.listener(Self::close_all_items_and_panes))
-            .on_action(cx.listener(Self::add_folder_to_project))
-            .on_action(cx.listener(Self::save_all))
-            .on_action(cx.listener(Self::open));
+    fn add_workspace_actions_listeners(&self, mut div: Div, cx: &mut ViewContext<Self>) -> Div {
         for action in self.workspace_actions.iter() {
             div = (action)(div, cx)
         }
@@ -5506,7 +5506,7 @@ mod tests {
         // Add a project folder
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("root2", true, cx)
+                project.find_or_create_worktree("root2", true, cx)
             })
             .await
             .unwrap();

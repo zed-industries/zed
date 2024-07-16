@@ -265,7 +265,10 @@ message Envelope {
         SynchronizeContextsResponse synchronize_contexts_response = 216;
 
         GetSignatureHelp get_signature_help = 217;
-        GetSignatureHelpResponse get_signature_help_response = 218; // current max
+        GetSignatureHelpResponse get_signature_help_response = 218;
+        ListRemoteDirectory list_remote_directory = 219;
+        ListRemoteDirectoryResponse list_remote_directory_response = 220;
+        UpdateDevServerProject update_dev_server_project = 221; // current max
     }
 
     reserved 158 to 161;
@@ -505,6 +508,20 @@ message CreateDevServerProjectResponse {
 
 message ValidateDevServerProjectRequest {
     string path = 1;
+}
+
+message ListRemoteDirectory {
+    uint64 dev_server_id = 1;
+    string path = 2;
+}
+
+message ListRemoteDirectoryResponse {
+    repeated string entries = 1;
+}
+
+message UpdateDevServerProject {
+    uint64 dev_server_project_id = 1;
+    repeated string paths = 2;
 }
 
 message CreateDevServer {
@@ -1335,6 +1352,7 @@ message DevServerProject {
     reserved 4;
     uint64 dev_server_id = 5;
     string path = 6;
+    repeated string paths = 7;
 }
 
 message DevServer {

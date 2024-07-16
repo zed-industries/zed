@@ -173,16 +173,13 @@ impl DevServerProjects {
             .read(cx)
             .projects_for_server(dev_server_id)
             .iter()
-            .any(|p| p.path == path)
+            .any(|p| p.paths.iter().any(|p| p == &path))
         {
             cx.spawn(|_, mut cx| async move {
                 cx.prompt(
                     gpui::PromptLevel::Critical,
                     "Failed to create project",
-                    Some(&format!(
-                        "Project {} already exists for this dev server.",
-                        path
-                    )),
+                    Some(&format!("{} is already open on this dev server.", path)),
                     &["Ok"],
                 )
                 .await
@@ -454,15 +451,10 @@ impl DevServerProjects {
         .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
 
-    fn delete_dev_server_project(
-        &mut self,
-        id: DevServerProjectId,
-        path: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn delete_dev_server_project(&mut self, id: DevServerProjectId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
             gpui::PromptLevel::Warning,
-            format!("Delete \"{}\"?", path).as_str(),
+            "Delete this project?",
             Some("This will delete the remote project. You can always re-add it later."),
             &["Delete", "Cancel"],
         );
@@ -702,12 +694,11 @@ impl DevServerProjects {
         let dev_server_project_id = project.id;
         let project_id = project.project_id;
         let is_online = project_id.is_some();
-        let project_path = project.path.clone();
 
         ListItem::new(("remote-project", dev_server_project_id.0))
             .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
             .child(
-                    Label::new(project.path.clone())
+                    Label::new(project.paths.join(", "))
             )
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
@@ -723,7 +714,7 @@ impl DevServerProjects {
             }))
             .end_hover_slot::<AnyElement>(Some(IconButton::new("remove-remote-project", IconName::Trash)
                 .on_click(cx.listener(move |this, _, cx| {
-                    this.delete_dev_server_project(dev_server_project_id, &project_path, cx)
+                    this.delete_dev_server_project(dev_server_project_id, cx)
                 }))
                 .tooltip(|cx| Tooltip::text("Delete remote project", cx)).into_any_element()))
     }
