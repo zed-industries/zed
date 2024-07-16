@@ -1351,7 +1351,7 @@ message DevServerProject {
     reserved 3;
     reserved 4;
     uint64 dev_server_id = 5;
-    optional string path = 6;
+    string path = 6;
     repeated string paths = 7;
 }
 

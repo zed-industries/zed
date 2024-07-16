@@ -1,4 +1,4 @@
-use std::iter::FromIterator;
+t use std::iter::FromIterator;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CharBag(u64);
