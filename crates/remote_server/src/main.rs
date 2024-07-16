@@ -15,7 +15,7 @@ fn main() {
 
     env_logger::init();
 
-    gpui::App::new().headless().run(move |cx| {
+    gpui::App::headless().run(move |cx| {
         HeadlessProject::init(cx);
 
         let (incoming_tx, incoming_rx) = mpsc::unbounded();

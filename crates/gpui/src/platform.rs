@@ -65,12 +65,16 @@ use time::UtcOffset;
 pub(crate) use windows::*;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new())
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless))
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    if headless {
+        return Rc::new(HeadlessClient::new());
+    }
+
     match guess_compositor() {
         "Wayland" => Rc::new(WaylandClient::new()),
         "X11" => Rc::new(X11Client::new()),
@@ -101,7 +105,7 @@ pub fn guess_compositor() -> &'static str {
 
 // todo("windows")
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
 }
 
@@ -111,7 +115,6 @@ pub(crate) trait Platform: 'static {
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
-    fn run_headless(&self);
     fn quit(&self);
     fn restart(&self, binary_path: Option<PathBuf>);
     fn activate(&self, ignoring_other_apps: bool);
