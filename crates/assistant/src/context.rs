@@ -328,10 +328,9 @@ struct PendingCompletion {
 pub struct SlashCommandId(clock::Lamport);
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct EditStep {
+pub struct EditStep<R> {
     pub id: usize,
-    pub source_range: Range<language::Anchor>,
-    pub content: String,
+    pub source_range: Range<R>,
 }
 
 pub struct Context {
@@ -360,7 +359,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    edit_steps: Vec<EditStep>,
+    edit_steps: Vec<EditStep<language::Anchor>>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -749,7 +748,7 @@ impl Context {
         &self.edit_suggestions
     }
 
-    pub fn edit_steps(&self) -> &[EditStep] {
+    pub fn edit_steps(&self) -> &[EditStep<language::Anchor>] {
         &self.edit_steps
     }
 
@@ -982,7 +981,6 @@ impl Context {
             let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
             let mut in_step = false;
             let mut step_start = 0;
-            let mut step_content = String::new();
             let mut current_id: Option<usize> = None;
             let mut line_start_offset = message_lines.offset();
 
@@ -992,17 +990,13 @@ impl Context {
                         if let Some(id_start) = line[step_start_index..].find("id=\"") {
                             let id_start = step_start_index + id_start + 4;
                             if let Some(id_end) = line[id_start..].find('"') {
-                                if let Ok(id) = line[id_start..id_start + id_end].parse::<usize>() {
-                                    in_step = true;
-                                    step_content.clear();
-                                    step_start = line_start_offset + step_start_index;
-                                    current_id = Some(id);
-
-                                    // Find the end of the opening tag
-                                    if let Some(tag_end) = line[step_start_index..].find('>') {
-                                        let content_start = step_start_index + tag_end + 1;
-                                        step_content.push_str(&line[content_start..]);
-                                        step_content.push('\n');
+                                if line[id_start + id_end + 1..].contains('>') {
+                                    if let Ok(id) =
+                                        line[id_start..id_start + id_end].parse::<usize>()
+                                    {
+                                        in_step = true;
+                                        step_start = line_start_offset + step_start_index;
+                                        current_id = Some(id);
                                     }
                                 }
                             }
@@ -1010,7 +1004,6 @@ impl Context {
                     }
                 } else if let Some(step_end_index) = line.find("</step>") {
                     if in_step {
-                        step_content.push_str(&line[..step_end_index]);
                         let start_anchor = buffer.anchor_after(step_start);
                         let end_anchor = buffer
                             .anchor_before(line_start_offset + step_end_index + "</step>".len());
@@ -1018,15 +1011,11 @@ impl Context {
                             new_edit_steps.push(EditStep {
                                 id,
                                 source_range: start_anchor..end_anchor,
-                                content: step_content.clone(),
                             });
                         }
                         in_step = false;
                         current_id = None;
                     }
-                } else if in_step {
-                    step_content.push_str(line);
-                    step_content.push('\n');
                 }
 
                 line_start_offset = message_lines.offset();
@@ -2164,6 +2153,7 @@ mod tests {
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
+    use indoc::indoc;
     use language::LspAdapterDelegate;
     use parking_lot::Mutex;
     use project::Project;
@@ -2172,7 +2162,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{cell::RefCell, env, path::Path, rc::Rc, sync::atomic::AtomicBool};
-    use text::network::Network;
+    use text::{network::Network, ToPoint};
     use ui::WindowContext;
     use unindent::Unindent;
     use util::{test::marked_text_ranges, RandomCharIter};
@@ -2694,20 +2684,27 @@ mod tests {
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
         // Simulate user input
+        let user_message = indoc! {r#"
+            Please refactor this code:
+
+            fn main() {
+                println!("Hello, World!");
+            }
+        "#};
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Please refactor this code:\n\nfn main() {\n    println!(\"Hello, World!\");\n}\n")], None, cx);
+            buffer.edit([(0..0, user_message)], None, cx);
         });
 
         // Simulate LLM response with edit steps
-        let llm_response = "
+        let llm_response = indoc! {r#"
             Sure, I can help you refactor that code. Here's a step-by-step process:
 
-            <step id=\"1\">
+            <step id="1">
             First, let's extract the greeting into a separate function:
 
             ```rust
             fn greet() {
-                println!(\"Hello, World!\");
+                println!("Hello, World!");
             }
 
             fn main() {
@@ -2716,26 +2713,32 @@ mod tests {
             ```
             </step>
 
-            <step id=\"2\">
+            <step id="2">
             Now, let's make the greeting customizable:
 
             ```rust
             fn greet(name: &str) {
-                println!(\"Hello, {}!\", name);
+                println!("Hello, {}!", name);
             }
 
             fn main() {
-                greet(\"World\");
+                greet("World");
             }
             ```
             </step>
 
             These changes make the code more modular and flexible.
-        ";
+        "#};
 
         // Simulate the assist method to trigger the LLM response
         context.update(cx, |context, cx| context.assist(cx));
         cx.run_until_parked();
+
+        // Retrieve the assistant response message's start from the context
+        let response_start_row = context.read_with(cx, |context, cx| {
+            let buffer = context.buffer.read(cx);
+            context.message_anchors[1].start.to_point(buffer).row
+        });
 
         // Simulate the LLM completion
         fake_provider.send_last_completion_chunk(llm_response.to_string());
@@ -2745,24 +2748,38 @@ mod tests {
         cx.run_until_parked();
 
         // Verify that the edit steps were parsed correctly
-        context.read_with(cx, |context, _cx| {
-            let edit_steps = &context.edit_steps;
-            assert_eq!(edit_steps.len(), 2, "Expected 2 edit steps");
-
-            // Check the first edit step
-            assert_eq!(edit_steps[0].id, 1);
-            assert!(edit_steps[0].content.contains("fn greet() {"));
-            assert!(edit_steps[0]
-                .content
-                .contains("println!(\"Hello, World!\");"));
-
-            // Check the second edit step
-            assert_eq!(edit_steps[1].id, 2);
-            assert!(edit_steps[1].content.contains("fn greet(name: &str) {"));
-            assert!(edit_steps[1]
-                .content
-                .contains("println!(\"Hello, {}!\", name);"));
+        context.read_with(cx, |context, cx| {
+            assert_eq!(
+                edit_steps(context, cx),
+                vec![
+                    EditStep {
+                        id: 1,
+                        source_range: Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 14, 7),
+                    },
+                    EditStep {
+                        id: 2,
+                        source_range: Point::new(response_start_row + 16, 0)
+                            ..Point::new(response_start_row + 28, 7),
+                    },
+                ]
+            );
         });
+
+        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<EditStep<Point>> {
+            context
+                .edit_steps
+                .iter()
+                .map(|step| {
+                    let buffer = context.buffer.read(cx);
+                    EditStep {
+                        id: step.id,
+                        source_range: step.source_range.start.to_point(buffer)
+                            ..step.source_range.end.to_point(buffer),
+                    }
+                })
+                .collect()
+        }
     }
 
     #[gpui::test]
