@@ -1022,7 +1022,7 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .filter_map(|x| x)
+            .flatten()
             .collect();
         v.push(first_edit.clone());
 

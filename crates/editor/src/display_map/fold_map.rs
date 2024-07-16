@@ -831,7 +831,7 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .filter_map(|x| x)
+            .flatten()
             .collect();
         v.push(first_edit.clone());
 
@@ -865,7 +865,7 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .filter_map(|x| x)
+            .flatten()
             .collect();
         v.push(first_edit.clone());
         v

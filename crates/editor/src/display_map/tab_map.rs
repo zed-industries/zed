@@ -119,7 +119,7 @@ impl TabMap {
                             result
                         }
                     })
-                    .filter_map(|x| x)
+                    .flatten()
                     .collect();
                 v.push(first_edit);
 
