@@ -2173,10 +2173,8 @@ impl ProjectPanel {
                             } else if event.down.modifiers.secondary() {
                                 if event.down.click_count > 1 {
                                     this.split_entry(entry_id, cx);
-                                } else {
-                                    if !this.marked_entries.insert(selection) {
-                                        this.marked_entries.remove(&selection);
-                                    }
+                                } else if !this.marked_entries.insert(selection) {
+                                    this.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
