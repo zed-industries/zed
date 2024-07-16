@@ -133,6 +133,7 @@ enum Feature {
     Vim,
     LanguageC,
     LanguageCpp,
+    LanguageGo,
     LanguagePython,
     LanguageRust,
 }
@@ -145,6 +146,7 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
             (Feature::Vim, vec!["vim"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguageGo, vec!["go", "golang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
             (Feature::LanguageRust, vec!["rust", "rs"]),
         ])
@@ -973,6 +975,10 @@ impl ExtensionsPage {
                 Feature::LanguageCpp => {
                     FeatureUpsell::new(telemetry, "C++ support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/cpp")
+                }
+                Feature::LanguageGo => {
+                    FeatureUpsell::new(telemetry, "Go support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/go")
                 }
                 Feature::LanguagePython => {
                     FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
