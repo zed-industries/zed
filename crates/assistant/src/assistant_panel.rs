@@ -10,7 +10,7 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId,
-    ContextStore, CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary,
+    ContextStore, CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
     EditStepOperations, EditSuggestion, InlineAssist, InlineAssistant, InsertIntoEditor,
     MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split, ToggleFocus,
@@ -1061,6 +1061,17 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+        if !self.apply_edit_step(cx) {
+            self.send_to_model(cx);
+        }
+    }
+
+    fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.edit_step_for_cursor(cx).is_some()
+        // todo!()
+    }
+
+    fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
             let new_selection = {
                 let cursor = user_message
@@ -2011,7 +2022,14 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let button_text = self.send_button_text(cx);
+        let button_text = match self.edit_step_for_cursor(cx) {
+            Some(edit_step) => match &edit_step.operations {
+                Some(EditStepOperations::Pending(_)) => "Computing Changes...",
+                Some(EditStepOperations::Parsed { .. }) => "Apply Changes",
+                None => "Send",
+            },
+            None => "Send",
+        };
         ButtonLike::new("send_button")
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ModalSurface)
@@ -2025,7 +2043,7 @@ impl ContextEditor {
             })
     }
 
-    fn send_button_text(&self, cx: &AppContext) -> &'static str {
+    fn edit_step_for_cursor<'a>(&'a self, cx: &'a AppContext) -> Option<&'a EditStep> {
         let newest_cursor = self
             .editor
             .read(cx)
@@ -2037,25 +2055,19 @@ impl ContextEditor {
         let buffer = context.buffer().read(cx);
 
         let edit_steps = context.edit_steps();
-        let step_index = edit_steps.binary_search_by(|step| {
-            let step_range = step.source_range.clone();
-            if newest_cursor.cmp(&step_range.start, buffer).is_lt() {
-                Ordering::Greater
-            } else if newest_cursor.cmp(&step_range.end, buffer).is_gt() {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            }
-        });
-
-        match step_index {
-            Ok(index) => match &edit_steps[index].operations {
-                Some(EditStepOperations::Pending(_)) => "Computing Changes...",
-                Some(EditStepOperations::Parsed { .. }) => "Apply Changes",
-                None => "Send",
-            },
-            Err(_) => "Send",
-        }
+        edit_steps
+            .binary_search_by(|step| {
+                let step_range = step.source_range.clone();
+                if newest_cursor.cmp(&step_range.start, buffer).is_lt() {
+                    Ordering::Greater
+                } else if newest_cursor.cmp(&step_range.end, buffer).is_gt() {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()
+            .map(|index| &edit_steps[index])
     }
 }
 
