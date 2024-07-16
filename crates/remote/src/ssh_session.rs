@@ -2,13 +2,11 @@ use crate::protocol::{
     message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
 };
 use anyhow::{anyhow, Context as _, Result};
-use async_pipe::{PipeReader, PipeWriter};
-use async_ssh2_lite::{AsyncSession, AsyncSessionStream};
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     future::{BoxFuture, LocalBoxFuture},
-    AsyncWriteExt as _, Future,
+    AsyncBufReadExt as _, AsyncWriteExt as _, Future,
 };
 use futures::{select_biased, AsyncReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{AppContext, AsyncAppContext, Model, WeakModel};
@@ -20,17 +18,26 @@ use rpc::{
     },
     TypedEnvelope,
 };
-use smol::{fs::unix::MetadataExt, io, Async};
+use smol::{
+    fs::{
+        self,
+        unix::{MetadataExt, PermissionsExt as _},
+    },
+    io::BufReader,
+    process,
+};
 use std::{
     any::TypeId,
-    net::{SocketAddr, TcpStream},
-    path::Path,
+    ffi::OsStr,
+    net::SocketAddr,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
         Arc,
     },
     time::Instant,
 };
+use tempfile::TempDir;
 
 const SERVER_BINARY_LOCAL_PATH: &str = "target/debug/remote_server";
 const SERVER_BINARY_REMOTE_PATH: &str = "./.zed_remote_server";
@@ -56,36 +63,49 @@ pub struct SshSession {
     >,
 }
 
+struct SshClientState {
+    socket_path: PathBuf,
+    port: String,
+    url: String,
+    _master_process: process::Child,
+    _temp_dir: TempDir,
+}
+
+#[derive(Debug)]
+struct SshFileStat {
+    size: u64,
+    mode: u32,
+}
+
+struct SpawnRequest {
+    command: String,
+    process_tx: oneshot::Sender<process::Child>,
+}
+
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 
 impl SshSession {
     pub async fn client(
         address: SocketAddr,
-        user: &str,
-        password: &str,
+        user: String,
+        password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
         cx: &AsyncAppContext,
     ) -> Result<Arc<Self>> {
+        let client_state = SshClientState::new(user, address, password_callback, cx).await?;
+
         let (spawn_process_tx, mut spawn_process_rx) = mpsc::unbounded::<SpawnRequest>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
-        let stream = Async::<TcpStream>::connect(address)
-            .await
-            .context("failed to connect to remote address")?;
+        ensure_server_binary(&client_state).await?;
 
-        let mut session =
-            AsyncSession::new(stream, None).context("failed to create ssh session")?;
-        session.handshake().await.context("ssh handshake failed")?;
-        session.userauth_password(user, password).await.unwrap();
-
-        ensure_server_binary(&session).await?;
-
-        let mut channel = session
-            .channel_session()
-            .await
-            .context("failed to create channel")?;
-        channel.exec(SERVER_BINARY_REMOTE_PATH).await?;
-        let mut stderr = channel.stderr();
+        let mut remote_server_child = client_state
+            .ssh_command(SERVER_BINARY_REMOTE_PATH)
+            .spawn()
+            .context("failed to spawn remote server")?;
+        let mut child_stderr = remote_server_child.stderr.take().unwrap();
+        let mut child_stdout = remote_server_child.stdout.take().unwrap();
+        let mut child_stdin = remote_server_child.stdin.take().unwrap();
 
         let executor = cx.background_executor().clone();
         executor.clone().spawn(async move {
@@ -104,7 +124,7 @@ impl SshSession {
                             return anyhow::Ok(());
                         };
 
-                        write_message(&mut channel, &mut stdin_buffer, outgoing).await?;
+                        write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
                     }
 
                     request = spawn_process_rx.next().fuse() => {
@@ -113,105 +133,31 @@ impl SshSession {
                         };
 
                         log::info!("spawn process: {:?}", request.command);
-                        let mut channel = session
-                            .channel_session()
-                            .await
+                        let child = client_state
+                            .ssh_command(&request.command)
+                            .spawn()
                             .context("failed to create channel")?;
-                        channel.exec(&request.command).await?;
-                        let mut stderr = channel.stderr();
-
-                        let (stdin_tx, mut stdin_rx) = async_pipe::pipe();
-                        let (mut stdout_tx, stdout_rx) = async_pipe::pipe();
-                        let (mut stderr_tx, stderr_rx) = async_pipe::pipe();
-                        let (exit_tx, exit_rx) = oneshot::channel();
-                        request.process_tx.send(SshChildProcess {
-                            stdin: stdin_tx,
-                            stdout: stdout_rx,
-                            stderr: stderr_rx,
-                            exit: exit_rx,
-                        }).ok();
-
-                        executor.spawn(async move {
-                            let mut stdin_buffer = [0; 1024];
-                            let mut stdout_buffer = [0; 1024];
-                            let mut stderr_buffer = [0; 1024];
-                            loop {
-                                select_biased! {
-                                    read = channel.read(&mut stdout_buffer).fuse() => {
-                                        match read {
-                                            Ok(len) => {
-                                                if len == 0 {
-                                                    stdout_tx.close().ok();
-                                                    break;
-                                                }
-                                                stdout_tx.write_all(&stdout_buffer[..len]).await?;
-                                            }
-                                            Err(error) => {
-                                                log::error!("error reading stdout: {error:?}");
-                                                break
-                                            }
-                                        }
-                                    }
-                                    read = stderr.read(&mut stderr_buffer).fuse() => {
-                                        match read {
-                                            Ok(len) => {
-                                                if len == 0 {
-                                                    stderr_tx.close().ok();
-                                                    break;
-                                                }
-                                                stderr_tx.write_all(&stderr_buffer[..len]).await?;
-                                            }
-                                            Err(error) => {
-                                                log::error!("error reading stdout: {error:?}");
-                                                break
-                                            }
-                                        }
-                                    }
-                                    read = stdin_rx.read(&mut stdin_buffer).fuse() => {
-                                        match read {
-                                            Ok(len) => {
-                                                if len == 0 {
-                                                    channel.send_eof().await?;
-                                                    break;
-                                                }
-                                                channel.write_all(&stdin_buffer[..len]).await?;
-                                            }
-                                            Err(error) => {
-                                                log::error!("error reading stdout: {error:?}");
-                                                break
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            io::copy(&mut channel, &mut stdout_tx).await?;
-                            io::copy(&mut stderr, &mut stderr_tx).await?;
-                            if let Ok(status) = channel.exit_status() {
-                                exit_tx.send(status).ok();
-                            }
-                            anyhow::Ok(())
-                        }).detach();
+                        request.process_tx.send(child).ok();
                     }
 
-                    result = channel.read(&mut stdout_buffer).fuse() => {
+                    result = child_stdout.read(&mut stdout_buffer).fuse() => {
                         match result {
                             Ok(len) => {
                                 if len == 0 {
-                                    let status = channel.exit_status()?;
-                                    if status != 0 {
-                                        let signal = channel.exit_signal().await?;
-                                        log::info!("channel exited with status: {status:?}, signal: {:?}", signal.error_message);
+                                    child_stdin.close().await?;
+                                    let status = remote_server_child.status().await?;
+                                    if !status.success() {
+                                        log::info!("channel exited with status: {status:?}");
                                     }
                                     return Ok(());
                                 }
 
                                 if len < stdout_buffer.len() {
-                                    channel.read_exact(&mut stdout_buffer[len..]).await?;
+                                    child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
                                 }
 
                                 let message_len = message_len_from_buffer(&stdout_buffer);
-                                match read_message_with_len(&mut channel, &mut stdout_buffer, message_len).await {
+                                match read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len).await {
                                     Ok(envelope) => {
                                         incoming_tx.unbounded_send(envelope).ok();
                                     }
@@ -226,7 +172,7 @@ impl SshSession {
                         }
                     }
 
-                    result = stderr.read(&mut stderr_buffer[stderr_offset..]).fuse() => {
+                    result = child_stderr.read(&mut stderr_buffer[stderr_offset..]).fuse() => {
                         match result {
                             Ok(len) => {
                                 stderr_offset += len;
@@ -366,7 +312,7 @@ impl SshSession {
         Ok(())
     }
 
-    pub async fn spawn_process(&self, command: String) -> SshChildProcess {
+    pub async fn spawn_process(&self, command: String) -> process::Child {
         let (process_tx, process_rx) = oneshot::channel();
         self.spawn_process_tx
             .unbounded_send(SpawnRequest {
@@ -440,34 +386,169 @@ impl ProtoClient for SshSession {
     }
 }
 
-struct SpawnRequest {
-    command: String,
-    process_tx: oneshot::Sender<SshChildProcess>,
+impl SshClientState {
+    async fn new(
+        user: String,
+        address: SocketAddr,
+        password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
+        cx: &AsyncAppContext,
+    ) -> Result<Self> {
+        let url = format!("{user}@{}", address.ip());
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-ssh-session")
+            .tempdir()?;
+
+        let listener = smol::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to find open port");
+        let port = listener.local_addr().unwrap().port();
+        let password_task = cx.spawn(|mut cx| async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0; 1024];
+                if stream.read(&mut buffer).await.is_ok() {
+                    let password = password_callback(&mut cx);
+                    let _ = stream.write_all(password.as_bytes()).await;
+                    return;
+                }
+            }
+        });
+
+        // TODO remove
+        password_task.detach();
+
+        let askpass_script = format!("#!/bin/sh\nnc 127.0.0.1 {port} < /dev/null 2> /dev/null");
+        let askpass_script_path = temp_dir.path().join("askpass.sh");
+        fs::write(&askpass_script_path, askpass_script).await?;
+        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o700)).await?;
+
+        let port = address.port().to_string();
+
+        let socket_path = temp_dir.path().join("control.sock");
+        let mut master_process = process::Command::new("ssh")
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", &askpass_script_path)
+            .args(["-o", "ControlMaster=yes", "-o"])
+            .arg(format!("ControlPath={}", socket_path.display()))
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .args(["-p", &port])
+            .arg(&url)
+            .spawn()?;
+
+        let stdin = master_process.stdin.as_mut().unwrap();
+        let mut stdout = BufReader::new(master_process.stdout.as_mut().unwrap());
+        stdin.write_all(b"echo hello zed\n").await?;
+        stdin.flush().await?;
+        let mut line = String::new();
+        stdout.read_line(&mut line).await?;
+
+        Ok(Self {
+            _master_process: master_process,
+            port,
+            _temp_dir: temp_dir,
+            socket_path,
+            url,
+        })
+    }
+
+    async fn file_stat(&self, path: &Path) -> Result<Option<SshFileStat>> {
+        let output = self
+            .ssh_command("stat")
+            .args(["-f", "%z %p"])
+            .arg(path)
+            .output()
+            .await?;
+
+        if output.status.success() {
+            let output = String::from_utf8(output.stdout)?;
+            let mut stats = output.split_whitespace();
+            let size = stats
+                .next()
+                .ok_or_else(|| anyhow!("Failed to parse size"))?
+                .parse()?;
+            let mode = stats
+                .next()
+                .ok_or_else(|| anyhow!("Failed to parse mode"))?
+                .parse::<u32>()?;
+            Ok(Some(SshFileStat { size, mode }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+        let output = self
+            .ssh_command("chmod")
+            .arg(format!("{:o}", mode))
+            .arg(path)
+            .output()
+            .await?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "failed to chmod file file {} {:o}: {}",
+                path.display(),
+                mode,
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
+        let mut command = process::Command::new("scp");
+        let output = self
+            .ssh_options(&mut command)
+            .arg("-P")
+            .arg(&self.port)
+            .arg(&src_path)
+            .arg(&format!("{}:{}", self.url, dest_path.display()))
+            .output()
+            .await?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "failed to upload file {} -> {}: {}",
+                src_path.display(),
+                dest_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    fn ssh_command<S: AsRef<OsStr>>(&self, binary: S) -> process::Command {
+        let mut command = process::Command::new("ssh");
+        self.ssh_options(&mut command)
+            .arg("-p")
+            .arg(&self.port)
+            .arg(&self.url)
+            .arg(binary);
+        command
+    }
+
+    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+        command
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .args(["-o", "ControlMaster=no", "-o"])
+            .arg(format!("ControlPath={}", self.socket_path.display()))
+    }
 }
 
-pub struct SshChildProcess {
-    pub stdin: PipeWriter,
-    pub stdout: PipeReader,
-    pub stderr: PipeReader,
-    pub exit: oneshot::Receiver<i32>,
-}
-
-async fn ensure_server_binary<S: AsyncSessionStream + Send + Sync + 'static>(
-    session: &AsyncSession<S>,
-) -> Result<()> {
+async fn ensure_server_binary(session: &SshClientState) -> Result<()> {
     let src_path = Path::new(SERVER_BINARY_LOCAL_PATH);
     let dst_path = Path::new(SERVER_BINARY_REMOTE_PATH);
-    let ftp = session
-        .sftp()
-        .await
-        .context("failed to initialize sftp channel")?;
 
-    let src_stat = smol::fs::metadata(src_path).await?;
+    let src_stat = fs::metadata(src_path).await?;
     let size = src_stat.size();
-    let perm = Some(0o755);
-    let dst_stat = ftp.stat(dst_path).await.ok();
+    let perm = 0o755_u32;
+    let dst_stat = session.file_stat(&dst_path).await?;
     let server_binary_exists = dst_stat.map_or(false, |stats| {
-        stats.is_file() && stats.size == Some(src_stat.size()) && stats.perm == perm
+        stats.size == src_stat.size() && stats.mode == perm
     });
     if server_binary_exists {
         log::info!("remote development server already present",);
@@ -476,23 +557,12 @@ async fn ensure_server_binary<S: AsyncSessionStream + Send + Sync + 'static>(
 
     let t0 = Instant::now();
     log::info!("uploading remote development server ({size} bytes)",);
-    let mut src_file = smol::fs::File::open(src_path)
+    session
+        .upload_file(src_path, dst_path)
         .await
-        .with_context(|| format!("failed to open server binary {src_path:?}"))?;
-    let mut dst_file = ftp
-        .create(dst_path)
-        .await
-        .context("failed to create server binary")?;
-    let result = io::copy(&mut src_file, &mut dst_file).await;
-    let mut stat = ftp.stat(dst_path).await?;
-    stat.perm = perm;
-    ftp.setstat(dst_path, stat).await?;
-    if result.is_err() {
-        ftp.unlink(dst_path)
-            .await
-            .context("failed to remove server binary")?;
-    }
-    result?;
+        .context("failed to upload server binary")?;
+
+    session.chmod(dst_path, 0o755).await?;
     log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
     Ok(())

@@ -7705,9 +7705,9 @@ impl Project {
         let abs_path = abs_path.as_ref();
         let root_name = abs_path.file_name().unwrap().to_string_lossy().to_string();
         let path = abs_path.to_string_lossy().to_string();
-        cx.spawn(|_, cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let response = ssh.request(AddWorktree { path: path.clone() }).await?;
-            Ok(cx.update(|cx| {
+            let worktree = cx.update(|cx| {
                 Worktree::remote(
                     0,
                     0,
@@ -7720,7 +7720,11 @@ impl Project {
                     ssh.clone().into(),
                     cx,
                 )
-            })?)
+            })?;
+
+            this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx))?;
+
+            Ok(worktree)
         })
     }
 

@@ -213,11 +213,15 @@ pub async fn open_ssh_paths(
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     for path in ssh_paths {
-        let Some(session) =
-            remote::SshSession::client(path.address, &path.username, &path.password, cx)
-                .await
-                .log_err()
-        else {
+        let password = path.password.clone();
+        let Some(session) = remote::SshSession::client(
+            path.address,
+            path.username.clone(),
+            Box::new(move |_cx| password.clone()),
+            cx,
+        )
+        .await
+        .log_err() else {
             continue;
         };
 
@@ -235,7 +239,7 @@ pub async fn open_ssh_paths(
 
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&path.path, true, cx)
+                project.find_or_create_worktree(&path.path, true, cx)
             })?
             .await?;
 

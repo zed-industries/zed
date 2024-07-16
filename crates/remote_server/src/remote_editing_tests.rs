@@ -40,7 +40,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
     let project = build_project(client_ssh, cx);
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
         .unwrap();
