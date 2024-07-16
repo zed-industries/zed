@@ -22,7 +22,7 @@ use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
 use workspace::{AppState, Workspace};
 
-use crate::{init_headless, init_ui};
+use crate::{handle_open_request, init_headless, init_ui};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -223,6 +223,7 @@ pub async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open {
+                urls,
                 paths,
                 wait,
                 open_new_workspace,
@@ -254,6 +255,27 @@ pub async fn handle_cli_connection(
                             cx.update(|cx| cx.quit()).log_err();
                         }
                     }
+                    return;
+                }
+
+                if !urls.is_empty() {
+                    cx.update(|cx| {
+                        match OpenRequest::parse(urls, cx) {
+                            Ok(open_request) => {
+                                handle_open_request(open_request, app_state.clone(), cx);
+                                responses.send(CliResponse::Exit { status: 0 }).log_err();
+                            }
+                            Err(e) => {
+                                responses
+                                    .send(CliResponse::Stderr {
+                                        message: format!("{e}"),
+                                    })
+                                    .log_err();
+                                responses.send(CliResponse::Exit { status: 1 }).log_err();
+                            }
+                        };
+                    })
+                    .log_err();
                     return;
                 }
 

@@ -4,13 +4,13 @@ Type=Application
 Name=$APP_NAME
 GenericName=Text Editor
 Comment=A high-performance, multiplayer code editor.
-TryExec=$APP_CLI
+TryExec=$APP
 StartupNotify=$DO_STARTUP_NOTIFY
 Exec=$APP_CLI $APP_ARGS
 Icon=$APP_ICON
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
-MimeType=text/plain;inode/directory;
+MimeType=text/plain;inode/directory;x-scheme-handler/zed;
 Actions=NewWorkspace;
 
 [Desktop Action NewWorkspace]
