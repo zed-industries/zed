@@ -817,8 +817,11 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
             .then_with(|| b.old.end.cmp(&a.old.end))
     });
 
+    let _old_alloc_ptr = edits.as_ptr();
     let mut inlay_edits = edits.into_iter();
     let inlay_edits = if let Some(mut first_edit) = inlay_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = inlay_edits
             .scan(&mut first_edit, |prev_edit, edit| {
                 if prev_edit.old.end >= edit.old.start {
@@ -831,10 +834,10 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .flatten()
+            .filter_map(|x| x)
             .collect();
         v.push(first_edit.clone());
-
+        debug_assert_eq!(_old_alloc_ptr, v.as_ptr(), "Inlay edits were reallocated");
         v
     } else {
         vec![]
@@ -850,9 +853,11 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
             .cmp(&b.old.start)
             .then_with(|| b.old.end.cmp(&a.old.end))
     });
-
+    let _old_alloc_ptr = edits.as_ptr();
     let mut fold_edits = edits.into_iter();
     let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = fold_edits
             .scan(&mut first_edit, |prev_edit, edit| {
                 if prev_edit.old.end >= edit.old.start {
@@ -865,7 +870,7 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
                     Some(Some(prev)) // Yield the previous edit
                 }
             })
-            .flatten()
+            .filter_map(|x| x)
             .collect();
         v.push(first_edit.clone());
         v
