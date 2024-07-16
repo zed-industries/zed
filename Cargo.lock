@@ -8524,7 +8524,6 @@ dependencies = [
  "client",
  "dev_server_projects",
  "editor",
- "feature_flags",
  "fuzzy",
  "gpui",
  "language",

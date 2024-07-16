@@ -4,8 +4,6 @@ use anyhow::anyhow;
 use anyhow::Context;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
-use feature_flags::FeatureFlagAppExt;
-use feature_flags::FeatureFlagViewExt;
 use gpui::AsyncWindowContext;
 use gpui::Subscription;
 use gpui::Task;
@@ -71,19 +69,6 @@ enum Mode {
 
 impl DevServerProjects {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, _| {
-            if enabled {
-                Self::register_open_remote_action(workspace);
-            }
-        })
-        .detach();
-
-        if cx.has_flag::<feature_flags::Remoting>() {
-            Self::register_open_remote_action(workspace);
-        }
-    }
-
-    fn register_open_remote_action(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
             let handle = cx.view().downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
@@ -983,7 +968,7 @@ impl DevServerProjects {
             .header(
                 ModalHeader::new()
                     .show_dismiss_button(true)
-                    .child(Headline::new("Remote Projects").size(HeadlineSize::Small)),
+                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::Small)),
             )
             .section(
                 Section::new().child(
