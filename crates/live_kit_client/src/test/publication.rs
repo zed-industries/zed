@@ -76,6 +76,10 @@ impl RemoteTrackPublication {
         Some(self.track.clone())
     }
 
+    pub fn kind(&self) -> TrackKind {
+        self.track.kind()
+    }
+
     pub fn is_muted(&self) -> bool {
         if let Some(room) = self.room.upgrade() {
             room.test_server()
@@ -83,6 +87,25 @@ impl RemoteTrackPublication {
                 .unwrap_or(false)
         } else {
             false
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        if let Some(room) = self.room.upgrade() {
+            !room.0.lock().paused_audio_tracks.contains(&self.sid)
+        } else {
+            false
+        }
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        if let Some(room) = self.room.upgrade() {
+            let paused_audio_tracks = &mut room.0.lock().paused_audio_tracks;
+            if enabled {
+                paused_audio_tracks.remove(&self.sid);
+            } else {
+                paused_audio_tracks.insert(self.sid.clone());
+            }
         }
     }
 }

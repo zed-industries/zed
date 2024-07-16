@@ -12,8 +12,8 @@ use live_kit_client::{
     options::{TrackPublishOptions, VideoCodec},
     participant::{Participant, RemoteParticipant},
     play_remote_audio_track,
-    publication::LocalTrackPublication,
-    track::{LocalTrack, RemoteAudioTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
+    publication::{LocalTrackPublication, RemoteTrackPublication},
+    track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
 use live_kit_server::token::{self, VideoGrant};
@@ -91,7 +91,7 @@ struct LivekitWindow {
 
 #[derive(Default)]
 struct ParticipantState {
-    audio_output_stream: Option<(RemoteAudioTrack, AudioStream)>,
+    audio_output_stream: Option<(RemoteTrackPublication, AudioStream)>,
     muted: bool,
     screen_share_output_view: Option<(RemoteVideoTrack, View<RemoteVideoTrackView>)>,
     speaking: bool,
@@ -170,13 +170,15 @@ impl LivekitWindow {
             }
 
             RoomEvent::TrackSubscribed {
-                track, participant, ..
+                publication,
+                participant,
+                track,
             } => {
                 let output = self.remote_participant(participant);
                 match track {
                     RemoteTrack::Audio(track) => {
                         output.audio_output_stream =
-                            Some((track.clone(), play_remote_audio_track(&track, cx)));
+                            Some((publication.clone(), play_remote_audio_track(&track, cx)));
                     }
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
@@ -317,8 +319,8 @@ impl LivekitWindow {
                 None
             }
         })?;
-        let track = participant.audio_output_stream.as_ref()?.0.rtc_track();
-        track.set_enabled(!track.enabled());
+        let publication = &participant.audio_output_stream.as_ref()?.0;
+        publication.set_enabled(!publication.is_enabled());
         cx.notify();
         Some(())
     }
@@ -390,7 +392,7 @@ impl Render for LivekitWindow {
                                 el.child(
                                     button()
                                         .id(SharedString::from(identity.0.clone()))
-                                        .child(if state.0.rtc_track().enabled() {
+                                        .child(if state.0.is_enabled() {
                                             "Deafen"
                                         } else {
                                             "Undeafen"

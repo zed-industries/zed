@@ -136,6 +136,7 @@ pub fn capture_local_audio_track(
         },
         sample_rate,
         channels,
+        Some(true),
     );
 
     let stream_task = cx.foreground_executor().spawn(async move {

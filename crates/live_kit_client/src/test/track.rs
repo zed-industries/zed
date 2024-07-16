@@ -55,6 +55,13 @@ impl RemoteTrack {
         }
     }
 
+    pub fn kind(&self) -> TrackKind {
+        match self {
+            RemoteTrack::Audio(_) => TrackKind::Audio,
+            RemoteTrack::Video(_) => TrackKind::Video,
+        }
+    }
+
     pub fn publisher_id(&self) -> ParticipantIdentity {
         match self {
             RemoteTrack::Audio(track) => track.publisher_id(),

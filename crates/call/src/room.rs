@@ -22,7 +22,7 @@ use livekit::{
     options::{TrackPublishOptions, VideoCodec},
     play_remote_audio_track,
     publication::LocalTrackPublication,
-    track::TrackSource,
+    track::{TrackKind, TrackSource},
     RoomEvent, RoomOptions,
 };
 use postage::{sink::Sink, stream::Stream, watch};
@@ -1593,8 +1593,8 @@ impl Room {
 
         for (_, participant) in live_kit.room.remote_participants() {
             for (_, publication) in participant.track_publications() {
-                if let Some(track) = publication.track() {
-                    track.rtc_track().set_enabled(!deafened);
+                if publication.kind() == TrackKind::Audio {
+                    publication.set_enabled(!deafened);
                 }
             }
         }

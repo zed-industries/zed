@@ -79,7 +79,12 @@ pub mod audio_source {
         }
 
         impl NativeAudioSource {
-            pub fn new(options: AudioSourceOptions, sample_rate: u32, num_channels: u32) -> Self {
+            pub fn new(
+                options: AudioSourceOptions,
+                sample_rate: u32,
+                num_channels: u32,
+                _enable_queue: Option<bool>,
+            ) -> Self {
                 Self {
                     options: Arc::new(options),
                     sample_rate,

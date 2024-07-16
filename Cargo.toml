@@ -320,7 +320,7 @@ itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
-livekit = { git = "https://github.com/livekit/rust-sdks", rev = "0f5029eeb5645b7226627a6f4c68d338e1a66bf0", features = ["dispatcher", "native-tls"], default-features = false }
+livekit = { git = "https://github.com/livekit/rust-sdks", rev = "a2d0382c51ae7eb5c33872142b3044857ba0a3dd", features = ["dispatcher", "native-tls"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
