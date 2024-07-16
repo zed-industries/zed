@@ -20,7 +20,7 @@ test-support = ["fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-pipe.workspace = true
-async-ssh2-lite = { version = "0.4", default-features = false, features = ["async-io"] }
+async-ssh2-lite = { version = "0.4", default-features = false, features = ["async-io", "vendored-openssl"] }
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
