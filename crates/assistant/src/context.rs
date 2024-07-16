@@ -266,6 +266,7 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     EditSuggestionsChanged,
+    EditStepsChanged,
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -326,6 +327,13 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditStep {
+    pub id: usize,
+    pub source_range: Range<language::Anchor>,
+    pub content: String,
+}
+
 pub struct Context {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -352,6 +360,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
+    edit_steps: Vec<EditStep>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -418,6 +427,7 @@ impl Context {
             buffer,
             telemetry,
             language_registry,
+            edit_steps: Vec::new(),
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -739,6 +749,10 @@ impl Context {
         &self.edit_suggestions
     }
 
+    pub fn edit_steps(&self) -> &[EditStep] {
+        &self.edit_steps
+    }
+
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
         &self.pending_slash_commands
     }
@@ -936,6 +950,90 @@ impl Context {
                 .splice(start_ix..end_ix, new_edit_suggestions);
         });
         cx.emit(ContextEvent::EditSuggestionsChanged);
+        cx.notify();
+    }
+
+    fn reparse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+        self.buffer.update(cx, |buffer, _| {
+            let range_start = buffer.anchor_before(range.start);
+            let range_end = buffer.anchor_after(range.end);
+            let start_ix = self
+                .edit_steps
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .end
+                        .cmp(&range_start, buffer)
+                        .then(Ordering::Greater)
+                })
+                .unwrap_err();
+            let end_ix = self
+                .edit_steps
+                .binary_search_by(|probe| {
+                    probe
+                        .source_range
+                        .start
+                        .cmp(&range_end, buffer)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+
+            let mut new_edit_steps = Vec::new();
+            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+            let mut in_step = false;
+            let mut step_start = 0;
+            let mut step_content = String::new();
+            let mut current_id: Option<usize> = None;
+            let mut line_start_offset = message_lines.offset();
+
+            while let Some(line) = message_lines.next() {
+                if let Some(step_start_index) = line.find("<step") {
+                    if !in_step {
+                        if let Some(id_start) = line[step_start_index..].find("id=\"") {
+                            let id_start = step_start_index + id_start + 4;
+                            if let Some(id_end) = line[id_start..].find('"') {
+                                if let Ok(id) = line[id_start..id_start + id_end].parse::<usize>() {
+                                    in_step = true;
+                                    step_content.clear();
+                                    step_start = line_start_offset + step_start_index;
+                                    current_id = Some(id);
+
+                                    // Find the end of the opening tag
+                                    if let Some(tag_end) = line[step_start_index..].find('>') {
+                                        let content_start = step_start_index + tag_end + 1;
+                                        step_content.push_str(&line[content_start..]);
+                                        step_content.push('\n');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(step_end_index) = line.find("</step>") {
+                    if in_step {
+                        step_content.push_str(&line[..step_end_index]);
+                        let start_anchor = buffer.anchor_after(step_start);
+                        let end_anchor = buffer
+                            .anchor_before(line_start_offset + step_end_index + "</step>".len());
+                        if let Some(id) = current_id {
+                            new_edit_steps.push(EditStep {
+                                id,
+                                source_range: start_anchor..end_anchor,
+                                content: step_content.clone(),
+                            });
+                        }
+                        in_step = false;
+                        current_id = None;
+                    }
+                } else if in_step {
+                    step_content.push_str(line);
+                    step_content.push('\n');
+                }
+
+                line_start_offset = message_lines.offset();
+            }
+            self.edit_steps.splice(start_ix..end_ix, new_edit_steps);
+        });
+        cx.emit(ContextEvent::EditStepsChanged);
         cx.notify();
     }
 
@@ -1158,13 +1256,13 @@ impl Context {
                     let mut response_latency = None;
                     let stream_completion = async {
                         let request_start = Instant::now();
-                        let mut messages = stream.await.inner.await?;
+                        let mut chunks = stream.await.inner.await?;
 
-                        while let Some(message) = messages.next().await {
+                        while let Some(chunk) = chunks.next().await {
                             if response_latency.is_none() {
                                 response_latency = Some(request_start.elapsed());
                             }
-                            let text = message?;
+                            let chunk = chunk?;
 
                             this.update(&mut cx, |this, cx| {
                                 let message_ix = this
@@ -1182,15 +1280,16 @@ impl Context {
                                             message.start.to_offset(buffer).saturating_sub(1)
                                         });
                                     let message_new_end_offset =
-                                        message_old_end_offset + text.len();
+                                        message_old_end_offset + chunk.len();
                                     buffer.edit(
-                                        [(message_old_end_offset..message_old_end_offset, text)],
+                                        [(message_old_end_offset..message_old_end_offset, chunk)],
                                         None,
                                         cx,
                                     );
                                     message_start_offset..message_new_end_offset
                                 });
-                                this.reparse_edit_suggestions_in_range(message_range, cx);
+                                this.reparse_edit_suggestions_in_range(message_range.clone(), cx);
+                                this.reparse_edit_steps_in_range(message_range, cx);
                                 cx.emit(ContextEvent::StreamedCompletion);
 
                                 Some(())
@@ -2619,6 +2718,94 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        let fake_provider = cx.update(FakeCompletionProvider::setup_test);
+        cx.update(assistant_panel::init);
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+
+        // Create a new context
+        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
+
+        // Simulate user input
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Please refactor this code:\n\nfn main() {\n    println!(\"Hello, World!\");\n}\n")], None, cx);
+        });
+
+        // Simulate LLM response with edit steps
+        let llm_response = "
+            Sure, I can help you refactor that code. Here's a step-by-step process:
+
+            <step id=\"1\">
+            First, let's extract the greeting into a separate function:
+
+            ```rust
+            fn greet() {
+                println!(\"Hello, World!\");
+            }
+
+            fn main() {
+                greet();
+            }
+            ```
+            </step>
+
+            <step id=\"2\">
+            Now, let's make the greeting customizable:
+
+            ```rust
+            fn greet(name: &str) {
+                println!(\"Hello, {}!\", name);
+            }
+
+            fn main() {
+                greet(\"World\");
+            }
+            ```
+            </step>
+
+            These changes make the code more modular and flexible.
+        ";
+
+        // Simulate the assist method to trigger the LLM response
+        let request = context.read_with(cx, |context, cx| context.to_completion_request(cx));
+        context.update(cx, |context, cx| {
+            let message_id = context.message_anchors[0].id;
+            context.assist(HashSet::from_iter([message_id]), cx);
+        });
+        cx.run_until_parked();
+
+        // Simulate the LLM completion
+        fake_provider.send_completion(&request, llm_response.to_string());
+        fake_provider.finish_completion(&request);
+
+        // Wait for the completion to be processed
+        cx.run_until_parked();
+
+        // Verify that the edit steps were parsed correctly
+        context.read_with(cx, |context, _cx| {
+            let edit_steps = &context.edit_steps;
+            assert_eq!(edit_steps.len(), 2, "Expected 2 edit steps");
+
+            // Check the first edit step
+            assert_eq!(edit_steps[0].id, 1);
+            assert!(edit_steps[0].content.contains("fn greet() {"));
+            assert!(edit_steps[0]
+                .content
+                .contains("println!(\"Hello, World!\");"));
+
+            // Check the second edit step
+            assert_eq!(edit_steps[1].id, 2);
+            assert!(edit_steps[1].content.contains("fn greet(name: &str) {"));
+            assert!(edit_steps[1]
+                .content
+                .contains("println!(\"Hello, {}!\", name);"));
+        });
     }
 
     #[gpui::test]

@@ -37,6 +37,13 @@ impl FakeCompletionProvider {
 
     pub fn send_completion(&self, request: &LanguageModelRequest, chunk: String) {
         let json = serde_json::to_string(request).unwrap();
+        dbg!(
+            &json,
+            self.current_completion_txs
+                .lock()
+                .keys()
+                .collect::<Vec<_>>()
+        );
         self.current_completion_txs
             .lock()
             .get(&json)

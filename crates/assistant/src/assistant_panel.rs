@@ -1256,6 +1256,9 @@ impl ContextEditor {
                     }
                 });
             }
+            ContextEvent::EditStepsChanged => {
+                dbg!(self.context.read(cx).edit_steps());
+            }
             ContextEvent::SummaryChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
