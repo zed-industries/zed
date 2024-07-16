@@ -113,25 +113,8 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            Events::Initialized(_) => {
-                let client = this.debug_client_by_id(*client_id, cx);
-
-                cx.spawn(|this, mut cx| async move {
-                    let task = this.update(&mut cx, |this, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.project().update(cx, |project, cx| {
-                                let client = client.clone();
-
-                                project.send_breakpoints(client, cx)
-                            })
-                        })
-                    })??;
-
-                    task.await?;
-
-                    client.configuration_done().await
-                })
-                .detach_and_log_err(cx);
+            Events::Initialized(event) => {
+                Self::handle_initialized_event(this, client_id, event, cx)
             }
             Events::Stopped(event) => Self::handle_stopped_event(this, client_id, event, cx),
             Events::Continued(event) => Self::handle_continued_event(this, client_id, event, cx),
@@ -270,6 +253,32 @@ impl DebugPanel {
         editor.update(&mut cx, |editor, _| {
             editor.clear_row_highlights::<DebugCurrentRowHighlight>();
         })
+    }
+
+    fn handle_initialized_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        _: &Option<Capabilities>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let client = this.debug_client_by_id(*client_id, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let task = this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.project().update(cx, |project, cx| {
+                        let client = client.clone();
+
+                        project.send_breakpoints(client, cx)
+                    })
+                })
+            })??;
+
+            task.await?;
+
+            client.configuration_done().await
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_continued_event(
