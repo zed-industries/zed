@@ -8727,20 +8727,15 @@ dependencies = [
  "anyhow",
  "async-pipe",
  "async-ssh2-lite",
- "async-tar",
- "async-trait",
  "collections",
- "env_logger",
  "fs",
  "futures 0.3.28",
- "git",
  "gpui",
  "log",
  "parking_lot 0.12.1",
  "prost",
  "rpc",
  "smol",
- "text",
 ]
 
 [[package]]
@@ -8750,7 +8745,6 @@ dependencies = [
  "anyhow",
  "client",
  "clock",
- "collections",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -8765,7 +8759,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "text",
  "worktree",
 ]
 

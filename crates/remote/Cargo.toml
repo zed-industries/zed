@@ -21,12 +21,8 @@ test-support = ["fs/test-support"]
 anyhow.workspace = true
 async-pipe.workspace = true
 async-ssh2-lite = { version = "0.4", default-features = false, features = ["async-io", "vendored-openssl"] }
-async-tar.workspace = true
-async-trait.workspace = true
 collections.workspace = true
-env_logger.workspace = true
 fs.workspace = true
-git.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -34,7 +30,6 @@ parking_lot.workspace = true
 prost.workspace = true
 rpc.workspace = true
 smol.workspace = true
-text.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -22,7 +22,6 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -33,7 +32,6 @@ remote.workspace = true
 rpc.workspace = true
 settings.workspace = true
 smol.workspace = true
-text.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
