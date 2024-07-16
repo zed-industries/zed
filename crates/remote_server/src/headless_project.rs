@@ -1,12 +1,13 @@
 use anyhow::{Context as _, Result};
-use fs::RealFs;
+use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
-use project::{buffer_store::BufferStore, ProjectPath, WorktreeId};
+use project::{buffer_store::BufferStore, ProjectPath, WorktreeId, WorktreeSettings};
 use remote::SshSession;
 use rpc::{
     proto::{self, AnyProtoClient, PeerId},
     TypedEnvelope,
 };
+use settings::{Settings as _, SettingsStore};
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
@@ -17,7 +18,7 @@ const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 const PROJECT_ID: u64 = 0;
 
 pub struct HeadlessProject {
-    pub fs: Arc<RealFs>,
+    pub fs: Arc<dyn Fs>,
     pub session: AnyProtoClient,
     pub worktrees: Vec<Model<Worktree>>,
     pub buffer_store: Model<BufferStore>,
@@ -25,7 +26,12 @@ pub struct HeadlessProject {
 }
 
 impl HeadlessProject {
-    pub fn new(session: Arc<SshSession>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn init(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::default());
+        WorktreeSettings::register(cx);
+    }
+
+    pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let this = cx.weak_model();
 
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
@@ -35,7 +41,7 @@ impl HeadlessProject {
 
         HeadlessProject {
             session: session.into(),
-            fs: Arc::new(RealFs::new(Default::default(), None)),
+            fs,
             worktrees: Vec::new(),
             buffer_store: cx.new_model(|_| BufferStore::new(true)),
             next_entry_id: Default::default(),

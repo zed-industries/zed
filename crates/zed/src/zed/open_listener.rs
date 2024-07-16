@@ -75,7 +75,7 @@ impl OpenRequest {
     }
 
     fn parse_ssh_file_path(&mut self, file: &str) {
-        let Some(url) = url::Url::parse(file.as_ref()).log_err() else {
+        let Some(url) = url::Url::parse(file).log_err() else {
             return;
         };
         let Some(host) = url.host() else {

@@ -261,6 +261,22 @@ impl SshSession {
         Self::new(incoming_rx, outgoing_tx, tx, cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (Arc<Self>, Arc<Self>) {
+        let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
+        let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded();
+        let (tx, _rx) = mpsc::unbounded();
+        (
+            client_cx
+                .update(|cx| Self::new(server_to_client_rx, client_to_server_tx, tx.clone(), cx)),
+            server_cx
+                .update(|cx| Self::new(client_to_server_rx, server_to_client_tx, tx.clone(), cx)),
+        )
+    }
+
     fn new(
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
@@ -282,7 +298,8 @@ impl SshSession {
                 while let Some(incoming) = incoming_rx.next().await {
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
-                        if let Some(sender) = this.response_channels.lock().remove(&request_id) {
+                        let sender = this.response_channels.lock().remove(&request_id);
+                        if let Some(sender) = sender {
                             let (tx, rx) = oneshot::channel();
                             if incoming.payload.is_some() {
                                 sender.send((incoming, tx)).ok();
@@ -297,7 +314,8 @@ impl SshSession {
                             envelope.payload_type_name()
                         );
                         let type_id = envelope.payload_type_id();
-                        if let Some(handler) = this.message_handlers.lock().get(&type_id) {
+                        let handler = this.message_handlers.lock().get(&type_id).cloned();
+                        if let Some(handler) = handler {
                             if let Some(future) = handler(envelope, this.clone(), cx.clone()) {
                                 future.await.ok();
                             } else {

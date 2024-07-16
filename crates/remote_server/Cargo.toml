@@ -37,5 +37,13 @@ text.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+node_runtime = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
+
+serde_json.workspace = true

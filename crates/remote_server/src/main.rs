@@ -1,14 +1,13 @@
+use fs::RealFs;
 use futures::channel::mpsc;
-use gpui::{AppContext, Context as _};
-use project::WorktreeSettings;
+use gpui::Context as _;
 use remote::{
     protocol::{read_message, write_message},
     SshSession,
 };
 use remote_server::headless_project::HeadlessProject;
-use settings::{Settings as _, SettingsStore};
 use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
-use std::{env, io, mem};
+use std::{env, io, mem, sync::Arc};
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
@@ -17,7 +16,7 @@ fn main() {
     env_logger::init();
 
     gpui::App::new().headless().run(move |cx| {
-        init(cx);
+        HeadlessProject::init(cx);
 
         let (incoming_tx, incoming_rx) = mpsc::unbounded();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
@@ -26,7 +25,13 @@ fn main() {
         let mut stdout = Async::new(io::stdout()).unwrap();
 
         let session = SshSession::server(incoming_rx, outgoing_tx, cx);
-        let project = cx.new_model(|cx| HeadlessProject::new(session.clone(), cx));
+        let project = cx.new_model(|cx| {
+            HeadlessProject::new(
+                session.clone(),
+                Arc::new(RealFs::new(Default::default(), None)),
+                cx,
+            )
+        });
 
         cx.background_executor()
             .spawn(async move {
@@ -57,9 +62,4 @@ fn main() {
 
         mem::forget(project);
     });
-}
-
-pub fn init(cx: &mut AppContext) {
-    cx.set_global(SettingsStore::default());
-    WorktreeSettings::register(cx);
 }
