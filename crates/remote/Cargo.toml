@@ -13,10 +13,6 @@ workspace = true
 path = "src/remote.rs"
 doctest = false
 
-[[bin]]
-name = "remote_server"
-path = "src/remote_server.rs"
-
 [features]
 default = []
 test-support = ["fs/test-support"]
