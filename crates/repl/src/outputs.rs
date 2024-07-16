@@ -504,15 +504,25 @@ impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
             return match &self.status {
-                ExecutionStatus::ConnectingToKernel => div().child("Connecting to kernel..."),
-                ExecutionStatus::Executing => div().child("Executing..."),
+                ExecutionStatus::ConnectingToKernel => {
+                    div().child(Label::new("Connecting to kernel...").color(Color::Muted))
+                }
+                ExecutionStatus::Executing => {
+                    div().child(Label::new("Executing...").color(Color::Muted))
+                }
                 ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
-                ExecutionStatus::Unknown => div().child("..."),
-                ExecutionStatus::ShuttingDown => div().child("Kernel shutting down..."),
-                ExecutionStatus::Shutdown => div().child("Kernel shutdown"),
-                ExecutionStatus::Queued => div().child("Queued"),
+                ExecutionStatus::Unknown => {
+                    div().child(div().child(Label::new("Unknown status").color(Color::Muted)))
+                }
+                ExecutionStatus::ShuttingDown => {
+                    div().child(Label::new("Kernel shutting down...").color(Color::Muted))
+                }
+                ExecutionStatus::Shutdown => {
+                    div().child(Label::new("Kernel shutdown").color(Color::Muted))
+                }
+                ExecutionStatus::Queued => div().child(Label::new("Queued").color(Color::Muted)),
                 ExecutionStatus::KernelErrored(error) => {
-                    div().child(format!("Kernel error: {}", error))
+                    div().child(Label::new(format!("Kernel error: {}", error)).color(Color::Error))
                 }
             }
             .into_any_element();
