@@ -20,7 +20,7 @@ use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
     io::BufReader,
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
     process::{self, Child},
 };
 use std::{
@@ -34,7 +34,7 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType};
+use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType, TCPHost};
 use util::ResultExt;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -78,9 +78,9 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        match config.connection {
-            DebugConnectionType::TCP => {
-                Self::create_tcp_client(id, config, command, args, project_path, cx).await
+        match config.connection.clone() {
+            DebugConnectionType::TCP(host) => {
+                Self::create_tcp_client(id, config, host, command, args, project_path, cx).await
             }
             DebugConnectionType::STDIO => {
                 Self::create_stdio_client(id, config, command, args, project_path, cx).await
@@ -91,11 +91,17 @@ impl DebugAdapterClient {
     async fn create_tcp_client(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
+        host: TCPHost,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
+        let mut port = host.port;
+        if port.is_none() {
+            port = Self::get_port().await;
+        }
+
         let mut command = process::Command::new(command);
         command
             .current_dir(project_path)
@@ -114,7 +120,10 @@ impl DebugAdapterClient {
             .timer(Duration::from_millis(1000))
             .await;
 
-        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), config.port);
+        let address = SocketAddrV4::new(
+            host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1)),
+            port.unwrap(),
+        );
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
@@ -126,6 +135,17 @@ impl DebugAdapterClient {
             None,
             Some(process),
             cx,
+        )
+    }
+
+    async fn get_port() -> Option<u16> {
+        Some(
+            TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
+                .await
+                .ok()?
+                .local_addr()
+                .ok()?
+                .port(),
         )
     }
 
@@ -149,11 +169,6 @@ impl DebugAdapterClient {
         let mut process = command
             .spawn()
             .with_context(|| "failed to spawn command.")?;
-
-        // give the adapter some time to start std
-        cx.background_executor()
-            .timer(Duration::from_millis(1000))
-            .await;
 
         let stdin = process
             .stdin
