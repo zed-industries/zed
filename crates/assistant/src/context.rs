@@ -383,21 +383,14 @@ impl EditStep {
     ) -> Task<Result<EditLocation>> {
         let path = path.to_string();
         cx.spawn(move |mut cx| async move {
-            let buffer = if let EditOperationKind::Create = operation {
-                // todo!("assign path to buffer")
-                project
-                    .update(&mut cx, |project, cx| project.create_buffer(cx))?
-                    .await?
-            } else {
-                project
-                    .update(&mut cx, |project, cx| {
-                        let project_path = project
-                            .project_path_for_full_path(Path::new(&path), cx)
-                            .with_context(|| format!("worktree not found for {:?}", path))?;
-                        anyhow::Ok(project.open_buffer(project_path, cx))
-                    })??
-                    .await?
-            };
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    let project_path = project
+                        .project_path_for_full_path(Path::new(&path), cx)
+                        .with_context(|| format!("worktree not found for {:?}", path))?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
 
             let range = if let Some(symbol) = operation.symbol() {
                 let outline = buffer
