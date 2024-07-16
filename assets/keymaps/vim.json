@@ -333,7 +333,10 @@
     "context": "vim_mode == waiting",
     "bindings": {
       "tab": "vim::Tab",
-      "enter": "vim::Enter"
+      "enter": "vim::Enter",
+      "escape": "vim::ClearOperators",
+      "ctrl-c": "vim::ClearOperators",
+      "ctrl-[": "vim::ClearOperators"
     }
   },
   {
