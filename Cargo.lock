@@ -372,6 +372,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assets",
  "assistant_slash_command",
  "async-watch",
  "breadcrumbs",

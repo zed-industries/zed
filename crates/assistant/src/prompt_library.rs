@@ -3,6 +3,7 @@ use crate::{
     InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use anyhow::{anyhow, Result};
+use assets::Assets;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -12,8 +13,8 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, transparent_black, AppContext, BackgroundExecutor, Bounds, EventEmitter,
-    Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    actions, point, size, transparent_black, AppContext, AssetSource, BackgroundExecutor, Bounds,
+    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
     TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
@@ -1295,6 +1296,17 @@ impl PromptStore {
 
     fn first(&self) -> Option<PromptMetadata> {
         self.metadata_cache.read().metadata.first().cloned()
+    }
+
+    pub fn operations_prompt(&self) -> String {
+        String::from_utf8(
+            Assets
+                .load("prompts/operations.md")
+                .unwrap()
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
     }
 }
 

@@ -1985,28 +1985,35 @@ impl Editor {
         _: &workspace::NewFile,
         cx: &mut ViewContext<Workspace>,
     ) {
+        Self::new_in_workspace(workspace, cx).detach_and_prompt_err(
+            "Failed to create buffer",
+            cx,
+            |e, _| match e.error_code() {
+                ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+                _ => None,
+            },
+        );
+    }
+
+    pub fn new_in_workspace(
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<Editor>>> {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.add_item_to_active_pane(
-                    Box::new(
-                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
-                    ),
-                    None,
-                    cx,
-                )
+                let editor =
+                    cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx));
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+                editor
             })
         })
-        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
-            ErrorCode::RemoteUpgradeRequired => Some(format!(
-                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
-                e.error_tag("required").unwrap_or("the latest version")
-            )),
-            _ => None,
-        });
     }
 
     pub fn new_file_in_direction(

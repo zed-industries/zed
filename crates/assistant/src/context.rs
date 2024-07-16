@@ -1,6 +1,6 @@
 use crate::{
-    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageId, MessageStatus, Role,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageStatus, Role,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -12,7 +12,6 @@ use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
-use indoc::formatdoc;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -337,16 +336,23 @@ pub struct EditStep {
 
 pub enum EditStepOperations {
     Pending(Task<Result<()>>),
-    Parsed(Vec<EditOperation>),
+    Parsed {
+        operations: Vec<EditOperation>,
+        raw_output: String,
+    },
 }
 
 impl Debug for EditStepOperations {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            EditStepOperations::Parsed(operations) => f
+            EditStepOperations::Parsed {
+                operations,
+                raw_output,
+            } => f
                 .debug_tuple("EditStepOperations::Parsed")
                 .field(operations)
+                .field(raw_output)
                 .finish(),
         }
     }
@@ -362,8 +368,10 @@ pub struct EditOperation {
 pub enum EditOperationKind {
     Update { symbol: String },
     Create,
-    InsertAfter { symbol: String },
-    InsertBefore { symbol: String },
+    InsertSiblingBefore { symbol: String },
+    InsertSiblingAfter { symbol: String },
+    PrependChild { symbol: String },
+    AppendChild { symbol: String },
     Delete { symbol: String },
 }
 
@@ -1050,8 +1058,6 @@ impl Context {
         edit_step: &EditStep,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let completion_provider = CompletionProvider::global(cx);
-
         let mut request = self.to_completion_request(cx);
         let edit_step_range = edit_step.source_range.clone();
         let step_text = self
@@ -1059,41 +1065,23 @@ impl Context {
             .read(cx)
             .text_for_range(edit_step_range.clone())
             .collect::<String>();
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: formatdoc!{r#"
-                Your task is to map a step from the conversation above to operations on symbols inside the provided source files.
-                For each symbol, specify whether to update it, delete it, or insert a new symbol before or after it.
-                You can also create new files.
-                There's no need to describe *what* to do, just *where* to do it.
-                If creating a file, assume any subsequent updates are included at the time of creation.
-                Don't create and then update a file.
-                We'll create it in one shot.
-                Prefer updating symbols lower in the syntax tree if possible.
-                Don't select overlapping symbols.
-                When updating a parent symbol, avoid operations on its children.
 
-                Example:
-
-                <operations>
-                    <update path="foo/bar.rs" symbol="impl Foo fn bar"/>
-                    <create path="foo/baz.rs"/>
-                    <insert_after path="foo/qux.rs" symbol="impl Qux fn foo"/>
-                    <insert_before path="foo/qux.rs" symbol="impl Qux fn qux"/>
-                    <delete path="foo/qux.rs" symbol="struct Waldo"/>
-                </operations>
-
-                Don't output anything other than XML. Do this now for the following step:
-
-                {step_text}
-            "#}
-        });
-
-        let completion = completion_provider.complete(request, cx);
         cx.spawn(|this, mut cx| async move {
-            let completion = completion.await?;
-            dbg!(&completion);
-            let operations = Self::parse_edit_operations(&completion);
+            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
+
+            let mut prompt = prompt_store.operations_prompt();
+            prompt.push_str(&step_text);
+
+            request.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: prompt,
+            });
+
+            let raw_output = cx
+                .update(|cx| CompletionProvider::global(cx).complete(request, cx))?
+                .await?;
+
+            let operations = Self::parse_edit_operations(&raw_output);
             this.update(&mut cx, |this, cx| {
                 let step_index = this
                     .edit_steps
@@ -1103,7 +1091,10 @@ impl Context {
                     })
                     .map_err(|_| anyhow!("edit step not found"))?;
                 if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                    edit_step.operations = Some(EditStepOperations::Parsed(operations));
+                    edit_step.operations = Some(EditStepOperations::Parsed {
+                        operations,
+                        raw_output,
+                    });
                     cx.emit(ContextEvent::EditStepsChanged);
                 }
                 anyhow::Ok(())
@@ -1124,10 +1115,16 @@ impl Context {
                             symbol: node.attribute("symbol")?.to_string(),
                         },
                         "create" => EditOperationKind::Create,
-                        "insert_after" => EditOperationKind::InsertAfter {
+                        "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
                             symbol: node.attribute("symbol")?.to_string(),
                         },
-                        "insert_before" => EditOperationKind::InsertBefore {
+                        "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        "prepend_child" => EditOperationKind::PrependChild {
+                            symbol: node.attribute("symbol")?.to_string(),
+                        },
+                        "append_child" => EditOperationKind::AppendChild {
                             symbol: node.attribute("symbol")?.to_string(),
                         },
                         "delete" => EditOperationKind::Delete {

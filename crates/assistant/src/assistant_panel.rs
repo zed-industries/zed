@@ -10,10 +10,11 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId,
-    ContextStore, CycleMessageRole, DeployHistory, DeployPromptLibrary, EditSuggestion,
-    InlineAssist, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    ResetKey, Role, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    ContextStore, CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary,
+    EditStepOperations, EditSuggestion, InlineAssist, InlineAssistant, InsertIntoEditor,
+    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -60,6 +61,7 @@ use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, BreadcrumbText, FollowableItem, Item, ItemHandle},
+    notifications::NotifyTaskExt,
     pane,
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -1080,6 +1082,53 @@ impl ContextEditor {
         }
     }
 
+    fn debug_edit_steps(&mut self, _: &DebugEditSteps, cx: &mut ViewContext<Self>) {
+        let mut output = String::new();
+        for (i, step) in self.context.read(cx).edit_steps().iter().enumerate() {
+            output.push_str(&format!("Step {}:\n", i + 1));
+            output.push_str(&format!(
+                "Content: {}\n",
+                self.context
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .text_for_range(step.source_range.clone())
+                    .collect::<String>()
+            ));
+            match &step.operations {
+                Some(EditStepOperations::Parsed {
+                    operations,
+                    raw_output,
+                }) => {
+                    output.push_str(&format!("Raw Output:\n{raw_output}\n"));
+                    output.push_str("Parsed Operations:\n");
+                    for op in operations {
+                        output.push_str(&format!("  {:?}\n", op));
+                    }
+                }
+                Some(EditStepOperations::Pending(_)) => {
+                    output.push_str("Operations: Pending\n");
+                }
+                None => {
+                    output.push_str("Operations: None\n");
+                }
+            }
+            output.push('\n');
+        }
+
+        let editor = self
+            .workspace
+            .update(cx, |workspace, cx| Editor::new_in_workspace(workspace, cx));
+
+        if let Ok(editor) = editor {
+            cx.spawn(|_, mut cx| async move {
+                let editor = editor.await?;
+                editor.update(&mut cx, |editor, cx| editor.set_text(output, cx))
+            })
+            .detach_and_notify_err(cx);
+        }
+    }
+
     fn cycle_message_role(&mut self, _: &CycleMessageRole, cx: &mut ViewContext<Self>) {
         let cursors = self.cursors(cx);
         self.context.update(cx, |context, cx| {
@@ -1243,9 +1292,7 @@ impl ContextEditor {
                     }
                 });
             }
-            ContextEvent::EditStepsChanged => {
-                dbg!(self.context.read(cx).edit_steps());
-            }
+            ContextEvent::EditStepsChanged => {}
             ContextEvent::SummaryChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
@@ -1984,6 +2031,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::apply_edit))
+            .on_action(cx.listener(ContextEditor::debug_edit_steps))
             .size_full()
             .v_flex()
             .child(

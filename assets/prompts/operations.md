@@ -1,0 +1,224 @@
+Your task is to map a step from the conversation above to operations on symbols inside the provided source files.
+
+Guidelines:
+- There's no need to describe *what* to do, just *where* to do it.
+- If creating a file, assume any subsequent updates are included at the time of creation.
+- Don't create and then update a file.
+- We'll create it in one shot.
+- Prefer updating symbols lower in the syntax tree if possible.
+- Never include operations on a parent symbol and one of its children in the same <operations> block.
+
+The available operation types are:
+
+1. <update>: Modify an existing symbol in a file.
+2. <create_file>: Create a new file.
+3. <insert_sibling_before>: Add a new symbol as sibling before another symbol in a file.
+4. <insert_sibling_after>: Add a new symbol as sibling after an existing symbol in a file.
+5. <append_child>: Add a new symbol as the last child of an existing symbol in a file.
+6. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
+7. <delete>: Remove an existing symbol from a file.
+
+Operations that *require* a symbol: <update>, <insert_sibling_before>, <insert_sibling_after>, <delete>
+Operations that don't allow a symbol: <create>
+Operations that have an *optional* symbol: <prepend_child>, <append_child>
+
+Example 1:
+
+User:
+  ```rs src/rectangle.rs
+  struct Rectangle {
+      width: f64,
+      height: f64,
+  }
+
+  impl Rectangle {
+      fn new(width: f64, height: f64) -> Self {
+          Rectangle { width, height }
+      }
+  }
+  ```
+
+  Symbols for src/rectangle.rs:
+  - struct Rectangle
+  - impl Rectangle
+  - impl Rectangle fn new
+
+  <step>Add a new method 'calculate_area' to the Rectangle struct</step>
+  <step>Implement the 'Display' trait for the Rectangle struct</step>
+
+  What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
+
+Assistant:
+  <operations>
+      <append_child path="src/shapes.rs" symbol="impl Rectangle"/>
+  </operations>
+
+User:
+  What are the operations for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
+
+Assistant:
+  <operations>
+      <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle"/>
+  </operations>
+
+Example 2:
+
+User:
+  ```rs src/user.rs
+  struct User {
+      pub name: String,
+      age: u32,
+      email: String,
+  }
+
+  impl User {
+      fn new(name: String, age: u32, email: String) -> Self {
+          User { name, age, email }
+      }
+
+      pub fn print_info(&self) {
+          println!("Name: {}, Age: {}, Email: {}", self.name, self.age, self.email);
+      }
+  }
+  ```
+
+  Symbols for src/user.rs:
+  - struct User
+  - struct User pub name
+  - struct User age
+  - struct User email
+  - impl User
+  - impl User fn new
+  - impl User pub fn print_info
+
+  <step>Update the 'print_info' method to use formatted output</step>
+  <step>Remove the 'email' field from the User struct</step>
+
+  What are the operations for the step: <step>Update the 'print_info' method to use formatted output</step>
+
+Assistant:
+  <operations>
+      <update path="src/user.rs" symbol="impl User fn print_info"/>
+  </operations>
+
+User:
+  What are the operations for the step: <step>Remove the 'email' field from the User struct</step>
+
+Assistant:
+  <operations>
+      <delete path="src/user.rs" symbol="struct User email"/>
+  </operations>
+
+Example 3:
+
+User:
+  ```rs src/vehicle.rs
+  struct Vehicle {
+      make: String,
+      model: String,
+      year: u32,
+  }
+
+  impl Vehicle {
+      fn new(make: String, model: String, year: u32) -> Self {
+          Vehicle { make, model, year }
+      }
+
+      fn print_year(&self) {
+          println!("Year: {}", self.year);
+      }
+  }
+  ```
+
+  Symbols for src/vehicle.rs:
+  - struct Vehicle
+  - struct Vehicle make
+  - struct Vehicle model
+  - struct Vehicle year
+  - impl Vehicle
+  - impl Vehicle fn new
+  - impl Vehicle fn print_year
+
+  <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
+  <step>Add a new method 'start_engine' before the 'new' method in the Vehicle impl block</step>
+
+  What are the operations for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
+
+Assistant:
+  <operations>
+      <prepend_child path="src/vehicle.rs" />
+  </operations>
+
+User:
+  What are the operations for the step: <step>Add a new method 'start_engine' before the 'new' method in the Vehicle impl block</step>
+
+Assistant:
+  <operations>
+      <insert_sibling_before path="src/vehicle.rs" symbol="impl Vehicle fn print_year"/>
+  </operations>
+
+Example 4:
+
+User:
+  ```rs src/employee.rs
+  struct Employee {
+      name: String,
+      position: String,
+      salary: u32,
+      department: String,
+  }
+
+  impl Employee {
+      fn new(name: String, position: String, salary: u32, department: String) -> Self {
+          Employee { name, position, salary, department }
+      }
+
+      fn print_details(&self) {
+          println!("Name: {}, Position: {}, Salary: {}, Department: {}",
+                    self.name, self.position, self.salary, self.department);
+      }
+
+      fn give_raise(&mut self, amount: u32) {
+          self.salary += amount;
+      }
+  }
+  ```
+
+  Symbols for src/employee.rs:
+  - struct Employee
+  - struct Employee name
+  - struct Employee position
+  - struct Employee salary
+  - struct Employee department
+  - impl Employee
+  - impl Employee fn new
+  - impl Employee fn print_details
+  - impl Employee fn give_raise
+
+  <step>Make salary an f32</step>
+
+  What are the operations for the step: <step>Make salary an f32</step>
+
+  A (wrong):
+    <operations>
+        <update path="src/employee.rs" symbol="struct Employee" />
+        <update path="src/employee.rs" symbol="struct Employee salary"/>
+    </operations>
+
+  This example demonstrates what not to do. `struct Employee salary` is a child of `struct Employee`.
+
+  A (corrected):
+    <operations>
+        <update path="src/employee.rs" symbol="struct Employee salary"/>
+    </operations>
+
+  User:
+    What are the correct operations for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
+
+  A:
+    <operations>
+        <delete path="src/employee.rs" symbol="struct Employee department"/>
+        <update path="src/employee.rs" symbol="impl Employee fn print_details"/>
+    </operations>
+
+Now generate the operations for the following step. Output pure XML:
