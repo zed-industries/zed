@@ -121,9 +121,6 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      - name: Generate license file
-        run: script/generate-licenses
-
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
