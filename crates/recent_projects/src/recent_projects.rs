@@ -5,7 +5,6 @@ use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
-use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -518,9 +517,6 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        if !cx.has_flag::<feature_flags::Remoting>() {
-            return None;
-        }
         Some(
             h_flex()
                 .border_t_1()
@@ -534,7 +530,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("New remote project…").color(Color::Muted))
+                        .child(Label::new("Open remote folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
