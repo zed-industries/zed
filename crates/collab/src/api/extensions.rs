@@ -10,7 +10,7 @@ use axum::{
     Extension, Json, Router,
 };
 use collections::HashMap;
-use rpc::{ExtensionApiManifest, GetExtensionsResponse};
+use rpc::{ExtensionApiManifest, ExtensionMetadata, GetExtensionsResponse};
 use semantic_version::SemanticVersion;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
@@ -43,7 +43,7 @@ async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extensions = app
+    let mut extensions = app
         .db
         .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
         .await?;
@@ -52,6 +52,23 @@ async fn get_extensions(
         let count = extensions.len();
         tracing::info!(query, count, "extension_search")
     }
+
+    if let Some(filter) = params.filter.as_deref() {
+        let mut exact_match: Option<ExtensionMetadata> = None;
+        extensions.retain(|extension| {
+            exact_match = Some(extension.clone());
+            extension.id.as_ref() != &filter.to_lowercase()
+        });
+        if exact_match == None {
+            exact_match = app
+                .db
+                .get_extensions_by_ids(&[&filter.to_lowercase()], None)
+                .await?
+                .first()
+                .cloned();
+        }
+        extensions.splice(0..0, exact_match);
+    };
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }

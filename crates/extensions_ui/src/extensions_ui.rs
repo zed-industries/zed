@@ -131,10 +131,13 @@ impl ExtensionFilter {
 enum Feature {
     Git,
     Vim,
+    LanguageBash,
     LanguageC,
     LanguageCpp,
     LanguagePython,
+    LanguageReact,
     LanguageRust,
+    LanguageTypescript,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
@@ -143,10 +146,16 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
             (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
             (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
         ])
     })
 }
@@ -969,6 +978,11 @@ impl ExtensionsPage {
                     .docs_url("https://zed.dev/docs/languages/python"),
                 Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/languages/rust"),
+                Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!").docs_url("https://zed.dev/docs/languages/bash"),
+                Feature::LanguageReact =>  FeatureUpsell::new("React support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/typescript"),
+                Feature::LanguageTypescript => FeatureUpsell::new("Typescript support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/languages/typescript"),
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
