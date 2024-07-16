@@ -23,7 +23,7 @@ pub struct DebugPanelItem {
 
 actions!(
     debug_panel_item,
-    [Continue, StepOver, StepIn, StepOut, Restart, Pause]
+    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop]
 );
 
 impl DebugPanelItem {
@@ -367,6 +367,13 @@ impl DebugPanelItem {
             .spawn(async move { client.pause(thread_id).await })
             .detach();
     }
+
+    fn handle_stop_action(&mut self, _: &Stop, cx: &mut ViewContext<Self>) {
+        let client = self.client.clone();
+        cx.background_executor()
+            .spawn(async move { client.stop().await })
+            .detach();
+    }
 }
 
 impl Render for DebugPanelItem {
@@ -382,6 +389,7 @@ impl Render for DebugPanelItem {
             .capture_action(cx.listener(Self::handle_step_out_action))
             .capture_action(cx.listener(Self::handle_restart_action))
             .capture_action(cx.listener(Self::handle_pause_action))
+            .capture_action(cx.listener(Self::handle_stop_action))
             .p_2()
             .size_full()
             .items_start()
@@ -423,10 +431,10 @@ impl Render for DebugPanelItem {
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
-                        IconButton::new("debug-pause", IconName::DebugStop)
-                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Pause))))
+                        IconButton::new("debug-stop", IconName::DebugStop)
+                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Stop))))
                             .disabled(disable_button)
-                            .tooltip(move |cx| Tooltip::text("Pause", cx)),
+                            .tooltip(move |cx| Tooltip::text("Stop", cx)),
                     ),
             )
             .child(

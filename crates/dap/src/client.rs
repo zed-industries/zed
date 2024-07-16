@@ -3,10 +3,10 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
-        StepBack, StepIn, StepOut,
+        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause,
+        SetBreakpoints, StepBack, StepIn, StepOut,
     },
-    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments,
+    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, DisconnectArguments,
     InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
     Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame,
     StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity, Variable,
@@ -420,6 +420,16 @@ impl DebugAdapterClient {
         self.request::<Pause>(PauseArguments { thread_id })
             .await
             .log_err();
+    }
+
+    pub async fn stop(&self) {
+        self.request::<Disconnect>(DisconnectArguments {
+            restart: Some(false),
+            terminate_debuggee: Some(false),
+            suspend_debuggee: Some(false),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn set_breakpoints(
