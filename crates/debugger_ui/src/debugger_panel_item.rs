@@ -1,6 +1,6 @@
+use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, Variable};
-
 use gpui::{
     actions, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
     Subscription, View,
@@ -9,8 +9,6 @@ use std::sync::Arc;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
 use workspace::item::{Item, ItemEvent};
-
-use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 
 pub struct DebugPanelItem {
     thread_id: u64,
@@ -323,9 +321,28 @@ impl DebugPanelItem {
     fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
-        cx.background_executor()
-            .spawn(async move { client.resume(thread_id).await })
-            .detach();
+        let status = self.current_thread_state().status;
+
+        cx.spawn(|this, mut cx| async move {
+            let response = client.resume(thread_id).await?;
+
+            this.update(&mut cx, |this, cx| {
+                // if the debug adapter does not send the continued event,
+                // and the status of the thread did not change we haven to assume the thread is running
+                if status == this.current_thread_state().status {
+                    if response.all_threads_continued.unwrap_or(false) {
+                        for thread in client.thread_states().values_mut() {
+                            thread.status = ThreadStatus::Running;
+                        }
+                    } else {
+                        client.update_thread_state_status(thread_id, ThreadStatus::Running);
+                    }
+
+                    cx.notify();
+                }
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_step_over_action(&mut self, _: &StepOver, cx: &mut ViewContext<Self>) {

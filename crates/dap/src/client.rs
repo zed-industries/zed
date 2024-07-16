@@ -6,10 +6,11 @@ use dap_types::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause,
         SetBreakpoints, StepBack, StepIn, StepOut,
     },
-    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, DisconnectArguments,
-    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
-    Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame,
-    StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity, Variable,
+    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
+    DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
+    NextArguments, PauseArguments, Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source,
+    SourceBreakpoint, StackFrame, StepBackArguments, StepInArguments, StepOutArguments,
+    SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
@@ -356,13 +357,12 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn resume(&self, thread_id: u64) {
+    pub async fn resume(&self, thread_id: u64) -> Result<ContinueResponse> {
         self.request::<Continue>(ContinueArguments {
             thread_id,
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
     pub async fn step_over(&self, thread_id: u64) {
