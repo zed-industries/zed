@@ -226,7 +226,6 @@ impl ProjectSearch {
                     project::SearchResult::Buffer { buffer, ranges } => {
                         let mut match_ranges = this
                             .update(&mut cx, |this, cx| {
-                                this.no_results = Some(false);
                                 this.excerpts.update(cx, |excerpts, cx| {
                                     excerpts.stream_excerpts_with_context_lines(
                                         buffer,
@@ -239,8 +238,11 @@ impl ProjectSearch {
                             .ok()?;
 
                         while let Some(range) = match_ranges.next().await {
-                            this.update(&mut cx, |this, _| this.match_ranges.push(range))
-                                .ok()?;
+                            this.update(&mut cx, |this, _| {
+                                this.no_results = Some(false);
+                                this.match_ranges.push(range)
+                            })
+                            .ok()?;
                         }
                         this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                     }
