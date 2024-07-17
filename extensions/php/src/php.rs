@@ -27,20 +27,7 @@ impl zed::Extension for PhpExtension {
         match language_server_id.as_ref() {
             Intelephense::LANGUAGE_SERVER_ID => {
                 let intelephense = self.intelephense.get_or_insert_with(|| Intelephense::new());
-
-                let server_path = intelephense.server_script_path(language_server_id)?;
-                Ok(zed::Command {
-                    command: zed::node_binary_path()?,
-                    args: vec![
-                        env::current_dir()
-                            .unwrap()
-                            .join(&server_path)
-                            .to_string_lossy()
-                            .to_string(),
-                        "--stdio".to_string(),
-                    ],
-                    env: Default::default(),
-                })
+                intelephense.language_server_command(language_server_id, worktree)
             }
             Phpactor::LANGUAGE_SERVER_ID => {
                 let phpactor = self.phpactor.get_or_insert_with(|| Phpactor::new());
