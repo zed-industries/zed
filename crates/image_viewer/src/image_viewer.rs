@@ -9,9 +9,8 @@ use ui::prelude::*;
 
 use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
-use util::ResultExt;
 use workspace::{
-    item::{Item, ProjectItem, TabContentParams},
+    item::{Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
 };
 
@@ -90,49 +89,6 @@ impl Item for ImageView {
             .into_any_element()
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        let item_id = cx.entity_id().as_u64();
-        let workspace_id = workspace.database_id();
-        let image_path = self.path.clone();
-
-        if let Some(workspace_id) = workspace_id {
-            cx.background_executor()
-                .spawn({
-                    let image_path = image_path.clone();
-                    async move {
-                        IMAGE_VIEWER
-                            .save_image_path(item_id, workspace_id, image_path)
-                            .await
-                            .log_err();
-                    }
-                })
-                .detach();
-        }
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some(IMAGE_VIEWER_KIND)
-    }
-
-    fn deserialize(
-        _project: Model<Project>,
-        _workspace: WeakView<Workspace>,
-        workspace_id: WorkspaceId,
-        item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        cx.spawn(|_pane, mut cx| async move {
-            let image_path = IMAGE_VIEWER
-                .get_image_path(item_id, workspace_id)?
-                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
-
-            cx.new_view(|cx| ImageView {
-                path: image_path,
-                focus_handle: cx.focus_handle(),
-            })
-        })
-    }
-
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
@@ -145,6 +101,62 @@ impl Item for ImageView {
             path: self.path.clone(),
             focus_handle: cx.focus_handle(),
         }))
+    }
+}
+
+impl SerializableItem for ImageView {
+    fn serialized_item_kind() -> &'static str {
+        IMAGE_VIEWER_KIND
+    }
+
+    fn deserialize(
+        _project: Model<Project>,
+        _workspace: WeakView<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<gpui::Result<View<Self>>> {
+        cx.spawn(|_pane, mut cx| async move {
+            let image_path = IMAGE_VIEWER
+                .get_image_path(item_id, workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
+
+            cx.new_view(|cx| ImageView {
+                path: image_path,
+                focus_handle: cx.focus_handle(),
+            })
+        })
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<gpui::Result<()>> {
+        cx.spawn(|_| IMAGE_VIEWER.delete_unloaded_items(workspace_id, alive_items))
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+
+        Some(cx.background_executor().spawn({
+            let image_path = self.path.clone();
+            async move {
+                IMAGE_VIEWER
+                    .save_image_path(item_id, workspace_id, image_path)
+                    .await
+            }
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
     }
 }
 
@@ -242,13 +254,14 @@ impl ProjectItem for ImageView {
 
 pub fn init(cx: &mut AppContext) {
     workspace::register_project_item::<ImageView>(cx);
-    workspace::register_deserializable_item::<ImageView>(cx)
+    workspace::register_serializable_item::<ImageView>(cx)
 }
 
 mod persistence {
+    use anyhow::Result;
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     define_connection! {
@@ -297,6 +310,30 @@ mod persistence {
                 FROM image_viewers
                 WHERE item_id = ? AND workspace_id = ?
             }
+        }
+
+        pub async fn delete_unloaded_items(
+            &self,
+            workspace: WorkspaceId,
+            alive_items: Vec<ItemId>,
+        ) -> Result<()> {
+            let placeholders = alive_items
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<&str>>()
+                .join(", ");
+
+            let query = format!("DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
+
+            self.write(move |conn| {
+                let mut statement = Statement::prepare(conn, query)?;
+                let mut next_index = statement.bind(&workspace, 1)?;
+                for id in alive_items {
+                    next_index = statement.bind(&id, next_index)?;
+                }
+                statement.exec()
+            })
+            .await
         }
     }
 }

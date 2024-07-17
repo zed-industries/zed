@@ -272,7 +272,8 @@ pub fn init(cx: &mut AppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
-    workspace::register_deserializable_item::<Editor>(cx);
+    workspace::register_serializable_item::<Editor>(cx);
+
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
@@ -550,6 +551,7 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -1876,6 +1878,9 @@ impl Editor {
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+            serialize_dirty_buffers: ProjectSettings::get_global(cx)
+                .session
+                .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
             file_header_size,
@@ -11250,8 +11255,11 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
+        let project_settings = ProjectSettings::get_global(cx);
+        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
+
         if self.mode == EditorMode::Full {
-            let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
+            let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, cx);
             }
