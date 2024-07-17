@@ -255,7 +255,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "cmd-enter": "search::ReplaceAll"

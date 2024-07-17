@@ -14,9 +14,9 @@ use editor::{
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
     EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WeakView, WhiteSpace, WindowContext,
+    IntoElement, KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -1564,6 +1564,7 @@ impl Render for ProjectSearchBar {
                 )
             });
             h_flex()
+                .pr(rems(5.5))
                 .gap_2()
                 .child(replace_column)
                 .child(replace_actions)
@@ -1612,9 +1613,14 @@ impl Render for ProjectSearchBar {
                     ),
                 )
         });
+        let mut key_context = KeyContext::default();
+        key_context.add("ProjectSearchBar");
+        if search.replacement_editor.focus_handle(cx).is_focused(cx) {
+            key_context.add("in_replace");
+        }
 
         v_flex()
-            .key_context("ProjectSearchBar")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
