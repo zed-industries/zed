@@ -17,6 +17,7 @@
 
 # Using Zed
 
+- [Multibuffers](./multibuffers.md)
 - [Assistant Panel](./assistant-panel.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
