@@ -34,7 +34,7 @@ if (!hasReleaseNotes) {
   );
 }
 
-const INCORRECT_ISSUE_LINK_PATTERN = new RegExp("-.*(#d+)", "g");
+const INCORRECT_ISSUE_LINK_PATTERN = new RegExp("-.*\\(#\\d+\\)", "g");
 
 const hasIncorrectIssueLinks = INCORRECT_ISSUE_LINK_PATTERN.test(
   danger.github.pr.body,
