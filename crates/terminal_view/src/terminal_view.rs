@@ -943,13 +943,13 @@ impl Item for TerminalView {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
 
-        let (icon, icon_color, rerun_btn) = match terminal.task() {
+        let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
                     let task_id = terminal_task.id.clone();
-                    let rerun_btn = IconButton::new("rerun-icon", IconName::Rerun)
+                    let rerun_button = IconButton::new("rerun-icon", IconName::Rerun)
                         .icon_size(IconSize::Small)
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Default)
@@ -963,9 +963,9 @@ impl Item for TerminalView {
                         });
 
                     if *success {
-                        (IconName::Check, Color::Success, Some(rerun_btn))
+                        (IconName::Check, Color::Success, Some(rerun_button))
                     } else {
-                        (IconName::XCircle, Color::Error, Some(rerun_btn))
+                        (IconName::XCircle, Color::Error, Some(rerun_button))
                     }
                 }
             },
@@ -980,17 +980,17 @@ impl Item for TerminalView {
                     .group("term-tab-icon")
                     .child(
                         div()
-                            .when(rerun_btn.is_some(), |this| {
+                            .when(rerun_button.is_some(), |this| {
                                 this.hover(|style| style.invisible().w_0())
                             })
                             .child(Icon::new(icon).color(icon_color)),
                     )
-                    .when_some(rerun_btn, |this, rerun_btn| {
+                    .when_some(rerun_button, |this, rerun_button| {
                         this.child(
                             div()
                                 .absolute()
                                 .visible_on_hover("term-tab-icon")
-                                .child(rerun_btn),
+                                .child(rerun_button),
                         )
                     }),
             )

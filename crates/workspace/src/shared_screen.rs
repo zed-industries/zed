@@ -7,12 +7,12 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, img, AppContext, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    div, img, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
     WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_flex, prelude::*, Icon, IconName, Label};
+use ui::{prelude::*, Icon, IconName, Label};
 
 pub enum Event {
     Close,
@@ -93,24 +93,18 @@ impl Item for SharedScreen {
         }
     }
 
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::Screen))
+    }
+
     fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> gpui::AnyElement {
-        h_flex()
-            .gap_1()
-            .child(Icon::new(IconName::Screen).color(if params.selected {
+        Label::new(format!("{}'s screen", self.user.github_login))
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
-            }))
-            .child(
-                Label::new(format!("{}'s screen", self.user.github_login)).color(
-                    if params.selected {
-                        Color::Default
-                    } else {
-                        Color::Muted
-                    },
-                ),
-            )
-            .into_any()
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

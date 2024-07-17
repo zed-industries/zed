@@ -12,11 +12,11 @@ use editor::{
     MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
-    IntoElement, KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext,
-    WeakModel, WhiteSpace, WindowContext,
+    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
+    WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -370,6 +370,10 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::MagnifyingGlass))
+    }
+
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext<'_>) -> AnyElement {
         let last_query: Option<SharedString> = self
             .model
@@ -384,21 +388,13 @@ impl Item for ProjectSearchView {
         let tab_name = last_query
             .filter(|query| !query.is_empty())
             .unwrap_or_else(|| "Project Search".into());
-        h_flex()
-            .gap_2()
-            .child(
-                Icon::new(IconName::MagnifyingGlass).color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
-            )
-            .child(Label::new(tab_name).color(if params.selected {
+        Label::new(tab_name)
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
-            }))
-            .into_any()
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
