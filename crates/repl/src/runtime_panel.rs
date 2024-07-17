@@ -3,7 +3,7 @@ use crate::{
     kernels::{kernel_specifications, KernelSpecification},
     session::{Session, SessionEvent},
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use futures::StreamExt as _;
@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
-use project::Fs;
+use project::{Fs, Item};
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
@@ -208,21 +208,26 @@ impl RuntimePanel {
         cx.notify();
     }
 
-    // Gets the active selection in the editor or the current line
-    fn selection(&self, editor: View<Editor>, cx: &mut ViewContext<Self>) -> Range<Anchor> {
+    pub fn snippet(
+        &self,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
+        let editor = editor.upgrade()?;
         let editor = editor.read(cx);
+
         let selection = editor.selections.newest::<usize>(cx);
-        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
         let range = if selection.is_empty() {
             let cursor = selection.head();
 
-            let cursor_row = multi_buffer_snapshot.offset_to_point(cursor).row;
-            let start_offset = multi_buffer_snapshot.point_to_offset(Point::new(cursor_row, 0));
+            let cursor_row = buffer_snapshot.offset_to_point(cursor).row;
+            let start_offset = buffer_snapshot.point_to_offset(Point::new(cursor_row, 0));
 
             let end_point = Point::new(
                 cursor_row,
-                multi_buffer_snapshot.line_len(MultiBufferRow(cursor_row)),
+                buffer_snapshot.line_len(MultiBufferRow(cursor_row)),
             );
             let end_offset = start_offset.saturating_add(end_point.column as usize);
 
@@ -232,25 +237,14 @@ impl RuntimePanel {
             selection.range()
         };
 
-        range.to_anchors(&multi_buffer_snapshot)
-    }
+        let anchor_range = range.to_anchors(&buffer_snapshot);
 
-    pub fn snippet(
-        &self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
-        let editor = editor.upgrade()?;
-
-        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let anchor_range = self.selection(editor, cx);
-
-        let selected_text = buffer
+        let selected_text = buffer_snapshot
             .text_for_range(anchor_range.clone())
             .collect::<String>();
 
-        let start_language = buffer.language_at(anchor_range.start)?;
-        let end_language = buffer.language_at(anchor_range.end)?;
+        let start_language = buffer_snapshot.language_at(anchor_range.start)?;
+        let end_language = buffer_snapshot.language_at(anchor_range.end)?;
         if start_language != end_language {
             return None;
         }
