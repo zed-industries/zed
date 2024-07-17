@@ -19,7 +19,7 @@ use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
 use settings::Settings as _;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{env::temp_dir, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 
@@ -144,6 +144,17 @@ impl EditorBlock {
 }
 
 impl Session {
+    pub fn working_directory(editor: WeakView<Editor>, cx: &WindowContext) -> PathBuf {
+        if let Some(working_directory) = editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).working_directory(cx))
+        {
+            working_directory
+        } else {
+            temp_dir()
+        }
+    }
+
     pub fn new(
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
@@ -151,7 +162,14 @@ impl Session {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-        let kernel = RunningKernel::new(kernel_specification.clone(), entity_id, fs.clone(), cx);
+
+        let kernel = RunningKernel::new(
+            kernel_specification.clone(),
+            entity_id,
+            Self::working_directory(editor.clone(), cx),
+            fs.clone(),
+            cx,
+        );
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
