@@ -96,7 +96,11 @@ impl Item for SharedScreen {
     fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> gpui::AnyElement {
         h_flex()
             .gap_1()
-            .child(Icon::new(IconName::Screen))
+            .child(Icon::new(IconName::Screen).color(if params.selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .child(
                 Label::new(format!("{}'s screen", self.user.github_login)).color(
                     if params.selected {
