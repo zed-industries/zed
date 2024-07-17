@@ -979,6 +979,7 @@ pub mod test {
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
+        serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
     }
 
@@ -1042,6 +1043,7 @@ pub mod test {
                 tab_detail: Default::default(),
                 workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
+                serialize: None,
             }
         }
 
@@ -1074,6 +1076,14 @@ pub mod test {
         pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
             self.project_items.clear();
             self.project_items.extend(items.iter().cloned());
+            self
+        }
+
+        pub fn with_serialize(
+            mut self,
+            serialize: impl Fn() -> Option<Task<anyhow::Result<()>>> + 'static,
+        ) -> Self {
+            self.serialize = Some(Box::new(serialize));
             self
         }
 
@@ -1185,6 +1195,7 @@ pub mod test {
                 tab_detail: Default::default(),
                 workspace_id: self.workspace_id,
                 focus_handle: cx.focus_handle(),
+                serialize: None,
             }))
         }
 
@@ -1268,7 +1279,13 @@ pub mod test {
             _closing: bool,
             _cx: &mut ViewContext<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
-            None
+            if let Some(serialize) = self.serialize.take() {
+                let result = serialize();
+                self.serialize = Some(serialize);
+                result
+            } else {
+                None
+            }
         }
 
         fn should_serialize(&self, _event: &Self::Event) -> bool {

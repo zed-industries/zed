@@ -4012,7 +4012,9 @@ impl Workspace {
                         acc
                     });
 
-            for item in unique_items.values() {
+            // We use into_iter() here so that the references to the items are moved into
+            // the tasks and not kept alive while we're sleeping.
+            for (_, item) in unique_items.into_iter() {
                 if let Ok(Some(task)) =
                     this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
                 {
@@ -4146,10 +4148,13 @@ impl Workspace {
 
             futures::future::join_all(clean_up_tasks).await;
 
-            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
             workspace
                 .update(&mut cx, |workspace, cx| {
+                    // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     workspace.serialize_workspace_internal(cx).detach();
+
+                    // Ensure that we mark the window as edited if we did load dirty items
+                    workspace.update_window_edited(cx);
                 })
                 .ok();
 
@@ -5736,6 +5741,41 @@ mod tests {
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Register TestItem as a serializable item
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        // When there are dirty untitled items, but they can serialize, then there is no prompt.
+        let item1 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        let item2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        assert!(task.await.unwrap());
     }
 
     #[gpui::test]
