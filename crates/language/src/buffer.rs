@@ -2781,6 +2781,9 @@ impl BufferSnapshot {
                 continue;
             }
 
+            let mut open_index = None;
+            let mut close_index = None;
+
             let mut buffer_ranges = Vec::new();
             for capture in mat.captures {
                 let node_is_name;
@@ -2792,6 +2795,12 @@ impl BufferSnapshot {
                 {
                     node_is_name = false;
                 } else {
+                    if Some(capture.index) == config.open_capture_ix {
+                        open_index = Some(capture.node.end_byte());
+                    } else if Some(capture.index) == config.close_capture_ix {
+                        close_index = Some(capture.node.start_byte());
+                    }
+
                     continue;
                 }
 
@@ -2871,6 +2880,7 @@ impl BufferSnapshot {
                 text,
                 highlight_ranges,
                 name_ranges,
+                body_range: open_index.zip(close_index).map(|(start, end)| start..end),
             });
         }
 
@@ -2894,6 +2904,9 @@ impl BufferSnapshot {
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
+                body_range: item.body_range.map(|body_range| {
+                    self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
+                }),
             });
             item_ends_stack.push(item.range.end);
         }
