@@ -436,20 +436,7 @@ impl Render for DebugPanelItem {
             .child(
                 h_flex()
                     .gap_2()
-                    .when(
-                        self.current_thread_state().status != ThreadStatus::Running,
-                        |this| {
-                            this.child(
-                                IconButton::new("debug-continue", IconName::DebugContinue)
-                                    .on_click(cx.listener(|_, _, cx| {
-                                        cx.dispatch_action(Box::new(Continue))
-                                    }))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |cx| Tooltip::text("Continue program", cx)),
-                            )
-                        },
-                    )
-                    .when(
+                    .when_else(
                         self.current_thread_state().status == ThreadStatus::Running,
                         |this| {
                             this.child(
@@ -458,6 +445,16 @@ impl Render for DebugPanelItem {
                                         cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Pause))),
                                     )
                                     .tooltip(move |cx| Tooltip::text("Pause program", cx)),
+                            )
+                        },
+                        |this| {
+                            this.child(
+                                IconButton::new("debug-continue", IconName::DebugContinue)
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(Continue))
+                                    }))
+                                    .disabled(thread_status != ThreadStatus::Stopped)
+                                    .tooltip(move |cx| Tooltip::text("Continue program", cx)),
                             )
                         },
                     )
