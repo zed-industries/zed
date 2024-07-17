@@ -536,7 +536,7 @@ pub struct Editor {
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
-    clicked_hunk: Option<(gpui::Point<Pixels>, HoveredHunk)>,
+    clicked_hunk: Option<((Pixels, Pixels), HoveredHunk)>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -2380,6 +2380,7 @@ impl Editor {
             }
 
             hide_hover(self, cx);
+            self.clicked_hunk = None;
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2427,7 +2428,6 @@ impl Editor {
         let (changed, result) = self.selections.change_with(cx, change);
 
         if changed {
-            self.clicked_hunk = None;
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
@@ -11677,6 +11677,7 @@ impl Editor {
             hide_hover(self, cx);
         }
 
+        self.clicked_hunk = None;
         self.hide_context_menu(cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();

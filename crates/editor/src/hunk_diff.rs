@@ -5,7 +5,7 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -13,9 +13,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, ButtonLike, Clickable, Context as _, FluentBuilder, Icon,
-    IconName, InteractiveElement, IntoElement, Label, ParentElement, Pixels, RenderOnce, Styled,
-    ViewContext, VisualContext, WindowContext,
+    div, ActiveTheme, Context as _, FluentBuilder, InteractiveElement, IntoElement, ParentElement,
+    RenderOnce, Styled, ViewContext, VisualContext, WindowContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -766,108 +765,72 @@ impl RenderOnce for HunkPopover {
         let editor = self.editor.clone();
         let clicked_hunk = self.clicked_hunk.clone();
         let expanded = self.expanded;
-        let icon_name = if expanded {
-            IconName::Minimize
-        } else {
-            IconName::Plus
-        };
-        div().min_h(Pixels(40.0)).min_w(Pixels(40.0)).child(
-            v_flex()
-                .child(
-                    ButtonLike::new("toggle-hunk")
-                        .child(
-                            h_flex()
-                                .bg(cx.theme().colors().element_hover)
-                                .gap_2()
-                                .child(Icon::new(icon_name))
-                                .child(Label::new(if expanded {
-                                    "Collapse Hunk"
-                                } else {
-                                    "Expand Hunk"
-                                })),
-                        )
-                        .on_click({
-                            let editor = editor.clone();
-                            let clicked_hunk = clicked_hunk.clone();
-                            move |_, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_hovered_hunk(&clicked_hunk, cx);
-                                });
-                            }
-                        }),
-                )
-                .child(
-                    ButtonLike::new("revert-hunk")
-                        .child(
-                            h_flex()
-                                .bg(cx.theme().colors().element_hover)
-                                .gap_2()
-                                .child(Icon::new(IconName::RotateCcw))
-                                .child(Label::new("Revert Hunk")),
-                        )
-                        .on_click({
-                            let click_editor = editor.clone();
-                            let hunk = clicked_hunk.clone();
-                            move |_, cx| {
-                                let multi_buffer = click_editor.read(cx).buffer().clone();
-                                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                                let mut revert_changes = HashMap::default();
-                                if let Some(hunk) = to_diff_hunk(&hunk, &multi_buffer_snapshot) {
-                                    Editor::prepare_revert_change(
-                                        &mut revert_changes,
-                                        &multi_buffer,
-                                        &hunk,
-                                        cx,
-                                    );
-                                }
-                                if !revert_changes.is_empty() {
-                                    click_editor
-                                        .update(cx, |editor, cx| editor.revert(revert_changes, cx));
-                                }
-                            }
-                        }),
-                )
-                .child(
-                    ButtonLike::new("revert-file")
-                        .child(
-                            h_flex()
-                                .bg(cx.theme().colors().element_hover)
-                                .gap_2()
-                                .child(Icon::new(IconName::SelectAll))
-                                .child(Label::new("Revert File")),
-                        )
-                        .on_click({
-                            let click_editor = editor.clone();
-                            move |_, cx| {
-                                let mut revert_changes = HashMap::default();
-                                let multi_buffer = click_editor.read(cx).buffer().clone();
-                                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                                for hunk in crate::hunks_for_rows(
-                                    Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row())
-                                        .into_iter(),
-                                    &multi_buffer_snapshot,
-                                ) {
-                                    Editor::prepare_revert_change(
-                                        &mut revert_changes,
-                                        &multi_buffer,
-                                        &hunk,
-                                        cx,
-                                    );
-                                }
-                                if !revert_changes.is_empty() {
-                                    click_editor.update(cx, |editor, cx| {
-                                        editor.transact(cx, |editor, cx| {
-                                            editor.revert(revert_changes, cx);
-                                        });
-                                    });
-                                }
-                            }
-                        }),
-                )
-                // TODO kb + style improvements
-                // show keyboard shortcuts
-                // change the color of the hunk that got the click
-                .child(v_flex()),
-        )
+        let context_menu = ui::ContextMenu::build(cx, move |menu, _| {
+            menu.entry(
+                if expanded {
+                    "Collapse Hunk"
+                } else {
+                    "Expand Hunk"
+                },
+                Some(ToggleHunkDiff.boxed_clone()),
+                {
+                    let editor = editor.clone();
+                    let hunk = clicked_hunk.clone();
+                    move |cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.toggle_hovered_hunk(&hunk, cx);
+                        });
+                    }
+                },
+            )
+            .entry("Revert Hunk", Some(RevertSelectedHunks.boxed_clone()), {
+                let editor = editor.clone();
+                let hunk = clicked_hunk.clone();
+                move |cx| {
+                    let multi_buffer = editor.read(cx).buffer().clone();
+                    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                    let mut revert_changes = HashMap::default();
+                    if let Some(hunk) = to_diff_hunk(&hunk, &multi_buffer_snapshot) {
+                        Editor::prepare_revert_change(
+                            &mut revert_changes,
+                            &multi_buffer,
+                            &hunk,
+                            cx,
+                        );
+                    }
+                    if !revert_changes.is_empty() {
+                        editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
+                    }
+                }
+            })
+            .entry("Revert File", None, {
+                let editor = editor.clone();
+                move |cx| {
+                    let mut revert_changes = HashMap::default();
+                    let multi_buffer = editor.read(cx).buffer().clone();
+                    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                    for hunk in crate::hunks_for_rows(
+                        Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
+                        &multi_buffer_snapshot,
+                    ) {
+                        Editor::prepare_revert_change(
+                            &mut revert_changes,
+                            &multi_buffer,
+                            &hunk,
+                            cx,
+                        );
+                    }
+                    if !revert_changes.is_empty() {
+                        editor.update(cx, |editor, cx| {
+                            editor.transact(cx, |editor, cx| {
+                                editor.revert(revert_changes, cx);
+                            });
+                        });
+                    }
+                }
+            })
+        });
+
+        div().occlude().absolute().child(context_menu)
     }
 }

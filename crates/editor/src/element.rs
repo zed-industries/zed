@@ -461,7 +461,27 @@ impl EditorElement {
             if modifiers.control || modifiers.platform {
                 editor.toggle_hovered_hunk(&hovered_hunk, cx);
             } else {
-                editor.clicked_hunk = Some((event.position, hovered_hunk));
+                let display_range = hovered_hunk
+                    .multi_buffer_range
+                    .clone()
+                    .to_display_points(&position_map.snapshot);
+                let hunk_bounds = Self::diff_hunk_bounds(
+                    &position_map.snapshot,
+                    position_map.line_height,
+                    gutter_hitbox.bounds,
+                    &&DisplayDiffHunk::Unfolded {
+                        diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
+                        display_row_range: display_range.start.row()..display_range.end.row(),
+                        multi_buffer_range: hovered_hunk.multi_buffer_range.clone(),
+                        status: hovered_hunk.status,
+                    },
+                );
+                let clicked_point = event.position;
+                if hunk_bounds.contains(&clicked_point) {
+                    let delta_x = clicked_point.x - hunk_bounds.origin.x;
+                    let delta_y = clicked_point.y - hunk_bounds.origin.y;
+                    editor.clicked_hunk = Some(((delta_x, delta_y), hovered_hunk));
+                }
             }
             cx.notify();
             return;
@@ -1293,7 +1313,7 @@ impl EditorElement {
                                 gutter_hitbox.bounds,
                                 &hunk,
                             );
-                            if let Some((clicked_point, editor_clicked_hunk)) =
+                            if let Some((click_bounds_offset, editor_clicked_hunk)) =
                                 self.editor.read(cx).clicked_hunk.clone()
                             {
                                 let clicked_display_range = editor_clicked_hunk
@@ -1321,6 +1341,10 @@ impl EditorElement {
                                         AvailableSpace::MinContent,
                                         AvailableSpace::MinContent,
                                     );
+
+                                    let mut clicked_point = hunk_bounds.origin;
+                                    clicked_point.x += click_bounds_offset.0;
+                                    clicked_point.y += click_bounds_offset.1;
                                     rendered_popover.prepaint_as_root(
                                         clicked_point,
                                         available_space,
@@ -3058,7 +3082,7 @@ impl EditorElement {
     fn diff_hunk_bounds(
         snapshot: &EditorSnapshot,
         line_height: Pixels,
-        bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
         hunk: &DisplayDiffHunk,
     ) -> Bounds<Pixels> {
         let scroll_position = snapshot.scroll_position();
@@ -3070,7 +3094,7 @@ impl EditorElement {
                 let end_y = start_y + line_height;
 
                 let width = 0.275 * line_height;
-                let highlight_origin = bounds.origin + point(px(0.), start_y);
+                let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                 let highlight_size = size(width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
             }
@@ -3103,7 +3127,7 @@ impl EditorElement {
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
                     let width = 0.275 * line_height;
-                    let highlight_origin = bounds.origin + point(px(0.), start_y);
+                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
@@ -3115,7 +3139,7 @@ impl EditorElement {
                     let end_y = start_y + line_height;
 
                     let width = 0.35 * line_height;
-                    let highlight_origin = bounds.origin + point(px(0.), start_y);
+                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
