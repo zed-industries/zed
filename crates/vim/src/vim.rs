@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod digraph;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -193,6 +194,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             Operator::FindForward { .. }
             | Operator::FindBackward { .. }
             | Operator::Replace
+            | Operator::Digraph { .. }
             | Operator::AddSurrounds { .. }
             | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds
@@ -848,6 +850,18 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Digraph { first_char }) => Vim::update(cx, |vim, cx| {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        digraph::insert_digraph(first_char, second_char, vim, cx);
+                    }
+                    vim.clear_operator(cx);
+                } else {
+                    let first_char = text.chars().next();
+                    vim.pop_operator(cx);
+                    vim.push_operator(Operator::Digraph { first_char }, cx);
+                }
+            }),
             Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
                 Mode::Normal => {
                     if let Some(target) = target {

@@ -315,6 +315,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
+      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
