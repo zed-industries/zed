@@ -278,14 +278,18 @@ impl SshSession {
         this
     }
 
-    pub async fn request<T: RequestMessage>(&self, payload: T) -> Result<T::Response> {
+    pub fn request<T: RequestMessage>(
+        &self,
+        payload: T,
+    ) -> impl 'static + Future<Output = Result<T::Response>> {
         log::debug!("ssh request start. name:{}", T::NAME);
-        let response = self
-            .request_dynamic(payload.into_envelope(0, None, None), "")
-            .await?;
-        log::debug!("ssh request finish. name:{}", T::NAME);
-        T::Response::from_envelope(response)
-            .ok_or_else(|| anyhow!("received a response of the wrong type"))
+        let response = self.request_dynamic(payload.into_envelope(0, None, None), "");
+        async move {
+            let response = response.await?;
+            log::debug!("ssh request finish. name:{}", T::NAME);
+            T::Response::from_envelope(response)
+                .ok_or_else(|| anyhow!("received a response of the wrong type"))
+        }
     }
 
     pub fn send<T: EnvelopedMessage>(&self, payload: T) -> Result<()> {
@@ -296,7 +300,7 @@ impl SshSession {
         &self,
         mut envelope: proto::Envelope,
         _request_type: &'static str,
-    ) -> impl Future<Output = Result<proto::Envelope>> {
+    ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let (tx, rx) = oneshot::channel();
         self.response_channels

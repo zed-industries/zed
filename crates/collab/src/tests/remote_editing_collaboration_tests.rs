@@ -76,27 +76,27 @@ async fn test_sharing_an_ssh_remote_project(
     });
 
     // User B can open buffers in the remote project.
-    let buffer = project_b
+    let buffer_b = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer((worktree_id, "src/lib.rs"), cx)
         })
         .await
         .unwrap();
-    buffer.update(cx_b, |buffer, cx| {
+    buffer_b.update(cx_b, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
-    // project_b
-    //     .update(cx_b, |project, cx| project.save_buffer(buffer, cx))
-    //     .await
-    //     .unwrap();
-    // assert_eq!(
-    //     remote_fs
-    //         .load("/code/project1/src/lib.rs".as_ref())
-    //         .await
-    //         .unwrap(),
-    //     "fn one() -> usize { 100 }"
-    // );
+    project_b
+        .update(cx_b, |project, cx| project.save_buffer(buffer_b, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        remote_fs
+            .load("/code/project1/src/lib.rs".as_ref())
+            .await
+            .unwrap(),
+        "fn one() -> usize { 100 }"
+    );
 }

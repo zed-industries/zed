@@ -9128,6 +9128,13 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
+            if let Some(ssh) = &this.ssh_session {
+                let mut payload = envelope.payload.clone();
+                payload.project_id = 0;
+                cx.background_executor()
+                    .spawn(ssh.request(payload))
+                    .detach_and_log_err(cx);
+            }
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.handle_update_buffer(envelope, this.is_remote(), cx)
             })
