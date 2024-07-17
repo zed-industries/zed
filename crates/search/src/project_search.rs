@@ -1576,31 +1576,23 @@ impl Render for ProjectSearchBar {
                 .child(
                     h_flex()
                         .flex_1()
-                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        // chosen so the total width of the search bar line
+                        // is about the same as the include/exclude line
+                        .min_w(rems(10.25))
+                        .max_w(rems(20.))
                         .h_8()
                         .px_2()
                         .py_1()
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Include, cx))
                         .rounded_lg()
-                        .child(self.render_text_input(&search.included_files_editor, cx))
-                        .child(
-                            SearchOptions::INCLUDE_IGNORED.as_button(
-                                search
-                                    .search_options
-                                    .contains(SearchOptions::INCLUDE_IGNORED),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
-                                }),
-                            ),
-                        ),
+                        .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
                     h_flex()
                         .flex_1()
-                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        .min_w(rems(10.25))
+                        .max_w(rems(20.))
                         .h_8()
                         .px_2()
                         .py_1()
@@ -1608,6 +1600,16 @@ impl Render for ProjectSearchBar {
                         .border_color(search.border_color_for(InputPanel::Exclude, cx))
                         .rounded_lg()
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                )
+                .child(
+                    SearchOptions::INCLUDE_IGNORED.as_button(
+                        search
+                            .search_options
+                            .contains(SearchOptions::INCLUDE_IGNORED),
+                        cx.listener(|this, _, cx| {
+                            this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+                        }),
+                    ),
                 )
         });
 
