@@ -1461,6 +1461,7 @@ impl Render for ProjectSearchBar {
                 ),
         );
 
+        let limit_reached = search.model.read(cx).limit_reached;
         let match_text = search
             .active_match_index
             .and_then(|index| {
@@ -1468,14 +1469,16 @@ impl Render for ProjectSearchBar {
                 let match_quantity = search.model.read(cx).match_ranges.len();
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
-                    Some(format!("{index}/{match_quantity}").to_string())
+                    if limit_reached {
+                        Some(format!("{index}/{match_quantity}+").to_string())
+                    } else {
+                        Some(format!("{index}/{match_quantity}").to_string())
+                    }
                 } else {
                     None
                 }
             })
             .unwrap_or_else(|| "0/0".to_string());
-
-        let limit_reached = search.model.read(cx).limit_reached;
 
         let matches_column = h_flex()
             .child(
@@ -1506,6 +1509,7 @@ impl Render for ProjectSearchBar {
             )
             .child(
                 h_flex()
+                    .id("matches")
                     .min_w(rems_from_px(40.))
                     .child(
                         Label::new(match_text).color(if search.active_match_index.is_some() {
@@ -1513,15 +1517,13 @@ impl Render for ProjectSearchBar {
                         } else {
                             Color::Disabled
                         }),
-                    ),
-            )
-            .when(limit_reached, |this| {
-                this.child(
-                    Label::new("Search limit reached")
-                        .ml_2()
-                        .color(Color::Warning),
-                )
-            });
+                    )
+                    .when(limit_reached, |el| {
+                        el.tooltip(|cx| {
+                            Tooltip::text("Search limits reached.\nTry narrowing your search.", cx)
+                        })
+                    }),
+            );
 
         let search_line = h_flex()
             .flex_1()
