@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
+use collections::HashMap;
 use editor::Bias;
+use gpui::AppContext;
+use lazy_static::lazy_static;
+use settings::Settings;
 use ui::WindowContext;
 
 use crate::{
@@ -8,11 +12,11 @@ use crate::{
     replace::multi_replace,
     state::{Mode, Operator},
     visual::visual_replace,
-    Vim,
+    Vim, VimSettings,
 };
 
 /// Copied from https://github.com/neovim/neovim/blob/master/src/nvim/digraph.c#L65
-const DIGRAPHS: &[(char, char, u32)] = &[
+const DEFAULT_DIGRAPHS: &[(char, char, u32)] = &[
     ('N', 'U', 0x00),
     ('S', 'H', 0x01),
     ('S', 'X', 0x02),
@@ -1378,26 +1382,34 @@ const DIGRAPHS: &[(char, char, u32)] = &[
     ('s', 't', 0xfb06),
 ];
 
-fn lookup_digraph(first_char: char, second_char: char) -> Option<char> {
-    let input = (first_char, second_char);
-    for &(a, b, c) in DIGRAPHS {
-        if (a, b) == input {
-            return char::from_u32(c);
+lazy_static! {
+    static ref DEFAULT_DIGRAPHS_MAP: HashMap<String, char> = {
+        let mut map = HashMap::default();
+        for &(a, b, c) in DEFAULT_DIGRAPHS {
+            let key = format!("{a}{b}");
+            map.insert(key, char::from_u32(c).unwrap());
         }
-    }
-    for &(a, b, c) in DIGRAPHS {
-        // Check for reversed order
-        if (b, a) == input {
-            return char::from_u32(c);
-        }
-    }
-    None
+        map
+    };
+}
+
+fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Option<char> {
+    let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
+    let input = [a, b].into_iter().collect::<String>();
+    let reversed = [b, a].into_iter().collect::<String>();
+
+    custom_digraphs
+        .get(&input)
+        .or_else(|| DEFAULT_DIGRAPHS_MAP.get(&input))
+        .or_else(|| custom_digraphs.get(&reversed))
+        .or_else(|| DEFAULT_DIGRAPHS_MAP.get(&reversed))
+        .copied()
 }
 
 pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| vim.pop_operator(cx));
 
-    if let Some(mapped_char) = lookup_digraph(first_char, second_char) {
+    if let Some(mapped_char) = lookup_digraph(first_char, second_char, &cx) {
         let text: Arc<str> = mapped_char.to_string().into();
 
         match Vim::read(cx).active_operator() {
@@ -1437,7 +1449,14 @@ fn multi_insert(mapped_str: Arc<str>, cx: &mut WindowContext) {
 
 #[cfg(test)]
 mod test {
-    use crate::test::NeovimBackedTestContext;
+    use collections::HashMap;
+    use settings::SettingsStore;
+
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+        VimSettings,
+    };
 
     #[gpui::test]
     async fn test_digraph_insert_mode(cx: &mut gpui::TestAppContext) {
@@ -1475,5 +1494,21 @@ mod test {
         )
         .await;
         cx.shared_state().await.assert_eq("áèïõˇū");
+    }
+
+    #[gpui::test]
+    async fn test_digraph_custom(cx: &mut gpui::TestAppContext) {
+        let mut cx: VimTestContext = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                let mut custom_digraphs = HashMap::default();
+                custom_digraphs.insert("|-".into(), '⊢');
+                s.custom_digraphs = Some(custom_digraphs);
+            });
+        });
+
+        cx.simulate_keystrokes("a ctrl-k | - escape");
+        cx.assert_state("ˇ⊢", Mode::Normal);
     }
 }
