@@ -271,14 +271,12 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("Project Index (Debug)")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(
+        &self,
+        _params: TabContentParams,
+        _cx: &WindowContext,
+    ) -> Option<SharedString> {
+        Some("Project Index (Debug)".into())
     }
 
     fn clone_on_split(

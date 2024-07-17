@@ -374,7 +374,11 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_content_text(
+        &self,
+        _params: TabContentParams,
+        cx: &WindowContext,
+    ) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -385,16 +389,11 @@ impl Item for ProjectSearchView {
                 let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
-        let tab_name = last_query
-            .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project Search".into());
-        Label::new(tab_name)
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        Some(
+            last_query
+                .filter(|query| !query.is_empty())
+                .unwrap_or_else(|| "Project Search".into()),
+        )
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

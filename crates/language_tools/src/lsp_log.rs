@@ -3,9 +3,9 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AnchorCorner, AnyElement, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
-    View, ViewContext, VisualContext, WeakModel, WindowContext,
+    actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
+    IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::{IoKind, LanguageServer};
@@ -697,14 +697,12 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("LSP Logs")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(
+        &self,
+        _params: TabContentParams,
+        _cx: &WindowContext,
+    ) -> Option<SharedString> {
+        Some("LSP Logs".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
