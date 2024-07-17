@@ -54,6 +54,7 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<dyn PlatformTextSystem>,
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
+    windows_version: WindowsVersion,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -105,6 +106,7 @@ impl WindowsPlatform {
         let clipboard_hash_format = register_clipboard_format(CLIPBOARD_HASH_FORMAT).unwrap();
         let clipboard_metadata_format =
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
+        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
 
         Self {
             state,
@@ -115,6 +117,7 @@ impl WindowsPlatform {
             text_system,
             clipboard_hash_format,
             clipboard_metadata_format,
+            windows_version,
         }
     }
 
