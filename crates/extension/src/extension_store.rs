@@ -456,9 +456,9 @@ impl ExtensionStore {
         let extension_ids = self
             .extension_index
             .extensions
-            .keys()
-            .map(|id| id.as_ref())
-            .filter(|id| extension_settings.should_auto_update(id))
+            .iter()
+            .filter(|(id, entry)| !entry.dev && extension_settings.should_auto_update(id))
+            .map(|(id, _)| id.as_ref())
             .collect::<Vec<_>>()
             .join(",");
         let task = self.fetch_extensions_from_api(
