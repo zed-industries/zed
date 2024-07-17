@@ -1600,31 +1600,27 @@ impl ContextEditor {
 
                 cx.update(|cx| {
                     for suggestion in suggestion_group.suggestions {
-                        if let Some(description) = suggestion.description {
-                            let range = {
-                                let buffer = editor.read(cx).buffer().read(cx).read(cx);
-                                let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                                buffer
-                                    .anchor_in_excerpt(excerpt_id, suggestion.range.start)
+                        let description = suggestion.description.unwrap_or_else(|| "Delete".into());
+                        let range = {
+                            let buffer = editor.read(cx).buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                            buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.range.start)
+                                .unwrap()
+                                ..buffer
+                                    .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
-                                    ..buffer
-                                        .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-                                        .unwrap()
-                            };
-
-                            InlineAssistant::update_global(cx, |assistant, cx| {
-                                assistant.suggest_assist(
-                                    &editor,
-                                    range,
-                                    description,
-                                    Some(workspace.clone()),
-                                    assistant_panel.upgrade().as_ref(),
-                                    cx,
-                                );
-                            });
-                        } else {
-                            // todo!("delete code...")
-                        }
+                        };
+                        InlineAssistant::update_global(cx, |assistant, cx| {
+                            assistant.suggest_assist(
+                                &editor,
+                                range,
+                                description,
+                                Some(workspace.clone()),
+                                assistant_panel.upgrade().as_ref(),
+                                cx,
+                            );
+                        });
                     }
                 })?;
             } else {

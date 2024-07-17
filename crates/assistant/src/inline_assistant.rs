@@ -16,7 +16,12 @@ use editor::{
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use fs::Fs;
-use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
+use futures::{
+    channel::mpsc,
+    future::LocalBoxFuture,
+    stream::{self, BoxStream},
+    SinkExt, Stream, StreamExt,
+};
 use gpui::{
     point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, Global, HighlightStyle,
     Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
@@ -28,8 +33,11 @@ use parking_lot::Mutex;
 use rope::Rope;
 use settings::{update_settings_file, Settings};
 use similar::TextDiff;
+use smol::future::FutureExt;
 use std::{
-    cmp, mem,
+    cmp,
+    future::Future,
+    mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
     sync::Arc,
@@ -809,16 +817,27 @@ impl InlineAssistant {
             self.prompt_history.pop_front();
         }
 
-        assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
         let codegen = assist.codegen.clone();
-        let request = self.request_for_inline_assist(assist_id, cx);
-
-        cx.spawn(|mut cx| async move {
-            let request = request.await?;
-            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        let telemetry_id = CompletionProvider::global(cx).model().telemetry_id();
+        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
+            if user_prompt.trim().to_lowercase() == "delete" {
+                async { Ok(stream::empty().boxed()) }.boxed_local()
+            } else {
+                let request = self.request_for_inline_assist(assist_id, cx);
+                let mut cx = cx.to_async();
+                async move {
+                    let request = request.await?;
+                    let chunks = cx
+                        .update(|cx| CompletionProvider::global(cx).stream_completion(request, cx))?
+                        .await?;
+                    Ok(chunks.boxed())
+                }
+                .boxed_local()
+            };
+        codegen.update(cx, |codegen, cx| {
+            codegen.undo(cx);
+            codegen.start(telemetry_id, chunks, cx);
+        });
     }
 
     fn request_for_inline_assist(
@@ -2053,7 +2072,12 @@ impl Codegen {
         &self.last_equal_ranges
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+    pub fn start(
+        &mut self,
+        telemetry_id: String,
+        stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let range = self.range.clone();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
@@ -2067,15 +2091,13 @@ impl Codegen {
             .next()
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
-        let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).stream_completion(prompt, cx);
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         self.generation = cx.spawn(|this, mut cx| {
             async move {
-                let response = response.await;
+                let chunks = stream.await;
                 let generate = async {
                     let mut edit_start = range.start.to_offset(&snapshot);
 
@@ -2085,7 +2107,7 @@ impl Codegen {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
-                                let chunks = StripInvalidSpans::new(response?);
+                                let chunks = StripInvalidSpans::new(chunks?);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
 
@@ -2168,7 +2190,7 @@ impl Codegen {
                                 telemetry.report_assistant_event(
                                     None,
                                     telemetry_events::AssistantKind::Inline,
-                                    model_telemetry_id,
+                                    telemetry_id,
                                     response_latency,
                                     error_message,
                                 );
@@ -2533,11 +2555,8 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use crate::FakeCompletionProvider;
-
     use super::*;
+    use crate::FakeCompletionProvider;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
@@ -2548,6 +2567,7 @@ mod tests {
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
+    use std::{future, sync::Arc};
 
     #[derive(Serialize)]
     pub struct DummyCompletionRequest {
@@ -2557,7 +2577,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
         cx.set_global(cx.update(SettingsStore::test));
-        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
+        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -2577,11 +2597,14 @@ mod tests {
         });
         let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, cx));
 
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
-            codegen.start(LanguageModelRequest::default(), cx)
+            codegen.start(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                cx,
+            )
         });
-
-        cx.background_executor.run_until_parked();
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -2593,11 +2616,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
+            chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion(&LanguageModelRequest::default());
+        drop(chunks_tx);
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -2618,7 +2641,6 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2636,8 +2658,14 @@ mod tests {
         });
         let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, cx));
 
-        let request = LanguageModelRequest::default();
-        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.start(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                cx,
+            )
+        });
 
         cx.background_executor.run_until_parked();
 
@@ -2651,11 +2679,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
+            chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion(&LanguageModelRequest::default());
+        drop(chunks_tx);
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -2676,7 +2704,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
+        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2694,8 +2722,14 @@ mod tests {
         });
         let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, cx));
 
-        let request = LanguageModelRequest::default();
-        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.start(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                cx,
+            )
+        });
 
         cx.background_executor.run_until_parked();
 
@@ -2709,11 +2743,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion_chunk(&LanguageModelRequest::default(), chunk.into());
+            chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion(&LanguageModelRequest::default());
+        drop(chunks_tx);
         cx.background_executor.run_until_parked();
 
         assert_eq!(
