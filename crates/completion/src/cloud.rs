@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
-use gpui::{AnyView, AppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use language_model::CloudModel;
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
@@ -139,6 +139,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
     fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         request.preprocess();
 

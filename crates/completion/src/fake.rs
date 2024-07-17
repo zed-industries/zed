@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::HashMap;
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use std::sync::Arc;
 use ui::WindowContext;
 
@@ -101,6 +101,7 @@ impl LanguageModelCompletionProvider for FakeCompletionProvider {
     fn stream_completion(
         &self,
         _request: LanguageModelRequest,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs

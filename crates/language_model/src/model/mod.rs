@@ -2,6 +2,7 @@ pub mod cloud_model;
 
 pub use anthropic::Model as AnthropicModel;
 pub use cloud_model::*;
+pub use copilot::copilot_chat::Model as CopilotChatModel;
 pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 
@@ -13,6 +14,7 @@ pub enum LanguageModel {
     OpenAi(OpenAiModel),
     Anthropic(AnthropicModel),
     Ollama(OllamaModel),
+    CopilotChat(CopilotChatModel),
 }
 
 impl Default for LanguageModel {
@@ -28,6 +30,7 @@ impl LanguageModel {
             LanguageModel::Anthropic(model) => format!("anthropic/{}", model.id()),
             LanguageModel::Cloud(model) => format!("zed.dev/{}", model.id()),
             LanguageModel::Ollama(model) => format!("ollama/{}", model.id()),
+            LanguageModel::CopilotChat(model) => format!("copilot.chat/{}", model.id()),
         }
     }
 
@@ -37,6 +40,7 @@ impl LanguageModel {
             LanguageModel::Anthropic(model) => model.display_name().into(),
             LanguageModel::Cloud(model) => model.display_name().into(),
             LanguageModel::Ollama(model) => model.display_name().into(),
+            LanguageModel::CopilotChat(model) => model.display_name().into(),
         }
     }
 
@@ -46,6 +50,7 @@ impl LanguageModel {
             LanguageModel::Anthropic(model) => model.max_token_count(),
             LanguageModel::Cloud(model) => model.max_token_count(),
             LanguageModel::Ollama(model) => model.max_token_count(),
+            LanguageModel::CopilotChat(model) => model.max_token_count(),
         }
     }
 
@@ -55,6 +60,7 @@ impl LanguageModel {
             LanguageModel::Anthropic(model) => model.id(),
             LanguageModel::Cloud(model) => model.id(),
             LanguageModel::Ollama(model) => model.id(),
+            LanguageModel::CopilotChat(model) => model.id(),
         }
     }
 }

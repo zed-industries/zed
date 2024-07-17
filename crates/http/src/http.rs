@@ -167,6 +167,34 @@ pub trait HttpClient: Send + Sync {
         }
     }
 
+    fn get_with_headers<'a>(
+        &'a self,
+        uri: &str,
+        body: AsyncBody,
+        headers: Vec<(String, String)>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
+        let mut builder = isahc::Request::builder()
+            .redirect_policy(if follow_redirects {
+                RedirectPolicy::Follow
+            } else {
+                RedirectPolicy::None
+            })
+            .method(Method::GET)
+            .uri(uri);
+
+        for (key, value) in headers.iter() {
+            builder = builder.header(key, value);
+        }
+
+        let request = builder.body(body);
+
+        match request {
+            Ok(request) => self.send(request),
+            Err(error) => async move { Err(error.into()) }.boxed(),
+        }
+    }
+
     fn post_json<'a>(
         &'a self,
         uri: &str,

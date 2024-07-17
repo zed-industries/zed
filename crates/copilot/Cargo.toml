@@ -13,6 +13,8 @@ path = "src/copilot.rs"
 doctest = false
 
 [features]
+default = []
+schemars = ["dep:schemars"]
 test-support = [
     "collections/test-support",
     "gpui/test-support",
@@ -24,8 +26,10 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+async-fs.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
+chrono.workspace = true
 collections.workspace = true
 client.workspace = true
 command_palette_hooks.workspace = true
@@ -33,6 +37,7 @@ editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http.workspace = true
+isahc.workspace = true
 language.workspace = true
 lsp.workspace = true
 menu.workspace = true
@@ -41,6 +46,9 @@ parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+strum.workspace = true
 settings.workspace = true
 smol.workspace = true
 ui.workspace = true

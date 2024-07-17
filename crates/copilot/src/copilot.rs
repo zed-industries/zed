@@ -1,3 +1,4 @@
+pub mod copilot_chat;
 mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
@@ -27,6 +28,7 @@ use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::TypeId,
+    env,
     ffi::OsString,
     mem,
     ops::Range,
@@ -581,7 +583,7 @@ impl Copilot {
         }
     }
 
-    fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();

@@ -4,10 +4,12 @@ use anthropic::Model as AnthropicModel;
 use client::Client;
 use completion::{
     AnthropicCompletionProvider, CloudCompletionProvider, CompletionProvider,
-    LanguageModelCompletionProvider, OllamaCompletionProvider, OpenAiCompletionProvider,
+    CopilotChatCompletionProvider, LanguageModelCompletionProvider, OllamaCompletionProvider,
+    OpenAiCompletionProvider,
 };
+use copilot::copilot_chat;
 use gpui::{AppContext, Pixels};
-use language_model::{CloudModel, LanguageModel};
+use language_model::{CloudModel, CopilotChatModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use open_ai::Model as OpenAiModel;
 use parking_lot::RwLock;
@@ -45,6 +47,11 @@ pub enum AssistantProvider {
         api_url: String,
         low_speed_timeout_in_seconds: Option<u64>,
     },
+    CopilotChat {
+        model: CopilotChatModel,
+        api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
 }
 
 impl Default for AssistantProvider {
@@ -79,6 +86,12 @@ pub enum AssistantProviderContent {
     #[serde(rename = "ollama")]
     Ollama {
         default_model: Option<OllamaModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "copilot_chat")]
+    CopilotChat {
+        default_model: Option<CopilotChatModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
     },
@@ -226,6 +239,13 @@ impl AssistantSettingsContent {
                         }
                         LanguageModel::Ollama(model) => {
                             *provider = Some(AssistantProviderContent::Ollama {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                        LanguageModel::CopilotChat(model) => {
+                            *provider = Some(AssistantProviderContent::CopilotChat {
                                 default_model: Some(model),
                                 api_url: None,
                                 low_speed_timeout_in_seconds: None,
@@ -457,6 +477,16 @@ impl Settings for AssistantSettings {
                                 api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
                                 low_speed_timeout_in_seconds,
                             },
+                            AssistantProviderContent::CopilotChat {
+                                default_model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::CopilotChat {
+                                model: default_model.unwrap_or_default(),
+                                api_url: api_url
+                                    .unwrap_or_else(|| copilot_chat::COPILOT_CHAT_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
                         };
                     }
                 }
@@ -521,6 +551,18 @@ pub fn update_completion_provider_settings(
                 cx,
             );
         }),
+        AssistantProvider::CopilotChat {
+            model,
+            api_url,
+            low_speed_timeout_in_seconds,
+        } => provider.update_current_as::<_, CopilotChatCompletionProvider>(|provider| {
+            provider.update(
+                model.clone(),
+                api_url.clone(),
+                low_speed_timeout_in_seconds.map(Duration::from_secs),
+                version,
+            );
+        }),
     };
 
     // Previously configured provider was changed to another one
@@ -573,6 +615,17 @@ pub(crate) fn create_provider_from_settings(
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
             cx,
+        ))),
+        AssistantProvider::CopilotChat {
+            model,
+            api_url,
+            low_speed_timeout_in_seconds,
+        } => Arc::new(RwLock::new(CopilotChatCompletionProvider::new(
+            model.clone(),
+            api_url.clone(),
+            client.http_client(),
+            low_speed_timeout_in_seconds.map(Duration::from_secs),
+            settings_version,
         ))),
     }
 }

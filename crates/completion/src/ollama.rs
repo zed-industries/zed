@@ -3,7 +3,7 @@ use crate::{CompletionProvider, LanguageModel, LanguageModelRequest};
 use anyhow::Result;
 use futures::StreamExt as _;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
-use gpui::{AnyView, AppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use http::HttpClient;
 use language_model::Role;
 use ollama::Model as OllamaModel;
@@ -93,6 +93,7 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_ollama_request(request);
 

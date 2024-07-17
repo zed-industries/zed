@@ -25,10 +25,13 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+copilot.workspace = true
+chrono.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http.workspace = true
+inline_completion_button.workspace = true
 language_model.workspace = true
 log.workspace = true
 menu.workspace = true

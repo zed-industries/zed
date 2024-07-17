@@ -4,7 +4,7 @@ use anthropic::{stream_completion, Model as AnthropicModel, Request, RequestMess
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
+use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
 use language_model::Role;
 use settings::Settings;
@@ -95,6 +95,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_anthropic_request(request);
 

@@ -22,6 +22,7 @@ test-support = [
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
+copilot = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 schemars.workspace = true

@@ -1,5 +1,6 @@
 mod anthropic;
 mod cloud;
+mod copilot_chat;
 #[cfg(any(test, feature = "test-support"))]
 mod fake;
 mod ollama;
@@ -9,10 +10,11 @@ pub use anthropic::*;
 use anyhow::Result;
 use client::Client;
 pub use cloud::*;
+pub use copilot_chat::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake::*;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
-use gpui::{AnyView, AppContext, Task, WindowContext};
+use gpui::{AnyView, AppContext, AsyncAppContext, Task, WindowContext};
 use language_model::{LanguageModel, LanguageModelRequest};
 pub use ollama::*;
 pub use open_ai::*;
@@ -52,6 +54,7 @@ pub trait LanguageModelCompletionProvider: Send + Sync {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -120,9 +123,9 @@ impl CompletionProvider {
     ) -> Task<Result<CompletionResponse>> {
         let rate_limiter = self.request_limiter.clone();
         let provider = self.provider.clone();
-        cx.foreground_executor().spawn(async move {
+        cx.spawn(|cx| async move {
             let lock = rate_limiter.acquire_arc().await;
-            let response = provider.read().stream_completion(request);
+            let response = provider.read().stream_completion(request, &cx);
             let response = response.await?;
             Ok(CompletionResponse {
                 inner: response,

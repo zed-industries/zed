@@ -56,6 +56,7 @@ impl LanguageModelRequest {
                 }
                 _ => {}
             },
+            LanguageModel::CopilotChat(_) => {}
         }
     }
 
