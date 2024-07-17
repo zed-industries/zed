@@ -1,9 +1,10 @@
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
+use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, Variable};
 use gpui::{
-    actions, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
-    Subscription, View,
+    actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
+    FocusableView, ListState, Subscription, View, WeakView,
 };
 use std::sync::Arc;
 use ui::WindowContext;
@@ -314,29 +315,40 @@ impl DebugPanelItem {
             .into_any()
     }
 
+    // if the debug adapter does not send the continued event,
+    // and the status of the thread did not change we have to assume the thread is running
+    // so we have to update the thread state status to running
+    fn update_thread_state(
+        this: WeakView<Self>,
+        previous_status: ThreadStatus,
+        all_threads_continued: Option<bool>,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            if previous_status == this.current_thread_state().status {
+                if all_threads_continued.unwrap_or(false) {
+                    for thread in this.client.thread_states().values_mut() {
+                        thread.status = ThreadStatus::Running;
+                    }
+                } else {
+                    this.client
+                        .update_thread_state_status(this.thread_id, ThreadStatus::Running);
+                }
+
+                cx.notify();
+            }
+        })
+    }
+
     fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
-        let status = self.current_thread_state().status;
+        let previous_status = self.current_thread_state().status;
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, cx| async move {
             let response = client.resume(thread_id).await?;
 
-            this.update(&mut cx, |this, cx| {
-                // if the debug adapter does not send the continued event,
-                // and the status of the thread did not change we haven to assume the thread is running
-                if status == this.current_thread_state().status {
-                    if response.all_threads_continued.unwrap_or(false) {
-                        for thread in client.thread_states().values_mut() {
-                            thread.status = ThreadStatus::Running;
-                        }
-                    } else {
-                        client.update_thread_state_status(thread_id, ThreadStatus::Running);
-                    }
-
-                    cx.notify();
-                }
-            })
+            Self::update_thread_state(this, previous_status, response.all_threads_continued, cx)
         })
         .detach_and_log_err(cx);
     }
@@ -344,30 +356,46 @@ impl DebugPanelItem {
     fn handle_step_over_action(&mut self, _: &StepOver, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
-        cx.background_executor()
-            .spawn(async move { client.step_over(thread_id).await })
-            .detach();
+        let previous_status = self.current_thread_state().status;
+
+        cx.spawn(|this, cx| async move {
+            client.step_over(thread_id).await?;
+
+            Self::update_thread_state(this, previous_status, None, cx)
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_step_in_action(&mut self, _: &StepIn, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
-        cx.background_executor()
-            .spawn(async move { client.step_in(thread_id).await })
-            .detach();
+        let previous_status = self.current_thread_state().status;
+
+        cx.spawn(|this, cx| async move {
+            client.step_in(thread_id).await?;
+
+            Self::update_thread_state(this, previous_status, None, cx)
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_step_out_action(&mut self, _: &StepOut, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
-        cx.background_executor()
-            .spawn(async move { client.step_out(thread_id).await })
-            .detach();
+        let previous_status = self.current_thread_state().status;
+
+        cx.spawn(|this, cx| async move {
+            client.step_out(thread_id).await?;
+
+            Self::update_thread_state(this, previous_status, None, cx)
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_restart_action(&mut self, _: &Restart, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
+
         cx.background_executor()
             .spawn(async move { client.restart(thread_id).await })
             .detach();

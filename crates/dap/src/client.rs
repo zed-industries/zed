@@ -369,17 +369,16 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn step_over(&self, thread_id: u64) {
+    pub async fn step_over(&self, thread_id: u64) -> Result<()> {
         self.request::<Next>(NextArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_in(&self, thread_id: u64) {
+    pub async fn step_in(&self, thread_id: u64) -> Result<()> {
         self.request::<StepIn>(StepInArguments {
             thread_id,
             target_id: None,
@@ -387,27 +386,24 @@ impl DebugAdapterClient {
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_out(&self, thread_id: u64) {
+    pub async fn step_out(&self, thread_id: u64) -> Result<()> {
         self.request::<StepOut>(StepOutArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_back(&self, thread_id: u64) {
+    pub async fn step_back(&self, thread_id: u64) -> Result<()> {
         self.request::<StepBack>(StepBackArguments {
             thread_id,
             single_thread: Some(true),
             granularity: Some(SteppingGranularity::Statement),
         })
         .await
-        .log_err();
     }
 
     pub async fn restart(&self, thread_id: u64) {
