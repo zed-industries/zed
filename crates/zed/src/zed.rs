@@ -1347,6 +1347,9 @@ mod tests {
         close.await.unwrap();
         assert!(!window_is_edited(window, cx));
 
+        // Advance the clock to ensure that the item has been serialized and dropped from the queue
+        cx.executor().advance_clock(Duration::from_secs(1));
+
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| {
             open_paths(
@@ -1358,6 +1361,22 @@ mod tests {
         })
         .await
         .unwrap();
+        executor.run_until_parked();
+
+        window
+            .update(cx, |workspace, cx| {
+                let editor = workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap();
+
+                editor.update(cx, |editor, cx| {
+                    assert_eq!(editor.text(cx), "hey");
+                });
+            })
+            .unwrap();
+
         let editor = window
             .read_with(cx, |workspace, cx| {
                 workspace
@@ -1464,9 +1483,6 @@ mod tests {
 
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         assert!(cx.update(|cx| cx.active_window().is_some()));
-
-        // // Run to make sure all the deserializing etc. has run
-        // cx.run_until_parked();
 
         // When opening the workspace, the window is not in a edited state.
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
