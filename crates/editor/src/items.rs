@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
+use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
@@ -588,6 +589,20 @@ impl Item for Editor {
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
         let path = path_for_buffer(&self.buffer, detail, true, cx)?;
         Some(path.to_string_lossy().to_string().into())
+    }
+
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+        ItemSettings::get_global(cx)
+            .file_icons
+            .then(|| {
+                self.buffer
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).project_path(cx))
+                    .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
+            })
+            .flatten()
+            .map(|icon| Icon::from_path(icon))
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {

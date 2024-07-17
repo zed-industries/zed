@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::Element as _;
+use ui::{Element as _, Icon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -147,6 +147,11 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn tab_content(&self, _params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         gpui::Empty.into_any()
     }
+
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        None
+    }
+
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
@@ -330,6 +335,7 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon>;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -439,6 +445,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         self.read(cx).tab_content(params, cx)
+    }
+
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+        self.read(cx).tab_icon(cx)
     }
 
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
