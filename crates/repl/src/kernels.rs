@@ -13,7 +13,6 @@ use runtimelib::{
 };
 use smol::{net::TcpListener, process::Command};
 use std::{
-    env::temp_dir,
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
