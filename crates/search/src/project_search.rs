@@ -30,8 +30,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
-    Selectable, Tooltip,
+    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, KeyBinding, Label, LabelCommon,
+    LabelSize, Selectable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -288,30 +288,32 @@ impl Render for ProjectSearchView {
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
             let major_text = if is_search_underway {
-                Label::new("Searching...")
+                "Searching..."
             } else if has_no_results {
-                Label::new("No results")
+                "No results"
             } else {
-                Label::new("Search all files")
+                "Search all files"
             };
 
-            let major_text = div().justify_center().max_w_96().child(major_text);
+            let major_text = div()
+                .justify_center()
+                .max_w_96()
+                .child(Label::new(major_text).size(LabelSize::Large));
 
-            let minor_text: Option<SharedString> = if let Some(no_results) = model.no_results {
+            let minor_text: Option<AnyElement> = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
-                    Some("No results found in this project for the provided query".into())
+                    Some(
+                        Label::new("No results found in this project for the provided query")
+                            .size(LabelSize::Small)
+                            .into_any_element(),
+                    )
                 } else {
                     None
                 }
             } else {
-                Some(self.landing_text_minor())
+                Some(self.landing_text_minor(cx).into_any_element())
             };
-            let minor_text = minor_text.map(|text| {
-                div()
-                    .items_center()
-                    .max_w_96()
-                    .child(Label::new(text).size(LabelSize::Small))
-            });
+            let minor_text = minor_text.map(|text| div().items_center().max_w_96().child(text));
             v_flex()
                 .flex_1()
                 .size_full()
@@ -323,7 +325,7 @@ impl Render for ProjectSearchView {
                         .size_full()
                         .justify_center()
                         .child(h_flex().flex_1())
-                        .child(v_flex().child(major_text).children(minor_text))
+                        .child(v_flex().gap_1().child(major_text).children(minor_text))
                         .child(h_flex().flex_1()),
                 )
         }
@@ -1069,8 +1071,54 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self) -> SharedString {
-        "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into()
+    fn landing_text_minor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        // Filter paths
+        // Find & Replace
+        // Regex/MatchCase/WholeWord
+
+        v_flex()
+            .gap_1()
+            .child(Label::new("Hit enter to search. For more options:"))
+            .child(
+                Button::new("filter-paths", "Include/exclude specific paths")
+                    .icon(IconName::Filter)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleFilters, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleFilters.boxed_clone())),
+            )
+            .child(
+                Button::new("find-replace", "Find and replace")
+                    .icon(IconName::Replace)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleReplace, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleReplace.boxed_clone())),
+            )
+            .child(
+                Button::new("regex", "Match with regex")
+                    .icon(IconName::Regex)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleRegex, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleRegex.boxed_clone())),
+            )
+            .child(
+                Button::new("match-case", "Match case")
+                    .icon(IconName::CaseSensitive)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleCaseSensitive, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleCaseSensitive.boxed_clone())),
+            )
+            .child(
+                Button::new("match-whole-words", "Match whole words")
+                    .icon(IconName::WholeWord)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleWholeWord, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleWholeWord.boxed_clone())),
+            )
     }
 
     fn border_color_for(&self, panel: InputPanel, cx: &WindowContext) -> Hsla {
@@ -1174,7 +1222,9 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_search_option(option, cx);
-                search_view.search(cx);
+                if search_view.model.read(cx).active_query.is_some() {
+                    search_view.search(cx);
+                }
             });
 
             cx.notify();
