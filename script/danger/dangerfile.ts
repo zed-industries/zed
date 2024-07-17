@@ -34,12 +34,21 @@ if (!hasReleaseNotes) {
   );
 }
 
-const ISSUE_LINK_PATTERN = /\(#(\d+)\)/g;
-const releaseNotesSection = danger.github.pr.body.match(
-  /Release Notes:\r?\n([\s\S]*?)(?:\r?\n){2}/,
+const INCORRECT_ISSUE_LINK_PATTERN = new RegExp("-.*(#d+)", "g");
+
+const hasIncorrectIssueLinks = INCORRECT_ISSUE_LINK_PATTERN.test(
+  danger.github.pr.body,
 );
-if (releaseNotesSection && ISSUE_LINK_PATTERN.test(releaseNotesSection[0])) {
+if (hasIncorrectIssueLinks) {
   warn(
-    "Please format links to GitHub issues as plain Markdown links: `([#<public_issue_number_if_exists>](https://github.com/zed-industries/zed/issues/<public_issue_number_if_exists>))`",
+    [
+      "This PR has incorrectly formatted GitHub issue links in the release notes.",
+      "",
+      "GitHub issue links must be formatted as plain Markdown links:",
+      "",
+      "```",
+      "- Improved something ([#ISSUE](https://github.com/zed-industries/zed/issues/ISSUE))",
+      "```",
+    ].join("\n"),
   );
 }
