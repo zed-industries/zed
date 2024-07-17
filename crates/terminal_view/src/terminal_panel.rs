@@ -26,10 +26,10 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::Item,
+    item::SerializableItem,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
+    DraggedTab, ItemId, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -278,6 +278,7 @@ impl TerminalPanel {
 
         let pane = pane.downgrade();
         let items = futures::future::join_all(items).await;
+        let mut alive_item_ids = Vec::new();
         pane.update(&mut cx, |pane, cx| {
             let active_item_id = serialized_panel
                 .as_ref()
@@ -287,6 +288,7 @@ impl TerminalPanel {
                 if let Some(item) = item.log_err() {
                     let item_id = item.entity_id().as_u64();
                     pane.add_item(Box::new(item), false, false, None, cx);
+                    alive_item_ids.push(item_id as ItemId);
                     if Some(item_id) == active_item_id {
                         active_ix = Some(pane.items_len() - 1);
                     }
@@ -297,6 +299,18 @@ impl TerminalPanel {
                 pane.activate_item(active_ix, false, false, cx)
             }
         })?;
+
+        // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
+        if let Some(workspace) = workspace.upgrade() {
+            let cleanup_task = workspace.update(&mut cx, |workspace, cx| {
+                workspace
+                    .database_id()
+                    .map(|workspace_id| TerminalView::cleanup(workspace_id, alive_item_ids, cx))
+            })?;
+            if let Some(task) = cleanup_task {
+                task.await.log_err();
+            }
+        }
 
         Ok(panel)
     }

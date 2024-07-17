@@ -1478,6 +1478,7 @@ impl Pane {
                 }
             }
         }
+
         Ok(true)
     }
 
