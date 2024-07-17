@@ -112,7 +112,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath,
+    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectEntryId, ProjectPath,
     ProjectTransaction, TaskSourceKind, WorktreeId,
 };
 use rand::prelude::*;
@@ -10221,6 +10221,10 @@ impl Editor {
                 .expect("you can only call set_text on editors for singleton buffers")
                 .update(cx, |buffer, cx| buffer.set_text(text, cx));
         });
+    }
+
+    pub fn entry_id(&self, cx: &mut ViewContext<Self>) -> Option<ProjectEntryId> {
+        self.buffer.read(cx).as_singleton()?.read(cx).entry_id(cx)
     }
 
     pub fn display_text(&self, cx: &mut AppContext) -> String {

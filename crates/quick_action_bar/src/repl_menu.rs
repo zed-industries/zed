@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Entity, Transformation, View};
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, RuntimePanel,
     Session, SessionSupport,
@@ -84,6 +84,13 @@ impl QuickActionBar {
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
+        let entry_id =
+            if let Some(entry_id) = RuntimePanel::entry_id_for_editor(&editor.downgrade(), cx) {
+                entry_id
+            } else {
+                return None;
+            };
+
         let panel_clone = repl_panel.clone();
         let editor_clone = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
@@ -151,11 +158,9 @@ impl QuickActionBar {
                         },
                         {
                             let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
                                 panel_clone.update(cx, |this, cx| {
-                                    this.run(editor_clone.clone(), cx).log_err();
+                                    this.run(editor_clone.clone(), &entry_id, cx).log_err();
                                 });
                             }
                         },
@@ -170,11 +175,9 @@ impl QuickActionBar {
                         },
                         {
                             let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
                                 panel_clone.update(cx, |this, cx| {
-                                    this.interrupt(editor_clone, cx);
+                                    this.interrupt(&entry_id, cx);
                                 });
                             }
                         },
@@ -189,11 +192,9 @@ impl QuickActionBar {
                         },
                         {
                             let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
                                 panel_clone.update(cx, |this, cx| {
-                                    this.clear_outputs(editor_clone, cx);
+                                    this.clear_outputs(&entry_id, cx);
                                 });
                             }
                         },
@@ -217,12 +218,12 @@ impl QuickActionBar {
                         },
                         {
                             let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
-                            move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.shutdown(editor_clone, cx);
-                                });
+                            {
+                                move |cx| {
+                                    panel_clone.update(cx, |this, cx| {
+                                        this.shutdown(&entry_id, cx);
+                                    });
+                                }
                             }
                         },
                     )

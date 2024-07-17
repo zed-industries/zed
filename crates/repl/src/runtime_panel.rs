@@ -6,14 +6,14 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
-use futures::StreamExt as _;
+use futures::{channel::mpsc::UnboundedSender, StreamExt as _};
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
     FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
 };
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
-use project::{Fs, Item};
+use project::{Fs, Item, ProjectEntryId};
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
@@ -42,17 +42,88 @@ pub struct RuntimePanel {
     enabled: bool,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
-    sessions: HashMap<EntityId, View<Session>>,
+    sessions: HashMap<ProjectEntryId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
     _editor_events_task: Task<()>,
 }
 
+pub struct ReplAction {
+    editor: WeakView<Editor>,
+    event: ReplEvent,
+}
+
+impl ReplAction {
+    fn run(
+        editor: WeakView<Editor>,
+        tx: UnboundedSender<ReplAction>,
+    ) -> impl Fn(&Run, &mut WindowContext) {
+        move |_: &Run, cx: &mut WindowContext| {
+            if !JupyterSettings::enabled(cx) {
+                return;
+            }
+            tx.unbounded_send(ReplAction {
+                editor: editor.clone(),
+                event: ReplEvent::Run,
+            })
+            .ok();
+        }
+    }
+
+    fn clear_outputs(
+        editor: WeakView<Editor>,
+        tx: UnboundedSender<ReplAction>,
+    ) -> impl Fn(&ClearOutputs, &mut WindowContext) {
+        move |_: &ClearOutputs, cx: &mut WindowContext| {
+            if !JupyterSettings::enabled(cx) {
+                return;
+            }
+            tx.unbounded_send(ReplAction {
+                editor: editor.clone(),
+                event: ReplEvent::ClearOutputs,
+            })
+            .ok();
+        }
+    }
+
+    fn interrupt(
+        editor: WeakView<Editor>,
+        tx: UnboundedSender<ReplAction>,
+    ) -> impl Fn(&Interrupt, &mut WindowContext) {
+        move |_: &Interrupt, cx: &mut WindowContext| {
+            if !JupyterSettings::enabled(cx) {
+                return;
+            }
+            tx.unbounded_send(ReplAction {
+                editor: editor.clone(),
+                event: ReplEvent::Interrupt,
+            })
+            .ok();
+        }
+    }
+
+    fn shutdown(
+        editor: WeakView<Editor>,
+        tx: UnboundedSender<ReplAction>,
+    ) -> impl Fn(&Shutdown, &mut WindowContext) {
+        move |_: &Shutdown, cx: &mut WindowContext| {
+            if !JupyterSettings::enabled(cx) {
+                return;
+            }
+            tx.unbounded_send(ReplAction {
+                editor: editor.clone(),
+                event: ReplEvent::Shutdown,
+            })
+            .ok();
+        }
+    }
+}
+
 pub enum ReplEvent {
-    Run(WeakView<Editor>),
-    ClearOutputs(WeakView<Editor>),
-    Interrupt(WeakView<Editor>),
-    Shutdown(WeakView<Editor>),
+    Run,
+    ClearOutputs,
+    Interrupt,
+    Shutdown,
 }
 
 impl RuntimePanel {
@@ -71,7 +142,7 @@ impl RuntimePanel {
                     // This allows us to inject actions on the editor from the repl panel without requiring the editor to
                     // depend on the `repl` crate.
                     let (repl_editor_event_tx, mut repl_editor_event_rx) =
-                        futures::channel::mpsc::unbounded::<ReplEvent>();
+                        futures::channel::mpsc::unbounded::<ReplAction>();
 
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
@@ -80,69 +151,37 @@ impl RuntimePanel {
                             this.set_enabled(JupyterSettings::enabled(cx), cx);
                         }),
                         cx.observe_new_views(
+                            // For every editor that is a singleton, register actions on it
                             move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
                                 let editor_view = cx.view().downgrade();
-                                let run_event_tx = repl_editor_event_tx.clone();
                                 let clear_event_tx = repl_editor_event_tx.clone();
-                                editor
-                                    .register_action(move |_: &Run, cx: &mut WindowContext| {
-                                        if !JupyterSettings::enabled(cx) {
-                                            return;
-                                        }
-                                        run_event_tx
-                                            .unbounded_send(ReplEvent::Run(editor_view.clone()))
-                                            .ok();
-                                    })
-                                    .detach();
 
-                                let editor_view = cx.view().downgrade();
                                 editor
-                                    .register_action(
-                                        move |_: &ClearOutputs, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            clear_event_tx
-                                                .unbounded_send(ReplEvent::ClearOutputs(
-                                                    editor_view.clone(),
-                                                ))
-                                                .ok();
-                                        },
-                                    )
+                                    .register_action(ReplAction::run(
+                                        editor_view.clone(),
+                                        repl_editor_event_tx.clone(),
+                                    ))
                                     .detach();
 
                                 editor
-                                    .register_action({
-                                        let editor = cx.view().downgrade();
-                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
-
-                                        move |_: &Interrupt, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            repl_editor_event_tx
-                                                .unbounded_send(ReplEvent::Interrupt(
-                                                    editor.clone(),
-                                                ))
-                                                .ok();
-                                        }
-                                    })
+                                    .register_action(ReplAction::clear_outputs(
+                                        editor_view.clone(),
+                                        repl_editor_event_tx.clone(),
+                                    ))
                                     .detach();
 
                                 editor
-                                    .register_action({
-                                        let editor = cx.view().downgrade();
-                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+                                    .register_action(ReplAction::interrupt(
+                                        editor_view.clone(),
+                                        repl_editor_event_tx.clone(),
+                                    ))
+                                    .detach();
 
-                                        move |_: &Shutdown, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            repl_editor_event_tx
-                                                .unbounded_send(ReplEvent::Shutdown(editor.clone()))
-                                                .ok();
-                                        }
-                                    })
+                                editor
+                                    .register_action(ReplAction::shutdown(
+                                        editor_view.clone(),
+                                        repl_editor_event_tx.clone(),
+                                    ))
                                     .detach();
                             },
                         ),
@@ -151,19 +190,30 @@ impl RuntimePanel {
                     // Listen for events from the editor on the `repl_editor_event_rx` channel
                     let _editor_events_task = cx.spawn(
                         move |this: WeakView<RuntimePanel>, mut cx: AsyncWindowContext| async move {
-                            while let Some(event) = repl_editor_event_rx.next().await {
-                                this.update(&mut cx, |runtime_panel, cx| match event {
-                                    ReplEvent::Run(editor) => {
-                                        runtime_panel.run(editor, cx).log_err();
-                                    }
-                                    ReplEvent::ClearOutputs(editor) => {
-                                        runtime_panel.clear_outputs(editor, cx);
-                                    }
-                                    ReplEvent::Interrupt(editor) => {
-                                        runtime_panel.interrupt(editor, cx);
-                                    }
-                                    ReplEvent::Shutdown(editor) => {
-                                        runtime_panel.shutdown(editor, cx);
+                            while let Some(action) = repl_editor_event_rx.next().await {
+                                this.update(&mut cx, |runtime_panel, cx| {
+                                    let entry_id =
+                                        match RuntimePanel::entry_id_for_editor(&action.editor, cx)
+                                        {
+                                            Some(entry_id) => entry_id,
+                                            None => return,
+                                        };
+
+                                    match action.event {
+                                        ReplEvent::Run => {
+                                            runtime_panel
+                                                .run(action.editor, &entry_id, cx)
+                                                .log_err();
+                                        }
+                                        ReplEvent::ClearOutputs => {
+                                            runtime_panel.clear_outputs(&entry_id, cx);
+                                        }
+                                        ReplEvent::Interrupt => {
+                                            runtime_panel.interrupt(&entry_id, cx);
+                                        }
+                                        ReplEvent::Shutdown => {
+                                            runtime_panel.shutdown(&entry_id, cx);
+                                        }
                                     }
                                 })
                                 .ok();
@@ -212,12 +262,18 @@ impl RuntimePanel {
         &self,
         editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
+    ) -> Option<(ProjectEntryId, String, Arc<Language>, Range<Anchor>)> {
         let editor = editor.upgrade()?;
         let editor = editor.read(cx);
 
+        let buffer = editor.buffer().read(cx);
+        let buffer_snapshot = buffer.snapshot(cx);
+
+        // Only allow code snippets for singletons
+        let singleton = editor.buffer().read(cx).as_singleton()?;
+        let entry_id = singleton.read(cx).entry_id(cx)?;
+
         let selection = editor.selections.newest::<usize>(cx);
-        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
         let range = if selection.is_empty() {
             let cursor = selection.head();
@@ -249,7 +305,12 @@ impl RuntimePanel {
             return None;
         }
 
-        Some((selected_text, start_language.clone(), anchor_range))
+        Some((
+            entry_id,
+            selected_text,
+            start_language.clone(),
+            anchor_range,
+        ))
     }
 
     pub fn language(
@@ -302,34 +363,46 @@ impl RuntimePanel {
     pub fn run(
         &mut self,
         editor: WeakView<Editor>,
+        _entry_id: &ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
         if !self.enabled {
             return Ok(());
         }
 
-        let (selected_text, language, anchor_range) = match self.snippet(editor.clone(), cx) {
-            Some(snippet) => snippet,
-            None => return Ok(()),
-        };
-
-        let entity_id = editor.entity_id();
+        let (entry_id, selected_text, language, anchor_range) =
+            match self.snippet(editor.clone(), cx) {
+                Some(snippet) => snippet,
+                None => return Ok(()),
+            };
 
         let kernel_specification = self
             .kernelspec(&language, cx)
             .with_context(|| format!("No kernel found for language: {}", language.name()))?;
 
-        let session = self.sessions.entry(entity_id).or_insert_with(|| {
+        let session = self.sessions.entry(entry_id).or_insert_with(|| {
             let view =
                 cx.new_view(|cx| Session::new(editor, self.fs.clone(), kernel_specification, cx));
             cx.notify();
 
             let subscription = cx.subscribe(
                 &view,
-                |panel: &mut RuntimePanel, _session: View<Session>, event: &SessionEvent, _cx| {
+                |panel: &mut RuntimePanel, _session: View<Session>, event: &SessionEvent, cx| {
                     match event {
-                        SessionEvent::Shutdown(shutdown_event) => {
-                            panel.sessions.remove(&shutdown_event.entity_id());
+                        SessionEvent::Shutdown(editor) => {
+                            let entry_id = RuntimePanel::entry_id_for_editor(editor, cx);
+
+                            match entry_id {
+                                Some(entry_id) => {
+                                    panel.sessions.remove(&entry_id);
+                                }
+                                None => {
+                                    log::error!(
+                                        "No entry_id found for editor with a kernel session"
+                                    );
+                                    return;
+                                }
+                            }
                         }
                     }
                 },
@@ -347,9 +420,8 @@ impl RuntimePanel {
         anyhow::Ok(())
     }
 
-    pub fn clear_outputs(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
-        let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get_mut(&entity_id) {
+    pub fn clear_outputs(&mut self, entry_id: &ProjectEntryId, cx: &mut ViewContext<Self>) {
+        if let Some(session) = self.sessions.get_mut(entry_id) {
             session.update(cx, |session, cx| {
                 session.clear_outputs(cx);
             });
@@ -357,9 +429,8 @@ impl RuntimePanel {
         }
     }
 
-    pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
-        let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get_mut(&entity_id) {
+    pub fn interrupt(&mut self, entry_id: &ProjectEntryId, cx: &mut ViewContext<Self>) {
+        if let Some(session) = self.sessions.get_mut(entry_id) {
             session.update(cx, |session, cx| {
                 session.interrupt(cx);
             });
@@ -367,9 +438,8 @@ impl RuntimePanel {
         }
     }
 
-    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
-        let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get(&entity_id) {
+    pub fn shutdown(&self, entry_id: &ProjectEntryId, cx: &mut ViewContext<RuntimePanel>) {
+        if let Some(session) = self.sessions.get(entry_id) {
             session.update(cx, |session, cx| {
                 session.shutdown(cx);
             });
@@ -386,13 +456,25 @@ pub enum SessionSupport {
 }
 
 impl RuntimePanel {
+    pub fn entry_id_for_editor(
+        editor: &WeakView<Editor>,
+        cx: &mut WindowContext,
+    ) -> Option<ProjectEntryId> {
+        let editor = editor.upgrade()?;
+        editor.update(cx, |editor, cx| editor.entry_id(cx))
+    }
+
     pub fn session(
         &mut self,
         editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> SessionSupport {
-        let entity_id = editor.entity_id();
-        let session = self.sessions.get(&entity_id).cloned();
+        let entry_id = match RuntimePanel::entry_id_for_editor(&editor, cx) {
+            Some(entry_id) => entry_id,
+            None => return SessionSupport::Unsupported,
+        };
+
+        let session = self.sessions.get(&entry_id).cloned();
 
         match session {
             Some(session) => SessionSupport::ActiveSession(session),

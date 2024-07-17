@@ -14,7 +14,7 @@ use gpui::{
     div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use language::Point;
-use project::Fs;
+use project::{Fs, ProjectEntryId};
 use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
