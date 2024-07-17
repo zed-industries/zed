@@ -1072,10 +1072,6 @@ impl ProjectSearchView {
     }
 
     fn landing_text_minor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // Filter paths
-        // Find & Replace
-        // Regex/MatchCase/WholeWord
-
         v_flex()
             .gap_1()
             .child(Label::new("Hit enter to search. For more options:"))

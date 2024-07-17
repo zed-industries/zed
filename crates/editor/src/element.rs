@@ -2092,8 +2092,9 @@ impl EditorElement {
                                                 }),
                                         ),
                                     )
-                                    .when_some(jump_data.clone(), |this, jump_data| {
-                                        this.cursor_pointer()
+                                    .when_some(jump_data.clone(), |el, jump_data| {
+                                        el.child(Icon::new(IconName::ArrowUpRight))
+                                            .cursor_pointer()
                                             .tooltip(|cx| {
                                                 Tooltip::for_action(
                                                     "Jump to File",
