@@ -22,7 +22,10 @@ use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
-    channel::{mpsc, oneshot},
+    channel::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
@@ -37,7 +40,7 @@ use gpui::{
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-    ProjectItem,
+    ProjectItem, SerializableItem, SerializableItemHandle,
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -85,7 +88,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
@@ -280,6 +283,12 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+impl Into<i64> for WorkspaceId {
+    fn into(self) -> i64 {
+        self.0
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -427,34 +436,96 @@ impl FollowableViewRegistry {
     }
 }
 
-#[derive(Default, Deref, DerefMut)]
-struct ItemDeserializers(
-    HashMap<
-        Arc<str>,
-        fn(
-            Model<Project>,
-            WeakView<Workspace>,
-            WorkspaceId,
-            ItemId,
-            &mut ViewContext<Pane>,
-        ) -> Task<Result<Box<dyn ItemHandle>>>,
-    >,
-);
+#[derive(Copy, Clone)]
+struct SerializableItemDescriptor {
+    deserialize: fn(
+        Model<Project>,
+        WeakView<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
+    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>,
+    view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
+}
 
-impl Global for ItemDeserializers {}
+#[derive(Default)]
+struct SerializableItemRegistry {
+    descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
+    descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
+}
 
-pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
-    if let Some(serialized_item_kind) = I::serialized_item_kind() {
-        let deserializers = cx.default_global::<ItemDeserializers>();
-        deserializers.insert(
-            Arc::from(serialized_item_kind),
-            |project, workspace, workspace_id, item_id, cx| {
-                let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
-                cx.foreground_executor()
-                    .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
-            },
-        );
+impl Global for SerializableItemRegistry {}
+
+impl SerializableItemRegistry {
+    fn deserialize(
+        item_kind: &str,
+        project: Model<Project>,
+        workspace: WeakView<Workspace>,
+        workspace_id: WorkspaceId,
+        item_item: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot deserialize {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, cx)
     }
+
+    fn cleanup(
+        item_kind: &str,
+        workspace_id: WorkspaceId,
+        loaded_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot cleanup {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.cleanup)(workspace_id, loaded_items, cx)
+    }
+
+    fn view_to_serializable_item_handle(
+        view: AnyView,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>> {
+        let this = cx.try_global::<Self>()?;
+        let descriptor = this.descriptors_by_type.get(&view.entity_type())?;
+        Some((descriptor.view_to_serializable_item)(view))
+    }
+
+    fn descriptor(item_kind: &str, cx: &AppContext) -> Option<SerializableItemDescriptor> {
+        let this = cx.try_global::<Self>()?;
+        this.descriptors_by_kind.get(item_kind).copied()
+    }
+}
+
+pub fn register_serializable_item<I: SerializableItem>(cx: &mut AppContext) {
+    let serialized_item_kind = I::serialized_item_kind();
+
+    let registry = cx.default_global::<SerializableItemRegistry>();
+    let descriptor = SerializableItemDescriptor {
+        deserialize: |project, workspace, workspace_id, item_id, cx| {
+            let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+            cx.foreground_executor()
+                .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+        },
+        cleanup: |workspace_id, loaded_items, cx| I::cleanup(workspace_id, loaded_items, cx),
+        view_to_serializable_item: |view| Box::new(view.downcast::<I>().unwrap()),
+    };
+    registry
+        .descriptors_by_kind
+        .insert(Arc::from(serialized_item_kind), descriptor);
+    registry
+        .descriptors_by_type
+        .insert(TypeId::of::<I>(), descriptor);
 }
 
 pub struct AppState {
@@ -657,6 +728,8 @@ pub struct Workspace {
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     render_disconnected_overlay:
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
+    serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    _items_serializer: Task<Result<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -842,6 +915,12 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
+        let (serializable_items_tx, serializable_items_rx) =
+            mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
+        let _items_serializer = cx.spawn(|this, mut cx| async move {
+            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
+        });
+
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |this, cx| {
@@ -942,6 +1021,8 @@ impl Workspace {
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
             render_disconnected_overlay: None,
+            serializable_items_tx,
+            _items_serializer,
         }
     }
 
@@ -1649,27 +1730,52 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn(|workspace, mut cx| async move {
-            // Override save mode and display "Save all files" prompt
-            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-                let answer = workspace.update(&mut cx, |_, cx| {
-                    let (prompt, detail) = Pane::file_names_for_prompt(
-                        &mut dirty_items.iter().map(|(_, handle)| handle),
-                        dirty_items.len(),
-                        cx,
-                    );
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        &prompt,
-                        Some(&detail),
-                        &["Save all", "Discard all", "Cancel"],
-                    )
-                })?;
-                match answer.await.log_err() {
-                    Some(0) => save_intent = SaveIntent::SaveAll,
-                    Some(1) => save_intent = SaveIntent::Skip,
-                    _ => {}
+            let dirty_items = if save_intent == SaveIntent::Close && dirty_items.len() > 0 {
+                let (serialize_tasks, remaining_dirty_items) =
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let mut remaining_dirty_items = Vec::new();
+                        let mut serialize_tasks = Vec::new();
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, cx))
+                            {
+                                serialize_tasks.push(task);
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                        (serialize_tasks, remaining_dirty_items)
+                    })?;
+
+                futures::future::try_join_all(serialize_tasks).await?;
+
+                if remaining_dirty_items.len() > 1 {
+                    let answer = workspace.update(&mut cx, |_, cx| {
+                        let (prompt, detail) = Pane::file_names_for_prompt(
+                            &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
+                            remaining_dirty_items.len(),
+                            cx,
+                        );
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            Some(&detail),
+                            &["Save all", "Discard all", "Cancel"],
+                        )
+                    })?;
+                    match answer.await.log_err() {
+                        Some(0) => save_intent = SaveIntent::SaveAll,
+                        Some(1) => save_intent = SaveIntent::Skip,
+                        _ => {}
+                    }
                 }
-            }
+
+                remaining_dirty_items
+            } else {
+                dirty_items
+            };
+
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.update(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
@@ -3743,12 +3849,14 @@ impl Workspace {
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
                     pane.items()
-                        .filter_map(|item_handle| {
+                        .filter_map(|handle| {
+                            let handle = handle.to_serializable_item_handle(cx)?;
+
                             Some(SerializedItem {
-                                kind: Arc::from(item_handle.serialized_item_kind()?),
-                                item_id: item_handle.item_id().as_u64(),
-                                active: Some(item_handle.item_id()) == active_item_id,
-                                preview: pane.is_active_preview_item(item_handle.item_id()),
+                                kind: Arc::from(handle.serialized_item_kind()),
+                                item_id: handle.item_id().as_u64(),
+                                active: Some(handle.item_id()) == active_item_id,
+                                preview: pane.is_active_preview_item(handle.item_id()),
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -3885,6 +3993,52 @@ impl Workspace {
         Task::ready(())
     }
 
+    async fn serialize_items(
+        this: &WeakView<Self>,
+        items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        const CHUNK_SIZE: usize = 200;
+        const THROTTLE_TIME: Duration = Duration::from_millis(200);
+
+        let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
+
+        while let Some(items_received) = serializable_items.next().await {
+            let unique_items =
+                items_received
+                    .into_iter()
+                    .fold(HashMap::default(), |mut acc, item| {
+                        acc.entry(item.item_id()).or_insert(item);
+                        acc
+                    });
+
+            // We use into_iter() here so that the references to the items are moved into
+            // the tasks and not kept alive while we're sleeping.
+            for (_, item) in unique_items.into_iter() {
+                if let Ok(Some(task)) =
+                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
+                {
+                    cx.background_executor()
+                        .spawn(async move { task.await.log_err() })
+                        .detach();
+                }
+            }
+
+            cx.background_executor().timer(THROTTLE_TIME).await;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn enqueue_item_serialization(
+        &mut self,
+        item: Box<dyn SerializableItemHandle>,
+    ) -> Result<()> {
+        self.serializable_items_tx
+            .unbounded_send(item)
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
+    }
+
     pub(crate) fn load_workspace(
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
@@ -3911,16 +4065,23 @@ impl Workspace {
                 center_group = Some((group, active_pane))
             }
 
-            let mut items_by_project_path = cx.update(|cx| {
-                center_items
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|item| {
-                        let item = item?;
-                        let project_path = item.project_path(cx)?;
-                        Some((project_path, item))
-                    })
-                    .collect::<HashMap<_, _>>()
+            let mut items_by_project_path = HashMap::default();
+            let mut item_ids_by_kind = HashMap::default();
+            let mut all_deserialized_items = Vec::default();
+            cx.update(|cx| {
+                for item in center_items.unwrap_or_default().into_iter().flatten() {
+                    if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
+                        item_ids_by_kind
+                            .entry(serializable_item_handle.serialized_item_kind())
+                            .or_insert(Vec::new())
+                            .push(item.item_id().as_u64() as ItemId);
+                    }
+
+                    if let Some(project_path) = item.project_path(cx) {
+                        items_by_project_path.insert(project_path, item.clone());
+                    }
+                    all_deserialized_items.push(item);
+                }
             })?;
 
             let opened_items = paths_to_open
@@ -3965,10 +4126,35 @@ impl Workspace {
                 cx.notify();
             })?;
 
-            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+            // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
+            // after loading the items, we might have different items and in order to avoid
+            // the database filling up, we delete items that haven't been loaded now.
+            //
+            // The items that have been loaded, have been saved after they've been added to the workspace.
+            let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
+                item_ids_by_kind
+                    .into_iter()
+                    .map(|(item_kind, loaded_items)| {
+                        SerializableItemRegistry::cleanup(
+                            item_kind,
+                            serialized_workspace.id,
+                            loaded_items,
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            futures::future::join_all(clean_up_tasks).await;
+
             workspace
                 .update(&mut cx, |workspace, cx| {
+                    // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     workspace.serialize_workspace_internal(cx).detach();
+
+                    // Ensure that we mark the window as edited if we did load dirty items
+                    workspace.update_window_edited(cx);
                 })
                 .ok();
 
@@ -5558,6 +5744,41 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Register TestItem as a serializable item
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        // When there are dirty untitled items, but they can serialize, then there is no prompt.
+        let item1 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        let item2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
     async fn test_close_pane_items(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6352,7 +6573,6 @@ mod tests {
 
         use super::*;
 
-        const TEST_PNG_KIND: &str = "TestPngItemView";
         // View
         struct TestPngItemView {
             focus_handle: FocusHandle,
@@ -6384,10 +6604,6 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_PNG_KIND)
-            }
         }
         impl EventEmitter<()> for TestPngItemView {}
         impl FocusableView for TestPngItemView {
@@ -6419,7 +6635,6 @@ mod tests {
             }
         }
 
-        const TEST_IPYNB_KIND: &str = "TestIpynbItemView";
         // View
         struct TestIpynbItemView {
             focus_handle: FocusHandle,
@@ -6451,10 +6666,6 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_IPYNB_KIND)
-            }
         }
         impl EventEmitter<()> for TestIpynbItemView {}
         impl FocusableView for TestIpynbItemView {
@@ -6490,14 +6701,10 @@ mod tests {
             focus_handle: FocusHandle,
         }
 
-        const TEST_ALTERNATE_PNG_KIND: &str = "TestAlternatePngItemView";
         impl Item for TestAlternatePngItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_ALTERNATE_PNG_KIND)
-            }
         }
+
         impl EventEmitter<()> for TestAlternatePngItemView {}
         impl FocusableView for TestAlternatePngItemView {
             fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -6564,7 +6771,10 @@ mod tests {
                 .unwrap();
 
             // Now we can check if the handle we got back errored or not
-            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_PNG_KIND);
+            assert_eq!(
+                handle.to_any().entity_type(),
+                TypeId::of::<TestPngItemView>()
+            );
 
             let handle = workspace
                 .update(cx, |workspace, cx| {
@@ -6574,7 +6784,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_IPYNB_KIND);
+            assert_eq!(
+                handle.to_any().entity_type(),
+                TypeId::of::<TestIpynbItemView>()
+            );
 
             let handle = workspace
                 .update(cx, |workspace, cx| {
@@ -6622,8 +6835,8 @@ mod tests {
 
             // This _must_ be the second item registered
             assert_eq!(
-                handle.serialized_item_kind().unwrap(),
-                TEST_ALTERNATE_PNG_KIND
+                handle.to_any().entity_type(),
+                TypeId::of::<TestAlternatePngItemView>()
             );
 
             let handle = workspace

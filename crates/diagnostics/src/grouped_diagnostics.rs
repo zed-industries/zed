@@ -40,7 +40,7 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::{debug_panic, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 use crate::project_diagnostics_settings::ProjectDiagnosticsSettings;
@@ -602,20 +602,6 @@ impl Item for GroupedDiagnosticsEditor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("diagnostics")
-    }
-
-    fn deserialize(
-        project: Model<Project>,
-        workspace: WeakView<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<View<Self>>> {
-        Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 

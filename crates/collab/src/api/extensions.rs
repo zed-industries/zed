@@ -10,7 +10,7 @@ use axum::{
     Extension, Json, Router,
 };
 use collections::HashMap;
-use rpc::{ExtensionApiManifest, ExtensionMetadata, GetExtensionsResponse};
+use rpc::{ExtensionApiManifest, GetExtensionsResponse};
 use semantic_version::SemanticVersion;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
@@ -48,27 +48,35 @@ async fn get_extensions(
         .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
         .await?;
 
-    if let Some(query) = params.filter.as_deref() {
-        let count = extensions.len();
-        tracing::info!(query, count, "extension_search")
-    }
-
     if let Some(filter) = params.filter.as_deref() {
-        let mut exact_match: Option<ExtensionMetadata> = None;
+        let extension_id = filter.to_lowercase();
+        let mut exact_match = None;
         extensions.retain(|extension| {
-            exact_match = Some(extension.clone());
-            extension.id.as_ref() != &filter.to_lowercase()
+            if extension.id.as_ref() == &extension_id {
+                exact_match = Some(extension.clone());
+                false
+            } else {
+                true
+            }
         });
-        if exact_match == None {
+        if exact_match.is_none() {
             exact_match = app
                 .db
-                .get_extensions_by_ids(&[&filter.to_lowercase()], None)
+                .get_extensions_by_ids(&[&extension_id], None)
                 .await?
                 .first()
                 .cloned();
         }
-        extensions.splice(0..0, exact_match);
+
+        if let Some(exact_match) = exact_match {
+            extensions.insert(0, exact_match);
+        }
     };
+
+    if let Some(query) = params.filter.as_deref() {
+        let count = extensions.len();
+        tracing::info!(query, count, "extension_search")
+    }
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }

@@ -17,6 +17,7 @@
 
 # Using Zed
 
+- [Multibuffers](./multibuffers.md)
 - [Assistant Panel](./assistant-panel.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
@@ -52,6 +53,7 @@
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
+- [R](./languages/r.md)
 - [Racket](./languages/racket.md)
 - [Ruby](./languages/ruby.md)
 - [Rust](./languages/rust.md)

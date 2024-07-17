@@ -131,7 +131,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -272,7 +272,8 @@ pub fn init(cx: &mut AppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
-    workspace::register_deserializable_item::<Editor>(cx);
+    workspace::register_serializable_item::<Editor>(cx);
+
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
@@ -551,6 +552,7 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -1771,6 +1773,8 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
+            .detach();
         cx.on_focus_out(&focus_handle, Self::handle_focus_out)
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -1876,6 +1880,9 @@ impl Editor {
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+            serialize_dirty_buffers: ProjectSettings::get_global(cx)
+                .session
+                .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
             file_header_size,
@@ -9491,6 +9498,11 @@ impl Editor {
                         }
                         editor
                     });
+                    cx.subscribe(&rename_editor, |_, _, e, cx| match e {
+                        EditorEvent::Focused => cx.emit(EditorEvent::FocusedIn),
+                        _ => {}
+                    })
+                    .detach();
 
                     let write_highlights =
                         this.clear_background_highlights::<DocumentHighlightWrite>(cx);
@@ -10381,6 +10393,22 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn working_directory(&self, cx: &WindowContext) -> Option<PathBuf> {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(dir) = file.abs_path(cx).parent() {
+                    return Some(dir.to_owned());
+                }
+            }
+
+            if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                return Some(project_path.path.to_path_buf());
+            }
+        }
+
+        None
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
@@ -11254,8 +11282,11 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
+        let project_settings = ProjectSettings::get_global(cx);
+        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
+
         if self.mode == EditorMode::Full {
-            let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
+            let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, cx);
             }
@@ -11641,6 +11672,10 @@ impl Editor {
                 }
             });
         }
+    }
+
+    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(EditorEvent::FocusedIn)
     }
 
     fn handle_focus_out(&mut self, event: FocusOutEvent, _cx: &mut ViewContext<Self>) {
@@ -12247,6 +12282,7 @@ pub enum EditorEvent {
     },
     Reparsed(BufferId),
     Focused,
+    FocusedIn,
     Blurred,
     DirtyChanged,
     Saved,

@@ -16,11 +16,10 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
-    ShutdownRequest,
+    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
 use settings::Settings as _;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{env::temp_dir, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 
@@ -145,6 +144,17 @@ impl EditorBlock {
 }
 
 impl Session {
+    pub fn working_directory(editor: WeakView<Editor>, cx: &WindowContext) -> PathBuf {
+        if let Some(working_directory) = editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).working_directory(cx))
+        {
+            working_directory
+        } else {
+            temp_dir()
+        }
+    }
+
     pub fn new(
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
@@ -152,7 +162,14 @@ impl Session {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-        let kernel = RunningKernel::new(kernel_specification.clone(), entity_id, fs.clone(), cx);
+
+        let kernel = RunningKernel::new(
+            kernel_specification.clone(),
+            entity_id,
+            Self::working_directory(editor.clone(), cx),
+            fs.clone(),
+            cx,
+        );
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -173,24 +190,6 @@ impl Session {
                                         .ok();
                                 }
                             });
-
-                            // For some reason sending a kernel info request will brick the ark (R) kernel.
-                            // Note that Deno and Python do not have this issue.
-                            if this.kernel_specification.name == "ark" {
-                                return;
-                            }
-
-                            // Get kernel info after (possibly) letting the kernel start
-                            cx.spawn(|this, mut cx| async move {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(120))
-                                    .await;
-                                this.update(&mut cx, |this, _cx| {
-                                    this.send(KernelInfoRequest {}.into(), _cx).ok();
-                                })
-                                .ok();
-                            })
-                            .detach();
                         })
                         .ok();
                     }
@@ -283,6 +282,10 @@ impl Session {
         } else {
             return;
         };
+
+        if code.is_empty() {
+            return;
+        }
 
         let execute_request = ExecuteRequest {
             code: code.to_string(),

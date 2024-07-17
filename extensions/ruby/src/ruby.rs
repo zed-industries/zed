@@ -5,11 +5,12 @@ use zed::settings::LspSettings;
 use zed::{serde_json, CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
-use crate::language_servers::{RubyLsp, Solargraph};
+use crate::language_servers::{Rubocop, RubyLsp, Solargraph};
 
 struct RubyExtension {
     solargraph: Option<Solargraph>,
     ruby_lsp: Option<RubyLsp>,
+    rubocop: Option<Rubocop>,
 }
 
 impl zed::Extension for RubyExtension {
@@ -17,6 +18,7 @@ impl zed::Extension for RubyExtension {
         Self {
             solargraph: None,
             ruby_lsp: None,
+            rubocop: None,
         }
     }
 
@@ -41,6 +43,15 @@ impl zed::Extension for RubyExtension {
                 Ok(zed::Command {
                     command: ruby_lsp.server_script_path(worktree)?,
                     args: vec![],
+                    env: worktree.shell_env(),
+                })
+            }
+            Rubocop::LANGUAGE_SERVER_ID => {
+                let rubocop = self.rubocop.get_or_insert_with(|| Rubocop::new());
+
+                Ok(zed::Command {
+                    command: rubocop.server_script_path(worktree)?,
+                    args: vec!["--lsp".into()],
                     env: worktree.shell_env(),
                 })
             }

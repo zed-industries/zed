@@ -74,10 +74,10 @@ pub fn deploy_context_menu(
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
         let menu = custom(editor, point, cx);
         editor.custom_context_menu = Some(custom);
-        if menu.is_none() {
+        let Some(menu) = menu else {
             return;
-        }
-        menu.unwrap()
+        };
+        menu
     } else {
         // Don't show the context menu if there isn't a project associated with this editor
         if editor.project.is_none() {
@@ -85,11 +85,13 @@ pub fn deploy_context_menu(
         }
 
         let display_map = editor.selections.display_map(cx);
+        let buffer = &editor.snapshot(cx).buffer_snapshot;
+        let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
             editor.change_selections(None, cx, |s| {
                 s.clear_disjoint();
-                s.set_pending_display_range(point..point, SelectMode::Character);
+                s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
         }
 

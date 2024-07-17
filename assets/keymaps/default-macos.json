@@ -102,9 +102,9 @@
       "ctrl-shift-b": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
       "ctrl-shift-f": "editor::SelectRight",
-      "alt-shift-left": "editor::SelectToPreviousWordStart",
+      "alt-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
       "alt-shift-b": "editor::SelectToPreviousWordStart",
-      "alt-shift-right": "editor::SelectToNextWordEnd",
+      "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "alt-shift-f": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
@@ -255,7 +255,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "cmd-enter": "search::ReplaceAll"
@@ -302,19 +302,20 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-alt-up": "editor::AddSelectionAbove",
+      "cmd-alt-up": "editor::AddSelectionAbove", // Insert cursor above
       "cmd-ctrl-p": "editor::AddSelectionAbove",
-      "cmd-alt-down": "editor::AddSelectionBelow",
+      "cmd-alt-down": "editor::AddSelectionBelow", // Insert cursor below
       "cmd-ctrl-n": "editor::AddSelectionBelow",
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
       "alt-shift-up": "editor::DuplicateLineUp",
       "alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
-      "cmd-d": ["editor::SelectNext", { "replace_newest": false }],
-      "cmd-shift-l": "editor::SelectAllMatches",
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
+      "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
