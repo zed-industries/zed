@@ -1236,7 +1236,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn to_proto(&self) -> rpc::proto::File {
+        fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
             unimplemented!()
         }
 

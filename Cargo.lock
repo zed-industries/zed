@@ -2525,6 +2525,8 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "release_channel",
+ "remote",
+ "remote_server",
  "reqwest",
  "rpc",
  "rustc-demangle",

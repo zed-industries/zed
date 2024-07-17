@@ -705,7 +705,7 @@ impl BufferStore {
 
         let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx))?;
         let operations = operations.await;
-        let state = buffer.update(cx, |buffer, _| buffer.to_proto())?;
+        let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx))?;
 
         let initial_state = proto::CreateBufferForPeer {
             project_id,

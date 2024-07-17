@@ -1652,7 +1652,7 @@ impl Project {
                                                     this.client.send(
                                                         proto::UpdateDiagnosticSummary {
                                                             project_id,
-                                                            worktree_id: cx.entity_id().as_u64(),
+                                                            worktree_id: worktree.id().to_proto(),
                                                             summary: Some(
                                                                 summary.to_proto(server_id, path),
                                                             ),
@@ -2466,7 +2466,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.into(),
-                                file: Some(new_file.to_proto()),
+                                file: Some(new_file.to_proto(cx)),
                             })
                             .log_err();
                     }
@@ -7999,7 +7999,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer.read(cx).remote_id().into(),
-                                file: Some(new_file.to_proto()),
+                                file: Some(new_file.to_proto(cx)),
                             })
                             .log_err();
                     }
@@ -9286,7 +9286,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.into(),
-                                file: Some(file.to_proto()),
+                                file: Some(file.to_proto(cx)),
                             })
                             .log_err();
                     }

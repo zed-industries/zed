@@ -235,6 +235,7 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
+remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }

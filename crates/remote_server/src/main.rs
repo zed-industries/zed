@@ -5,7 +5,7 @@ use remote::{
     protocol::{read_message, write_message},
     SshSession,
 };
-use remote_server::headless_project::HeadlessProject;
+use remote_server::HeadlessProject;
 use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
 use std::{env, io, mem, sync::Arc};
 
