@@ -109,7 +109,9 @@ impl Render for MultibufferHint {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Label::new("You can edit results inline in multibuffers!"))
+                    .child(Label::new(
+                        "Edit and save files directly in the results multibuffer!",
+                    ))
                     .child(
                         ButtonLike::new("open_docs")
                             .style(ButtonStyle::Transparent)
