@@ -458,17 +458,17 @@ impl SshClientState {
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let stdout = master_process.stdout.as_mut().unwrap();
-        let mut output = [0u8; 1];
-        stdout.read(&mut output).await?;
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).await?;
         drop(askpass_task);
 
         if master_process.try_status()?.is_some() {
-            let mut stderr_bytes = Vec::new();
+            output.clear();
             let mut stderr = master_process.stderr.take().unwrap();
-            stderr.read_to_end(&mut stderr_bytes).await?;
+            stderr.read_to_end(&mut output).await?;
             Err(anyhow!(
                 "failed to connect: {}",
-                String::from_utf8_lossy(&stderr_bytes)
+                String::from_utf8_lossy(&output)
             ))?;
         }
 
