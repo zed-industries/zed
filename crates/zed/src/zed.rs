@@ -293,8 +293,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     if cfg!(target_os = "linux") {
                         let prompt = cx.prompt(
                             PromptLevel::Warning,
-                            "Could not install the CLI",
-                            Some("If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source you may need to create an alias/symlink manually."),
+                            "CLI should already be installed",
+                            Some("If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else."),
                             &["Ok"],
                         );
                         cx.background_executor().spawn(prompt).detach();
