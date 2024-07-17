@@ -3,10 +3,10 @@
     "bindings": {
       "ctrl-shift-[": "pane::ActivatePrevItem",
       "ctrl-shift-]": "pane::ActivateNextItem",
-      "ctrl-pagedown": "pane::ActivatePrevItem",
-      "ctrl-pageup": "pane::ActivateNextItem",
-      "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
     }
   },
   {
