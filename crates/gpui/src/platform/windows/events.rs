@@ -666,8 +666,8 @@ fn handle_calc_client_size(
             WindowsVersion::Win10 => {}
             WindowsVersion::Win11 => {
                 // Magic number that calculates the width of the border
-                let board = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
-                requested_client_rect[0].top += board;
+                let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
+                requested_client_rect[0].top += border;
             }
         }
     }
