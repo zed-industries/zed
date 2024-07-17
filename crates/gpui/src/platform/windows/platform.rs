@@ -310,6 +310,7 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.foreground_executor.clone(),
             lock.current_cursor,
+            self.windows_version,
         )?;
         drop(lock);
         let handle = window.get_raw_handle();
