@@ -11732,6 +11732,27 @@ impl Editor {
         });
         self.change_selections(None, cx, |selections| selections.refresh());
     }
+
+    pub fn to_pixel_point(
+        &mut self,
+        source: multi_buffer::Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::Point<Pixels>> {
+        let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
+        let text_layout_details = self.text_layout_details(cx);
+        let editor_snapshot = self.snapshot(cx);
+        let source_point = source.to_display_point(&editor_snapshot);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(&editor_snapshot);
+        if first_visible_line > source_point {
+            return None;
+        }
+        let source_x = editor_snapshot.x_for_display_point(source_point, &text_layout_details);
+        let source_y = line_height * (source_point.row() - first_visible_line.row()).0 as f32;
+        Some(gpui::Point::new(source_x, source_y))
+    }
 }
 
 fn hunks_for_selections(

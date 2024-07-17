@@ -79,7 +79,9 @@ impl Editor {
             .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
         let editor_handle = cx.view().clone();
 
-        self.mouse_context_menu = Some(MouseContextMenu::new(
+        self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+            self,
+            hovered_hunk.multi_buffer_range.start,
             clicked_point,
             ContextMenu::build(cx, move |menu, _| {
                 menu.context(focus_handle)
@@ -151,7 +153,7 @@ impl Editor {
                     })
             }),
             cx,
-        ))
+        )
     }
 
     pub(super) fn toggle_hovered_hunk(

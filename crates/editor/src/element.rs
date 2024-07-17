@@ -1,4 +1,5 @@
 use crate::editor_settings::ScrollBeyondLastLine;
+use crate::mouse_context_menu::MenuPosition;
 use crate::RangeToAnchorExt;
 use crate::TransformBlockId;
 use crate::{
@@ -2501,16 +2502,35 @@ impl EditorElement {
     }
 
     fn layout_mouse_context_menu(&self, cx: &mut WindowContext) -> Option<AnyElement> {
-        let mouse_context_menu = self.editor.read(cx).mouse_context_menu.as_ref()?;
-        let mut element = deferred(
-            anchored()
-                .position(mouse_context_menu.position)
-                .child(mouse_context_menu.context_menu.clone())
-                .anchor(AnchorCorner::TopLeft)
-                .snap_to_window(),
-        )
-        .with_priority(1)
-        .into_any();
+        let mut element = self.editor.update(cx, |editor, cx| {
+            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+            let context_menu = mouse_context_menu.context_menu.clone();
+            let position = match mouse_context_menu.position {
+                MenuPosition::PinnedToScreen(point) => point,
+                MenuPosition::PinnedToEditor {
+                    source,
+                    offset_x,
+                    offset_y,
+                } => {
+                    let mut source_point = editor.to_pixel_point(source, cx)?;
+                    source_point.x += offset_x;
+                    source_point.y += offset_y;
+                    source_point
+                }
+            };
+
+            Some(
+                deferred(
+                    anchored()
+                        .position(position)
+                        .child(context_menu)
+                        .anchor(AnchorCorner::TopLeft)
+                        .snap_to_window(),
+                )
+                .with_priority(1)
+                .into_any(),
+            )
+        })?;
 
         element.prepaint_as_root(gpui::Point::default(), AvailableSpace::min_size(), cx);
         Some(element)
@@ -4037,7 +4057,11 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
-        editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
+        editor.mouse_context_menu = Some(MouseContextMenu::pinned_to_screen(
+            position,
+            context_menu,
+            cx,
+        ));
         cx.notify();
     });
 }
