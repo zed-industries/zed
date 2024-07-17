@@ -7,6 +7,7 @@ Guidelines:
 - We'll create it in one shot.
 - Prefer updating symbols lower in the syntax tree if possible.
 - Never include operations on a parent symbol and one of its children in the same <operations> block.
+- Never nest an operation with another operation or include CDATA or other content. All operations are leaf nodes.
 - Include a description attribute for each operation with a brief, one-line description of the change to perform.
 - Descriptions are required for all operations except delete.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
@@ -21,6 +22,7 @@ The available operation types are:
 6. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
 7. <delete>: Remove an existing symbol from a file. The `description` attribute is invalid for delete, but required for other ops.
 
+All operations *require* a path.
 Operations that *require* a symbol: <update>, <insert_sibling_before>, <insert_sibling_after>, <delete>
 Operations that don't allow a symbol: <create>
 Operations that have an *optional* symbol: <prepend_child>, <append_child>
@@ -52,17 +54,17 @@ User:
   What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
 
 Assistant:
-  <operations>
-      <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate_area method" />
-  </operations>
+<operations>
+    <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate_area method" />
+</operations>
 
 User:
   What are the operations for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
 
 Assistant:
-  <operations>
-      <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle" description="Implement Display trait for Rectangle"/>
-  </operations>
+<operations>
+    <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle" description="Implement Display trait for Rectangle"/>
+</operations>
 
 Example 2:
 
@@ -224,4 +226,6 @@ User:
         <update path="src/employee.rs" symbol="impl Employee fn print_details" description="Don't print the 'department' field" />
     </operations>
 
-Now generate the operations for the following step. Output pure XML:
+Now generate the operations for the following step.
+Output only valid XML containing valid operations with their required attributes.
+Your response *must* begin with <operations> and end with </operations>:

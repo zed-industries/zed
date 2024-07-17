@@ -134,7 +134,6 @@ impl InlineAssistant {
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let mut assists = Vec::new();
-        let mut assist_blocks = Vec::new();
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
@@ -174,42 +173,18 @@ impl InlineAssistant {
                 }
             }
 
-            assist_blocks.push(BlockProperties {
-                style: BlockStyle::Sticky,
-                position: range.start,
-                height: prompt_editor.read(cx).height_in_lines,
-                render: build_assist_editor_renderer(&prompt_editor),
-                disposition: BlockDisposition::Above,
-            });
-            assist_blocks.push(BlockProperties {
-                style: BlockStyle::Sticky,
-                position: range.end,
-                height: 1,
-                render: Box::new(|cx| {
-                    v_flex()
-                        .h_full()
-                        .w_full()
-                        .border_t_1()
-                        .border_color(cx.theme().status().info_border)
-                        .into_any_element()
-                }),
-                disposition: BlockDisposition::Below,
-            });
-            assists.push((assist_id, prompt_editor));
-        }
+            let [prompt_block_id, end_block_id] =
+                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
 
-        let assist_block_ids = editor.update(cx, |editor, cx| {
-            editor.insert_blocks(assist_blocks, None, cx)
-        });
+            assists.push((assist_id, prompt_editor, prompt_block_id, end_block_id));
+        }
 
         let editor_assists = self
             .assists_by_editor
             .entry(editor.downgrade())
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
         let mut assist_group = InlineAssistGroup::new();
-        for ((assist_id, prompt_editor), block_ids) in
-            assists.into_iter().zip(assist_block_ids.chunks_exact(2))
-        {
+        for (assist_id, prompt_editor, prompt_block_id, end_block_id) in assists {
             self.assists.insert(
                 assist_id,
                 InlineAssist::new(
@@ -218,8 +193,8 @@ impl InlineAssistant {
                     assistant_panel.is_some(),
                     editor,
                     &prompt_editor,
-                    block_ids[0],
-                    block_ids[1],
+                    prompt_block_id,
+                    end_block_id,
                     prompt_editor.read(cx).codegen.clone(),
                     workspace.clone(),
                     cx,
@@ -233,6 +208,113 @@ impl InlineAssistant {
         if let Some(assist_id) = assist_to_focus {
             self.focus_assist(assist_id, cx);
         }
+    }
+
+    pub fn suggest_assist(
+        &mut self,
+        editor: &View<Editor>,
+        range: Range<Anchor>,
+        initial_prompt: String,
+        workspace: Option<WeakView<Workspace>>,
+        assistant_panel: Option<&View<AssistantPanel>>,
+        cx: &mut WindowContext,
+    ) {
+        let assist_group_id = self.next_assist_group_id.post_inc();
+        let prompt_buffer = cx.new_model(|cx| Buffer::local(&initial_prompt, cx));
+        let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+
+        let assist_id = self.next_assist_id.post_inc();
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(
+                editor.read(cx).buffer().clone(),
+                range.clone(),
+                self.telemetry.clone(),
+                cx,
+            )
+        });
+
+        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let prompt_editor = cx.new_view(|cx| {
+            PromptEditor::new(
+                assist_id,
+                gutter_dimensions.clone(),
+                self.prompt_history.clone(),
+                prompt_buffer.clone(),
+                codegen.clone(),
+                editor,
+                assistant_panel,
+                workspace.clone(),
+                self.fs.clone(),
+                cx,
+            )
+        });
+
+        let [prompt_block_id, end_block_id] =
+            self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+
+        let editor_assists = self
+            .assists_by_editor
+            .entry(editor.downgrade())
+            .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
+
+        let mut assist_group = InlineAssistGroup::new();
+        self.assists.insert(
+            assist_id,
+            InlineAssist::new(
+                assist_id,
+                assist_group_id,
+                assistant_panel.is_some(),
+                editor,
+                &prompt_editor,
+                prompt_block_id,
+                end_block_id,
+                prompt_editor.read(cx).codegen.clone(),
+                workspace.clone(),
+                cx,
+            ),
+        );
+        assist_group.assist_ids.push(assist_id);
+        editor_assists.assist_ids.push(assist_id);
+        self.assist_groups.insert(assist_group_id, assist_group);
+
+        self.focus_assist(assist_id, cx);
+    }
+
+    fn insert_assist_blocks(
+        &self,
+        editor: &View<Editor>,
+        range: &Range<Anchor>,
+        prompt_editor: &View<PromptEditor>,
+        cx: &mut WindowContext,
+    ) -> [BlockId; 2] {
+        let assist_blocks = vec![
+            BlockProperties {
+                style: BlockStyle::Sticky,
+                position: range.start,
+                height: prompt_editor.read(cx).height_in_lines,
+                render: build_assist_editor_renderer(prompt_editor),
+                disposition: BlockDisposition::Above,
+            },
+            BlockProperties {
+                style: BlockStyle::Sticky,
+                position: range.end,
+                height: 1,
+                render: Box::new(|cx| {
+                    v_flex()
+                        .h_full()
+                        .w_full()
+                        .border_t_1()
+                        .border_color(cx.theme().status().info_border)
+                        .into_any_element()
+                }),
+                disposition: BlockDisposition::Below,
+            },
+        ];
+
+        editor.update(cx, |editor, cx| {
+            let block_ids = editor.insert_blocks(assist_blocks, None, cx);
+            [block_ids[0], block_ids[1]]
+        })
     }
 
     fn handle_prompt_editor_focus_in(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {

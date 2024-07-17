@@ -360,7 +360,6 @@ impl EditStep {
         cx: &AppContext,
     ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
         let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
-            dbg!("bailing");
             return Task::ready(HashMap::default());
         };
 
@@ -385,7 +384,6 @@ impl EditStep {
             }
 
             for (buffer, suggestion_groups) in suggestion_groups_by_buffer.iter_mut() {
-                dbg!(suggestion_groups.len());
                 buffer
                     .update(&mut cx, |buffer, _cx| {
                         suggestion_groups
@@ -454,7 +452,7 @@ impl Debug for EditStepOperations {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditOperation {
     pub path: String,
     pub kind: EditOperationKind,
@@ -567,7 +565,7 @@ impl EditOperation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditOperationKind {
     Update {
         symbol: String,
@@ -1283,44 +1281,120 @@ impl Context {
     }
 
     fn parse_edit_operations(xml: &str) -> Vec<EditOperation> {
-        let doc = roxmltree::Document::parse(xml).ok();
+        let Some(start_ix) = xml.find("<operations>") else {
+            return Vec::new();
+        };
+        let Some(end_ix) = xml[start_ix..].find("</operations>") else {
+            return Vec::new();
+        };
+        let end_ix = end_ix + start_ix + "</operations>".len();
+
+        let doc = roxmltree::Document::parse(&xml[start_ix..end_ix]).log_err();
         doc.map_or(Vec::new(), |doc| {
             doc.root_element()
                 .children()
-                .filter_map(|node| {
+                .map(|node| {
                     let tag_name = node.tag_name().name();
-                    let path = node.attribute("path")?.to_string();
+                    let path = node
+                        .attribute("path")
+                        .with_context(|| {
+                            format!("invalid node {node:?}, missing attribute 'path'")
+                        })?
+                        .to_string();
                     let kind = match tag_name {
                         "update" => EditOperationKind::Update {
-                            symbol: node.attribute("symbol")?.to_string(),
-                            description: node.attribute("description")?.to_string(),
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "create" => EditOperationKind::Create {
-                            description: node.attribute("description")?.to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
-                            symbol: node.attribute("symbol")?.to_string(),
-                            description: node.attribute("description")?.to_string(),
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
-                            symbol: node.attribute("symbol")?.to_string(),
-                            description: node.attribute("description")?.to_string(),
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "prepend_child" => EditOperationKind::PrependChild {
                             symbol: node.attribute("symbol").map(String::from),
-                            description: node.attribute("description")?.to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "append_child" => EditOperationKind::AppendChild {
                             symbol: node.attribute("symbol").map(String::from),
-                            description: node.attribute("description")?.to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
                         },
                         "delete" => EditOperationKind::Delete {
-                            symbol: node.attribute("symbol")?.to_string(),
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
                         },
-                        _ => return None,
+                        _ => return Err(anyhow!("invalid node {node:?}")),
                     };
-                    Some(EditOperation { path, kind })
+                    anyhow::Ok(EditOperation { path, kind })
                 })
+                .filter_map(|op| op.log_err())
                 .collect()
         })
     }
@@ -2904,6 +2978,55 @@ mod tests {
                 })
                 .collect()
         }
+    }
+
+    #[test]
+    fn test_parse_edit_operations() {
+        let operations = indoc! {r#"
+            Here are the operations to make all fields of the Canvas struct private:
+
+            <operations>
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub pixels" description="Remove pub keyword from pixels field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub size" description="Remove pub keyword from size field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub stride" description="Remove pub keyword from stride field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub format" description="Remove pub keyword from format field" />
+            </operations>
+        "#};
+
+        let parsed_operations = Context::parse_edit_operations(operations);
+        assert_eq!(
+            parsed_operations,
+            vec![
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub pixels".to_string(),
+                        description: "Remove pub keyword from pixels field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub size".to_string(),
+                        description: "Remove pub keyword from size field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub stride".to_string(),
+                        description: "Remove pub keyword from stride field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub format".to_string(),
+                        description: "Remove pub keyword from format field".to_string(),
+                    },
+                },
+            ]
+        );
     }
 
     #[gpui::test]

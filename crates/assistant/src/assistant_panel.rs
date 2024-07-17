@@ -598,6 +598,7 @@ impl AssistantPanel {
             make_lsp_adapter_delegate(workspace.project(), cx).log_err()
         });
 
+        let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
@@ -605,6 +606,7 @@ impl AssistantPanel {
                 workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
+                assistant_panel,
                 cx,
             );
             editor.insert_default_prompt(cx);
@@ -727,6 +729,7 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
+            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let workspace = workspace
                     .upgrade()
@@ -738,6 +741,7 @@ impl AssistantPanel {
                         workspace,
                         project,
                         lsp_adapter_delegate,
+                        assistant_panel,
                         cx,
                     )
                 });
@@ -781,6 +785,7 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
+            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let workspace = workspace
                     .upgrade()
@@ -792,6 +797,7 @@ impl AssistantPanel {
                         workspace,
                         this.project.clone(),
                         lsp_adapter_delegate,
+                        assistant_panel,
                         cx,
                     )
                 });
@@ -977,6 +983,7 @@ pub struct ContextEditor {
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
     active_edit_step_start: Option<language::Anchor>,
+    assistant_panel: WeakView<AssistantPanel>,
 }
 
 impl ContextEditor {
@@ -988,6 +995,7 @@ impl ContextEditor {
         workspace: View<Workspace>,
         project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
+        assistant_panel: WeakView<AssistantPanel>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
@@ -1031,6 +1039,7 @@ impl ContextEditor {
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
             active_edit_step_start: None,
+            assistant_panel,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -1569,24 +1578,57 @@ impl ContextEditor {
             Err(_) => return Task::ready(Err(anyhow!("active edit step not found"))),
         };
 
-        dbg!(active_edit_step);
         let edit_suggestions = active_edit_step.edit_suggestions(&self.project, cx);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
+        let assistant_panel = self.assistant_panel.clone();
         cx.spawn(|_this, mut cx| async move {
             let edit_suggestions = edit_suggestions.await;
 
             if edit_suggestions.is_empty() {
                 return Ok(());
-            } else if edit_suggestions.len() == 1 {
-                // If there's only one buffer, open it directly
-                let (buffer, _) = edit_suggestions.into_iter().next().unwrap();
+            } else if edit_suggestions.len() == 1
+                && edit_suggestions.values().next().unwrap().len() == 1
+            {
+                // If there's only one buffer and one suggestion group, open it directly
+                let (buffer, suggestion_groups) = edit_suggestions.into_iter().next().unwrap();
+                let suggestion_group = suggestion_groups.into_iter().next().unwrap();
                 let editor = workspace.update(&mut cx, |workspace, cx| {
                     let active_pane = workspace.active_pane().clone();
                     workspace.open_project_item::<Editor>(active_pane, buffer, cx)
                 })?;
+
+                cx.update(|cx| {
+                    for suggestion in suggestion_group.suggestions {
+                        if let Some(description) = suggestion.description {
+                            let range = {
+                                let buffer = editor.read(cx).buffer().read(cx).read(cx);
+                                let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                                buffer
+                                    .anchor_in_excerpt(excerpt_id, suggestion.range.start)
+                                    .unwrap()
+                                    ..buffer
+                                        .anchor_in_excerpt(excerpt_id, suggestion.range.end)
+                                        .unwrap()
+                            };
+
+                            InlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.suggest_assist(
+                                    &editor,
+                                    range,
+                                    description,
+                                    Some(workspace.clone()),
+                                    assistant_panel.upgrade().as_ref(),
+                                    cx,
+                                );
+                            });
+                        } else {
+                            // todo!("delete code...")
+                        }
+                    }
+                })?;
             } else {
-                // If there are multiple buffers, create a multibuffer
+                // If there are multiple buffers or suggestion groups, create a multibuffer
                 let multibuffer = cx.new_model(|cx| {
                     let replica_id = project.read(cx).replica_id();
                     let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
