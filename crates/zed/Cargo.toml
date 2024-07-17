@@ -106,6 +106,7 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+blake3 = "1.5.3"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
