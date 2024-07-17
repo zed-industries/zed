@@ -9,7 +9,6 @@ use assistant_slash_command::{
 use client::{proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use editor::{ExcerptRange, MultiBuffer};
 use fs::Fs;
 use futures::{
     future::{self, Shared},
@@ -17,14 +16,15 @@ use futures::{
 };
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
 use language::{
-    AnchorRangeExt, Bias, Buffer, Capability, LanguageRegistry, OffsetRangeExt, Point, ToOffset,
+    AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
+    ToPoint,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::{self, Ordering},
+    cmp,
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -273,7 +273,6 @@ impl ContextOperation {
 pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
-    EditSuggestionsChanged,
     EditStepsChanged,
     StreamedCompletion,
     PendingSlashCommandsUpdated {
@@ -341,135 +340,92 @@ pub struct EditStep {
     pub operations: Option<EditStepOperations>,
 }
 
-pub struct EditStepLocation {
-    pub buffer: Model<Buffer>,
+#[derive(Debug)]
+pub struct EditSuggestionGroup {
+    pub context_range: Range<language::Anchor>,
+    pub suggestions: Vec<EditSuggestion>,
+}
+
+#[derive(Debug)]
+pub struct EditSuggestion {
     pub range: Range<language::Anchor>,
+    /// If None, assume this is a suggestion to delete the range rather than transform it.
+    pub description: Option<String>,
 }
 
 impl EditStep {
-    pub fn locations_multibuffer(
+    pub fn edit_suggestions(
         &self,
         project: &Model<Project>,
         cx: &AppContext,
-    ) -> Task<Result<Model<MultiBuffer>>> {
-        let replica_id = project.read(cx).replica_id();
-        let edit_locations = self.locations(project, cx);
-        cx.spawn(|mut cx| async move {
-            let edit_locations = edit_locations.await;
-            cx.new_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
-                for (buffer, ranges) in edit_locations {
-                    multibuffer.push_excerpts(
-                        buffer.clone(),
-                        ranges.into_iter().map(|range| ExcerptRange {
-                            context: range,
-                            primary: None,
-                        }),
-                        cx,
-                    );
-                }
-                multibuffer
-            })
-        })
-    }
-
-    pub fn locations(
-        &self,
-        project: &Model<Project>,
-        cx: &AppContext,
-    ) -> Task<HashMap<Model<Buffer>, Vec<Range<language::Anchor>>>> {
+    ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
         let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
+            dbg!("bailing");
             return Task::ready(HashMap::default());
         };
 
-        let location_tasks: Vec<_> = operations
+        let suggestion_tasks: Vec<_> = operations
             .iter()
-            .map(|operation| self.operation_location(operation, project.clone(), cx))
+            .map(|operation| operation.edit_suggestion(project.clone(), cx))
             .collect();
 
         cx.spawn(|mut cx| async move {
-            let locations = future::join_all(location_tasks)
+            let suggestions_by_buffer = future::join_all(suggestion_tasks)
                 .await
                 .into_iter()
-                .filter_map(|location| location.log_err())
+                .filter_map(|task| task.log_err())
                 .collect::<Vec<_>>();
 
-            let mut buffer_ranges: HashMap<Model<Buffer>, Vec<Range<language::Anchor>>> =
-                HashMap::default();
-            for location in locations {
-                buffer_ranges
-                    .entry(location.buffer)
+            let mut suggestion_groups_by_buffer = HashMap::default();
+            for (buffer, suggestion_group) in suggestions_by_buffer {
+                suggestion_groups_by_buffer
+                    .entry(buffer)
                     .or_insert_with(Vec::new)
-                    .push(location.range);
+                    .push(suggestion_group);
             }
 
-            for (buffer, ranges) in buffer_ranges.iter_mut() {
+            for (buffer, suggestion_groups) in suggestion_groups_by_buffer.iter_mut() {
+                dbg!(suggestion_groups.len());
                 buffer
                     .update(&mut cx, |buffer, _cx| {
-                        ranges.sort_by(|a, b| a.cmp(b, buffer));
-                        ranges.dedup_by(|a, b| a.intersects(b, buffer));
+                        suggestion_groups
+                            .sort_by(|a, b| a.context_range.cmp(&b.context_range, buffer));
+                        suggestion_groups.dedup_by(|a, b| {
+                            if a.context_range.intersects(&b.context_range, buffer) {
+                                a.suggestions.extend(b.suggestions.drain(..));
+                                a.suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+                                a.suggestions.dedup_by(|a, b| {
+                                    if a.range.intersects(&b.range, buffer) {
+                                        if b.range.start.cmp(&a.range.start, buffer).is_lt() {
+                                            a.range.start = b.range.start;
+                                        }
+                                        if b.range.end.cmp(&a.range.end, buffer).is_gt() {
+                                            a.range.end = b.range.end;
+                                        }
+
+                                        if let (Some(a_desc), Some(b_desc)) =
+                                            (&mut a.description, &b.description)
+                                        {
+                                            a_desc.push('\n');
+                                            a_desc.push_str(b_desc);
+                                        } else if b.description.is_some() {
+                                            a.description = b.description.clone();
+                                        }
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                });
+                                true
+                            } else {
+                                false
+                            }
+                        });
                     })
                     .ok();
             }
 
-            buffer_ranges
-        })
-    }
-
-    fn operation_location(
-        &self,
-        operation: &EditOperation,
-        project: Model<Project>,
-        cx: &AppContext,
-    ) -> Task<Result<EditStepLocation>> {
-        let path = operation.path.clone();
-        let kind = operation.kind.clone();
-        cx.spawn(move |mut cx| async move {
-            let buffer = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = project
-                        .project_path_for_full_path(Path::new(&path), cx)
-                        .with_context(|| format!("worktree not found for {:?}", path))?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            let range = if let Some(symbol) = kind.symbol() {
-                let outline = buffer
-                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
-                    .context("no outline for buffer")?;
-                let candidate = outline
-                    .path_candidates
-                    .iter()
-                    .find(|item| item.string == symbol)
-                    .context("symbol not found")?;
-                outline.items[candidate.id].range.clone()
-            } else {
-                match kind {
-                    EditOperationKind::PrependChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let start = language::Anchor::MIN;
-                            let end = buffer
-                                .anchor_after(cmp::min(Point::new(10, 0), buffer.max_point()));
-                            start..end
-                        })?
-                    }
-                    EditOperationKind::AppendChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let start = buffer.anchor_before(Point::new(
-                                buffer.max_point().row.saturating_sub(10),
-                                0,
-                            ));
-                            let end = language::Anchor::MAX;
-                            start..end
-                        })?
-                    }
-                    EditOperationKind::Create => language::Anchor::MIN..language::Anchor::MAX,
-                    _ => unreachable!("All other operations should have a symbol"),
-                }
-            };
-
-            Ok(EditStepLocation { buffer, range })
+            suggestion_groups_by_buffer
         })
     }
 }
@@ -504,27 +460,165 @@ pub struct EditOperation {
     pub kind: EditOperationKind,
 }
 
+impl EditOperation {
+    fn edit_suggestion(
+        &self,
+        project: Model<Project>,
+        cx: &AppContext,
+    ) -> Task<Result<(Model<language::Buffer>, EditSuggestionGroup)>> {
+        let path = self.path.clone();
+        let kind = self.kind.clone();
+        cx.spawn(move |mut cx| async move {
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    let project_path = project
+                        .project_path_for_full_path(Path::new(&path), cx)
+                        .with_context(|| format!("worktree not found for {:?}", path))?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
+            while *parse_status.borrow() != ParseStatus::Idle {
+                parse_status.changed().await?;
+            }
+
+            let context_range = if let Some(symbol) = kind.symbol() {
+                let outline = buffer
+                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
+                    .context("no outline for buffer")?;
+                let candidate = outline
+                    .path_candidates
+                    .iter()
+                    .find(|item| item.string == symbol)
+                    .context("symbol not found")?;
+                let symbol_range = outline.items[candidate.id].range.clone();
+                match kind {
+                    EditOperationKind::PrependChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let start = symbol_range.start;
+                            let end = buffer.anchor_after(cmp::min(
+                                start.to_point(buffer) + Point::new(10, 0),
+                                symbol_range.end.to_point(buffer),
+                            ));
+                            start..end
+                        })?
+                    }
+                    EditOperationKind::AppendChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let end = symbol_range.end;
+                            let start = buffer.anchor_before(cmp::max(
+                                end.to_point(buffer) - Point::new(10, 0),
+                                symbol_range.start.to_point(buffer),
+                            ));
+                            start..end
+                        })?
+                    }
+                    _ => symbol_range,
+                }
+            } else {
+                match kind {
+                    EditOperationKind::PrependChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let start = language::Anchor::MIN;
+                            let end = buffer
+                                .anchor_after(cmp::min(Point::new(10, 0), buffer.max_point()));
+                            start..end
+                        })?
+                    }
+                    EditOperationKind::AppendChild { .. } => {
+                        buffer.update(&mut cx, |buffer, _| {
+                            let start = buffer.anchor_before(Point::new(
+                                buffer.max_point().row.saturating_sub(10),
+                                0,
+                            ));
+                            let end = language::Anchor::MAX;
+                            start..end
+                        })?
+                    }
+                    EditOperationKind::Create { .. } => {
+                        language::Anchor::MIN..language::Anchor::MAX
+                    }
+                    _ => unreachable!("All other operations should have a symbol"),
+                }
+            };
+
+            let suggestion_range = match kind {
+                EditOperationKind::InsertSiblingBefore { .. }
+                | EditOperationKind::PrependChild { .. } => {
+                    context_range.start..context_range.start
+                }
+                EditOperationKind::InsertSiblingAfter { .. }
+                | EditOperationKind::AppendChild { .. } => context_range.end..context_range.end,
+                _ => context_range.clone(),
+            };
+
+            Ok((
+                buffer,
+                EditSuggestionGroup {
+                    context_range,
+                    suggestions: vec![EditSuggestion {
+                        range: suggestion_range,
+                        description: kind.description().map(ToString::to_string),
+                    }],
+                },
+            ))
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum EditOperationKind {
-    Update { symbol: String },
-    Create,
-    InsertSiblingBefore { symbol: String },
-    InsertSiblingAfter { symbol: String },
-    PrependChild { symbol: Option<String> },
-    AppendChild { symbol: Option<String> },
-    Delete { symbol: String },
+    Update {
+        symbol: String,
+        description: String,
+    },
+    Create {
+        description: String,
+    },
+    InsertSiblingBefore {
+        symbol: String,
+        description: String,
+    },
+    InsertSiblingAfter {
+        symbol: String,
+        description: String,
+    },
+    PrependChild {
+        symbol: Option<String>,
+        description: String,
+    },
+    AppendChild {
+        symbol: Option<String>,
+        description: String,
+    },
+    Delete {
+        symbol: String,
+    },
 }
 
 impl EditOperationKind {
     pub fn symbol(&self) -> Option<&str> {
         match self {
-            Self::Update { symbol } => Some(symbol),
-            Self::InsertSiblingBefore { symbol } => Some(symbol),
-            Self::InsertSiblingAfter { symbol } => Some(symbol),
-            Self::PrependChild { symbol } => symbol.as_deref(),
-            Self::AppendChild { symbol } => symbol.as_deref(),
+            Self::Update { symbol, .. } => Some(symbol),
+            Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
+            Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
+            Self::PrependChild { symbol, .. } => symbol.as_deref(),
+            Self::AppendChild { symbol, .. } => symbol.as_deref(),
             Self::Delete { symbol } => Some(symbol),
-            Self::Create => None,
+            Self::Create { .. } => None,
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Update { description, .. } => Some(description),
+            Self::Create { description } => Some(description),
+            Self::InsertSiblingBefore { description, .. } => Some(description),
+            Self::InsertSiblingAfter { description, .. } => Some(description),
+            Self::PrependChild { description, .. } => Some(description),
+            Self::AppendChild { description, .. } => Some(description),
+            Self::Delete { .. } => None,
         }
     }
 }
@@ -536,7 +630,6 @@ pub struct Context {
     pending_ops: Vec<ContextOperation>,
     operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
-    edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
@@ -549,7 +642,6 @@ pub struct Context {
     pending_completions: Vec<PendingCompletion>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
-    pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
@@ -604,7 +696,6 @@ impl Context {
             operations: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
-            edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
@@ -615,7 +706,6 @@ impl Context {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
-            pending_edit_suggestion_parse: None,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -940,10 +1030,6 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_suggestions(&self) -> &[EditSuggestion] {
-        &self.edit_suggestions
-    }
-
     pub fn edit_steps(&self) -> &[EditStep] {
         &self.edit_steps
     }
@@ -980,7 +1066,6 @@ impl Context {
             )),
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
-                self.reparse_edit_suggestions(cx);
                 self.reparse_slash_commands(cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
@@ -1087,65 +1172,6 @@ impl Context {
         if !updated.is_empty() || !removed.is_empty() {
             cx.emit(ContextEvent::PendingSlashCommandsUpdated { removed, updated });
         }
-    }
-
-    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
-            })
-            .ok();
-        }));
-    }
-
-    fn reparse_edit_suggestions_in_range(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, _| {
-            let range_start = buffer.anchor_before(range.start);
-            let range_end = buffer.anchor_after(range.end);
-            let start_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .end
-                        .cmp(&range_start, buffer)
-                        .then(Ordering::Greater)
-                })
-                .unwrap_err();
-            let end_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .start
-                        .cmp(&range_end, buffer)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
-
-            let mut new_edit_suggestions = Vec::new();
-            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
-                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
-                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
-                new_edit_suggestions.push(EditSuggestion {
-                    source_range: start_anchor..end_anchor,
-                    full_path: suggestion.path,
-                });
-            }
-            self.edit_suggestions
-                .splice(start_ix..end_ix, new_edit_suggestions);
-        });
-        cx.emit(ContextEvent::EditSuggestionsChanged);
-        cx.notify();
     }
 
     fn parse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
@@ -1267,19 +1293,26 @@ impl Context {
                     let kind = match tag_name {
                         "update" => EditOperationKind::Update {
                             symbol: node.attribute("symbol")?.to_string(),
+                            description: node.attribute("description")?.to_string(),
                         },
-                        "create" => EditOperationKind::Create,
+                        "create" => EditOperationKind::Create {
+                            description: node.attribute("description")?.to_string(),
+                        },
                         "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
                             symbol: node.attribute("symbol")?.to_string(),
+                            description: node.attribute("description")?.to_string(),
                         },
                         "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
                             symbol: node.attribute("symbol")?.to_string(),
+                            description: node.attribute("description")?.to_string(),
                         },
                         "prepend_child" => EditOperationKind::PrependChild {
                             symbol: node.attribute("symbol").map(String::from),
+                            description: node.attribute("description")?.to_string(),
                         },
                         "append_child" => EditOperationKind::AppendChild {
                             symbol: node.attribute("symbol").map(String::from),
+                            description: node.attribute("description")?.to_string(),
                         },
                         "delete" => EditOperationKind::Delete {
                             symbol: node.attribute("symbol")?.to_string(),
@@ -1505,7 +1538,6 @@ impl Context {
                                 );
                                 message_start_offset..message_new_end_offset
                             });
-                            this.reparse_edit_suggestions_in_range(message_range.clone(), cx);
                             this.parse_edit_steps_in_range(message_range, cx);
                             cx.emit(ContextEvent::StreamedCompletion);
 
@@ -2038,99 +2070,6 @@ impl ContextVersion {
     }
 }
 
-#[derive(Debug)]
-enum EditParsingState {
-    None,
-    InOldText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_start_offset: usize,
-    },
-    InNewText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_range: Range<usize>,
-        new_text_start_offset: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditSuggestion {
-    pub source_range: Range<language::Anchor>,
-    pub full_path: PathBuf,
-}
-
-pub struct ParsedEditSuggestion {
-    pub path: PathBuf,
-    pub outer_range: Range<usize>,
-    pub old_text_range: Range<usize>,
-    pub new_text_range: Range<usize>,
-}
-
-pub fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
-    let mut state = EditParsingState::None;
-    loop {
-        let offset = lines.offset();
-        let message_line = lines.next()?;
-        match state {
-            EditParsingState::None => {
-                if let Some(rest) = message_line.strip_prefix("```edit ") {
-                    let path = rest.trim();
-                    if !path.is_empty() {
-                        state = EditParsingState::InOldText {
-                            path: PathBuf::from(path),
-                            start_offset: offset,
-                            old_text_start_offset: lines.offset(),
-                        };
-                    }
-                }
-            }
-            EditParsingState::InOldText {
-                path,
-                start_offset,
-                old_text_start_offset,
-            } => {
-                if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range: old_text_start_offset..offset,
-                        new_text_start_offset: lines.offset(),
-                    };
-                } else {
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_offset,
-                        old_text_start_offset,
-                    };
-                }
-            }
-            EditParsingState::InNewText {
-                path,
-                start_offset,
-                old_text_range,
-                new_text_start_offset,
-            } => {
-                if message_line == "```" {
-                    return Some(ParsedEditSuggestion {
-                        path,
-                        outer_range: start_offset..offset + "```".len(),
-                        old_text_range,
-                        new_text_range: new_text_start_offset..offset,
-                    });
-                } else {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range,
-                        new_text_start_offset,
-                    };
-                }
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
@@ -2424,10 +2363,9 @@ mod tests {
     use parking_lot::Mutex;
     use project::Project;
     use rand::prelude::*;
-    use rope::Rope;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{cell::RefCell, env, path::Path, rc::Rc, sync::atomic::AtomicBool};
+    use std::{cell::RefCell, env, rc::Rc, sync::atomic::AtomicBool};
     use text::{network::Network, ToPoint};
     use ui::WindowContext;
     use unindent::Unindent;
@@ -2865,76 +2803,6 @@ mod tests {
             assert_eq!(actual_text, expected_text);
             assert_eq!(actual_ranges, expected_ranges);
         }
-    }
-
-    #[test]
-    fn test_parse_next_edit_suggestion() {
-        let text = "
-            some output:
-
-            ```edit src/foo.rs
-                let a = 1;
-                let b = 2;
-            ---
-                let w = 1;
-                let x = 2;
-                let y = 3;
-                let z = 4;
-            ```
-
-            some more output:
-
-            ```edit src/foo.rs
-                let c = 1;
-            ---
-            ```
-
-            and the conclusion.
-        "
-        .unindent();
-
-        let rope = Rope::from(text.as_str());
-        let mut lines = rope.chunks().lines();
-        let mut suggestions = vec![];
-        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
-            suggestions.push((
-                suggestion.path.clone(),
-                text[suggestion.old_text_range].to_string(),
-                text[suggestion.new_text_range].to_string(),
-            ));
-        }
-
-        assert_eq!(
-            suggestions,
-            vec![
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let a = 1;", //
-                        "    let b = 2;",
-                        "",
-                    ]
-                    .join("\n"),
-                    [
-                        "    let w = 1;",
-                        "    let x = 2;",
-                        "    let y = 3;",
-                        "    let z = 4;",
-                        "",
-                    ]
-                    .join("\n"),
-                ),
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let c = 1;", //
-                        "",
-                    ]
-                    .join("\n"),
-                    String::new(),
-                )
-            ]
-        );
     }
 
     #[gpui::test]

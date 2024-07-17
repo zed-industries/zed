@@ -17,6 +17,7 @@ use crate::{
     LanguageScope, Outline, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
+use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
@@ -104,6 +105,7 @@ pub struct Buffer {
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
+    parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -117,6 +119,12 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ParseStatus {
+    Idle,
+    Parsing,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -710,6 +718,7 @@ impl Buffer {
             parsing_in_background: false,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
+            parse_status: async_watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
@@ -1059,6 +1068,7 @@ impl Buffer {
             }
         });
 
+        self.parse_status.0.send(ParseStatus::Parsing).unwrap();
         match cx
             .background_executor()
             .block_with_timeout(self.sync_parse_timeout, parse_task)
@@ -1101,8 +1111,13 @@ impl Buffer {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
+        self.parse_status.0.send(ParseStatus::Idle).unwrap();
         cx.emit(Event::Reparsed);
         cx.notify();
+    }
+
+    pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
+        self.parse_status.1.clone()
     }
 
     /// Assign to the buffer a set of diagnostics created by a given language server.

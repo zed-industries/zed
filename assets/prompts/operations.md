@@ -7,6 +7,9 @@ Guidelines:
 - We'll create it in one shot.
 - Prefer updating symbols lower in the syntax tree if possible.
 - Never include operations on a parent symbol and one of its children in the same <operations> block.
+- Include a description attribute for each operation with a brief, one-line description of the change to perform.
+- Descriptions are required for all operations except delete.
+- Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 
 The available operation types are:
 
@@ -16,7 +19,7 @@ The available operation types are:
 4. <insert_sibling_after>: Add a new symbol as sibling after an existing symbol in a file.
 5. <append_child>: Add a new symbol as the last child of an existing symbol in a file.
 6. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
-7. <delete>: Remove an existing symbol from a file.
+7. <delete>: Remove an existing symbol from a file. The `description` attribute is invalid for delete, but required for other ops.
 
 Operations that *require* a symbol: <update>, <insert_sibling_before>, <insert_sibling_after>, <delete>
 Operations that don't allow a symbol: <create>
@@ -50,7 +53,7 @@ User:
 
 Assistant:
   <operations>
-      <append_child path="src/shapes.rs" symbol="impl Rectangle"/>
+      <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate_area method" />
   </operations>
 
 User:
@@ -58,7 +61,7 @@ User:
 
 Assistant:
   <operations>
-      <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle"/>
+      <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle" description="Implement Display trait for Rectangle"/>
   </operations>
 
 Example 2:
@@ -98,7 +101,7 @@ User:
 
 Assistant:
   <operations>
-      <update path="src/user.rs" symbol="impl User fn print_info"/>
+      <update path="src/user.rs" symbol="impl User fn print_info" description="Use formatted output" />
   </operations>
 
 User:
@@ -106,7 +109,7 @@ User:
 
 Assistant:
   <operations>
-      <delete path="src/user.rs" symbol="struct User email"/>
+      <delete path="src/user.rs" symbol="struct User email" description="Remove the email field" />
   </operations>
 
 Example 3:
@@ -140,21 +143,21 @@ User:
   - impl Vehicle fn print_year
 
   <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
-  <step>Add a new method 'start_engine' before the 'new' method in the Vehicle impl block</step>
+  <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
   What are the operations for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 
 Assistant:
   <operations>
-      <prepend_child path="src/vehicle.rs" />
+      <prepend_child path="src/vehicle.rs" description="Add 'use std::fmt' statement" />
   </operations>
 
 User:
-  What are the operations for the step: <step>Add a new method 'start_engine' before the 'new' method in the Vehicle impl block</step>
+  What are the operations for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
 Assistant:
   <operations>
-      <insert_sibling_before path="src/vehicle.rs" symbol="impl Vehicle fn print_year"/>
+      <insert_sibling_before path="src/vehicle.rs" symbol="impl Vehicle fn print_year" description="Add start_engine method"/>
   </operations>
 
 Example 4:
@@ -201,15 +204,15 @@ User:
 
   A (wrong):
     <operations>
-        <update path="src/employee.rs" symbol="struct Employee" />
-        <update path="src/employee.rs" symbol="struct Employee salary"/>
+        <update path="src/employee.rs" symbol="struct Employee" description="Change the type of salary to an f32" />
+        <update path="src/employee.rs" symbol="struct Employee salary" description="Change the type to an f32" />
     </operations>
 
   This example demonstrates what not to do. `struct Employee salary` is a child of `struct Employee`.
 
   A (corrected):
     <operations>
-        <update path="src/employee.rs" symbol="struct Employee salary"/>
+        <update path="src/employee.rs" symbol="struct Employee salary" description="Change the type to an f32" />
     </operations>
 
   User:
@@ -217,8 +220,8 @@ User:
 
   A:
     <operations>
-        <delete path="src/employee.rs" symbol="struct Employee department"/>
-        <update path="src/employee.rs" symbol="impl Employee fn print_details"/>
+        <delete path="src/employee.rs" symbol="struct Employee department" />
+        <update path="src/employee.rs" symbol="impl Employee fn print_details" description="Don't print the 'department' field" />
     </operations>
 
 Now generate the operations for the following step. Output pure XML:

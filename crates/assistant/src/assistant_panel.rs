@@ -1,18 +1,17 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    humanize_token_count, parse_next_edit_suggestion,
+    humanize_token_count,
     prompt_library::open_prompt_library,
-    search::*,
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId,
-    ContextStore, CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
-    EditStepOperations, EditSuggestion, InlineAssist, InlineAssistant, InsertIntoEditor,
-    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
+    EditStepOperations, InlineAssist, InlineAssistant, InsertIntoEditor, MessageStatus,
+    ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector,
 };
@@ -27,25 +26,24 @@ use editor::{
         BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Empty, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
     UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, AutoindentMode, Buffer, LanguageRegistry, LspAdapterDelegate,
-    OffsetRangeExt as _, Point, ToOffset,
+    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
+use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -1280,40 +1278,6 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            ContextEvent::EditSuggestionsChanged => {
-                self.editor.update(cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let excerpt_id = *buffer.as_singleton().unwrap().0;
-                    let context = self.context.read(cx);
-                    let highlighted_rows = context
-                        .edit_suggestions()
-                        .iter()
-                        .map(|suggestion| {
-                            let start = buffer
-                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.start)
-                                .unwrap();
-                            let end = buffer
-                                .anchor_in_excerpt(excerpt_id, suggestion.source_range.end)
-                                .unwrap();
-                            start..=end
-                        })
-                        .collect::<Vec<_>>();
-
-                    editor.clear_row_highlights::<EditSuggestion>();
-                    for range in highlighted_rows {
-                        editor.highlight_rows::<EditSuggestion>(
-                            range,
-                            Some(
-                                cx.theme()
-                                    .colors()
-                                    .editor_document_highlight_read_background,
-                            ),
-                            false,
-                            cx,
-                        );
-                    }
-                });
-            }
             ContextEvent::EditStepsChanged => {
                 cx.notify();
             }
@@ -1581,7 +1545,7 @@ impl ContextEditor {
                     .map(|step| step.source_range.start);
                 if new_active_step != self.active_edit_step_start {
                     self.active_edit_step_start = new_active_step;
-                    self.open_multibuffer_for_active_edit_step(cx)
+                    self.open_editor_for_active_edit_step(cx)
                         .detach_and_log_err(cx);
                 }
             }
@@ -1590,10 +1554,7 @@ impl ContextEditor {
         cx.emit(event.clone());
     }
 
-    fn open_multibuffer_for_active_edit_step(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    fn open_editor_for_active_edit_step(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let Some(active_edit_step_start) = self.active_edit_step_start.clone() else {
             return Task::ready(Err(anyhow!("no active edit step")));
         };
@@ -1608,16 +1569,50 @@ impl ContextEditor {
             Err(_) => return Task::ready(Err(anyhow!("active edit step not found"))),
         };
 
-        let multibuffer = active_edit_step.locations_multibuffer(&self.project, cx);
+        dbg!(active_edit_step);
+        let edit_suggestions = active_edit_step.edit_suggestions(&self.project, cx);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        cx.spawn(|this, mut cx| async move {
-            let buffer = multibuffer.await?;
-            let editor =
-                cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))?;
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.add_item_to_active_pane(Box::new(editor), None, cx)
-            })
+        cx.spawn(|_this, mut cx| async move {
+            let edit_suggestions = edit_suggestions.await;
+
+            if edit_suggestions.is_empty() {
+                return Ok(());
+            } else if edit_suggestions.len() == 1 {
+                // If there's only one buffer, open it directly
+                let (buffer, _) = edit_suggestions.into_iter().next().unwrap();
+                let editor = workspace.update(&mut cx, |workspace, cx| {
+                    let active_pane = workspace.active_pane().clone();
+                    workspace.open_project_item::<Editor>(active_pane, buffer, cx)
+                })?;
+            } else {
+                // If there are multiple buffers, create a multibuffer
+                let multibuffer = cx.new_model(|cx| {
+                    let replica_id = project.read(cx).replica_id();
+                    let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
+                    for (buffer, suggestion_groups) in edit_suggestions {
+                        multibuffer.push_excerpts(
+                            buffer,
+                            suggestion_groups
+                                .into_iter()
+                                .map(|suggestion_group| ExcerptRange {
+                                    context: suggestion_group.context_range,
+                                    primary: None,
+                                }),
+                            cx,
+                        );
+                    }
+                    multibuffer
+                })?;
+
+                let editor = cx
+                    .new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(Box::new(editor), None, cx)
+                })?;
+            };
+
+            Ok(())
         })
     }
 
@@ -1883,173 +1878,6 @@ impl ContextEditor {
         });
     }
 
-    fn apply_edit(&mut self, _: &ApplyEdit, cx: &mut ViewContext<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let project = workspace.read(cx).project().clone();
-
-        struct Edit {
-            old_text: String,
-            new_text: String,
-        }
-
-        let context = self.context.read(cx);
-        let context_buffer = context.buffer().read(cx);
-        let context_buffer_snapshot = context_buffer.snapshot();
-
-        let selections = self.editor.read(cx).selections.disjoint_anchors();
-        let mut selections = selections.iter().peekable();
-        let selected_suggestions = context
-            .edit_suggestions()
-            .iter()
-            .filter(|suggestion| {
-                while let Some(selection) = selections.peek() {
-                    if selection
-                        .end
-                        .text_anchor
-                        .cmp(&suggestion.source_range.start, context_buffer)
-                        .is_lt()
-                    {
-                        selections.next();
-                        continue;
-                    }
-                    if selection
-                        .start
-                        .text_anchor
-                        .cmp(&suggestion.source_range.end, context_buffer)
-                        .is_gt()
-                    {
-                        break;
-                    }
-                    return true;
-                }
-                false
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let mut opened_buffers: HashMap<PathBuf, Task<Result<Model<Buffer>>>> = HashMap::default();
-        project.update(cx, |project, cx| {
-            for suggestion in &selected_suggestions {
-                opened_buffers
-                    .entry(suggestion.full_path.clone())
-                    .or_insert_with(|| {
-                        project.open_buffer_for_full_path(&suggestion.full_path, cx)
-                    });
-            }
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            let mut buffers_by_full_path = HashMap::default();
-            for (full_path, buffer) in opened_buffers {
-                if let Some(buffer) = buffer.await.log_err() {
-                    buffers_by_full_path.insert(full_path, buffer);
-                }
-            }
-
-            let mut suggestions_by_buffer = HashMap::default();
-            cx.update(|cx| {
-                for suggestion in selected_suggestions {
-                    if let Some(buffer) = buffers_by_full_path.get(&suggestion.full_path) {
-                        let (_, edits) = suggestions_by_buffer
-                            .entry(buffer.clone())
-                            .or_insert_with(|| (buffer.read(cx).snapshot(), Vec::new()));
-
-                        let mut lines = context_buffer_snapshot
-                            .as_rope()
-                            .chunks_in_range(
-                                suggestion.source_range.to_offset(&context_buffer_snapshot),
-                            )
-                            .lines();
-                        if let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
-                            let old_text = context_buffer_snapshot
-                                .text_for_range(suggestion.old_text_range)
-                                .collect();
-                            let new_text = context_buffer_snapshot
-                                .text_for_range(suggestion.new_text_range)
-                                .collect();
-                            edits.push(Edit { old_text, new_text });
-                        }
-                    }
-                }
-            })?;
-
-            let edits_by_buffer = cx
-                .background_executor()
-                .spawn(async move {
-                    let mut result = HashMap::default();
-                    for (buffer, (snapshot, suggestions)) in suggestions_by_buffer {
-                        let edits =
-                            result
-                                .entry(buffer)
-                                .or_insert(Vec::<(Range<language::Anchor>, _)>::new());
-                        for suggestion in suggestions {
-                            if let Some(range) =
-                                fuzzy_search_lines(snapshot.as_rope(), &suggestion.old_text)
-                            {
-                                let edit_start = snapshot.anchor_after(range.start);
-                                let edit_end = snapshot.anchor_before(range.end);
-                                if let Err(ix) = edits.binary_search_by(|(range, _)| {
-                                    range.start.cmp(&edit_start, &snapshot)
-                                }) {
-                                    edits.insert(
-                                        ix,
-                                        (edit_start..edit_end, suggestion.new_text.clone()),
-                                    );
-                                }
-                            } else {
-                                log::info!(
-                                    "assistant edit did not match any text in buffer {:?}",
-                                    &suggestion.old_text
-                                );
-                            }
-                        }
-                    }
-                    result
-                })
-                .await;
-
-            let mut project_transaction = ProjectTransaction::default();
-            let (editor, workspace, title) = this.update(&mut cx, |this, cx| {
-                for (buffer_handle, edits) in edits_by_buffer {
-                    buffer_handle.update(cx, |buffer, cx| {
-                        buffer.start_transaction();
-                        buffer.edit(
-                            edits,
-                            Some(AutoindentMode::Block {
-                                original_indent_columns: Vec::new(),
-                            }),
-                            cx,
-                        );
-                        buffer.end_transaction(cx);
-                        if let Some(transaction) = buffer.finalize_last_transaction() {
-                            project_transaction
-                                .0
-                                .insert(buffer_handle.clone(), transaction.clone());
-                        }
-                    });
-                }
-
-                (
-                    this.editor.downgrade(),
-                    this.workspace.clone(),
-                    this.title(cx),
-                )
-            })?;
-
-            Editor::open_project_transaction(
-                &editor,
-                workspace,
-                project_transaction,
-                format!("Edits from {}", title),
-                cx,
-            )
-            .await
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         self.context
             .update(cx, |context, cx| context.save(None, self.fs.clone(), cx));
@@ -2128,7 +1956,6 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::confirm_command))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(cx.listener(ContextEditor::apply_edit))
             .on_action(cx.listener(ContextEditor::debug_edit_steps))
             .size_full()
             .v_flex()
