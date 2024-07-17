@@ -3,14 +3,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, Empty, EntityId, EventEmitter};
+use gpui::{AppContext, EntityId, EventEmitter, Subscription};
 use ui::{prelude::*, ButtonLike, IconButtonShape, Tooltip};
-use workspace::item::ItemHandle;
+use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct MultibufferHint {
     shown_on: HashSet<EntityId>,
     active_item: Option<Box<dyn ItemHandle>>,
+    subscription: Option<Subscription>,
 }
 
 const NUMBER_OF_HINTS: usize = 10;
@@ -22,6 +23,7 @@ impl MultibufferHint {
         Self {
             shown_on: Default::default(),
             active_item: None,
+            subscription: None,
         }
     }
 }
@@ -60,6 +62,29 @@ impl MultibufferHint {
     fn dismiss(&mut self, cx: &mut AppContext) {
         Self::set_count(NUMBER_OF_HINTS, cx)
     }
+
+    /// Determines the toolbar location for this [`MultibufferHint`].
+    fn determine_toolbar_location(&mut self, cx: &mut ViewContext<Self>) -> ToolbarItemLocation {
+        if Self::shown_count() >= NUMBER_OF_HINTS {
+            return ToolbarItemLocation::Hidden;
+        }
+
+        let Some(active_pane_item) = self.active_item.as_ref() else {
+            return ToolbarItemLocation::Hidden;
+        };
+
+        if active_pane_item.is_singleton(cx)
+            || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
+        {
+            return ToolbarItemLocation::Hidden;
+        }
+
+        if self.shown_on.insert(active_pane_item.item_id()) {
+            Self::increment_count(cx);
+        }
+
+        ToolbarItemLocation::Secondary
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for MultibufferHint {}
@@ -70,37 +95,34 @@ impl ToolbarItemView for MultibufferHint {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
-        if Self::shown_count() > NUMBER_OF_HINTS {
-            return ToolbarItemLocation::Hidden;
-        }
+        cx.notify();
+        self.active_item = active_pane_item.map(|item| item.boxed_clone());
 
         let Some(active_pane_item) = active_pane_item else {
             return ToolbarItemLocation::Hidden;
         };
 
-        if active_pane_item.is_singleton(cx) {
-            return ToolbarItemLocation::Hidden;
-        }
+        let this = cx.view().downgrade();
+        self.subscription = Some(active_pane_item.subscribe_to_item_events(
+            cx,
+            Box::new(move |event, cx| {
+                if let ItemEvent::UpdateBreadcrumbs = event {
+                    this.update(cx, |this, cx| {
+                        cx.notify();
+                        let location = this.determine_toolbar_location(cx);
+                        cx.emit(ToolbarItemEvent::ChangeLocation(location))
+                    })
+                    .ok();
+                }
+            }),
+        ));
 
-        if self.shown_on.insert(active_pane_item.item_id()) {
-            Self::increment_count(cx)
-        }
-
-        self.active_item = Some(active_pane_item.boxed_clone());
-        ToolbarItemLocation::Secondary
+        self.determine_toolbar_location(cx)
     }
 }
 
 impl Render for MultibufferHint {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(active_item) = self.active_item.as_ref() else {
-            return Empty.into_any_element();
-        };
-
-        if active_item.breadcrumbs(cx.theme(), cx).is_none() {
-            return Empty.into_any_element();
-        }
-
         h_flex()
             .px_2()
             .justify_between()
