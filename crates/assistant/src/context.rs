@@ -341,30 +341,30 @@ pub struct EditStep {
     pub operations: Option<EditStepOperations>,
 }
 
-pub struct EditLocation {
+pub struct EditStepLocation {
     pub buffer: Model<Buffer>,
     pub range: Range<language::Anchor>,
 }
 
 impl EditStep {
-    pub fn edit_locations_multibuffer(
+    pub fn locations_multibuffer(
         &self,
         project: &Model<Project>,
         cx: &AppContext,
     ) -> Task<Result<Model<MultiBuffer>>> {
         let replica_id = project.read(cx).replica_id();
-        let edit_locations = self.edit_locations(project, cx);
+        let edit_locations = self.locations(project, cx);
         cx.spawn(|mut cx| async move {
             let edit_locations = edit_locations.await;
             cx.new_model(|cx| {
                 let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
-                for location in edit_locations {
+                for (buffer, ranges) in edit_locations {
                     multibuffer.push_excerpts(
-                        location.buffer,
-                        [ExcerptRange {
-                            context: location.range,
+                        buffer.clone(),
+                        ranges.into_iter().map(|range| ExcerptRange {
+                            context: range,
                             primary: None,
-                        }],
+                        }),
                         cx,
                     );
                 }
@@ -373,44 +373,57 @@ impl EditStep {
         })
     }
 
-    pub fn edit_locations(
+    pub fn locations(
         &self,
         project: &Model<Project>,
         cx: &AppContext,
-    ) -> Task<Vec<EditLocation>> {
+    ) -> Task<HashMap<Model<Buffer>, Vec<Range<language::Anchor>>>> {
         let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
-            return Task::ready(Vec::new());
+            return Task::ready(HashMap::default());
         };
 
         let location_tasks: Vec<_> = operations
             .iter()
-            .map(|operation| {
-                self.locate_symbol(
-                    operation.path.clone(),
-                    operation.kind.clone(),
-                    project.clone(),
-                    cx,
-                )
-            })
+            .map(|operation| self.operation_location(operation, project.clone(), cx))
             .collect();
 
-        cx.spawn(|_| async move {
-            future::join_all(location_tasks)
+        cx.spawn(|mut cx| async move {
+            let locations = future::join_all(location_tasks)
                 .await
                 .into_iter()
                 .filter_map(|location| location.log_err())
-                .collect()
+                .collect::<Vec<_>>();
+
+            let mut buffer_ranges: HashMap<Model<Buffer>, Vec<Range<language::Anchor>>> =
+                HashMap::default();
+            for location in locations {
+                buffer_ranges
+                    .entry(location.buffer)
+                    .or_insert_with(Vec::new)
+                    .push(location.range);
+            }
+
+            for (buffer, ranges) in buffer_ranges.iter_mut() {
+                buffer
+                    .update(&mut cx, |buffer, _cx| {
+                        ranges.sort_by(|a, b| a.cmp(b, buffer));
+                        ranges.dedup_by(|a, b| a.intersects(b, buffer));
+                    })
+                    .ok();
+            }
+
+            buffer_ranges
         })
     }
 
-    fn locate_symbol(
+    fn operation_location(
         &self,
-        path: String,
-        operation: EditOperationKind,
+        operation: &EditOperation,
         project: Model<Project>,
         cx: &AppContext,
-    ) -> Task<Result<EditLocation>> {
-        let path = path.to_string();
+    ) -> Task<Result<EditStepLocation>> {
+        let path = operation.path.clone();
+        let kind = operation.kind.clone();
         cx.spawn(move |mut cx| async move {
             let buffer = project
                 .update(&mut cx, |project, cx| {
@@ -421,7 +434,7 @@ impl EditStep {
                 })??
                 .await?;
 
-            let range = if let Some(symbol) = operation.symbol() {
+            let range = if let Some(symbol) = kind.symbol() {
                 let outline = buffer
                     .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
                     .context("no outline for buffer")?;
@@ -432,7 +445,7 @@ impl EditStep {
                     .context("symbol not found")?;
                 outline.items[candidate.id].range.clone()
             } else {
-                match operation {
+                match kind {
                     EditOperationKind::PrependChild { .. } => {
                         buffer.update(&mut cx, |buffer, _| {
                             let start = language::Anchor::MIN;
@@ -456,7 +469,7 @@ impl EditStep {
                 }
             };
 
-            Ok(EditLocation { buffer, range })
+            Ok(EditStepLocation { buffer, range })
         })
     }
 }

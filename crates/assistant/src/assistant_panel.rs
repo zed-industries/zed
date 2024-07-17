@@ -1608,7 +1608,7 @@ impl ContextEditor {
             Err(_) => return Task::ready(Err(anyhow!("active edit step not found"))),
         };
 
-        let multibuffer = active_edit_step.edit_locations_multibuffer(&self.project, cx);
+        let multibuffer = active_edit_step.locations_multibuffer(&self.project, cx);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
