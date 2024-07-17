@@ -520,10 +520,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     };
 
-    if !request.open_ssh_paths.is_empty() {
+    if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
             open_ssh_paths(
-                request.open_ssh_paths,
+                connection_info,
+                request.open_paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

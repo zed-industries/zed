@@ -823,8 +823,8 @@ impl TestClient {
     ) -> (Model<Project>, WorktreeId) {
         let project = cx.update(|cx| {
             Project::ssh(
-                self.client().clone(),
                 ssh,
+                self.client().clone(),
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),

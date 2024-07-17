@@ -6,7 +6,7 @@ use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     future::{BoxFuture, LocalBoxFuture},
-    AsyncBufReadExt as _, AsyncWriteExt as _, Future,
+    AsyncWriteExt as _, Future,
 };
 use futures::{select_biased, AsyncReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{AppContext, AsyncAppContext, Model, WeakModel};
@@ -23,8 +23,7 @@ use smol::{
         self,
         unix::{MetadataExt, PermissionsExt as _},
     },
-    io::BufReader,
-    process,
+    process::{self, Stdio},
 };
 use std::{
     any::TypeId,
@@ -37,6 +36,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+use util::ResultExt as _;
 
 const SERVER_BINARY_LOCAL_PATH: &str = "target/debug/remote_server";
 const SERVER_BINARY_REMOTE_PATH: &str = "./.zed_remote_server";
@@ -88,7 +88,9 @@ impl SshSession {
         user: String,
         host: String,
         port: u16,
-        password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
+        password_callback: Box<
+            dyn Send + Fn(String, &mut AsyncAppContext) -> oneshot::Receiver<Result<String>>,
+        >,
         cx: &AsyncAppContext,
     ) -> Result<Arc<Self>> {
         let client_state = SshClientState::new(user, host, port, password_callback, cx).await?;
@@ -395,7 +397,9 @@ impl SshClientState {
         user: String,
         host: String,
         port: u16,
-        password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
+        password_callback: Box<
+            dyn Send + Fn(String, &mut AsyncAppContext) -> oneshot::Receiver<Result<String>>,
+        >,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
         let url = format!("{user}@{host}");
@@ -403,53 +407,77 @@ impl SshClientState {
             .prefix("zed-ssh-session")
             .tempdir()?;
 
+        // Create a TCP listener to handle requests from the askpass program.
         let listener = smol::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("failed to find open port");
         let askpass_port = listener.local_addr().unwrap().port();
-        let password_task = cx.spawn(|mut cx| async move {
-            if let Ok((mut stream, _)) = listener.accept().await {
-                let mut buffer = [0; 1024];
-                if stream.read(&mut buffer).await.is_ok() {
-                    let password = password_callback(&mut cx);
-                    let _ = stream.write_all(password.as_bytes()).await;
-                    return;
+        let askpass_task = cx.spawn(|mut cx| async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = Vec::new();
+                if stream.read_to_end(&mut buffer).await.is_err() {
+                    buffer.clear();
+                }
+                let args = String::from_utf8_lossy(&buffer);
+
+                dbg!(&args);
+
+                if let Some(password) = password_callback(args.to_string(), &mut cx)
+                    .await
+                    .context("failed to get ssh password")
+                    .and_then(|p| p)
+                    .log_err()
+                {
+                    stream.write_all(password.as_bytes()).await.log_err();
                 }
             }
         });
 
-        // TODO remove
-        password_task.detach();
-
-        let askpass_script =
-            format!("#!/bin/sh\nnc 127.0.0.1 {askpass_port} < /dev/null 2> /dev/null");
+        // Create an askpass script that communicates back to this process using TCP.
+        let askpass_script = format!(
+            "{shebang}\n echo \"$@\" | nc 127.0.0.1 {askpass_port} 2> /dev/null",
+            shebang = "#!/bin/sh"
+        );
         let askpass_script_path = temp_dir.path().join("askpass.sh");
         fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o700)).await?;
+        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
-        let socket_path = temp_dir.path().join("control.sock");
+        // Start the master SSH process, which does not do anything except for establish
+        // the connection and keep it open, allowing other ssh commands to reuse it
+        // via a control socket.
+        let socket_path = temp_dir.path().join("ssh.sock");
         let mut master_process = process::Command::new("ssh")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(["-o", "ControlMaster=yes", "-o"])
+            .args(["-N", "-o", "ControlMaster=yes", "-o"])
             .arg(format!("ControlPath={}", socket_path.display()))
-            .stdin(process::Stdio::piped())
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
             .args(["-p", &port.to_string()])
             .arg(&url)
             .spawn()?;
 
-        let stdin = master_process.stdin.as_mut().unwrap();
-        let mut stdout = BufReader::new(master_process.stdout.as_mut().unwrap());
-        stdin.write_all(b"echo hello zed\n").await?;
-        stdin.flush().await?;
-        let mut line = String::new();
-        stdout.read_line(&mut line).await?;
+        // Wait for this ssh process to close its stdout, indicating that authentication
+        // has completed.
+        let stdout = master_process.stdout.as_mut().unwrap();
+        let mut output = [0u8; 1];
+        stdout.read(&mut output).await?;
+        drop(askpass_task);
+
+        if master_process.try_status()?.is_some() {
+            let mut stderr_bytes = Vec::new();
+            let mut stderr = master_process.stderr.take().unwrap();
+            stderr.read_to_end(&mut stderr_bytes).await?;
+            Err(anyhow!(
+                "failed to connect: {}",
+                String::from_utf8_lossy(&stderr_bytes)
+            ))?;
+        }
 
         Ok(Self {
             _master_process: master_process,
-            port: askpass_port,
+            port,
             _temp_dir: temp_dir,
             socket_path,
             url,
@@ -535,9 +563,9 @@ impl SshClientState {
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
         command
-            .stdin(process::Stdio::piped())
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
@@ -549,10 +577,10 @@ async fn ensure_server_binary(session: &SshClientState) -> Result<()> {
 
     let src_stat = fs::metadata(src_path).await?;
     let size = src_stat.size();
-    let perm = 0o755_u32;
+    let server_mode = 0o755;
     let dst_stat = session.file_stat(&dst_path).await?;
     let server_binary_exists = dst_stat.map_or(false, |stats| {
-        stats.size == src_stat.size() && stats.mode == perm
+        stats.size == src_stat.size() && stats.mode == server_mode
     });
     if server_binary_exists {
         log::info!("remote development server already present",);
@@ -566,7 +594,7 @@ async fn ensure_server_binary(session: &SshClientState) -> Result<()> {
         .await
         .context("failed to upload server binary")?;
 
-    session.chmod(dst_path, 0o755).await?;
+    session.chmod(dst_path, server_mode).await?;
     log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
     Ok(())

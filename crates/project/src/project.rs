@@ -831,8 +831,8 @@ impl Project {
     }
 
     pub fn ssh(
-        client: Arc<Client>,
         ssh_session: Arc<SshSession>,
+        client: Arc<Client>,
         node: Arc<dyn NodeRuntime>,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,

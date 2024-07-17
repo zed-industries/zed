@@ -22,24 +22,24 @@ use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
 use workspace::{AppState, Workspace};
 
+use crate::zed::password_prompt::PasswordPrompt;
 use crate::{init_headless, init_ui};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
     pub open_paths: Vec<PathLikeWithPosition<PathBuf>>,
-    pub open_ssh_paths: Vec<SshPath>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
+    pub ssh_connection: Option<SshConnectionInfo>,
 }
 
-#[derive(Debug)]
-pub struct SshPath {
+#[derive(Debug, PartialEq, Eq)]
+pub struct SshConnectionInfo {
     pub username: String,
-    pub password: String,
+    pub password: Option<String>,
     pub host: String,
     pub port: u16,
-    pub path: PathBuf,
 }
 
 impl OpenRequest {
@@ -53,7 +53,7 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
             } else if url.starts_with("ssh://") {
-                this.parse_ssh_file_path(&url)
+                this.parse_ssh_file_path(&url)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -74,28 +74,35 @@ impl OpenRequest {
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str) {
-        let Some(url) = url::Url::parse(file).log_err() else {
-            return;
-        };
-        let Some(host) = url.host() else {
-            return;
-        };
-        let username = url.username();
+    fn parse_ssh_file_path(&mut self, file: &str) -> Result<()> {
+        let url = url::Url::parse(file)?;
+        let host = url
+            .host()
+            .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
+            .to_string();
+        let username = url.username().to_string();
         if username.is_empty() {
-            return;
+            return Err(anyhow!("missing username in ssh url: {}", file));
         }
-        let Some(password) = url.password() else {
-            return;
-        };
+        let password = url.password().map(|s| s.to_string());
         let port = url.port().unwrap_or(22);
-        self.open_ssh_paths.push(SshPath {
-            username: username.to_string(),
-            password: password.to_string(),
-            host: host.to_string(),
+        if !self.open_paths.is_empty() {
+            return Err(anyhow!("cannot open both local and ssh paths"));
+        }
+        let connection = SshConnectionInfo {
+            username,
+            password,
+            host,
             port,
-            path: PathBuf::from(url.path()),
-        });
+        };
+        if let Some(ssh_connection) = &self.ssh_connection {
+            if *ssh_connection != connection {
+                return Err(anyhow!("cannot open multiple ssh connections"));
+            }
+        }
+        self.ssh_connection = Some(connection);
+        self.parse_file_path(url.path());
+        Ok(())
     }
 
     fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
@@ -197,49 +204,78 @@ fn connect_to_cli(
 }
 
 pub async fn open_ssh_paths(
-    ssh_paths: Vec<SshPath>,
+    connection_info: SshConnectionInfo,
+    paths: Vec<PathLikeWithPosition<PathBuf>>,
     app_state: Arc<AppState>,
     _open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    for path in ssh_paths {
-        let Some(session) = remote::SshSession::client(
-            path.username,
-            path.host,
-            path.port,
-            Box::new(move |_cx| path.password.clone()),
+    let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+    let window = cx.open_window(options, |cx| {
+        let project = project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+        cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
+    })?;
+
+    let session = remote::SshSession::client(
+        connection_info.username,
+        connection_info.host,
+        connection_info.port,
+        Box::new(move |args, cx| {
+            let (tx, rx) = oneshot::channel();
+            window
+                .update(cx, |workspace, cx| {
+                    cx.activate_window();
+                    if let Some(password) = connection_info.password.clone() {
+                        tx.send(Ok(password)).ok();
+                    } else {
+                        workspace.toggle_modal(cx, |cx| PasswordPrompt::new(args, tx, cx));
+                    }
+                })
+                .unwrap();
+            rx
+        }),
+        cx,
+    )
+    .await;
+
+    if session.is_err() {
+        window.update(cx, |_, cx| cx.remove_window()).ok();
+    }
+
+    let session = session?;
+
+    let project = cx.update(|cx| {
+        project::Project::ssh(
+            session,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
             cx,
         )
-        .await
-        .log_err() else {
-            continue;
-        };
+    })?;
 
-        let project = cx.update(|cx| {
-            project::Project::ssh(
-                app_state.client.clone(),
-                session,
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            )
-        })?;
-
+    for path in paths {
         project
             .update(cx, |project, cx| {
-                project.find_or_create_worktree(&path.path, true, cx)
+                project.find_or_create_worktree(&path.path_like, true, cx)
             })?
             .await?;
-
-        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-        let window = cx.open_window(options, {
-            let app_state = app_state.clone();
-            move |cx| cx.new_view(|cx| Workspace::new(None, project, app_state, cx))
-        })?;
-        window.update(cx, |_, cx| cx.activate_window()).log_err();
     }
+
+    window.update(cx, |_, cx| {
+        cx.replace_root_view(|cx| Workspace::new(None, project, app_state, cx))
+    })?;
+    window.update(cx, |_, cx| cx.activate_window())?;
+
     Ok(())
 }
 
