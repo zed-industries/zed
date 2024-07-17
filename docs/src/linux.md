@@ -3,13 +3,13 @@
 For most people we recommend using the script on the [download](/download) page to install Zed:
 
 ```sh
-curl https://zed.dev/install.sh | sh
+curl -f https://zed.dev/install.sh | sh
 ```
 
 We also offer a preview build of Zed which receives updates about a week ahead of stable. You can install it with:
 
 ```sh
-curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
+curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
 The install script does not work on systems that:
