@@ -394,10 +394,9 @@ impl DebugPanelItem {
 
     fn handle_restart_action(&mut self, _: &Restart, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
-        let thread_id = self.thread_id;
 
         cx.background_executor()
-            .spawn(async move { client.restart(thread_id).await })
+            .spawn(async move { client.restart().await })
             .detach();
     }
 
@@ -486,8 +485,13 @@ impl Render for DebugPanelItem {
                         IconButton::new("debug-restart", IconName::DebugRestart)
                             .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Restart))))
                             .disabled(
-                                thread_status != ThreadStatus::Stopped
-                                    && thread_status != ThreadStatus::Running,
+                                !self
+                                    .client
+                                    .capabilities()
+                                    .supports_restart_request
+                                    .unwrap_or_default()
+                                    || thread_status != ThreadStatus::Stopped
+                                        && thread_status != ThreadStatus::Running,
                             )
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )

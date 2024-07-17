@@ -3,14 +3,14 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause,
+        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Restart,
         SetBreakpoints, StepBack, StepIn, StepOut,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
-    NextArguments, PauseArguments, Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source,
-    SourceBreakpoint, StackFrame, StepBackArguments, StepInArguments, StepOutArguments,
-    SteppingGranularity, Variable,
+    NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
+    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
+    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
@@ -298,8 +298,8 @@ impl DebugAdapterClient {
         self.config.request.clone()
     }
 
-    pub fn capabilities(&self) -> Option<dap_types::Capabilities> {
-        self.capabilities.clone()
+    pub fn capabilities(&self) -> dap_types::Capabilities {
+        self.capabilities.clone().unwrap()
     }
 
     pub fn next_request_id(&self) -> u64 {
@@ -406,11 +406,14 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn restart(&self, thread_id: u64) {
-        self.request::<StepBack>(StepBackArguments {
-            thread_id,
-            single_thread: Some(true),
-            granularity: Some(SteppingGranularity::Statement),
+    pub async fn restart(&self) {
+        self.request::<Restart>(RestartArguments {
+            raw: self
+                .config
+                .request_args
+                .as_ref()
+                .map(|v| v.args.clone())
+                .unwrap_or(Value::Null),
         })
         .await
         .log_err();
