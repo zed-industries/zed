@@ -9491,6 +9491,11 @@ impl Editor {
                         }
                         editor
                     });
+                    cx.subscribe(&rename_editor, |_, _, e, cx| match e {
+                        EditorEvent::Focused => cx.emit(EditorEvent::FocusedIn),
+                        _ => {}
+                    })
+                    .detach();
 
                     let write_highlights =
                         this.clear_background_highlights::<DocumentHighlightWrite>(cx);
