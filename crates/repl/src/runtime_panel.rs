@@ -23,7 +23,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ClearOutputs]);
+actions!(repl, [Run, ClearOutputs, Interrupt, Shutdown]);
 actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
@@ -51,6 +51,8 @@ pub struct RuntimePanel {
 pub enum ReplEvent {
     Run(WeakView<Editor>),
     ClearOutputs(WeakView<Editor>),
+    Interrupt(WeakView<Editor>),
+    Shutdown(WeakView<Editor>),
 }
 
 impl RuntimePanel {
@@ -108,6 +110,40 @@ impl RuntimePanel {
                                         },
                                     )
                                     .detach();
+
+                                editor
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
+                                        move |_: &Interrupt, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            repl_editor_event_tx
+                                                .unbounded_send(ReplEvent::Interrupt(
+                                                    editor.clone(),
+                                                ))
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
+
+                                editor
+                                    .register_action({
+                                        let editor = cx.view().downgrade();
+                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
+
+                                        move |_: &Shutdown, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            repl_editor_event_tx
+                                                .unbounded_send(ReplEvent::Shutdown(editor.clone()))
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
                             },
                         ),
                     ];
@@ -122,6 +158,12 @@ impl RuntimePanel {
                                     }
                                     ReplEvent::ClearOutputs(editor) => {
                                         runtime_panel.clear_outputs(editor, cx);
+                                    }
+                                    ReplEvent::Interrupt(editor) => {
+                                        runtime_panel.interrupt(editor, cx);
+                                    }
+                                    ReplEvent::Shutdown(editor) => {
+                                        runtime_panel.shutdown(editor, cx);
                                     }
                                 })
                                 .ok();
@@ -320,11 +362,31 @@ impl RuntimePanel {
             cx.notify();
         }
     }
+
+    pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get_mut(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.interrupt(cx);
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.shutdown(cx);
+            });
+            cx.notify();
+        }
+    }
 }
 
 pub enum SessionSupport {
     ActiveSession(View<Session>),
-    Inactive(KernelSpecification),
+    Inactive(Box<KernelSpecification>),
     RequiresSetup(Arc<str>),
     Unsupported,
 }
@@ -350,7 +412,7 @@ impl RuntimePanel {
                 let kernelspec = self.kernelspec(&language, cx);
 
                 match kernelspec {
-                    Some(kernelspec) => SessionSupport::Inactive(kernelspec),
+                    Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
                     None => {
                         // If no kernelspec but language is one of typescript or python
                         // then we return RequiresSetup

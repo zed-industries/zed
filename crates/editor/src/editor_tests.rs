@@ -8812,7 +8812,6 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let follower_1 = cx
         .update_window(*workspace.deref(), |_, cx| {
             Editor::from_state_proto(
-                pane.clone(),
                 workspace.root_view(cx).unwrap(),
                 ViewId {
                     creator: Default::default(),
@@ -8904,7 +8903,6 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let follower_2 = cx
         .update_window(*workspace.deref(), |_, cx| {
             Editor::from_state_proto(
-                pane.clone(),
                 workspace.root_view(cx).unwrap().clone(),
                 ViewId {
                     creator: Default::default(),

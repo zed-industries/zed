@@ -35,6 +35,7 @@ There are several third-party Zed packages for various Linux distributions and p
 * Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
 * Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
 * ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
+* AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
 * Please add others to this list!
 
 When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
@@ -64,9 +65,9 @@ ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/zed
 If you'd like integration with an XDG-compatible desktop environment, you will also need to install the `.desktop` file:
 
 ```sh
-cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/zed.desktop
-sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed.desktop
-sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/zed.desktop
+cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/dev.zed.Zed.desktop
+sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/dev.zed.Zed.desktop
+sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/dev.zed.Zed.desktop
 ```
 
 ## Troubleshooting

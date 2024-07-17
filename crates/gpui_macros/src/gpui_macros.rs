@@ -70,6 +70,12 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
     styles::cursor_style_methods(input)
 }
 
+/// Generates methods for border styles.
+#[proc_macro]
+pub fn border_style_methods(input: TokenStream) -> TokenStream {
+    styles::border_style_methods(input)
+}
+
 /// Generates methods for box shadow styles.
 #[proc_macro]
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {

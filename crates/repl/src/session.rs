@@ -16,8 +16,7 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
-    ShutdownRequest,
+    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -173,24 +172,6 @@ impl Session {
                                         .ok();
                                 }
                             });
-
-                            // For some reason sending a kernel info request will brick the ark (R) kernel.
-                            // Note that Deno and Python do not have this issue.
-                            if this.kernel_specification.name == "ark" {
-                                return;
-                            }
-
-                            // Get kernel info after (possibly) letting the kernel start
-                            cx.spawn(|this, mut cx| async move {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(120))
-                                    .await;
-                                this.update(&mut cx, |this, _cx| {
-                                    this.send(KernelInfoRequest {}.into(), _cx).ok();
-                                })
-                                .ok();
-                            })
-                            .detach();
                         })
                         .ok();
                     }
@@ -283,6 +264,10 @@ impl Session {
         } else {
             return;
         };
+
+        if code.is_empty() {
+            return;
+        }
 
         let execute_request = ExecuteRequest {
             code: code.to_string(),

@@ -274,7 +274,7 @@ zed_actions = { path = "crates/zed_actions" }
 alacritty_terminal = "0.23"
 any_vec = "0.13"
 anyhow = "1.0.57"
-ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "29f2e1a" }
+ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1" }
 async-fs = "1.6"

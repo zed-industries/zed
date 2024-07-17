@@ -34,7 +34,7 @@ pub(crate) struct TestPlatform {
 #[derive(Default)]
 pub(crate) struct TestPrompts {
     multiple_choice: VecDeque<oneshot::Sender<usize>>,
-    new_path: VecDeque<(PathBuf, oneshot::Sender<Option<PathBuf>>)>,
+    new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
 }
 
 impl TestPlatform {
@@ -80,7 +80,7 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
-        tx.send(select_path(&path)).ok();
+        tx.send(Ok(select_path(&path))).ok();
     }
 
     pub(crate) fn simulate_prompt_answer(&self, response_ix: usize) {
@@ -216,14 +216,14 @@ impl Platform for TestPlatform {
     fn prompt_for_paths(
         &self,
         _options: crate::PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<std::path::PathBuf>>>> {
         unimplemented!()
     }
 
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
-    ) -> oneshot::Receiver<Option<std::path::PathBuf>> {
+    ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
         self.prompts
             .borrow_mut()

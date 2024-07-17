@@ -202,35 +202,65 @@ table tbody tr:nth-child(2n) {
 }
 
 blockquote {
-  margin: 20px 0;
-  padding: 0 20px;
+  margin: auto;
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
   color: var(--fg);
   background-color: var(--quote-bg);
-  border-block-start: 0.1em solid var(--quote-border);
-  border-block-end: 0.1em solid var(--quote-border);
+  border: 1px solid var(--quote-border);
 }
 
-.warning {
-  margin: 20px;
-  padding: 0 20px;
-  border-inline-start: 2px solid var(--warning-border);
+blockquote > p {
+  margin: 0;
+  padding-left: 2.6rem;
+  font-size: 1.4rem;
 }
 
-.warning:before {
+blockquote:before {
   position: absolute;
-  width: 3rem;
-  height: 3rem;
-  margin-inline-start: calc(-1.5rem - 21px);
   content: "ⓘ";
-  text-align: center;
-  background-color: var(--bg);
-  color: var(--warning-border);
+  margin: 0.3rem 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  font-size: 1.6rem;
   font-weight: bold;
-  font-size: 2rem;
+  color: var(--icons);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.625em;
 }
 
 blockquote .warning:before {
   background-color: var(--quote-bg);
+}
+
+.warning {
+  margin: auto;
+  padding: 1rem 1.25rem;
+  background-color: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+.warning > p {
+  margin: 0;
+  padding-left: 2.6rem;
+  font-size: 1.4rem;
+}
+
+.warning:before {
+  position: absolute;
+  content: "ⓘ";
+  margin: 0.3rem 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  font-size: 1.6rem;
+  font-weight: bold;
+  color: var(--warning-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.625em;
 }
 
 kbd {

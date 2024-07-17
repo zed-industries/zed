@@ -268,6 +268,7 @@ impl Vim {
             EditorEvent::Edited { .. } => {
                 Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx))
             }
+            EditorEvent::FocusedIn => Vim::update(cx, |vim, cx| vim.sync_vim_settings(cx)),
             _ => {}
         }));
 
