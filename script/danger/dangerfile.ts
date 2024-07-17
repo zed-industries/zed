@@ -33,3 +33,13 @@ if (!hasReleaseNotes) {
     ].join("\n"),
   );
 }
+
+const ISSUE_LINK_PATTERN = /\(#(\d+)\)/g;
+const releaseNotesSection = danger.github.pr.body.match(
+  /Release Notes:\r?\n([\s\S]*?)(?:\r?\n){2}/,
+);
+if (releaseNotesSection && ISSUE_LINK_PATTERN.test(releaseNotesSection[0])) {
+  warn(
+    "Please format links to GitHub issues as plain Markdown links: `([#<public_issue_number_if_exists>](https://github.com/zed-industries/zed/issues/<public_issue_number_if_exists>))`",
+  );
+}
