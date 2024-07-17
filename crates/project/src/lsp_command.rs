@@ -12,7 +12,7 @@ use clock::Global;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
-    language_settings::{language_settings, InlayHintKind},
+    language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
@@ -31,11 +31,13 @@ pub use signature_help::{
     SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
 };
 
-pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
+pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
-        tab_size,
-        insert_spaces: true,
-        insert_final_newline: Some(true),
+        tab_size: settings.tab_size.into(),
+        insert_spaces: !settings.hard_tabs,
+        trim_trailing_whitespace: Some(settings.remove_trailing_whitespace_on_save),
+        trim_final_newlines: Some(settings.ensure_final_newline_on_save),
+        insert_final_newline: Some(settings.ensure_final_newline_on_save),
         ..lsp::FormattingOptions::default()
     }
 }
@@ -153,24 +155,12 @@ pub(crate) struct GetCodeActions {
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
     pub trigger: String,
-    pub options: FormattingOptions,
+    pub options: lsp::FormattingOptions,
     pub push_to_history: bool,
 }
 
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
-}
-
-pub(crate) struct FormattingOptions {
-    tab_size: u32,
-}
-
-impl From<lsp::FormattingOptions> for FormattingOptions {
-    fn from(value: lsp::FormattingOptions) -> Self {
-        Self {
-            tab_size: value.tab_size,
-        }
-    }
 }
 
 pub(crate) struct LinkedEditingRange {
@@ -2069,7 +2059,7 @@ impl LspCommand for OnTypeFormatting {
                 point_to_lsp(self.position),
             ),
             ch: self.trigger.clone(),
-            options: lsp_formatting_options(self.options.tab_size),
+            options: self.options.clone(),
         }
     }
 
@@ -2127,14 +2117,14 @@ impl LspCommand for OnTypeFormatting {
             })?
             .await?;
 
-        let tab_size = buffer.update(&mut cx, |buffer, cx| {
-            language_settings(buffer.language(), buffer.file(), cx).tab_size
+        let options = buffer.update(&mut cx, |buffer, cx| {
+            lsp_formatting_options(language_settings(buffer.language(), buffer.file(), cx))
         })?;
 
         Ok(Self {
             position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
             trigger: message.trigger.clone(),
-            options: lsp_formatting_options(tab_size.get()).into(),
+            options,
             push_to_history: false,
         })
     }
