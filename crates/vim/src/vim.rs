@@ -850,18 +850,19 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            Some(Operator::Digraph { first_char }) => Vim::update(cx, |vim, cx| {
+            Some(Operator::Digraph { first_char }) => {
                 if let Some(first_char) = first_char {
                     if let Some(second_char) = text.chars().next() {
-                        digraph::insert_digraph(first_char, second_char, vim, cx);
+                        digraph::insert_digraph(first_char, second_char, cx);
                     }
-                    vim.clear_operator(cx);
                 } else {
                     let first_char = text.chars().next();
-                    vim.pop_operator(cx);
-                    vim.push_operator(Operator::Digraph { first_char }, cx);
+                    Vim::update(cx, |vim, cx| {
+                        vim.pop_operator(cx);
+                        vim.push_operator(Operator::Digraph { first_char }, cx);
+                    });
                 }
-            }),
+            }
             Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
                 Mode::Normal => {
                     if let Some(target) = target {

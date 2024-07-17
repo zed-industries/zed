@@ -3,7 +3,13 @@ use std::sync::Arc;
 use editor::Bias;
 use ui::WindowContext;
 
-use crate::Vim;
+use crate::{
+    normal::normal_replace,
+    replace::multi_replace,
+    state::{Mode, Operator},
+    visual::visual_replace,
+    Vim,
+};
 
 /// Copied from https://github.com/neovim/neovim/blob/master/src/nvim/digraph.c#L65
 const DIGRAPHS: &[(char, char, u32)] = &[
@@ -1374,19 +1380,43 @@ const DIGRAPHS: &[(char, char, u32)] = &[
 
 fn lookup_digraph(first_char: char, second_char: char) -> Option<char> {
     let input = (first_char, second_char);
-    DIGRAPHS.iter().find_map(|&(a, b, c)| {
-        if (a, b) == input || (b, a) == input {
-            char::from_u32(c)
-        } else {
-            None
+    for &(a, b, c) in DIGRAPHS {
+        if (a, b) == input {
+            return char::from_u32(c);
         }
-    })
+    }
+    for &(a, b, c) in DIGRAPHS {
+        // Check for reversed order
+        if (b, a) == input {
+            return char::from_u32(c);
+        }
+    }
+    None
 }
 
-pub fn insert_digraph(first_char: char, second_char: char, vim: &mut Vim, cx: &mut WindowContext) {
-    if let Some(mapped_char) = lookup_digraph(first_char, second_char) {
-        let mapped_str: Arc<str> = mapped_char.to_string().into();
+pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| vim.pop_operator(cx));
 
+    if let Some(mapped_char) = lookup_digraph(first_char, second_char) {
+        let text: Arc<str> = mapped_char.to_string().into();
+
+        match Vim::read(cx).active_operator() {
+            Some(Operator::Replace) => match Vim::read(cx).state().mode {
+                Mode::Normal => normal_replace(text, cx),
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            _ => match Vim::read(cx).state().mode {
+                Mode::Insert => multi_insert(text, cx),
+                Mode::Replace => multi_replace(text, cx),
+                _ => {}
+            },
+        }
+    }
+}
+
+fn multi_insert(mapped_str: Arc<str>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             let (display_map, display_selections) = editor.selections.all_adjusted_display(cx);
             let edits = display_selections
@@ -1402,7 +1432,7 @@ pub fn insert_digraph(first_char: char, second_char: char, vim: &mut Vim, cx: &m
                 buffer.edit(edits, None, cx);
             });
         });
-    }
+    });
 }
 
 #[cfg(test)]
@@ -1414,15 +1444,36 @@ mod test {
         let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("Hellˇo").await;
-        cx.simulate_shared_keystrokes("a ctrl-k a ' escape").await;
-        cx.shared_state().await.assert_eq("Helloˇá");
+        cx.simulate_shared_keystrokes("a ctrl-k o : escape").await;
+        cx.shared_state().await.assert_eq("Helloˇö");
 
         cx.set_shared_state("Hellˇo").await;
-        cx.simulate_shared_keystrokes("a ctrl-k ' a escape").await;
-        cx.shared_state().await.assert_eq("Helloˇá");
+        cx.simulate_shared_keystrokes("a ctrl-k : o escape").await;
+        cx.shared_state().await.assert_eq("Helloˇö");
 
         cx.set_shared_state("Hellˇo").await;
-        cx.simulate_shared_keystrokes("i ctrl-k a ' escape").await;
-        cx.shared_state().await.assert_eq("Hellˇáo");
+        cx.simulate_shared_keystrokes("i ctrl-k o : escape").await;
+        cx.shared_state().await.assert_eq("Hellˇöo");
+    }
+
+    #[gpui::test]
+    async fn test_digraph_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("Hellˇo").await;
+        cx.simulate_shared_keystrokes("r ctrl-k o :").await;
+        cx.shared_state().await.assert_eq("Hellˇö");
+    }
+
+    #[gpui::test]
+    async fn test_digraph_replace_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇHello").await;
+        cx.simulate_shared_keystrokes(
+            "shift-r ctrl-k a ' ctrl-k e ` ctrl-k i : ctrl-k o ~ ctrl-k u - escape",
+        )
+        .await;
+        cx.shared_state().await.assert_eq("áèïõˇū");
     }
 }
