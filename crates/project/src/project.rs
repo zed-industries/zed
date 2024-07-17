@@ -7355,7 +7355,7 @@ impl Project {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 let status = request.status();
                 return cx.spawn(move |this, cx| async move {
-                    if !request.check_capabilities(&language_server.capabilities()) {
+                    if !request.check_capabilities(language_server.adapter_server_capabilities()) {
                         return Ok(Default::default());
                     }
 
