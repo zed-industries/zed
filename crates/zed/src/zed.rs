@@ -372,7 +372,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 move |_: &mut Workspace,
                       _: &zed_actions::OpenKeymap,
                       cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(&paths::keymap_file(), Rope::default, cx);
+                    open_settings_file(&paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
                 },
             )
             .register_action(
