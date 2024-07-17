@@ -381,6 +381,7 @@ mod tests {
                 .prefix("test-event-stream")
                 .tempdir()
                 .unwrap();
+            dbg!(&dir);
             let path = dir.path().canonicalize().unwrap();
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
@@ -389,17 +390,30 @@ mod tests {
 
             let (tx, rx) = mpsc::channel();
             let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
-            thread::spawn(move || stream.run(move |events| tx.send(events.to_vec()).is_ok()));
+            thread::spawn(move || {
+                stream.run(move |events| {
+                    dbg!(&events);
+                    tx.send(events.to_vec()).is_ok()
+                })
+            });
 
+            println!("--------- creating new file");
             fs::write(path.join("new-file"), "").unwrap();
             let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
             assert_eq!(event.path, path.join("new-file"));
             assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
 
+            println!("---------- removing existing file");
             fs::remove_file(path.join("existing-file-5")).unwrap();
             let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let event = events.last().unwrap();
+
+            // thread 'tests::test_event_stream_simple' panicked at crates/fsevent/src/fsevent.rs:403:13:
+            // assertion `left == right` failed
+            //   left: "/private/var/folders/cf/sdy1nn_542g798vjgnxxz8140000gn/T/test-event-streamW1SkQ2/new-file"
+            //  right: "/private/var/folders/cf/sdy1nn_542g798vjgnxxz8140000gn/T/test-event-streamW1SkQ2/existing-file-5"
+
             assert_eq!(event.path, path.join("existing-file-5"));
             assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
             drop(handle);
