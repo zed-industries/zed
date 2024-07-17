@@ -41,7 +41,7 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim::VimModeSetting;
-use welcome::BaseKeymap;
+use welcome::{BaseKeymap, MultibufferHint};
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -495,6 +495,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
+            let multibuffer_hint = cx.new_view(|_| MultibufferHint::new());
+            toolbar.add_item(multibuffer_hint, cx);
             let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, cx);
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);

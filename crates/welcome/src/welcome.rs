@@ -1,12 +1,13 @@
 mod base_keymap_picker;
 mod base_keymap_setting;
+mod multibuffer_hint;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -19,6 +20,9 @@ use workspace::{
 };
 
 pub use base_keymap_setting::BaseKeymap;
+pub use multibuffer_hint::*;
+
+actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 
@@ -30,6 +34,8 @@ pub fn init(cx: &mut AppContext) {
             let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, cx)
         });
+        workspace
+            .register_action(|_workspace, _: &ResetHints, cx| MultibufferHint::set_count(0, cx));
     })
     .detach();
 
