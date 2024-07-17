@@ -14,9 +14,9 @@ use editor::{
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
     EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
-    IntoElement, KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WhiteSpace, WindowContext,
+    IntoElement, KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext,
+    WeakModel, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
