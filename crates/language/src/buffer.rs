@@ -33,7 +33,7 @@ use smol::future::yield_now;
 use std::{
     any::Any,
     cell::Cell,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
     ffi::OsStr,
     fmt,
@@ -2764,7 +2764,6 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        let mut stack = Vec::<Range<usize>>::new();
         let mut items = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
@@ -2865,22 +2864,41 @@ impl BufferSnapshot {
             }
 
             matches.advance();
-            while stack.last().map_or(false, |prev_range| {
-                prev_range.start > item_range.start || prev_range.end < item_range.end
-            }) {
-                stack.pop();
-            }
-            stack.push(item_range.clone());
 
             items.push(OutlineItem {
-                depth: stack.len() - 1,
-                range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
+                depth: 0, // We'll calculate the depth later
+                range: item_range,
                 text,
                 highlight_ranges,
                 name_ranges,
-            })
+            });
         }
-        Some(items)
+
+        items.sort_by_key(|item| (item.range.start, Reverse(item.range.end)));
+
+        // Assign depths based on containment relationships and convert to anchors.
+        let mut item_ends_stack = Vec::<usize>::new();
+        let mut anchor_items = Vec::new();
+        for item in items {
+            while let Some(last_end) = item_ends_stack.last().copied() {
+                if last_end < item.range.end {
+                    item_ends_stack.pop();
+                } else {
+                    break;
+                }
+            }
+
+            anchor_items.push(OutlineItem {
+                depth: item_ends_stack.len(),
+                range: self.anchor_after(item.range.start)..self.anchor_before(item.range.end),
+                text: item.text,
+                highlight_ranges: item.highlight_ranges,
+                name_ranges: item.name_ranges,
+            });
+            item_ends_stack.push(item.range.end);
+        }
+
+        Some(anchor_items)
     }
 
     /// For each grammar in the language, runs the provided
