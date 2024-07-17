@@ -523,7 +523,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if !request.open_ssh_paths.is_empty() {
         cx.spawn(|mut cx| async move {
             open_ssh_paths(
-                &request.open_ssh_paths,
+                request.open_ssh_paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

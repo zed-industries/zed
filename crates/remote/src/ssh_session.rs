@@ -29,7 +29,6 @@ use smol::{
 use std::{
     any::TypeId,
     ffi::OsStr,
-    net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
@@ -65,7 +64,7 @@ pub struct SshSession {
 
 struct SshClientState {
     socket_path: PathBuf,
-    port: String,
+    port: u16,
     url: String,
     _master_process: process::Child,
     _temp_dir: TempDir,
@@ -86,12 +85,13 @@ type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, ones
 
 impl SshSession {
     pub async fn client(
-        address: SocketAddr,
         user: String,
+        host: String,
+        port: u16,
         password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
         cx: &AsyncAppContext,
     ) -> Result<Arc<Self>> {
-        let client_state = SshClientState::new(user, address, password_callback, cx).await?;
+        let client_state = SshClientState::new(user, host, port, password_callback, cx).await?;
 
         let (spawn_process_tx, mut spawn_process_rx) = mpsc::unbounded::<SpawnRequest>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -389,11 +389,12 @@ impl ProtoClient for SshSession {
 impl SshClientState {
     async fn new(
         user: String,
-        address: SocketAddr,
+        host: String,
+        port: u16,
         password_callback: Box<dyn Send + FnOnce(&mut AsyncAppContext) -> String>,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
-        let url = format!("{user}@{}", address.ip());
+        let url = format!("{user}@{host}");
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
@@ -401,7 +402,7 @@ impl SshClientState {
         let listener = smol::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("failed to find open port");
-        let port = listener.local_addr().unwrap().port();
+        let askpass_port = listener.local_addr().unwrap().port();
         let password_task = cx.spawn(|mut cx| async move {
             if let Ok((mut stream, _)) = listener.accept().await {
                 let mut buffer = [0; 1024];
@@ -416,12 +417,11 @@ impl SshClientState {
         // TODO remove
         password_task.detach();
 
-        let askpass_script = format!("#!/bin/sh\nnc 127.0.0.1 {port} < /dev/null 2> /dev/null");
+        let askpass_script =
+            format!("#!/bin/sh\nnc 127.0.0.1 {askpass_port} < /dev/null 2> /dev/null");
         let askpass_script_path = temp_dir.path().join("askpass.sh");
         fs::write(&askpass_script_path, askpass_script).await?;
         fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o700)).await?;
-
-        let port = address.port().to_string();
 
         let socket_path = temp_dir.path().join("control.sock");
         let mut master_process = process::Command::new("ssh")
@@ -432,7 +432,7 @@ impl SshClientState {
             .stdin(process::Stdio::piped())
             .stdout(process::Stdio::piped())
             .stderr(process::Stdio::piped())
-            .args(["-p", &port])
+            .args(["-p", &port.to_string()])
             .arg(&url)
             .spawn()?;
 
@@ -445,7 +445,7 @@ impl SshClientState {
 
         Ok(Self {
             _master_process: master_process,
-            port,
+            port: askpass_port,
             _temp_dir: temp_dir,
             socket_path,
             url,
@@ -501,7 +501,7 @@ impl SshClientState {
         let output = self
             .ssh_options(&mut command)
             .arg("-P")
-            .arg(&self.port)
+            .arg(&self.port.to_string())
             .arg(&src_path)
             .arg(&format!("{}:{}", self.url, dest_path.display()))
             .output()
@@ -523,7 +523,7 @@ impl SshClientState {
         let mut command = process::Command::new("ssh");
         self.ssh_options(&mut command)
             .arg("-p")
-            .arg(&self.port)
+            .arg(&self.port.to_string())
             .arg(&self.url)
             .arg(binary);
         command

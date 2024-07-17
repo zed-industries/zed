@@ -11,7 +11,6 @@ use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, VisualContext as _, WindowHandle};
 use language::{Bias, Point};
-use std::net::IpAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,7 +37,8 @@ pub struct OpenRequest {
 pub struct SshPath {
     pub username: String,
     pub password: String,
-    pub address: std::net::SocketAddr,
+    pub host: String,
+    pub port: u16,
     pub path: PathBuf,
 }
 
@@ -89,21 +89,11 @@ impl OpenRequest {
             return;
         };
         let port = url.port().unwrap_or(22);
-        let address = match host {
-            url::Host::Domain(domain) => {
-                if let Ok(ip) = domain.parse::<IpAddr>() {
-                    (ip, port).into()
-                } else {
-                    return;
-                }
-            }
-            url::Host::Ipv4(ip) => (ip, port).into(),
-            url::Host::Ipv6(ip) => (ip, port).into(),
-        };
         self.open_ssh_paths.push(SshPath {
             username: username.to_string(),
             password: password.to_string(),
-            address,
+            host: host.to_string(),
+            port,
             path: PathBuf::from(url.path()),
         });
     }
@@ -207,17 +197,17 @@ fn connect_to_cli(
 }
 
 pub async fn open_ssh_paths(
-    ssh_paths: &Vec<SshPath>,
+    ssh_paths: Vec<SshPath>,
     app_state: Arc<AppState>,
     _open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     for path in ssh_paths {
-        let password = path.password.clone();
         let Some(session) = remote::SshSession::client(
-            path.address,
-            path.username.clone(),
-            Box::new(move |_cx| password.clone()),
+            path.username,
+            path.host,
+            path.port,
+            Box::new(move |_cx| path.password.clone()),
             cx,
         )
         .await
