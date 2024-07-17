@@ -1,7 +1,5 @@
 mod language_servers;
 
-use std::env;
-
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
 use crate::language_servers::{Intelephense, Phpactor};
