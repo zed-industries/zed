@@ -10,6 +10,7 @@ local_arch=false
 local_only=false
 local_install=false
 bundle_name=""
+can_code_sign=false
 
 # This must match the team in the provisioning profile.
 APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
@@ -107,6 +108,27 @@ fi
 mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
+
+if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
+    can_code_sign=true
+
+    echo "Setting up keychain for code signing..."
+    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
+    security default-keychain -s zed.keychain
+    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
+    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+    rm /tmp/zed-certificate.p12
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+
+    function cleanup() {
+        echo "Cleaning up keychain"
+        security default-keychain -s login.keychain
+        security delete-keychain zed.keychain
+    }
+
+    trap cleanup EXIT
+fi
 
 GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
@@ -207,24 +229,14 @@ function sign_binaries() {
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
     cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
-    if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
-        echo "Signing bundle with Apple-issued certificate"
-        security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-        security default-keychain -s zed.keychain
-        security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-        echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-        security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-        rm /tmp/zed-certificate.p12
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-
+    if [[ $can_code_sign = true ]]; then
+        echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks/WebRTC.framework" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/zed" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
-
-        security default-keychain -s login.keychain
     else
         echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
         if [[ "$local_only" = false ]]; then
@@ -291,20 +303,13 @@ function sign_binaries() {
         mkdir -p ${dmg_source_directory}
         mv "${app_path}" "${dmg_source_directory}"
 
-        if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+        if [[ $can_code_sign = true ]]; then
             echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
             hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
 
-            security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-            security default-keychain -s zed.keychain
-            security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-            echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-            security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            rm /tmp/zed-certificate.p12
-            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-
+            echo "Code-signing DMG"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "$(pwd)/${dmg_file_path}" -v
-            security default-keychain -s login.keychain
+
             echo "Notarizing DMG with Apple"
             "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
 
@@ -330,17 +335,9 @@ function sign_binaries() {
         npm install --global dmg-license minimist
         dmg-license script/eula/eula.json "${dmg_file_path}"
 
-        if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+        if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
-            security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-            security default-keychain -s zed.keychain
-            security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-            echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-            security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            rm /tmp/zed-certificate.p12
-            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "$(pwd)/${dmg_file_path}" -v
-            security default-keychain -s login.keychain
             "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
