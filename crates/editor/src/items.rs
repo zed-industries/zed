@@ -1038,14 +1038,16 @@ impl SerializableItem for Editor {
                     }
 
                     if serialize_dirty_buffers {
-                        if is_dirty {
+                        let (contents, language) = if is_dirty {
                             let contents = snapshot.text();
                             let language = snapshot.language().map(|lang| lang.name().to_string());
-                            DB.save_contents(item_id, workspace_id, contents, language)
-                                .await?;
+                            (Some(contents), language)
                         } else {
-                            DB.delete_contents(item_id, workspace_id).await?;
-                        }
+                            (None, None)
+                        };
+
+                        DB.save_contents(item_id, workspace_id, contents, language)
+                            .await?;
                     }
 
                     anyhow::Ok(())
