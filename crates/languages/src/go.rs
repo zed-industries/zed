@@ -524,6 +524,23 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!(
+                    "gow -c test {} -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "gow".into(),
+                args: vec![
+                    "-c".into(),
+                    "test".into(),
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    "-run".into(),
+                    format!("'^{}$'", VariableName::Symbol.template_value(),),
+                ],
+                tags: vec!["go-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
                 args: vec!["test".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
@@ -544,6 +561,29 @@ impl ContextProvider for GoContextProvider {
                 ),
                 command: "go".into(),
                 args: vec![
+                    "test".into(),
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "'^{}$/^{}$'",
+                        VariableName::Symbol.template_value(),
+                        GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                    ),
+                ],
+                tags: vec!["go-subtest".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "gow -c test {} -run {}/{}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                    GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                ),
+                command: "gow".into(),
+                args: vec![
+                    "-c".into(),
                     "test".into(),
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-v".into(),
