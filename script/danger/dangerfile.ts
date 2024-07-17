@@ -47,7 +47,7 @@ if (hasIncorrectIssueLinks) {
       "GitHub issue links must be formatted as plain Markdown links:",
       "",
       "```",
-      "- Improved something ([#ISSUE](https://github.com/zed-industries/zed/issues/ISSUE))",
+      "- Improved something ([#ISSUE](https://github.com/zed-industries/zed/issues/ISSUE)).",
       "```",
     ].join("\n"),
   );
