@@ -1310,10 +1310,13 @@ impl EditorElement {
                                             expanded_end_row == &display_row_range.end
                                         })
                                         .unwrap_or(false);
-                                    let mut rendered_popover =
-                                        HunkPopover::new(editor_clicked_hunk, expanded)
-                                            .render(cx)
-                                            .into_any_element();
+                                    let mut rendered_popover = HunkPopover::new(
+                                        self.editor.clone(),
+                                        editor_clicked_hunk,
+                                        expanded,
+                                    )
+                                    .render(cx)
+                                    .into_any_element();
                                     let available_space = size(
                                         AvailableSpace::MinContent,
                                         AvailableSpace::MinContent,

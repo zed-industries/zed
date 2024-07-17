@@ -5877,22 +5877,7 @@ impl Editor {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
-                editor.buffer().update(cx, |multi_buffer, cx| {
-                    for (buffer_id, changes) in revert_changes {
-                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit(
-                                    changes.into_iter().map(|(range, text)| {
-                                        (range, text.to_string().map(Arc::<str>::from))
-                                    }),
-                                    None,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
-                });
-                editor.change_selections(None, cx, |selections| selections.refresh());
+                editor.revert(revert_changes, cx);
             });
         }
     }
@@ -5922,22 +5907,20 @@ impl Editor {
         cx: &mut ViewContext<'_, Editor>,
     ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
-        self.buffer.update(cx, |multi_buffer, cx| {
-            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
-                Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
-            }
-        });
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
+            Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
+        }
         revert_changes
     }
 
-    fn prepare_revert_change(
+    pub fn prepare_revert_change(
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
-        multi_buffer: &MultiBuffer,
+        multi_buffer: &Model<MultiBuffer>,
         hunk: &DiffHunk<MultiBufferRow>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Option<()> {
-        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = multi_buffer.read(cx).buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
         let original_text = buffer.diff_base()?.slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
@@ -11728,15 +11711,35 @@ impl Editor {
     pub fn file_header_size(&self) -> u8 {
         self.file_header_size
     }
+
+    pub fn revert(
+        &mut self,
+        revert_changes: HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.buffer().update(cx, |multi_buffer, cx| {
+            for (buffer_id, changes) in revert_changes {
+                if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            changes.into_iter().map(|(range, text)| {
+                                (range, text.to_string().map(Arc::<str>::from))
+                            }),
+                            None,
+                            cx,
+                        );
+                    });
+                }
+            }
+        });
+        self.change_selections(None, cx, |selections| selections.refresh());
+    }
 }
 
 fn hunks_for_selections(
     multi_buffer_snapshot: &MultiBufferSnapshot,
     selections: &[Selection<Anchor>],
 ) -> Vec<DiffHunk<MultiBufferRow>> {
-    let mut hunks = Vec::with_capacity(selections.len());
-    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
-        HashMap::default();
     let buffer_rows_for_selections = selections.iter().map(|selection| {
         let head = selection.head();
         let tail = selection.tail();
@@ -11749,7 +11752,17 @@ fn hunks_for_selections(
         }
     });
 
-    for selected_multi_buffer_rows in buffer_rows_for_selections {
+    hunks_for_rows(buffer_rows_for_selections, multi_buffer_snapshot)
+}
+
+pub fn hunks_for_rows(
+    rows: impl Iterator<Item = Range<MultiBufferRow>>,
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+) -> Vec<DiffHunk<MultiBufferRow>> {
+    let mut hunks = Vec::new();
+    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
+        HashMap::default();
+    for selected_multi_buffer_rows in rows {
         let query_rows =
             selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
