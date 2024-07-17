@@ -452,27 +452,22 @@ impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = PreviewEvent;
 
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::FileDoc))
+    }
+
     fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
-        h_flex()
-            .gap_2()
-            .child(Icon::new(IconName::FileDoc).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .child(
-                Label::new(if let Some(description) = &self.tab_description {
-                    description.clone().into()
-                } else {
-                    self.fallback_tab_description.clone()
-                })
-                .color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
-            )
-            .into_any()
+        Label::new(if let Some(description) = &self.tab_description {
+            description.clone().into()
+        } else {
+            self.fallback_tab_description.clone()
+        })
+        .color(if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        })
+        .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
