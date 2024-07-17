@@ -126,7 +126,7 @@ pub struct LspSettings {
     pub settings: Option<serde_json::Value>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSettings {
     /// Whether or not to restore unsaved buffers on restart.
     ///
@@ -134,8 +134,15 @@ pub struct SessionSettings {
     /// dirty files when closing the application.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
     pub restore_unsaved_buffers: bool,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            restore_unsaved_buffers: true,
+        }
+    }
 }
 
 impl Settings for ProjectSettings {
