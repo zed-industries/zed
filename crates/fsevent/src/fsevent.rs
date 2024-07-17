@@ -376,12 +376,12 @@ mod tests {
 
     #[test]
     fn test_event_stream_simple() {
-        for _ in 0..3 {
+        for iteration in 0..3 {
             let dir = tempfile::Builder::new()
                 .prefix("test-event-stream")
                 .tempdir()
                 .unwrap();
-            dbg!(&dir);
+            println!("iteration: {}, dir: {:?}", iteration, dir);
             let path = dir.path().canonicalize().unwrap();
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
@@ -392,7 +392,10 @@ mod tests {
             let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));
             thread::spawn(move || {
                 stream.run(move |events| {
-                    dbg!(&events);
+                    println!("sending events:");
+                    for event in events.iter() {
+                        println!("- {:?}", event);
+                    }
                     tx.send(events.to_vec()).is_ok()
                 })
             });
