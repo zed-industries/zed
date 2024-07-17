@@ -536,7 +536,7 @@ pub struct Editor {
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
-    clicked_hunk: Option<HoveredHunk>,
+    clicked_hunk: Option<(gpui::Point<Pixels>, HoveredHunk)>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -2427,6 +2427,7 @@ impl Editor {
         let (changed, result) = self.selections.change_with(cx, change);
 
         if changed {
+            self.clicked_hunk = None;
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }

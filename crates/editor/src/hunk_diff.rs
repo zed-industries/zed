@@ -345,6 +345,7 @@ impl Editor {
                 position: hunk.multi_buffer_range.start,
                 height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
+                disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
                     let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     let click_editor = editor.clone();
@@ -371,7 +372,6 @@ impl Editor {
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),
-                disposition: BlockDisposition::Above,
             }),
             None,
             cx,
@@ -865,8 +865,8 @@ impl RenderOnce for HunkPopover {
                         }),
                 )
                 // TODO kb + style improvements
-                // TODO kb deleted hunks push the opened menu below, instead, open THEM below
-                // * hide git hunks
+                // show keyboard shortcuts
+                // change the color of the hunk that got the click
                 .child(v_flex()),
         )
     }

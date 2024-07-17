@@ -461,7 +461,7 @@ impl EditorElement {
             if modifiers.control || modifiers.platform {
                 editor.toggle_hovered_hunk(&hovered_hunk, cx);
             } else {
-                editor.clicked_hunk = Some(hovered_hunk);
+                editor.clicked_hunk = Some((event.position, hovered_hunk));
             }
             cx.notify();
             return;
@@ -1293,7 +1293,7 @@ impl EditorElement {
                                 gutter_hitbox.bounds,
                                 &hunk,
                             );
-                            if let Some(editor_clicked_hunk) =
+                            if let Some((clicked_point, editor_clicked_hunk)) =
                                 self.editor.read(cx).clicked_hunk.clone()
                             {
                                 let clicked_display_range = editor_clicked_hunk
@@ -1322,7 +1322,7 @@ impl EditorElement {
                                         AvailableSpace::MinContent,
                                     );
                                     rendered_popover.prepaint_as_root(
-                                        hunk_bounds.origin,
+                                        clicked_point,
                                         available_space,
                                         cx,
                                     );
