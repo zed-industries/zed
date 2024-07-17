@@ -1,4 +1,4 @@
-use std::fs;
+use std::{env, fs};
 
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
@@ -18,11 +18,39 @@ impl Intelephense {
         }
     }
 
+    pub fn language_server_command(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        if let Some(path) = worktree.which("intelephense") {
+            return Ok(zed::Command {
+                command: path,
+                args: vec!["--stdio".to_string()],
+                env: Default::default(),
+            });
+        }
+
+        let server_path = self.server_script_path(language_server_id)?;
+        Ok(zed::Command {
+            command: zed::node_binary_path()?,
+            args: vec![
+                env::current_dir()
+                    .unwrap()
+                    .join(&server_path)
+                    .to_string_lossy()
+                    .to_string(),
+                "--stdio".to_string(),
+            ],
+            env: Default::default(),
+        })
+    }
+
     fn server_exists(&self) -> bool {
         fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
 
-    pub fn server_script_path(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
+    fn server_script_path(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
         let server_exists = self.server_exists();
         if self.did_find_server && server_exists {
             return Ok(SERVER_PATH.to_string());

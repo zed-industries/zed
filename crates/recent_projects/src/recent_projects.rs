@@ -703,9 +703,10 @@ mod tests {
     use std::path::PathBuf;
 
     use editor::Editor;
-    use gpui::{TestAppContext, WindowHandle};
-    use project::Project;
+    use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
+    use project::{project_settings::ProjectSettings, Project};
     use serde_json::json;
+    use settings::SettingsStore;
     use workspace::{open_paths, AppState, LocalPaths};
 
     use super::*;
@@ -713,6 +714,15 @@ mod tests {
     #[gpui::test]
     async fn test_prompts_on_dirty_before_submit(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                    settings.session.restore_unsaved_buffers = false
+                });
+            });
+        });
+
         app_state
             .fs
             .as_fake()

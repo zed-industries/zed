@@ -180,8 +180,8 @@ impl LspAdapter for VtslsLspAdapter {
         Ok(Some(json!({
             "typescript": {
                 "tsdk": tsdk_path,
-                "format": {
-                    "enable": true
+                "suggest": {
+                    "completeFunctionCalls": true
                 },
                 "inlayHints": {
                     "parameterNames": {
@@ -204,6 +204,11 @@ impl LspAdapter for VtslsLspAdapter {
                     "enumMemberValues": {
                         "enabled": true,
                     }
+                }
+            },
+            "javascript": {
+                "suggest": {
+                    "completeFunctionCalls": true
                 }
             },
             "vtsls": {
@@ -232,49 +237,9 @@ impl LspAdapter for VtslsLspAdapter {
         if let Some(options) = override_options {
             return Ok(options);
         }
-        let tsdk_path = Self::tsdk_path(&adapter).await;
-        Ok(json!({
-            "typescript": {
-                "suggest": {
-                    "completeFunctionCalls": true
-                },
-                "tsdk": tsdk_path,
-                "format": {
-                    "enable": true
-                },
-                "inlayHints": {
-                    "parameterNames": {
-                        "enabled": "all",
-                        "suppressWhenArgumentMatchesName": false,
-                    },
-                    "parameterTypes": {
-                        "enabled": true
-                    },
-                    "variableTypes": {
-                        "enabled": true,
-                        "suppressWhenTypeMatchesName": false,
-                    },
-                    "propertyDeclarationTypes": {
-                        "enabled": true,
-                    },
-                    "functionLikeReturnTypes": {
-                        "enabled": true,
-                    },
-                    "enumMemberValues": {
-                        "enabled": true,
-                    }
-                }
-            },
-            "vtsls": {
-                "experimental": {
-                    "completion": {
-                        "enableServerSideFuzzyMatch": true,
-                        "entriesLimit": 5000,
-                    }
-                },
-                "autoUseWorkspaceTsdk": true
-            }
-        }))
+        self.initialization_options(adapter)
+            .await
+            .map(|o| o.unwrap())
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

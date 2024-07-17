@@ -61,9 +61,9 @@ Assign kernels by name to languages in your `settings.json`.
 }
 ```
 
-If you have `jupyter` installed, you can run `juptyer kernelspec list` to see the available kernels. Note that only
+If you have `jupyter` installed, you can run `juptyer kernelspec list` to see the available kernels.
 
-````
+```
 $ jupyter kernelspec list
 Available kernels:
   ark                   /Users/z/Library/Jupyter/kernels/ark
@@ -85,6 +85,8 @@ Available kernels:
   conda-base            /Users/z/Library/Jupyter/kernels/conda-base
   python3               /Users/z/.pyenv/versions/miniconda3-latest/share/jupyter/kernels/python3
 ```
+
+You must run `python -m ipykernel install --user` to install the kernel.
 
 ## Language specific instructions
 

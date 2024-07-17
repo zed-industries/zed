@@ -43,6 +43,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{
         language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+        LanguageSettings,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
@@ -93,7 +94,6 @@ use std::{
     ffi::OsStr,
     hash::Hash,
     iter, mem,
-    num::NonZeroU32,
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
@@ -4967,7 +4967,6 @@ impl Project {
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
             let ensure_final_newline = settings.ensure_final_newline_on_save;
-            let tab_size = settings.tab_size;
 
             // First, format buffer's whitespace according to the settings.
             let trailing_whitespace_diff = if remove_trailing_whitespace {
@@ -5052,7 +5051,7 @@ impl Project {
                                 buffer,
                                 buffer_abs_path,
                                 language_server,
-                                tab_size,
+                                &settings,
                                 &mut cx,
                             )
                             .await
@@ -5101,7 +5100,7 @@ impl Project {
                                 buffer,
                                 buffer_abs_path,
                                 language_server,
-                                tab_size,
+                                &settings,
                                 &mut cx,
                             )
                             .await
@@ -5171,7 +5170,7 @@ impl Project {
         buffer: &Model<Buffer>,
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
-        tab_size: NonZeroU32,
+        settings: &LanguageSettings,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let uri = lsp::Url::from_file_path(abs_path)
@@ -5186,7 +5185,7 @@ impl Project {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
-                    options: lsp_command::lsp_formatting_options(tab_size.get()),
+                    options: lsp_command::lsp_formatting_options(settings),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -5198,7 +5197,7 @@ impl Project {
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                     text_document,
                     range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp_command::lsp_formatting_options(tab_size.get()),
+                    options: lsp_command::lsp_formatting_options(settings),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -6829,8 +6828,12 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let tab_size = buffer.update(cx, |buffer, cx| {
-            language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx).tab_size
+        let options = buffer.update(cx, |buffer, cx| {
+            lsp_command::lsp_formatting_options(language_settings(
+                buffer.language_at(position).as_ref(),
+                buffer.file(),
+                cx,
+            ))
         });
         self.request_lsp(
             buffer.clone(),
@@ -6838,7 +6841,7 @@ impl Project {
             OnTypeFormatting {
                 position,
                 trigger,
-                options: lsp_command::lsp_formatting_options(tab_size.get()).into(),
+                options,
                 push_to_history,
             },
             cx,
