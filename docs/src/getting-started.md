@@ -25,13 +25,13 @@ brew install --cask zed@preview
 For most people, the easiest way to install Zed is through our installation script:
 
 ```sh
-curl https://zed.dev/install.sh | sh
+curl -f https://zed.dev/install.sh | sh
 ```
 
 If you'd like to help us test our new features, you can also install our preview build:
 
 ```sh
-curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
+curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
 This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
