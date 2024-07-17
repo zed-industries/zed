@@ -937,7 +937,7 @@ impl SerializableItem for Editor {
                     project.create_local_buffer("", language, cx)
                 })?;
 
-                // Then set the text so that the language is set correctly
+                // Then set the text so that the dirty bit is set correctly
                 buffer.update(&mut cx, |buffer, cx| {
                     buffer.set_text(content, cx);
                 })?;
@@ -951,7 +951,7 @@ impl SerializableItem for Editor {
             (Some(path), contents, _) => {
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
-                        .find_local_worktree(&path, cx)
+                        .find_worktree(&path, cx)
                         .with_context(|| format!("No worktree for path: {path:?}"))?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -1006,9 +1006,9 @@ impl SerializableItem for Editor {
         let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
 
         let project = self.project.clone()?;
-        if project.read(cx).worktrees().next().is_none() {
+        if project.read(cx).visible_worktrees(cx).next().is_none() {
             // If we don't have a worktree, we don't serialize, because
-            // if we don't have a worktree, we can't deserialize ourselves.
+            // projects without worktrees aren't deserialized.
             serialize_dirty_buffers = false;
         }
 
