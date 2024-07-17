@@ -706,7 +706,7 @@ mod tests {
     use gpui::{TestAppContext, WindowHandle};
     use project::Project;
     use serde_json::json;
-    use workspace::{open_paths, AppState, LocalPaths};
+    use workspace::{open_paths, AppState};
 
     use super::*;
 
@@ -772,7 +772,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        LocalPaths::new(vec!["/test/path/"]).into(),
+                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
                     )]);
                 });
             })
