@@ -418,11 +418,8 @@ impl SshClientState {
                 if stream.read_to_end(&mut buffer).await.is_err() {
                     buffer.clear();
                 }
-                let args = String::from_utf8_lossy(&buffer);
-
-                dbg!(&args);
-
-                if let Some(password) = password_callback(args.to_string(), &mut cx)
+                let password_prompt = String::from_utf8_lossy(&buffer);
+                if let Some(password) = password_callback(password_prompt.to_string(), &mut cx)
                     .await
                     .context("failed to get ssh password")
                     .and_then(|p| p)

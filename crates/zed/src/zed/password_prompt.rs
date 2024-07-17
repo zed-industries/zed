@@ -22,7 +22,11 @@ impl PasswordPrompt {
         Self {
             prompt: SharedString::from(prompt),
             tx: Some(tx),
-            editor: cx.new_view(|cx| Editor::single_line(cx)),
+            editor: cx.new_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_redact_all(true, cx);
+                editor
+            }),
         }
     }
 

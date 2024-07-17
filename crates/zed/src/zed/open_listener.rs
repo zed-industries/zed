@@ -227,7 +227,7 @@ pub async fn open_ssh_paths(
         connection_info.username,
         connection_info.host,
         connection_info.port,
-        Box::new(move |args, cx| {
+        Box::new(move |prompt, cx| {
             let (tx, rx) = oneshot::channel();
             window
                 .update(cx, |workspace, cx| {
@@ -235,7 +235,7 @@ pub async fn open_ssh_paths(
                     if let Some(password) = connection_info.password.clone() {
                         tx.send(Ok(password)).ok();
                     } else {
-                        workspace.toggle_modal(cx, |cx| PasswordPrompt::new(args, tx, cx));
+                        workspace.toggle_modal(cx, |cx| PasswordPrompt::new(prompt, tx, cx));
                     }
                 })
                 .unwrap();
