@@ -1337,17 +1337,12 @@ impl EditorElement {
                                     )
                                     .render(cx)
                                     .into_any_element();
-                                    let available_space = size(
-                                        AvailableSpace::MinContent,
-                                        AvailableSpace::MinContent,
-                                    );
-
                                     let mut clicked_point = hunk_bounds.origin;
                                     clicked_point.x += click_bounds_offset.0;
                                     clicked_point.y += click_bounds_offset.1;
                                     rendered_popover.prepaint_as_root(
                                         clicked_point,
-                                        available_space,
+                                        AvailableSpace::min_size(),
                                         cx,
                                     );
                                     clicked_hunk = Some(rendered_popover);
@@ -1430,9 +1425,7 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-
-        element.prepaint_as_root(absolute_offset, available_space, cx);
+        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), cx);
 
         Some(element)
     }
@@ -2533,8 +2526,7 @@ impl EditorElement {
             return false;
         };
 
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-        let context_menu_size = context_menu.layout_as_root(available_space, cx);
+        let context_menu_size = context_menu.layout_as_root(AvailableSpace::min_size(), cx);
 
         let (x, y) = match position {
             crate::ContextMenuOrigin::EditorPoint(point) => {
@@ -2630,8 +2622,6 @@ impl EditorElement {
             return;
         };
 
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-
         // This is safe because we check on layout whether the required row is available
         let hovered_row_layout =
             &line_layouts[position.row().minus(visible_display_row_range.start) as usize];
@@ -2645,7 +2635,7 @@ impl EditorElement {
         let mut overall_height = Pixels::ZERO;
         let mut measured_hover_popovers = Vec::new();
         for mut hover_popover in hover_popovers {
-            let size = hover_popover.layout_as_root(available_space, cx);
+            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), cx);
             let horizontal_offset =
                 (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
 
@@ -5771,11 +5761,7 @@ impl CursorLayout {
                 .child(cursor_name.string.clone())
                 .into_any_element();
 
-            name_element.prepaint_as_root(
-                name_origin,
-                size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                cx,
-            );
+            name_element.prepaint_as_root(name_origin, AvailableSpace::min_size(), cx);
 
             self.cursor_name = Some(name_element);
         }

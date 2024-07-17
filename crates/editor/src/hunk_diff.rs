@@ -5,7 +5,10 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{
+    anchored, deferred, Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton,
+    Task, View,
+};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -831,6 +834,13 @@ impl RenderOnce for HunkPopover {
             })
         });
 
-        div().occlude().absolute().child(context_menu)
+        div().absolute().child(
+            deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(context_menu),
+            )
+            .with_priority(1),
+        )
     }
 }
