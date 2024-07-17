@@ -5,10 +5,7 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{
-    anchored, deferred, Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton,
-    Task, View,
-};
+use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -16,34 +13,20 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, ActiveTheme, Context as _, FluentBuilder, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, Styled, ViewContext, VisualContext, WindowContext,
+    div, ActiveTheme, Context as _, ContextMenu, FluentBuilder, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
 use crate::{
     editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    hunk_status, hunks_for_selections,
+    mouse_context_menu::MouseContextMenu,
+    BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight, Editor,
+    EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint,
+    ToggleHunkDiff,
 };
-
-#[derive(Debug)]
-pub(super) struct HunkPopover {
-    editor: View<Editor>,
-    clicked_hunk: HoveredHunk,
-    expanded: bool,
-}
-impl HunkPopover {
-    pub fn new(editor: View<Editor>, clicked_hunk: HoveredHunk, expanded: bool) -> Self {
-        Self {
-            editor,
-            clicked_hunk,
-            expanded,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct HoveredHunk {
@@ -83,6 +66,94 @@ pub(super) struct ExpandedHunk {
 }
 
 impl Editor {
+    pub(super) fn open_hunk_context_menu(
+        &mut self,
+        hovered_hunk: HoveredHunk,
+        clicked_point: gpui::Point<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let focus_handle = self.focus_handle.clone();
+        let expanded = self
+            .expanded_hunks
+            .hunks(false)
+            .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
+        let editor_handle = cx.view().clone();
+
+        self.mouse_context_menu = Some(MouseContextMenu::new(
+            clicked_point,
+            ContextMenu::build(cx, move |menu, _| {
+                menu.context(focus_handle)
+                    .entry(
+                        if expanded {
+                            "Collapse Hunk"
+                        } else {
+                            "Expand Hunk"
+                        },
+                        Some(ToggleHunkDiff.boxed_clone()),
+                        {
+                            let editor = editor_handle.clone();
+                            let hunk = hovered_hunk.clone();
+                            move |cx| {
+                                editor.update(cx, |editor, cx| {
+                                    editor.toggle_hovered_hunk(&hunk, cx);
+                                });
+                            }
+                        },
+                    )
+                    .entry("Revert Hunk", Some(RevertSelectedHunks.boxed_clone()), {
+                        let editor = editor_handle.clone();
+                        let hunk = hovered_hunk.clone();
+                        move |cx| {
+                            let multi_buffer = editor.read(cx).buffer().clone();
+                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                            let mut revert_changes = HashMap::default();
+                            if let Some(hunk) =
+                                crate::hunk_diff::to_diff_hunk(&hunk, &multi_buffer_snapshot)
+                            {
+                                Editor::prepare_revert_change(
+                                    &mut revert_changes,
+                                    &multi_buffer,
+                                    &hunk,
+                                    cx,
+                                );
+                            }
+                            if !revert_changes.is_empty() {
+                                editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
+                            }
+                        }
+                    })
+                    .entry("Revert File", None, {
+                        let editor = editor_handle.clone();
+                        move |cx| {
+                            let mut revert_changes = HashMap::default();
+                            let multi_buffer = editor.read(cx).buffer().clone();
+                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                            for hunk in crate::hunks_for_rows(
+                                Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row())
+                                    .into_iter(),
+                                &multi_buffer_snapshot,
+                            ) {
+                                Editor::prepare_revert_change(
+                                    &mut revert_changes,
+                                    &multi_buffer,
+                                    &hunk,
+                                    cx,
+                                );
+                            }
+                            if !revert_changes.is_empty() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.transact(cx, |editor, cx| {
+                                        editor.revert(revert_changes, cx);
+                                    });
+                                });
+                            }
+                        }
+                    })
+            }),
+            cx,
+        ))
+    }
+
     pub(super) fn toggle_hovered_hunk(
         &mut self,
         hovered_hunk: &HoveredHunk,
@@ -389,10 +460,6 @@ impl Editor {
     }
 
     pub(super) fn clear_clicked_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
-        if self.clicked_hunk.is_some() {
-            self.clicked_hunk = None;
-            return true;
-        }
         self.expanded_hunks.hunk_update_tasks.clear();
         self.clear_row_highlights::<DiffRowHighlight>();
         let to_remove = self
@@ -761,86 +828,4 @@ fn to_inclusive_row_range(
         ..display_row_range.end.to_point(&snapshot.display_snapshot);
     let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
     new_range.start..=new_range.end
-}
-
-impl RenderOnce for HunkPopover {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let editor = self.editor.clone();
-        let clicked_hunk = self.clicked_hunk.clone();
-        let expanded = self.expanded;
-        let context_menu = ui::ContextMenu::build(cx, move |menu, _| {
-            menu.entry(
-                if expanded {
-                    "Collapse Hunk"
-                } else {
-                    "Expand Hunk"
-                },
-                Some(ToggleHunkDiff.boxed_clone()),
-                {
-                    let editor = editor.clone();
-                    let hunk = clicked_hunk.clone();
-                    move |cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.toggle_hovered_hunk(&hunk, cx);
-                        });
-                    }
-                },
-            )
-            .entry("Revert Hunk", Some(RevertSelectedHunks.boxed_clone()), {
-                let editor = editor.clone();
-                let hunk = clicked_hunk.clone();
-                move |cx| {
-                    let multi_buffer = editor.read(cx).buffer().clone();
-                    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                    let mut revert_changes = HashMap::default();
-                    if let Some(hunk) = to_diff_hunk(&hunk, &multi_buffer_snapshot) {
-                        Editor::prepare_revert_change(
-                            &mut revert_changes,
-                            &multi_buffer,
-                            &hunk,
-                            cx,
-                        );
-                    }
-                    if !revert_changes.is_empty() {
-                        editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
-                    }
-                }
-            })
-            .entry("Revert File", None, {
-                let editor = editor.clone();
-                move |cx| {
-                    let mut revert_changes = HashMap::default();
-                    let multi_buffer = editor.read(cx).buffer().clone();
-                    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                    for hunk in crate::hunks_for_rows(
-                        Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
-                        &multi_buffer_snapshot,
-                    ) {
-                        Editor::prepare_revert_change(
-                            &mut revert_changes,
-                            &multi_buffer,
-                            &hunk,
-                            cx,
-                        );
-                    }
-                    if !revert_changes.is_empty() {
-                        editor.update(cx, |editor, cx| {
-                            editor.transact(cx, |editor, cx| {
-                                editor.revert(revert_changes, cx);
-                            });
-                        });
-                    }
-                }
-            })
-        });
-
-        div().absolute().child(
-            deferred(
-                anchored()
-                    .anchor(AnchorCorner::TopRight)
-                    .child(context_menu),
-            )
-            .with_priority(1),
-        )
-    }
 }

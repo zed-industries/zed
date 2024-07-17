@@ -1,5 +1,4 @@
 use crate::editor_settings::ScrollBeyondLastLine;
-use crate::hunk_diff::HunkPopover;
 use crate::RangeToAnchorExt;
 use crate::TransformBlockId;
 use crate::{
@@ -469,18 +468,15 @@ impl EditorElement {
                     &position_map.snapshot,
                     position_map.line_height,
                     gutter_hitbox.bounds,
-                    &&DisplayDiffHunk::Unfolded {
+                    &DisplayDiffHunk::Unfolded {
                         diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
                         display_row_range: display_range.start.row()..display_range.end.row(),
                         multi_buffer_range: hovered_hunk.multi_buffer_range.clone(),
                         status: hovered_hunk.status,
                     },
                 );
-                let clicked_point = event.position;
-                if hunk_bounds.contains(&clicked_point) {
-                    let delta_x = clicked_point.x - hunk_bounds.origin.x;
-                    let delta_y = clicked_point.y - hunk_bounds.origin.y;
-                    editor.clicked_hunk = Some(((delta_x, delta_y), hovered_hunk));
+                if hunk_bounds.contains(&event.position) {
+                    editor.open_hunk_context_menu(hovered_hunk, event.position, cx);
                 }
             }
             cx.notify();
@@ -1257,7 +1253,7 @@ impl EditorElement {
         display_rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> (Option<AnyElement>, Vec<(DisplayDiffHunk, Option<Hitbox>)>) {
+    ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
         let buffer_snapshot = &snapshot.buffer_snapshot;
 
         let buffer_start_row = MultiBufferRow(
@@ -1271,31 +1267,10 @@ impl EditorElement {
                 .row,
         );
 
-        let expanded_hunk_display_rows = self.editor.update(cx, |editor, _| {
-            editor
-                .expanded_hunks
-                .hunks(false)
-                .map(|expanded_hunk| {
-                    let start_row = expanded_hunk
-                        .hunk_range
-                        .start
-                        .to_display_point(snapshot)
-                        .row();
-                    let end_row = expanded_hunk
-                        .hunk_range
-                        .end
-                        .to_display_point(snapshot)
-                        .row();
-                    (start_row, end_row)
-                })
-                .collect::<HashMap<_, _>>()
-        });
-
         let git_gutter_setting = ProjectSettings::get_global(cx)
             .git
             .git_gutter
             .unwrap_or_default();
-        let mut clicked_hunk = None;
         let display_hunks = buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
@@ -1303,51 +1278,13 @@ impl EditorElement {
             .map(|hunk| match git_gutter_setting {
                 GitGutterSetting::TrackedFiles => {
                     let hitbox = match hunk {
-                        DisplayDiffHunk::Unfolded {
-                            ref display_row_range,
-                            ..
-                        } => {
+                        DisplayDiffHunk::Unfolded { .. } => {
                             let hunk_bounds = Self::diff_hunk_bounds(
                                 &snapshot,
                                 line_height,
                                 gutter_hitbox.bounds,
                                 &hunk,
                             );
-                            if let Some((click_bounds_offset, editor_clicked_hunk)) =
-                                self.editor.read(cx).clicked_hunk.clone()
-                            {
-                                let clicked_display_range = editor_clicked_hunk
-                                    .multi_buffer_range
-                                    .clone()
-                                    .to_display_points(snapshot);
-                                let clicked_display_row_range = clicked_display_range.start.row()
-                                    ..clicked_display_range.end.row();
-
-                                if &clicked_display_row_range == display_row_range {
-                                    let expanded = expanded_hunk_display_rows
-                                        .get(&display_row_range.start)
-                                        .map(|expanded_end_row| {
-                                            expanded_end_row == &display_row_range.end
-                                        })
-                                        .unwrap_or(false);
-                                    let mut rendered_popover = HunkPopover::new(
-                                        self.editor.clone(),
-                                        editor_clicked_hunk,
-                                        expanded,
-                                    )
-                                    .render(cx)
-                                    .into_any_element();
-                                    let mut clicked_point = hunk_bounds.origin;
-                                    clicked_point.x += click_bounds_offset.0;
-                                    clicked_point.y += click_bounds_offset.1;
-                                    rendered_popover.prepaint_as_root(
-                                        clicked_point,
-                                        AvailableSpace::min_size(),
-                                        cx,
-                                    );
-                                    clicked_hunk = Some(rendered_popover);
-                                }
-                            }
                             Some(cx.insert_hitbox(hunk_bounds, true))
                         }
                         DisplayDiffHunk::Folded { .. } => None,
@@ -1357,7 +1294,7 @@ impl EditorElement {
                 GitGutterSetting::Hide => (hunk, None),
             })
             .collect();
-        (clicked_hunk, display_hunks)
+        display_hunks
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3064,9 +3001,6 @@ impl EditorElement {
                 }
             }
         });
-        if let Some(mut clicked_hunk) = layout.clicked_hunk.take() {
-            clicked_hunk.paint(cx);
-        }
     }
 
     fn diff_hunk_bounds(
@@ -4930,7 +4864,7 @@ impl Element for EditorElement {
                         self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
 
-                    let (clicked_hunk, display_hunks) = self.layout_git_gutters(
+                    let display_hunks = self.layout_git_gutters(
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
@@ -5294,7 +5228,6 @@ impl Element for EditorElement {
                         text_hitbox,
                         gutter_hitbox,
                         gutter_dimensions,
-                        clicked_hunk,
                         display_hunks,
                         content_origin,
                         scrollbar_layout,
@@ -5423,7 +5356,6 @@ pub struct EditorLayout {
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
     gutter_dimensions: GutterDimensions,
-    clicked_hunk: Option<AnyElement>,
     content_origin: gpui::Point<Pixels>,
     scrollbar_layout: Option<ScrollbarLayout>,
     mode: EditorMode,

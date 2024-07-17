@@ -536,7 +536,6 @@ pub struct Editor {
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
-    clicked_hunk: Option<((Pixels, Pixels), HoveredHunk)>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1861,7 +1860,6 @@ impl Editor {
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             expanded_hunks: ExpandedHunks::default(),
-            clicked_hunk: None,
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2380,7 +2378,6 @@ impl Editor {
             }
 
             hide_hover(self, cx);
-            self.clicked_hunk = None;
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -11677,7 +11674,6 @@ impl Editor {
             hide_hover(self, cx);
         }
 
-        self.clicked_hunk = None;
         self.hide_context_menu(cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
