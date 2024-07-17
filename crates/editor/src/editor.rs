@@ -131,7 +131,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -10384,6 +10384,22 @@ impl Editor {
     pub fn set_show_indent_guides(&mut self, show_indent_guides: bool, cx: &mut ViewContext<Self>) {
         self.show_indent_guides = Some(show_indent_guides);
         cx.notify();
+    }
+
+    pub fn working_directory(&self, cx: &WindowContext) -> Option<PathBuf> {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(dir) = file.abs_path(cx).parent() {
+                    return Some(dir.to_owned());
+                }
+            }
+
+            if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                return Some(project_path.path.to_path_buf());
+            }
+        }
+
+        None
     }
 
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {

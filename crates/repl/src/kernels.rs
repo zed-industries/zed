@@ -171,6 +171,7 @@ pub struct RunningKernel {
     _control_task: Task<anyhow::Result<()>>,
     _routing_task: Task<anyhow::Result<()>>,
     connection_path: PathBuf,
+    pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
@@ -190,6 +191,7 @@ impl RunningKernel {
     pub fn new(
         kernel_specification: KernelSpecification,
         entity_id: EntityId,
+        working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<(Self, JupyterMessageChannel)>> {
@@ -220,7 +222,9 @@ impl RunningKernel {
             fs.atomic_write(connection_path.clone(), content).await?;
 
             let mut cmd = kernel_specification.command(&connection_path)?;
+
             let process = cmd
+                .current_dir(&working_directory)
                 // .stdout(Stdio::null())
                 // .stderr(Stdio::null())
                 .kill_on_drop(true)
@@ -301,6 +305,7 @@ impl RunningKernel {
                 Self {
                     process,
                     request_tx,
+                    working_directory,
                     _shell_task,
                     _iopub_task,
                     _control_task,
