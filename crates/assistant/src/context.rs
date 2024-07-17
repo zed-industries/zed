@@ -17,7 +17,6 @@ use futures::{
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
-    ToPoint,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -444,9 +443,9 @@ impl Debug for EditStepOperations {
                 operations,
                 raw_output,
             } => f
-                .debug_tuple("EditStepOperations::Parsed")
-                .field(operations)
-                .field(raw_output)
+                .debug_struct("EditStepOperations::Parsed")
+                .field("operations", operations)
+                .field("raw_output", raw_output)
                 .finish(),
         }
     }
@@ -490,30 +489,30 @@ impl EditOperation {
                     .iter()
                     .find(|item| item.string == symbol)
                     .context("symbol not found")?;
-                let symbol_range = outline.items[candidate.id].range.clone();
-                match kind {
-                    EditOperationKind::PrependChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let start = symbol_range.start;
-                            let end = buffer.anchor_after(cmp::min(
-                                start.to_point(buffer) + Point::new(10, 0),
-                                symbol_range.end.to_point(buffer),
-                            ));
-                            start..end
-                        })?
-                    }
-                    EditOperationKind::AppendChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let end = symbol_range.end;
-                            let start = buffer.anchor_before(cmp::max(
-                                end.to_point(buffer) - Point::new(10, 0),
-                                symbol_range.start.to_point(buffer),
-                            ));
-                            start..end
-                        })?
-                    }
-                    _ => symbol_range,
-                }
+                buffer.update(&mut cx, |buffer, _| {
+                    let mut symbol_point_range = outline.items[candidate.id].range.to_point(buffer);
+                    symbol_point_range.start.column = 0;
+                    symbol_point_range.end.column = buffer.line_len(symbol_point_range.end.row);
+                    let context_point_range = match kind {
+                        EditOperationKind::PrependChild { .. } => {
+                            let end = cmp::min(
+                                Point::new(symbol_point_range.start.row + 10, 0),
+                                symbol_point_range.end,
+                            );
+                            symbol_point_range.start..end
+                        }
+                        EditOperationKind::AppendChild { .. } => {
+                            let start = cmp::max(
+                                Point::new(symbol_point_range.end.row.saturating_sub(10), 0),
+                                symbol_point_range.start,
+                            );
+                            start..symbol_point_range.end
+                        }
+                        _ => symbol_point_range,
+                    };
+                    buffer.anchor_before(context_point_range.start)
+                        ..buffer.anchor_after(context_point_range.end)
+                })?
             } else {
                 match kind {
                     EditOperationKind::PrependChild { .. } => {
