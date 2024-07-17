@@ -219,6 +219,7 @@
   "enum"
   "export"
   "implements"
+  "infer"
   "interface"
   "keyof"
   "namespace"
