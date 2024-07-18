@@ -111,6 +111,7 @@ impl ChatPanel {
                 this.is_scrolled_to_bottom = !event.is_scrolled;
             }));
 
+            let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
                 fs,
                 client,
@@ -120,7 +121,7 @@ impl ChatPanel {
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_editor: input_editor,
-                local_timezone: cx.local_timezone(),
+                local_timezone: UtcOffset::from_whole_seconds(local_offset).unwrap(),
                 subscriptions: Vec::new(),
                 is_scrolled_to_bottom: true,
                 active: false,

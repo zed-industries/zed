@@ -3923,7 +3923,7 @@ fn render_inline_blame_entry(
     workspace: Option<WeakView<Workspace>>,
     cx: &mut WindowContext<'_>,
 ) -> AnyElement {
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
     let text = format!("{}, {}", author, relative_timestamp);
@@ -3969,7 +3969,7 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let short_commit_id = blame_entry.sha.display_short();
 
