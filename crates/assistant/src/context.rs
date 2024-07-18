@@ -1102,6 +1102,7 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse_slash_commands(cx);
+                self.prune_invalid_edit_steps(cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1206,6 +1207,18 @@ impl Context {
 
         if !updated.is_empty() || !removed.is_empty() {
             cx.emit(ContextEvent::PendingSlashCommandsUpdated { removed, updated });
+        }
+    }
+
+    fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        let prev_len = self.edit_steps.len();
+        self.edit_steps.retain(|step| {
+            step.source_range.start.is_valid(buffer) && step.source_range.end.is_valid(buffer)
+        });
+        if self.edit_steps.len() != prev_len {
+            cx.emit(ContextEvent::EditStepsChanged);
+            cx.notify();
         }
     }
 
