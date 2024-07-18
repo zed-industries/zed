@@ -161,8 +161,10 @@ impl Editor {
         hovered_hunk: &HoveredHunk,
         cx: &mut ViewContext<Editor>,
     ) {
-        if let Some(diff_hunk) = to_diff_hunk(hovered_hunk, &self.buffer().read(cx).snapshot(cx)) {
+        let editor_snapshot = self.snapshot(cx);
+        if let Some(diff_hunk) = to_diff_hunk(hovered_hunk, &editor_snapshot.buffer_snapshot) {
             self.toggle_hunks_expanded(vec![diff_hunk], cx);
+            self.change_selections(None, cx, |selections| selections.refresh());
         }
     }
 
@@ -429,12 +431,7 @@ impl Editor {
                             .start
                             .to_display_point(&editor_snapshot)
                             .row();
-                        editor.render_close_hunk_diff_button(
-                            hunk.clone(),
-                            false, // TODO kb
-                            hunk_start_row,
-                            cx,
-                        )
+                        editor.render_close_hunk_diff_button(hunk.clone(), hunk_start_row, cx)
                     });
                     let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     let click_editor = editor.clone();
@@ -778,11 +775,12 @@ fn editor_with_deleted_text(
                 }
             }),
         ]);
+        let parent_editor_for_reverts = parent_editor.clone();
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
         editor
             .register_action::<RevertSelectedHunks>(move |_, cx| {
-                parent_editor
+                parent_editor_for_reverts
                     .update(cx, |editor, cx| {
                         let Some((buffer, original_text)) =
                             editor.buffer().update(cx, |buffer, cx| {
@@ -806,6 +804,16 @@ fn editor_with_deleted_text(
                                 cx,
                             )
                         });
+                    })
+                    .ok();
+            })
+            .detach();
+        let hunk = hunk.clone();
+        editor
+            .register_action::<ToggleHunkDiff>(move |_, cx| {
+                parent_editor
+                    .update(cx, |editor, cx| {
+                        editor.toggle_hovered_hunk(&hunk, cx);
                     })
                     .ok();
             })

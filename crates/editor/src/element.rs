@@ -3913,8 +3913,6 @@ impl EditorElement {
                             status: hunk.status,
                             diff_base_byte_range: hunk.diff_base_byte_range,
                         },
-                        // TODO kb
-                        false,
                         display_row,
                         cx,
                     );
