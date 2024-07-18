@@ -33,7 +33,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

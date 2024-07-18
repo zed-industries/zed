@@ -10,6 +10,7 @@ Guidelines:
 - Never nest an operation with another operation or include CDATA or other content. All operations are leaf nodes.
 - Include a description attribute for each operation with a brief, one-line description of the change to perform.
 - Descriptions are required for all operations except delete.
+- When generating multiple operations, ensure the descriptions are specific to each individual operation.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 - Don't generate multiple operations at the same location. Instead, combine them together in a single operation with a succinct combined description.
 

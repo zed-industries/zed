@@ -10,10 +10,10 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
     CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
-    EditStepOperations, InlineAssist, InlineAssistant, InsertIntoEditor, MessageStatus,
-    ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector,
+    EditStepOperations, EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant,
+    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -39,7 +39,8 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
+    language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
+    ToOffset,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
@@ -969,6 +970,12 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
+struct ActiveEditStep {
+    start: language::Anchor,
+    assist_ids: Vec<InlineAssistId>,
+    _open_editor: Task<Result<()>>,
+}
+
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
@@ -982,7 +989,7 @@ pub struct ContextEditor {
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
-    active_edit_step_start: Option<language::Anchor>,
+    active_edit_step: Option<ActiveEditStep>,
     assistant_panel: WeakView<AssistantPanel>,
 }
 
@@ -1038,7 +1045,7 @@ impl ContextEditor {
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
-            active_edit_step_start: None,
+            active_edit_step: None,
             assistant_panel,
         };
         this.update_message_headers(cx);
@@ -1078,8 +1085,16 @@ impl ContextEditor {
     }
 
     fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        self.edit_step_for_cursor(cx).is_some()
-        // todo!()
+        if let Some(step) = self.active_edit_step.as_ref() {
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                for assist_id in &step.assist_ids {
+                    assistant.start_assist(*assist_id, cx);
+                }
+                !step.assist_ids.is_empty()
+            })
+        } else {
+            false
+        }
     }
 
     fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
@@ -1549,13 +1564,20 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                let new_active_step = self
-                    .edit_step_for_cursor(cx)
-                    .map(|step| step.source_range.start);
-                if new_active_step != self.active_edit_step_start {
-                    self.active_edit_step_start = new_active_step;
-                    self.open_editor_for_active_edit_step(cx)
-                        .detach_and_log_err(cx);
+                let new_active_step = self.edit_step_for_cursor(cx);
+                if let Some(new_active_step) = new_active_step {
+                    if Some(new_active_step.source_range.start)
+                        != self.active_edit_step.as_ref().map(|step| step.start)
+                    {
+                        let suggestions = new_active_step.edit_suggestions(&self.project, cx);
+                        self.active_edit_step = Some(ActiveEditStep {
+                            start: new_active_step.source_range.start,
+                            assist_ids: Vec::new(),
+                            _open_editor: self.open_editor_for_edit_suggestions(suggestions, cx),
+                        });
+                    }
+                } else {
+                    self.active_edit_step = None;
                 }
             }
             _ => {}
@@ -1563,28 +1585,18 @@ impl ContextEditor {
         cx.emit(event.clone());
     }
 
-    fn open_editor_for_active_edit_step(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        let Some(active_edit_step_start) = self.active_edit_step_start.clone() else {
-            return Task::ready(Err(anyhow!("no active edit step")));
-        };
-
-        let context = self.context.read(cx);
-        let buffer = context.buffer().read(cx);
-        let active_edit_step = match context
-            .edit_steps()
-            .binary_search_by(|step| step.source_range.start.cmp(&active_edit_step_start, buffer))
-        {
-            Ok(index) => &context.edit_steps()[index],
-            Err(_) => return Task::ready(Err(anyhow!("active edit step not found"))),
-        };
-
-        let edit_suggestions = active_edit_step.edit_suggestions(&self.project, cx);
+    fn open_editor_for_edit_suggestions(
+        &mut self,
+        edit_suggestions: Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let assistant_panel = self.assistant_panel.clone();
-        cx.spawn(|_this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let edit_suggestions = edit_suggestions.await;
 
+            let mut assist_ids = Vec::new();
             if edit_suggestions.is_empty() {
                 return Ok(());
             } else if edit_suggestions.len() == 1
@@ -1613,7 +1625,7 @@ impl ContextEditor {
                         };
                         let initial_text = suggestion.prepend_newline.then(|| "\n".into());
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.suggest_assist(
+                            assist_ids.push(assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
@@ -1621,7 +1633,7 @@ impl ContextEditor {
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
-                            );
+                            ));
                         });
                     }
 
@@ -1691,7 +1703,7 @@ impl ContextEditor {
                 cx.update(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         for (range, description, initial_text) in inline_assist_suggestions {
-                            assistant.suggest_assist(
+                            assist_ids.push(assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
@@ -1699,7 +1711,7 @@ impl ContextEditor {
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
-                            );
+                            ));
                         }
                     })
                 })?;
@@ -1708,7 +1720,11 @@ impl ContextEditor {
                 })?;
             };
 
-            Ok(())
+            this.update(&mut cx, |this, _cx| {
+                if let Some(step) = this.active_edit_step.as_mut() {
+                    step.assist_ids = assist_ids;
+                }
+            })
         })
     }
 

@@ -228,7 +228,7 @@ impl InlineAssistant {
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
-    ) {
+    ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new_model(|cx| Buffer::local(&initial_prompt, cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
@@ -300,6 +300,7 @@ impl InlineAssistant {
         assist_group.assist_ids.push(assist_id);
         editor_assists.assist_ids.push(assist_id);
         self.assist_groups.insert(assist_group_id, assist_group);
+        assist_id
     }
 
     fn insert_assist_blocks(
@@ -802,7 +803,7 @@ impl InlineAssistant {
         assist_group.assist_ids.clone()
     }
 
-    fn start_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    pub fn start_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -969,7 +970,7 @@ impl InlineAssistant {
         })
     }
 
-    fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1252,7 +1253,7 @@ fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-struct InlineAssistId(usize);
+pub struct InlineAssistId(usize);
 
 impl InlineAssistId {
     fn post_inc(&mut self) -> InlineAssistId {
