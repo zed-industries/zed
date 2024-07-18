@@ -294,7 +294,7 @@ impl WindowsWindow {
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
-        let raw_hwnd = unsafe {
+        let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
                 classname,
@@ -309,8 +309,9 @@ impl WindowsWindow {
                 hinstance,
                 lpparam,
             )
-        }?;
+        };
         let state_ptr = context.inner.take().unwrap()?;
+        let raw_hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
         unsafe {
