@@ -49,7 +49,7 @@ impl TestPlatform {
         let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
 
         #[cfg(target_os = "linux")]
-        let text_system = Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
+        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
 
         #[cfg(target_os = "windows")]
         let text_system = Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
