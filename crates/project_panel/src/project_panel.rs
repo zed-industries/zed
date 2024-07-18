@@ -1307,6 +1307,8 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
+            let mut tasks = Vec::new();
+
             for clipboard_entry in clipboard_entries.items() {
                 if clipboard_entry.worktree_id != worktree_id {
                     return None;
@@ -1318,15 +1320,34 @@ impl ProjectPanel {
                         .update(cx, |project, cx| {
                             project.rename_entry(clipboard_entry.entry_id, new_path, cx)
                         })
-                        .detach_and_log_err(cx)
+                        .detach_and_log_err(cx);
                 } else {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.copy_entry(clipboard_entry.entry_id, new_path, cx)
-                        })
-                        .detach_and_log_err(cx)
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                    });
+                    tasks.push(task);
                 }
             }
+
+            cx.spawn(|project_panel, mut cx| async move {
+                let entry_ids = futures::future::join_all(tasks).await;
+                if let Some(Some(entry)) = entry_ids
+                    .into_iter()
+                    .rev()
+                    .find_map(|entry_id| entry_id.ok())
+                {
+                    project_panel
+                        .update(&mut cx, |project_panel, _cx| {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id: entry.id,
+                            });
+                        })
+                        .ok();
+                }
+            })
+            .detach();
+
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
@@ -3579,8 +3600,8 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two copy.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
@@ -3595,9 +3616,9 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy 1.txt",
+                "      one.two copy 1.txt  <== selected",
                 "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
@@ -3682,10 +3703,13 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 //
-                "v root  <== selected",
+                "v root",
                 "    > a",
-                "    > a copy",
-                "    > a copy 1",
+                "    v a copy",
+                "        > a  <== selected",
+                "        > inner_dir",
+                "          one.txt",
+                "          two.txt",
                 "    v b",
                 "        v a",
                 "            v inner_dir",
