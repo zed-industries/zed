@@ -417,11 +417,7 @@ impl Item for ChannelView {
             .gap_2()
             .child(
                 Label::new(channel_name)
-                    .color(if params.selected {
-                        Color::Default
-                    } else {
-                        Color::Muted
-                    })
+                    .color(params.text_color())
                     .italic(params.preview),
             )
             .when_some(status, |element, status| {

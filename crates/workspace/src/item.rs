@@ -142,6 +142,17 @@ pub struct TabContentParams {
     pub preview: bool,
 }
 
+impl TabContentParams {
+    /// Returns the text color to be used for the tab content.
+    pub fn text_color(&self) -> Color {
+        if self.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }
+    }
+}
+
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
 
@@ -154,13 +165,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
             return gpui::Empty.into_any();
         };
 
-        let color = if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        };
-
-        Label::new(text).color(color).into_any_element()
+        Label::new(text)
+            .color(params.text_color())
+            .into_any_element()
     }
 
     /// Returns the textual contents of the tab.

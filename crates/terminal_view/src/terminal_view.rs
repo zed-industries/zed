@@ -994,11 +994,7 @@ impl Item for TerminalView {
                         )
                     }),
             )
-            .child(Label::new(title).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
+            .child(Label::new(title).color(params.text_color()))
             .into_any()
     }
 

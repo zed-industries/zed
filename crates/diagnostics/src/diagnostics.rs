@@ -649,11 +649,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
-                .color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
+                .color(params.text_color())
                 .into_any_element()
         } else {
             h_flex()
@@ -663,13 +659,10 @@ impl Item for ProjectDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(Label::new(self.summary.error_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.error_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .when(self.summary.warning_count > 0, |then| {
@@ -677,13 +670,10 @@ impl Item for ProjectDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                            .child(Label::new(self.summary.warning_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.warning_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .into_any_element()
