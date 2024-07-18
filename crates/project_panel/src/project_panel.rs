@@ -1329,23 +1329,19 @@ impl ProjectPanel {
                 }
             }
 
-            cx.spawn(|this, mut cx| async move {
-                let mut entry_ids = Vec::new();
-                for task in tasks {
-                    if let Some(entry) = task.await.log_err() {
-                        if let Some(entry) = entry {
-                            entry_ids.push(entry.id);
-                        }
-                    }
-                }
-                if let Some(id) = entry_ids.first() {
-                    this.update(&mut cx, |this, _cx| {
-                        this.selection = Some(SelectedEntry {
+            cx.spawn(|project_panel, mut cx| async move {
+                let entry_ids = futures::future::join_all(tasks).await;
+                if let Some(entry) = entry_ids
+                    .into_iter()
+                    .find_map(|entry_id| entry_id.expect("copy failed"))
+                {
+                    project_panel.update(&mut cx, |project_panel, _cx| {
+                        project_panel.selection = Some(SelectedEntry {
                             worktree_id,
-                            entry_id: *id,
+                            entry_id: entry.id,
                         });
                     })
-                    .log_err();
+                    .ok();
                 }
             })
             .detach();
