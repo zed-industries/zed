@@ -310,6 +310,8 @@ impl WindowsWindow {
                 lpparam,
             )
         };
+        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
         let raw_hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
