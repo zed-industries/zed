@@ -1685,9 +1685,11 @@ impl ContextEditor {
             return;
         };
 
+        let selection = editor.update(cx, |editor, cx| editor.selections.newest_adjusted(cx));
         let editor = editor.read(cx);
-        let range = editor.selections.newest::<usize>(cx).range();
         let buffer = editor.buffer().read(cx).snapshot(cx);
+        let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+            ..editor::ToOffset::to_offset(&selection.end, &buffer);
         let start_language = buffer.language_at(range.start);
         let end_language = buffer.language_at(range.end);
         let language_name = if start_language == end_language {

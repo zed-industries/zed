@@ -157,6 +157,18 @@ impl SelectionsCollection {
         selections
     }
 
+    /// Returns the newest selection, adjusted to take into account the selection line_mode
+    pub fn newest_adjusted(&self, cx: &mut AppContext) -> Selection<Point> {
+        let mut selection = self.newest::<Point>(cx);
+        if self.line_mode {
+            let map = self.display_map(cx);
+            let new_range = map.expand_to_line(selection.range());
+            selection.start = new_range.start;
+            selection.end = new_range.end;
+        }
+        selection
+    }
+
     pub fn all_adjusted_display(
         &self,
         cx: &mut AppContext,
