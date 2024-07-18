@@ -1331,17 +1331,16 @@ impl ProjectPanel {
 
             cx.spawn(|project_panel, mut cx| async move {
                 let entry_ids = futures::future::join_all(tasks).await;
-                if let Some(entry) = entry_ids
-                    .into_iter()
-                    .find_map(|entry_id| entry_id.expect("copy failed"))
+                if let Some(Some(entry)) = entry_ids.into_iter().rev().find_map(|entry_id| entry_id.ok())
                 {
-                    project_panel.update(&mut cx, |project_panel, _cx| {
-                        project_panel.selection = Some(SelectedEntry {
-                            worktree_id,
-                            entry_id: entry.id,
-                        });
-                    })
-                    .ok();
+                    project_panel
+                        .update(&mut cx, |project_panel, _cx| {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id: entry.id,
+                            });
+                        })
+                        .ok();
                 }
             })
             .detach();
