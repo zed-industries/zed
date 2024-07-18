@@ -61,7 +61,7 @@ use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
     LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -5621,7 +5621,6 @@ impl Project {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                |server_capabilities| server_capabilities.signature_help_provider.is_some(),
                 GetSignatureHelp { position },
                 cx,
             );
@@ -5696,11 +5695,6 @@ impl Project {
             let all_actions_task = self.request_multiple_lsp_locally(
                 &buffer,
                 Some(position),
-                |server_capabilities| match server_capabilities.hover_provider {
-                    Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
-                    Some(lsp::HoverProviderCapability::Options(_)) => true,
-                    None => false,
-                },
                 GetHover { position },
                 cx,
             );
@@ -6286,7 +6280,6 @@ impl Project {
             let all_actions_task = self.request_multiple_lsp_locally(
                 &buffer_handle,
                 Some(range.start),
-                GetCodeActions::supports_code_actions,
                 GetCodeActions {
                     range: range.clone(),
                     kinds: None,
@@ -7431,7 +7424,6 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: Option<P>,
-        server_capabilities_check: fn(&ServerCapabilities) -> bool,
         request: R,
         cx: &mut ModelContext<'_, Self>,
     ) -> Task<Vec<R::Response>>
@@ -7449,7 +7441,6 @@ impl Project {
         let scope = position.and_then(|position| snapshot.language_scope_at(position));
         let mut response_results = self
             .language_servers_for_buffer(buffer.read(cx), cx)
-            .filter(|(_, server)| server_capabilities_check(&server.capabilities()))
             .filter(|(adapter, _)| {
                 scope
                     .as_ref()
@@ -8575,11 +8566,6 @@ impl Project {
                         project.request_multiple_lsp_locally(
                             &buffer,
                             Some(get_hover.position),
-                            |server_capabilities| match server_capabilities.hover_provider {
-                                Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
-                                Some(lsp::HoverProviderCapability::Options(_)) => true,
-                                None => false,
-                            },
                             get_hover,
                             cx,
                         )
@@ -8617,7 +8603,6 @@ impl Project {
                         project.request_multiple_lsp_locally(
                             &buffer,
                             Some(get_code_actions.range.start),
-                            GetCodeActions::supports_code_actions,
                             get_code_actions,
                             cx,
                         )
@@ -8655,9 +8640,6 @@ impl Project {
                         project.request_multiple_lsp_locally(
                             &buffer,
                             Some(get_signature_help.position),
-                            |server_capabilities| {
-                                server_capabilities.signature_help_provider.is_some()
-                            },
                             get_signature_help,
                             cx,
                         )
