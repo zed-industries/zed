@@ -101,12 +101,12 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Model::ThreePointFiveTurbo => 4096,
-            Model::Four => 8192,
-            Model::FourTurbo => 128000,
-            Model::FourOmni => 128000,
+            Self::ThreePointFiveTurbo => 4096,
+            Self::Four => 8192,
+            Self::FourTurbo => 128000,
+            Self::FourOmni => 128000,
             Self::FourOmniMini => 128000,
-            Model::Custom { max_tokens, .. } => *max_tokens,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }
