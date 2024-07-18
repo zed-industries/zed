@@ -269,7 +269,7 @@ impl Editor {
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    Some(cx.theme().status().created_background),
                     false,
                     cx,
                 );
@@ -278,7 +278,7 @@ impl Editor {
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    Some(cx.theme().status().created_background),
                     false,
                     cx,
                 );
@@ -306,7 +306,7 @@ impl Editor {
         hunk: &HunkToExpand,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<BlockId> {
-        let deleted_hunk_color = deleted_hunk_color(cx);
+        let deleted_hunk_color = cx.theme().status().deleted_background;
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let editor_model = cx.model().clone();
@@ -538,18 +538,6 @@ fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Optio
                 }
             })
         })
-}
-
-fn added_hunk_color(cx: &AppContext) -> Hsla {
-    let mut created_color = cx.theme().status().git().created;
-    created_color.fade_out(0.7);
-    created_color
-}
-
-fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    let mut deleted_color = cx.theme().status().git().deleted;
-    deleted_color.fade_out(0.7);
-    deleted_color
 }
 
 fn editor_with_deleted_text(
