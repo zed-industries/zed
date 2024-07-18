@@ -13,7 +13,7 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
+    h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
     ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
@@ -439,7 +439,8 @@ impl Editor {
                         .bg(deleted_hunk_color)
                         .size_full()
                         .child(
-                            div()
+                            v_flex()
+                                .justify_center()
                                 .max_w(gutter_dimensions.full_width())
                                 .min_w(gutter_dimensions.full_width())
                                 .size_full()
