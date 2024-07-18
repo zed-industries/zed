@@ -1,6 +1,6 @@
-use crate::stdout_is_a_pty;
 use crate::{handle_open_request, init_headless, init_ui, zed::password_prompt::PasswordPrompt};
 use anyhow::{anyhow, Context, Result};
+use auto_update::AutoUpdater;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -15,7 +15,7 @@ use gpui::{
     AppContext, AsyncAppContext, Global, SemanticVersion, VisualContext as _, WindowHandle,
 };
 use language::{Bias, Point};
-use release_channel::AppVersion;
+use release_channel::{AppVersion, ReleaseChannel};
 use remote::SshPlatform;
 use std::path::Path;
 use std::path::PathBuf;
@@ -199,9 +199,13 @@ async fn get_server_binary(
     platform: SshPlatform,
     cx: &mut AsyncAppContext,
 ) -> Result<(PathBuf, SemanticVersion)> {
+    let (version, release_channel) =
+        cx.update(|cx| (AppVersion::global(cx), ReleaseChannel::global(cx)))?;
+
     // In dev mode, build the remote server binary from source
     #[cfg(debug_assertions)]
-    if stdout_is_a_pty()
+    if crate::stdout_is_a_pty()
+        && release_channel == ReleaseChannel::Dev
         && platform.arch == std::env::consts::ARCH
         && platform.os == std::env::consts::OS
     {
@@ -213,7 +217,6 @@ async fn get_server_binary(
         run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
 
         let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
-        let version = cx.update(|cx| AppVersion::global(cx))?;
         return Ok((path, version));
 
         async fn run_cmd(command: &mut Command) -> Result<()> {
@@ -225,7 +228,10 @@ async fn get_server_binary(
         }
     }
 
-    Err(anyhow!("not yet implemented"))
+    let binary_path =
+        AutoUpdater::get_latest_remote_server_release(platform.os, platform.arch, cx).await?;
+
+    Ok((binary_path, version))
 }
 
 #[cfg(target_os = "linux")]

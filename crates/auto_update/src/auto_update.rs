@@ -81,9 +81,9 @@ pub struct AutoUpdater {
 }
 
 #[derive(Deserialize)]
-struct JsonRelease {
-    version: String,
-    url: String,
+pub struct JsonRelease {
+    pub version: String,
+    pub url: String,
 }
 
 struct AutoUpdateSetting(bool);
@@ -354,7 +354,6 @@ impl AutoUpdater {
             return;
         }
 
-        self.status = AutoUpdateStatus::Checking;
         cx.notify();
 
         self.pending_poll = Some(cx.spawn(|this, mut cx| async move {
@@ -380,20 +379,53 @@ impl AutoUpdater {
         cx.notify();
     }
 
-    async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
-        let (client, current_version) = this.read_with(&cx, |this, _| {
-            (this.http_client.clone(), this.current_version)
-        })?;
+    pub async fn get_latest_remote_server_release(
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
+        let (this, mut release_channel) = cx.update(|cx| {
+            anyhow::Ok((
+                cx.default_global::<GlobalAutoUpdate>()
+                    .0
+                    .clone()
+                    .ok_or_else(|| anyhow!("auto-update not initialized"))?,
+                ReleaseChannel::global(cx),
+            ))
+        })??;
 
-        let asset = match OS {
-            "linux" => format!("zed-linux-{}.tar.gz", ARCH),
-            "macos" => "Zed.dmg".into(),
-            _ => return Err(anyhow!("auto-update not supported for OS {:?}", OS)),
-        };
+        if release_channel == ReleaseChannel::Dev {
+            release_channel = ReleaseChannel::Nightly;
+        }
 
+        let release = Self::get_latest_release(&this, "zed-remote-server", os, arch, cx).await?;
+
+        let servers_dir = paths::remote_servers_dir();
+        let channel_dir = servers_dir.join(release_channel.dev_name());
+        let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
+        let version_path = platform_dir.join(format!("{}.gz", release.version));
+        smol::fs::create_dir_all(&platform_dir).await.ok();
+
+        let client = this.read_with(cx, |this, _| this.http_client.clone())?;
+        if smol::fs::metadata(&version_path).await.is_err() {
+            log::info!("downloading zed-remote-server {os} {arch}");
+            download_remote_server_binary(&version_path, release, client, cx).await?;
+        }
+
+        Ok(version_path)
+    }
+
+    async fn get_latest_release(
+        this: &Model<Self>,
+        asset: &str,
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncAppContext,
+    ) -> Result<JsonRelease> {
+        let client = this.read_with(cx, |this, _| this.http_client.clone())?;
         let mut url_string = client.build_url(&format!(
             "/api/releases/latest?asset={}&os={}&arch={}",
-            asset, OS, ARCH
+            asset, os, arch
         ));
         cx.update(|cx| {
             if let Some(param) = ReleaseChannel::try_global(cx)
@@ -413,8 +445,17 @@ impl AutoUpdater {
             .await
             .context("error reading release")?;
 
-        let release: JsonRelease =
-            serde_json::from_slice(body.as_slice()).context("error deserializing release")?;
+        serde_json::from_slice(body.as_slice()).context("error deserializing release")
+    }
+
+    async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
+        let (client, current_version) = this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Checking;
+            cx.notify();
+            (this.http_client.clone(), this.current_version)
+        })?;
+
+        let release = Self::get_latest_release(&this, "zed", OS, ARCH, &mut cx).await?;
 
         let should_download = match *RELEASE_CHANNEL {
             ReleaseChannel::Nightly => cx
@@ -441,7 +482,7 @@ impl AutoUpdater {
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-auto-update")
             .tempdir()?;
-        let downloaded_asset = download_release(&temp_dir, release, &asset, client, &cx).await?;
+        let downloaded_asset = download_release(&temp_dir, release, "zed", client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -493,6 +534,32 @@ impl AutoUpdater {
                 .is_some())
         })
     }
+}
+
+async fn download_remote_server_binary(
+    target_path: &PathBuf,
+    release: JsonRelease,
+    client: Arc<HttpClientWithUrl>,
+    cx: &AsyncAppContext,
+) -> Result<()> {
+    let mut target_file = File::create(&target_path).await?;
+    let (installation_id, release_channel, telemetry) = cx.update(|cx| {
+        let installation_id = Client::global(cx).telemetry().installation_id();
+        let release_channel =
+            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
+        let telemetry = TelemetrySettings::get_global(cx).metrics;
+
+        (installation_id, release_channel, telemetry)
+    })?;
+    let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+        installation_id,
+        release_channel,
+        telemetry,
+    })?);
+
+    let mut response = client.get(&release.url, request_body, true).await?;
+    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    Ok(())
 }
 
 async fn download_release(

@@ -983,6 +983,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
+ "paths",
  "release_channel",
  "schemars",
  "serde",
