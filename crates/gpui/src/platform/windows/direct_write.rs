@@ -171,6 +171,11 @@ impl DirectWriteTextSystem {
             font_id_by_identifier: HashMap::default(),
         })))
     }
+
+    pub(crate) fn destroy(&self) {
+        let mut lock = self.0.write();
+        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
+    }
 }
 
 impl PlatformTextSystem for DirectWriteTextSystem {
@@ -238,11 +243,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
                 font_size,
                 ..Default::default()
             })
-    }
-
-    fn destroy(&self) {
-        let mut lock = self.0.write();
-        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
     }
 }
 

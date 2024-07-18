@@ -51,7 +51,7 @@ pub(crate) struct WindowsPlatform {
     icon: HICON,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<dyn PlatformTextSystem>,
+    text_system: Arc<DirectWriteTextSystem>,
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
 }
