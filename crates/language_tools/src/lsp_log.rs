@@ -13,7 +13,7 @@ use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
 use workspace::{
-    item::{Item, ItemHandle, TabContentParams},
+    item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -697,11 +697,7 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("LSP Logs".into())
     }
 

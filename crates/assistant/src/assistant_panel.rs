@@ -2023,11 +2023,7 @@ impl FocusableView for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(
-        &self,
-        _params: item::TabContentParams,
-        cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
         Some(util::truncate_and_trailoff(&self.title(cx), Self::MAX_TAB_TITLE_LEN).into())
     }
 
@@ -2525,11 +2521,7 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(
-        &self,
-        _params: item::TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("History".into())
     }
 }

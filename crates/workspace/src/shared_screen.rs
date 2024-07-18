@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
@@ -97,11 +97,7 @@ impl Item for SharedScreen {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 

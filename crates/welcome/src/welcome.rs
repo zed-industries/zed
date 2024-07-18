@@ -15,7 +15,7 @@ use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
@@ -303,11 +303,7 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Welcome to Zed!".into())
     }
 

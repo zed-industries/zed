@@ -24,7 +24,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle},
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
@@ -385,11 +385,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
         let label = if let Some(channel) = self.channel(cx) {
             match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),

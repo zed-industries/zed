@@ -25,7 +25,6 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use vim::VimModeSetting;
-use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
@@ -1135,11 +1134,7 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Extensions".into())
     }
 

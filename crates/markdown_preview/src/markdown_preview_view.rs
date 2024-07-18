@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
-use workspace::item::{Item, ItemHandle, TabContentParams};
+use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
@@ -456,11 +456,7 @@ impl Item for MarkdownPreviewView {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some(if let Some(description) = &self.tab_description {
             description.clone().into()
         } else {

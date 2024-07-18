@@ -150,7 +150,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     /// By default this returns a [`Label`] that displays that text from
     /// `tab_content_text`.
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let Some(text) = self.tab_content_text(params, cx) else {
+        let Some(text) = self.tab_content_text(cx) else {
             return gpui::Empty.into_any();
         };
 
@@ -166,11 +166,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     /// Returns the textual contents of the tab.
     ///
     /// Use this if you don't need to customize the tab contents.
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         None
     }
 

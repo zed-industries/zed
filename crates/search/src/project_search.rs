@@ -35,7 +35,7 @@ use ui::{
 };
 use util::paths::PathMatcher;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -374,11 +374,7 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)

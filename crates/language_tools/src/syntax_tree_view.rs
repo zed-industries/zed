@@ -11,7 +11,7 @@ use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{h_flex, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
-    item::{Item, ItemHandle, TabContentParams},
+    item::{Item, ItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -380,11 +380,7 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(
-        &self,
-        _params: TabContentParams,
-        _cx: &WindowContext,
-    ) -> Option<SharedString> {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Syntax Tree".into())
     }
 
