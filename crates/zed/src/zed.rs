@@ -139,7 +139,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         .detach();
 
         if let Some(specs) = cx.gpu_specs().filter(|info| info.is_cpu_emulator) {
-            log::info!("using gpu: {:?}", specs);
+            log::info!("Using GPU: {:?}", specs);
             let message = format!(db::indoc!{r#"
                 Zed is currently running on a software emulated GPU.
                 It will be horribly slow and use 100% CPU.
