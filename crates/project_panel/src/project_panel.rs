@@ -1307,6 +1307,8 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
+            let mut tasks = Vec::new();
+
             for clipboard_entry in clipboard_entries.items() {
                 if clipboard_entry.worktree_id != worktree_id {
                     return None;
@@ -1318,15 +1320,36 @@ impl ProjectPanel {
                         .update(cx, |project, cx| {
                             project.rename_entry(clipboard_entry.entry_id, new_path, cx)
                         })
-                        .detach_and_log_err(cx)
+                        .detach_and_log_err(cx);
                 } else {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.copy_entry(clipboard_entry.entry_id, new_path, cx)
-                        })
-                        .detach_and_log_err(cx)
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                    });
+                    tasks.push(task);
                 }
             }
+
+            cx.spawn(|this, mut cx| async move {
+                let mut entry_ids = Vec::new();
+                for task in tasks {
+                    if let Some(entry) = task.await.log_err() {
+                        if let Some(entry) = entry {
+                            entry_ids.push(entry.id);
+                        }
+                    }
+                }
+                if let Some(id) = entry_ids.first() {
+                    this.update(&mut cx, |this, _cx| {
+                        this.selection = Some(SelectedEntry {
+                            worktree_id,
+                            entry_id: *id,
+                        });
+                    })
+                    .log_err();
+                }
+            })
+            .detach();
+
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
