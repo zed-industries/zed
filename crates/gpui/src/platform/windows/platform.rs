@@ -670,10 +670,11 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
 }
 
 fn begin_vsync(vsync_evnet: HANDLE) {
+    let event: SafeHandle = vsync_evnet.into();
     std::thread::spawn(move || unsafe {
         loop {
             windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(vsync_evnet).log_err();
+            SetEvent(*event).log_err();
         }
     });
 }
