@@ -3703,10 +3703,13 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 //
-                "v root  <== selected",
+                "v root",
                 "    > a",
-                "    > a copy",
-                "    > a copy 1",
+                "    v a copy",
+                "        > a  <== selected",
+                "        > inner_dir",
+                "          one.txt",
+                "          two.txt",
                 "    v b",
                 "        v a",
                 "            v inner_dir",
