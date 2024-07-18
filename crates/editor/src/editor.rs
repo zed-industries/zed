@@ -3638,7 +3638,7 @@ impl Editor {
         if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(
                 &ShowCompletions {
-                    trigger: text.chars().last(),
+                    trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
                 },
                 cx,
             );
@@ -4062,15 +4062,18 @@ impl Editor {
                 Some(ContextMenu::Completions(_))
             )
         };
-        let trigger_kind = match (options.trigger, is_followup_invoke) {
+        let trigger_kind = match (&options.trigger, is_followup_invoke) {
             (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
-            (Some(_), _) => CompletionTriggerKind::TRIGGER_CHARACTER,
+            (Some(trigger), _) if buffer.read(cx).completion_triggers().contains(&trigger) => {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            }
+
             _ => CompletionTriggerKind::INVOKED,
         };
         let completion_context = CompletionContext {
-            trigger_character: options.trigger.and_then(|c| {
+            trigger_character: options.trigger.as_ref().and_then(|trigger| {
                 if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
-                    Some(String::from(c))
+                    Some(String::from(trigger))
                 } else {
                     None
                 }
