@@ -12,7 +12,7 @@ use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use gpu::GPUSettings;
+use gpu::GpuSettings;
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
     ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
@@ -80,7 +80,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
 
-    GPUSettings::register(cx);
+    GpuSettings::register(cx);
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
@@ -118,7 +118,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             width: px(360.0),
             height: px(240.0),
         }),
-        gpu: GPUSettings::get_global(cx).gpu.map(Into::into),
+        gpu: GpuSettings::get_global(cx).gpu.map(Into::into),
     }
 }
 

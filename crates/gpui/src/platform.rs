@@ -254,7 +254,7 @@ pub enum Decorations {
 
 /// A type to describe which GPU to prefer.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub enum GPU {
+pub enum Gpu {
     /// The window is rendered using the integrated (lower-power) GPU
     #[default]
     Integrated,
@@ -692,7 +692,7 @@ pub struct WindowOptions {
 
     /// Whether to prefer one GPU over another. macOS only
     /// Note that this may be ignored.
-    pub gpu: Option<GPU>,
+    pub gpu: Option<Gpu>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -725,7 +725,7 @@ pub(crate) struct WindowParams {
     /// Whether to prefer one GPU over another. macOS only
     /// Note that this may be ignored.
     #[cfg_attr(target_os = "linux", allow(dead_code))]
-    pub gpu: Option<GPU>,
+    pub gpu: Option<Gpu>,
 }
 
 /// Represents the status of how a window should be opened.

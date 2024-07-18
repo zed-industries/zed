@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Surface, Underline, GPU,
+    Gpu, Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -38,7 +38,7 @@ pub unsafe fn new_renderer(
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
     _transparent: bool,
-    gpu: Option<GPU>,
+    gpu: Option<Gpu>,
 ) -> Renderer {
     MetalRenderer::new(context, gpu)
 }
@@ -109,9 +109,9 @@ pub(crate) struct MetalRenderer {
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, gpu: Option<GPU>) -> Self {
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, gpu: Option<Gpu>) -> Self {
         let device = match gpu {
-            Some(GPU::Discrete) => metal::Device::system_default(),
+            Some(Gpu::Discrete) => metal::Device::system_default(),
             _ => {
                 // By default, prefer low‐power integrated GPUs on Intel Mac. On Apple
                 // Silicon, there is only ever one GPU, so this is equivalent to
