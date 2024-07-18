@@ -7,11 +7,24 @@ use remote::{
 };
 use remote_server::HeadlessProject;
 use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
-use std::{env, io, mem, sync::Arc};
+use std::{env, io, mem, process, sync::Arc};
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     env::set_var("RUST_LOG", "remote=trace");
+
+    let subcommand = std::env::args().nth(1);
+    match subcommand.as_deref() {
+        Some("run") => {}
+        Some("version") => {
+            println!("{}", env!("ZED_PKG_VERSION"));
+            return;
+        }
+        _ => {
+            eprintln!("usage: remote <run|version>");
+            process::exit(1);
+        }
+    }
 
     env_logger::init();
 
@@ -52,7 +65,7 @@ fn main() {
                         Ok(message) => message,
                         Err(error) => {
                             log::warn!("error reading message: {:?}", error);
-                            std::process::exit(0);
+                            process::exit(0);
                         }
                     };
                     incoming_tx.unbounded_send(message).ok();

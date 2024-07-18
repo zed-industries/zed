@@ -45,3 +45,7 @@ node_runtime = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 
 serde_json.workspace = true
+
+[build-dependencies]
+cargo_toml.workspace = true
+toml.workspace = true

@@ -9,7 +9,7 @@ use futures::{
     AsyncWriteExt as _, Future,
 };
 use futures::{select_biased, AsyncReadExt as _, FutureExt as _, StreamExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, WeakModel};
 use parking_lot::Mutex;
 use rpc::{
     proto::{
@@ -38,7 +38,6 @@ use std::{
 use tempfile::TempDir;
 use util::ResultExt as _;
 
-const SERVER_BINARY_LOCAL_PATH: &str = "target/debug/remote_server";
 const SERVER_BINARY_REMOTE_PATH: &str = "./.zed_remote_server";
 
 pub struct SshSession {
@@ -70,15 +69,28 @@ struct SshClientState {
     _temp_dir: TempDir,
 }
 
-#[derive(Debug)]
-struct SshFileStat {
-    size: u64,
-    mode: u32,
-}
-
 struct SpawnRequest {
     command: String,
     process_tx: oneshot::Sender<process::Child>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SshPlatform {
+    pub os: &'static str,
+    pub arch: &'static str,
+}
+
+pub trait SshClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<String>>;
+    fn get_server_binary(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
@@ -88,21 +100,22 @@ impl SshSession {
         user: String,
         host: String,
         port: u16,
-        password_callback: Box<
-            dyn Send + Fn(String, &mut AsyncAppContext) -> oneshot::Receiver<Result<String>>,
-        >,
-        cx: &AsyncAppContext,
+        delegate: Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>> {
-        let client_state = SshClientState::new(user, host, port, password_callback, cx).await?;
+        let client_state = SshClientState::new(user, host, port, delegate.clone(), cx).await?;
+
+        let platform = query_platform(&client_state).await?;
+        let (binary_path, version) = delegate.get_server_binary(platform, cx).await??;
+        ensure_server_binary(&client_state, &binary_path, version).await?;
 
         let (spawn_process_tx, mut spawn_process_rx) = mpsc::unbounded::<SpawnRequest>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
-        ensure_server_binary(&client_state).await?;
-
         let mut remote_server_child = client_state
             .ssh_command(SERVER_BINARY_REMOTE_PATH)
+            .arg("run")
             .spawn()
             .context("failed to spawn remote server")?;
         let mut child_stderr = remote_server_child.stderr.take().unwrap();
@@ -397,9 +410,7 @@ impl SshClientState {
         user: String,
         host: String,
         port: u16,
-        password_callback: Box<
-            dyn Send + Fn(String, &mut AsyncAppContext) -> oneshot::Receiver<Result<String>>,
-        >,
+        delegate: Arc<dyn SshClientDelegate>,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
         let url = format!("{user}@{host}");
@@ -419,7 +430,8 @@ impl SshClientState {
                     buffer.clear();
                 }
                 let password_prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = password_callback(password_prompt.to_string(), &mut cx)
+                if let Some(password) = delegate
+                    .ask_password(password_prompt.to_string(), &mut cx)
                     .await
                     .context("failed to get ssh password")
                     .and_then(|p| p)
@@ -481,50 +493,6 @@ impl SshClientState {
         })
     }
 
-    async fn file_stat(&self, path: &Path) -> Result<Option<SshFileStat>> {
-        let output = self
-            .ssh_command("stat")
-            .args(["-f", "%z %p"])
-            .arg(path)
-            .output()
-            .await?;
-
-        if output.status.success() {
-            let output = String::from_utf8(output.stdout)?;
-            let mut stats = output.split_whitespace();
-            let size = stats
-                .next()
-                .ok_or_else(|| anyhow!("Failed to parse size"))?
-                .parse()?;
-            let mode = stats
-                .next()
-                .ok_or_else(|| anyhow!("Failed to parse mode"))?
-                .parse::<u32>()?;
-            Ok(Some(SshFileStat { size, mode }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
-        let output = self
-            .ssh_command("chmod")
-            .arg(format!("{:o}", mode))
-            .arg(path)
-            .output()
-            .await?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "failed to chmod file file {} {:o}: {}",
-                path.display(),
-                mode,
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    }
-
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
         let mut command = process::Command::new("scp");
         let output = self
@@ -548,13 +516,13 @@ impl SshClientState {
         }
     }
 
-    fn ssh_command<S: AsRef<OsStr>>(&self, binary: S) -> process::Command {
+    fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
         let mut command = process::Command::new("ssh");
         self.ssh_options(&mut command)
             .arg("-p")
             .arg(&self.port.to_string())
             .arg(&self.url)
-            .arg(binary);
+            .arg(program);
         command
     }
 
@@ -568,31 +536,88 @@ impl SshClientState {
     }
 }
 
-async fn ensure_server_binary(session: &SshClientState) -> Result<()> {
-    let src_path = Path::new(SERVER_BINARY_LOCAL_PATH);
-    let dst_path = Path::new(SERVER_BINARY_REMOTE_PATH);
+async fn run_cmd(command: &mut process::Command) -> Result<String> {
+    let output = command.output().await?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(anyhow!(
+            "failed to run command: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
 
-    let src_stat = fs::metadata(src_path).await?;
-    let size = src_stat.size();
-    let server_mode = 0o755;
-    let dst_stat = session.file_stat(&dst_path).await?;
-    let server_binary_exists = dst_stat.map_or(false, |stats| {
-        stats.size == src_stat.size() && stats.mode == server_mode
-    });
+async fn query_platform(session: &SshClientState) -> Result<SshPlatform> {
+    let os = run_cmd(session.ssh_command("uname").arg("-s")).await?;
+    let arch = run_cmd(session.ssh_command("uname").arg("-m")).await?;
+
+    let os = match os.trim() {
+        "Darwin" => "macos",
+        "Linux" => "linux",
+        _ => Err(anyhow!("unknown uname os {os:?}"))?,
+    };
+    let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
+        "aarch64"
+    } else if arch.starts_with("x86") || arch.starts_with("i686") {
+        "x86_64"
+    } else {
+        Err(anyhow!("unknown uname architecture {arch:?}"))?
+    };
+
+    Ok(SshPlatform { os, arch })
+}
+
+async fn ensure_server_binary(
+    session: &SshClientState,
+    src_path: &Path,
+    version: SemanticVersion,
+) -> Result<()> {
+    let dst_path = Path::new(SERVER_BINARY_REMOTE_PATH);
+    let mut dst_path_gz = dst_path.to_path_buf();
+    dst_path_gz.set_extension("gz");
+
+    let mut server_binary_exists = false;
+    if let Ok(installed_version) = run_cmd(session.ssh_command(&dst_path).arg("version")).await {
+        if installed_version.trim() == version.to_string() {
+            server_binary_exists = true;
+        }
+    }
+
     if server_binary_exists {
         log::info!("remote development server already present",);
         return Ok(());
     }
 
+    let src_stat = fs::metadata(src_path).await?;
+    let size = src_stat.size();
+    let server_mode = 0o755;
+
     let t0 = Instant::now();
-    log::info!("uploading remote development server ({size} bytes)",);
+    log::info!("uploading remote development server ({}kb)", size / 1024);
     session
-        .upload_file(src_path, dst_path)
+        .upload_file(src_path, &dst_path_gz)
         .await
         .context("failed to upload server binary")?;
-
-    session.chmod(dst_path, server_mode).await?;
     log::info!("uploaded remote development server in {:?}", t0.elapsed());
+
+    log::info!("extracting remote development server");
+    run_cmd(
+        session
+            .ssh_command("gunzip")
+            .arg("--force")
+            .arg(&dst_path_gz),
+    )
+    .await?;
+
+    log::info!("unzipping remote development server");
+    run_cmd(
+        session
+            .ssh_command("chmod")
+            .arg(format!("{:o}", server_mode))
+            .arg(&dst_path),
+    )
+    .await?;
 
     Ok(())
 }

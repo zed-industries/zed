@@ -1,3 +1,4 @@
+use crate::stdout_is_a_pty;
 use crate::{handle_open_request, init_headless, init_ui, zed::password_prompt::PasswordPrompt};
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
@@ -10,8 +11,12 @@ use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global, VisualContext as _, WindowHandle};
+use gpui::{
+    AppContext, AsyncAppContext, Global, SemanticVersion, VisualContext as _, WindowHandle,
+};
 use language::{Bias, Point};
+use release_channel::AppVersion;
+use remote::SshPlatform;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -150,6 +155,79 @@ impl OpenListener {
     }
 }
 
+struct SshClientDelegate {
+    window: WindowHandle<Workspace>,
+    known_password: Option<String>,
+}
+
+impl remote::SshClientDelegate for SshClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<String>> {
+        let (tx, rx) = oneshot::channel();
+        let mut known_password = self.known_password.clone();
+        self.window
+            .update(cx, |workspace, cx| {
+                cx.activate_window();
+                if let Some(password) = known_password.take() {
+                    tx.send(Ok(password)).ok();
+                } else {
+                    workspace.toggle_modal(cx, |cx| PasswordPrompt::new(prompt, tx, cx));
+                }
+            })
+            .unwrap();
+        rx
+    }
+
+    fn get_server_binary(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
+        let (tx, rx) = oneshot::channel();
+        cx.spawn(|mut cx| async move {
+            tx.send(get_server_binary(platform, &mut cx).await).ok();
+        })
+        .detach();
+        rx
+    }
+}
+
+async fn get_server_binary(
+    platform: SshPlatform,
+    cx: &mut AsyncAppContext,
+) -> Result<(PathBuf, SemanticVersion)> {
+    // In dev mode, build the remote server binary from source
+    #[cfg(debug_assertions)]
+    if stdout_is_a_pty()
+        && platform.arch == std::env::consts::ARCH
+        && platform.os == std::env::consts::OS
+    {
+        use smol::process::{Command, Stdio};
+
+        log::info!("building remote server binary from source");
+        run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
+        run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
+        run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+
+        let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+        let version = cx.update(|cx| AppVersion::global(cx))?;
+        return Ok((path, version));
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command.stderr(Stdio::inherit()).output().await?;
+            if !output.status.success() {
+                Err(anyhow!("failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+    }
+
+    Err(anyhow!("not yet implemented"))
+}
+
 #[cfg(target_os = "linux")]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
@@ -225,19 +303,9 @@ pub async fn open_ssh_paths(
         connection_info.username,
         connection_info.host,
         connection_info.port,
-        Box::new(move |prompt, cx| {
-            let (tx, rx) = oneshot::channel();
-            window
-                .update(cx, |workspace, cx| {
-                    cx.activate_window();
-                    if let Some(password) = connection_info.password.clone() {
-                        tx.send(Ok(password)).ok();
-                    } else {
-                        workspace.toggle_modal(cx, |cx| PasswordPrompt::new(prompt, tx, cx));
-                    }
-                })
-                .unwrap();
-            rx
+        Arc::new(SshClientDelegate {
+            window,
+            known_password: connection_info.password,
         }),
         cx,
     )

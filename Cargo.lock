@@ -8694,6 +8694,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cargo_toml",
  "client",
  "clock",
  "env_logger",
@@ -8710,6 +8711,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "toml 0.8.10",
  "worktree",
 ]
 
