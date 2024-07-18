@@ -25,7 +25,7 @@ use editor::{
     display_map::{
         BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
     },
-    scroll::{Autoscroll, AutoscrollStrategy},
+    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
@@ -1624,6 +1624,25 @@ impl ContextEditor {
                             );
                         });
                     }
+
+                    // Scroll the editor to the suggested assist
+                    editor.update(cx, |editor, cx| {
+                        let anchor = {
+                            let buffer = editor.buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                            buffer
+                                .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
+                                .unwrap()
+                        };
+
+                        editor.set_scroll_anchor(
+                            ScrollAnchor {
+                                offset: gpui::Point::default(),
+                                anchor,
+                            },
+                            cx,
+                        );
+                    });
                 })?;
             } else {
                 // If there are multiple buffers or suggestion groups, create a multibuffer
