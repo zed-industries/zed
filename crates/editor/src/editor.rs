@@ -435,7 +435,7 @@ struct RunnableTasks {
     context_range: Range<BufferOffset>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
@@ -786,6 +786,7 @@ struct RegisteredInlineCompletionProvider {
     _subscription: Subscription,
 }
 
+#[derive(Debug)]
 enum ContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
@@ -910,15 +911,58 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .map(|(id, completion)| {
-                StringMatchCandidate::new(
-                    id,
-                    completion.label.text[completion.label.filter_range.clone()].into(),
-                )
+                StringMatchCandidate::new(id, completion.label.text.clone().into())
             })
             .collect();
+
         Self {
             id,
             initial_position,
+            buffer,
+            completions: Arc::new(RwLock::new(completions)),
+            match_candidates,
+            matches: Vec::new().into(),
+            selected_item: 0,
+            scroll_handle: UniformListScrollHandle::new(),
+            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
+                DebouncedDelay::new(),
+            ))),
+        }
+    }
+
+    fn new_snippet_choices(
+        id: CompletionId,
+        choices: &Vec<String>,
+        old_range: Range<Anchor>,
+        buffer: Model<Buffer>,
+    ) -> Self {
+        let completions = choices
+            .iter()
+            .map(|choice| Completion {
+                old_range: old_range.start.text_anchor..old_range.end.text_anchor,
+                new_text: choice.to_string(),
+                label: CodeLabel {
+                    text: choice.to_string(),
+                    runs: Default::default(),
+                    filter_range: Default::default(),
+                },
+                server_id: LanguageServerId(usize::MAX),
+                documentation: None,
+                lsp_completion: Default::default(),
+                confirm: None,
+                show_new_completions_on_confirm: true,
+            })
+            .collect();
+
+        let match_candidates = choices
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.to_string()))
+            .collect();
+
+        Self {
+            id,
+            initial_position: old_range.start,
             buffer,
             completions: Arc::new(RwLock::new(completions)),
             match_candidates,
@@ -1319,7 +1363,7 @@ impl CompletionsMenu {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CodeActionContents {
     tasks: Option<Arc<ResolvedTasks>>,
     actions: Option<Arc<[CodeAction]>>,
@@ -1414,6 +1458,7 @@ impl CodeActionsItem {
     }
 }
 
+#[derive(Debug)]
 struct CodeActionsMenu {
     actions: CodeActionContents,
     buffer: Model<Buffer>,
@@ -5199,58 +5244,18 @@ impl Editor {
                     ))
                 });
 
-                // let completions = choices.iter().map(|choice| {
-                //     Completion {
-                //         old_range:
-                //     }
-                // })
-
                 if let Some((first_range, buffer)) = current_buffer {
-                    // let completions = vec![Completion {
-                    //     old_range: first_range.start.text_anchor..first_range.end.text_anchor,
-                    //     new_text: "My cool completion".to_owned(),
-                    //     label: CodeLabel {
-                    //         text: "My cool text".to_owned(),
-                    //         runs: Default::default(),
-                    //         filter_range: Default::default(),
-                    //     },
-                    //     server_id: LanguageServerId(usize::MAX),
-                    //     documentation: None,
-                    //     lsp_completion: Default::default(),
-                    //     confirm: None,
-                    //     show_new_completions_on_confirm: false,
-                    // }]
-                    // .into_boxed_slice();
-
-                    let completions = choices
-                        .iter()
-                        .map(|choice| Completion {
-                            old_range: first_range.start.text_anchor..first_range.end.text_anchor,
-                            new_text: choice.clone(),
-                            label: CodeLabel {
-                                text: choice.clone(),
-                                runs: Default::default(),
-                                filter_range: Default::default(),
-                            },
-                            server_id: LanguageServerId(usize::MAX),
-                            documentation: None,
-                            lsp_completion: Default::default(),
-                            confirm: None,
-                            show_new_completions_on_confirm: true,
-                        })
-                        .collect();
-
                     *self.context_menu.write() = Some(ContextMenu::Completions(
-                        CompletionsMenu::new(
+                        CompletionsMenu::new_snippet_choices(
                             post_inc(&mut self.next_completion_id),
-                            first_range.start,
+                            choices,
+                            first_range,
                             buffer,
-                            completions,
-                        )
-                        .suppress_documentation_resolution(),
+                        ),
                     ));
 
                     self.show_completions(&ShowCompletions { trigger: None }, cx);
+                    dbg!(self.context_menu.read());
                 }
             }
 
@@ -5345,6 +5350,12 @@ impl Editor {
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_anchor_ranges(current_ranges.iter().cloned())
                 });
+
+                // TODO: Finishing implementing the below lines
+                // if let Some(choices) = snippet.choices[snippet.active_index] {
+
+                // }
+
                 // If snippet state is not at the last tabstop, push it back on the stack
                 if snippet.active_index + 1 < snippet.ranges.len() {
                     self.snippet_stack.push(snippet);
