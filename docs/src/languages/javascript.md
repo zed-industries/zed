@@ -142,3 +142,7 @@ You can configure ESLint's `rulesCustomizations` setting:
   }
 }
 ```
+
+
+## Yarn integration
+See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.

@@ -26,10 +26,10 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::Item,
+    item::SerializableItem,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
+    DraggedTab, ItemId, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -278,6 +278,7 @@ impl TerminalPanel {
 
         let pane = pane.downgrade();
         let items = futures::future::join_all(items).await;
+        let mut alive_item_ids = Vec::new();
         pane.update(&mut cx, |pane, cx| {
             let active_item_id = serialized_panel
                 .as_ref()
@@ -287,6 +288,7 @@ impl TerminalPanel {
                 if let Some(item) = item.log_err() {
                     let item_id = item.entity_id().as_u64();
                     pane.add_item(Box::new(item), false, false, None, cx);
+                    alive_item_ids.push(item_id as ItemId);
                     if Some(item_id) == active_item_id {
                         active_ix = Some(pane.items_len() - 1);
                     }
@@ -297,6 +299,18 @@ impl TerminalPanel {
                 pane.activate_item(active_ix, false, false, cx)
             }
         })?;
+
+        // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
+        if let Some(workspace) = workspace.upgrade() {
+            let cleanup_task = workspace.update(&mut cx, |workspace, cx| {
+                workspace
+                    .database_id()
+                    .map(|workspace_id| TerminalView::cleanup(workspace_id, alive_item_ids, cx))
+            })?;
+            if let Some(task) = cleanup_task {
+                task.await.log_err();
+            }
+        }
 
         Ok(panel)
     }
@@ -350,24 +364,66 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, Vec::new())),
+            Shell::System => Shell::retrieve_system_shell().map(|shell| (shell, Vec::new())),
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
+        #[cfg(target_os = "windows")]
+        let windows_shell_type = Shell::to_windows_shell_type(&shell);
 
-        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        #[cfg(not(target_os = "windows"))]
+        {
+            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use terminal::terminal_settings::WindowsShellType;
+
+            match windows_shell_type {
+                WindowsShellType::Powershell => {
+                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                }
+                WindowsShellType::Cmd => {
+                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                }
+                WindowsShellType::Other => {
+                    spawn_task.command_label =
+                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                }
+            }
+        }
+
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
+                #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
+                #[cfg(target_os = "windows")]
+                command.push_str(&Shell::to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
+
+        #[cfg(not(target_os = "windows"))]
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
+        #[cfg(target_os = "windows")]
+        {
+            use terminal::terminal_settings::WindowsShellType;
+
+            match windows_shell_type {
+                WindowsShellType::Powershell => {
+                    user_args.extend(["-C".to_owned(), combined_command])
+                }
+                WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
+                WindowsShellType::Other => {
+                    user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                }
+            }
+        }
         spawn_task.args = user_args;
         let spawn_task = spawn_task;
 

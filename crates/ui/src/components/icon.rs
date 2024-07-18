@@ -1,6 +1,6 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -90,7 +90,9 @@ impl IconSize {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
@@ -116,6 +118,8 @@ pub enum IconName {
     CaseSensitive,
     Check,
     ChevronDown,
+    /// This chevron indicates a popover menu.
+    ChevronDownSmall,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
@@ -192,6 +196,7 @@ pub enum IconName {
     PullRequest,
     Quote,
     Regex,
+    ReplNeutral,
     Replace,
     ReplaceAll,
     ReplaceNext,
@@ -264,6 +269,7 @@ impl IconName {
             IconName::CaseSensitive => "icons/case_insensitive.svg",
             IconName::Check => "icons/check.svg",
             IconName::ChevronDown => "icons/chevron_down.svg",
+            IconName::ChevronDownSmall => "icons/chevron_down_small.svg",
             IconName::ChevronLeft => "icons/chevron_left.svg",
             IconName::ChevronRight => "icons/chevron_right.svg",
             IconName::ChevronUp => "icons/chevron_up.svg",
@@ -340,6 +346,7 @@ impl IconName {
             IconName::PullRequest => "icons/pull_request.svg",
             IconName::Quote => "icons/quote.svg",
             IconName::Regex => "icons/regex.svg",
+            IconName::ReplNeutral => "icons/repl_neutral.svg",
             IconName::Replace => "icons/replace.svg",
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",

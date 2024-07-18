@@ -27,7 +27,7 @@ pub(crate) struct FetchSlashCommand;
 impl FetchSlashCommand {
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
         let mut url = url.to_owned();
-        if !url.starts_with("https://") {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
             url = format!("https://{url}");
         }
 

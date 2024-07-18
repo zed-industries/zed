@@ -11,7 +11,7 @@ use std::{
 };
 
 use ::util::ResultExt;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -35,6 +35,7 @@ pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
+    pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -57,6 +58,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
+    pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
 }
 
@@ -67,7 +69,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
-    ) -> Self {
+    ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -81,7 +83,8 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
-        let renderer = windows_renderer::windows_renderer(hwnd, transparent);
+        let border_offset = WindowBorderOffset::default();
+        let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -89,10 +92,11 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
 
-        Self {
+        Ok(Self {
             origin,
             logical_size,
             fullscreen_restore_bounds,
+            border_offset,
             scale_factor,
             callbacks,
             input_handler,
@@ -104,7 +108,7 @@ impl WindowsWindowState {
             display,
             fullscreen,
             hwnd,
-        }
+        })
     }
 
     #[inline]
@@ -123,7 +127,8 @@ impl WindowsWindowState {
         }
     }
 
-    fn window_bounds(&self) -> WindowBounds {
+    // Calculate the bounds used for saving and whether the window is maximized.
+    fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -132,22 +137,22 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
-        let physical_size = size(
-            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
-        );
-        let bounds = Bounds {
-            origin: logical_point(
-                placement.rcNormalPosition.left as f32,
-                placement.rcNormalPosition.top as f32,
+        (
+            calculate_client_rect(
+                placement.rcNormalPosition,
+                self.border_offset,
                 self.scale_factor,
             ),
-            size: physical_size.to_pixels(self.scale_factor),
-        };
+            placement.showCmd == SW_SHOWMAXIMIZED.0 as u32,
+        )
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        let (bounds, maximized) = self.calculate_window_bounds();
 
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+        } else if maximized {
             WindowBounds::Maximized(bounds)
         } else {
             WindowBounds::Windowed(bounds)
@@ -198,22 +203,23 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowStatePtr {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Rc<Self> {
+    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
             context.transparent,
             cs,
             context.current_cursor,
             context.display,
-        ));
+        )?);
 
-        Rc::new(Self {
+        Ok(Rc::new(Self {
             state,
             hwnd,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
+            is_movable: context.is_movable,
             executor: context.executor.clone(),
-        })
+        }))
     }
 }
 
@@ -230,11 +236,12 @@ pub(crate) struct Callbacks {
 }
 
 struct WindowCreateContext {
-    inner: Option<Rc<WindowsWindowStatePtr>>,
+    inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
+    is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
 }
@@ -246,13 +253,13 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
-    ) -> Self {
+    ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
-            .unwrap_or(false);
+            .unwrap_or(true);
         let windowname = HSTRING::from(
             params
                 .titlebar
@@ -261,7 +268,14 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
+        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+        } else {
+            (
+                WS_EX_APPWINDOW,
+                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+            )
+        };
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -275,13 +289,14 @@ impl WindowsWindow {
             hide_title_bar,
             display,
             transparent: true,
+            is_movable: params.is_movable,
             executor,
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_APPWINDOW,
+                dwexstyle,
                 classname,
                 &windowname,
                 dwstyle,
@@ -295,32 +310,31 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
-        register_drag_drop(state_ptr.clone());
-        let wnd = Self(state_ptr);
+        let state_ptr = context.inner.take().unwrap()?;
+        register_drag_drop(state_ptr.clone())?;
 
         unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(raw_hwnd, &mut placement).log_err();
+            GetWindowPlacement(raw_hwnd, &mut placement)?;
             // the bounds may be not inside the display
             let bounds = if display.check_given_bounds(params.bounds) {
                 params.bounds
             } else {
                 display.default_bounds()
             };
-            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
-            placement.rcNormalPosition.left = bounds.left().0;
-            placement.rcNormalPosition.right = bounds.right().0;
-            placement.rcNormalPosition.top = bounds.top().0;
-            placement.rcNormalPosition.bottom = bounds.bottom().0;
-            SetWindowPlacement(raw_hwnd, &placement).log_err();
+            let mut lock = state_ptr.state.borrow_mut();
+            let bounds = bounds.to_device_pixels(lock.scale_factor);
+            lock.border_offset.udpate(raw_hwnd)?;
+            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
+            drop(lock);
+            SetWindowPlacement(raw_hwnd, &placement)?;
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
+        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
 
-        wnd
+        Ok(Self(state_ptr))
     }
 }
 
@@ -383,9 +397,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().scale_factor
     }
 
-    // todo(windows)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Dark
+        system_appearance().log_err().unwrap_or_default()
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -405,9 +418,8 @@ impl PlatformWindow for WindowsWindow {
         logical_point(point.x as f32, point.y as f32, scale_factor)
     }
 
-    // todo(windows)
     fn modifiers(&self) -> Modifiers {
-        Modifiers::none()
+        current_modifiers()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -505,6 +517,11 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
+    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
@@ -533,10 +550,6 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 let mut lock = state_ptr.state.borrow_mut();
-                lock.fullscreen_restore_bounds = Bounds {
-                    origin: lock.origin,
-                    size: lock.logical_size,
-                };
                 let StyleAndBounds {
                     style,
                     x,
@@ -546,6 +559,8 @@ impl PlatformWindow for WindowsWindow {
                 } = if let Some(state) = lock.fullscreen.take() {
                     state
                 } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
                     let style =
                         WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
@@ -605,6 +620,8 @@ impl PlatformWindow for WindowsWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
+
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);
@@ -787,15 +804,25 @@ pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
     last_position: Point<DevicePixels>,
+    double_click_spatial_tolerance_width: i32,
+    double_click_spatial_tolerance_height: i32,
+    double_click_interval: Duration,
     pub(crate) current_count: usize,
 }
 
 impl ClickState {
     pub fn new() -> Self {
+        let double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        let double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        let double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+
         ClickState {
             button: MouseButton::Left,
             last_click: Instant::now(),
             last_position: Point::default(),
+            double_click_spatial_tolerance_width,
+            double_click_spatial_tolerance_height,
+            double_click_interval,
             current_count: 0,
         }
     }
@@ -814,13 +841,19 @@ impl ClickState {
         self.current_count
     }
 
+    pub fn system_update(&mut self) {
+        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    }
+
     #[inline]
     fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
         let diff = self.last_position - new_position;
 
-        self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
-            && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
-            && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+        self.last_click.elapsed() < self.double_click_interval
+            && diff.x.0.abs() <= self.double_click_spatial_tolerance_width
+            && diff.y.0.abs() <= self.double_click_spatial_tolerance_height
     }
 }
 
@@ -830,6 +863,32 @@ struct StyleAndBounds {
     y: i32,
     cx: i32,
     cy: i32,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WindowBorderOffset {
+    width_offset: i32,
+    height_offset: i32,
+}
+
+impl WindowBorderOffset {
+    pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+        let window_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut rect)?;
+            rect
+        };
+        let client_rect = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetClientRect(hwnd, &mut rect)?;
+            rect
+        };
+        self.width_offset =
+            (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+        self.height_offset =
+            (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+        Ok(())
+    }
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
@@ -862,10 +921,14 @@ unsafe extern "system" fn wnd_proc(
         let cs = unsafe { &*cs };
         let ctx = cs.lpCreateParams as *mut WindowCreateContext;
         let ctx = unsafe { &mut *ctx };
-        let state_ptr = WindowsWindowStatePtr::new(ctx, hwnd, cs);
-        let weak = Box::new(Rc::downgrade(&state_ptr));
+        let creation_result = WindowsWindowStatePtr::new(ctx, hwnd, cs);
+        if creation_result.is_err() {
+            ctx.inner = Some(creation_result);
+            return LRESULT(0);
+        }
+        let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
-        ctx.inner = Some(state_ptr);
+        ctx.inner = Some(creation_result);
         return LRESULT(1);
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
@@ -913,7 +976,7 @@ fn get_module_handle() -> HMODULE {
     }
 }
 
-fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
+fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     let window_handle = state_ptr.hwnd;
     let handler = WindowsDragDropHandler(state_ptr);
     // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
@@ -922,16 +985,58 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     let drag_drop_handler: IDropTarget = handler.into();
     unsafe {
         RegisterDragDrop(window_handle, &drag_drop_handler)
-            .expect("unable to register drag-drop event")
+            .context("unable to register drag-drop event")?;
+    }
+    Ok(())
+}
+
+fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
+    // NOTE:
+    // The reason that not using `AdjustWindowRectEx()` here is
+    // that the size reported by this function is incorrect.
+    // You can test it, and there are similar discussions online.
+    // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
+    //
+    // So we manually calculate these values here.
+    let mut rect = RECT {
+        left: bounds.left().0,
+        top: bounds.top().0,
+        right: bounds.right().0,
+        bottom: bounds.bottom().0,
     };
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
+    rect.left -= left_offset;
+    rect.top -= top_offset;
+    rect.right += right_offset;
+    rect.bottom += bottom_offet;
+    rect
+}
+
+fn calculate_client_rect(
+    rect: RECT,
+    border_offset: WindowBorderOffset,
+    scale_factor: f32,
+) -> Bounds<Pixels> {
+    let left_offset = border_offset.width_offset / 2;
+    let top_offset = border_offset.height_offset / 2;
+    let right_offset = border_offset.width_offset - left_offset;
+    let bottom_offet = border_offset.height_offset - top_offset;
+    let left = rect.left + left_offset;
+    let top = rect.top + top_offset;
+    let right = rect.right - right_offset;
+    let bottom = rect.bottom - bottom_offet;
+    let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
+    Bounds {
+        origin: logical_point(left as f32, top as f32, scale_factor),
+        size: physical_size.to_pixels(scale_factor),
+    }
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
-// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
-const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
-// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
-const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};
@@ -945,7 +1050,7 @@ mod windows_renderer {
         platform::blade::{BladeRenderer, BladeSurfaceConfig},
     };
 
-    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> BladeRenderer {
+    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
         let raw = RawWindow { hwnd: hwnd.0 };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
@@ -958,14 +1063,14 @@ mod windows_renderer {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
         let config = BladeSurfaceConfig {
             size: gpu::Extent::default(),
             transparent,
         };
 
-        BladeRenderer::new(gpu, config)
+        Ok(BladeRenderer::new(gpu, config))
     }
 
     struct RawWindow {

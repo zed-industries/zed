@@ -79,7 +79,7 @@ impl EditorLspTestContext {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
+                project.find_or_create_worktree("/root", true, cx)
             })
             .await
             .unwrap();

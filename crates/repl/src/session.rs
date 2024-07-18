@@ -7,31 +7,36 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
-    Anchor, AnchorRangeExt as _, Editor,
+    scroll::Autoscroll,
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{div, prelude::*, EventEmitter, Render, Task, View, ViewContext, WeakView};
+use gpui::{
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
+};
+use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
-    ShutdownRequest,
+    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
 use settings::Settings as _;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{env::temp_dir, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 
 pub struct Session {
-    editor: WeakView<Editor>,
-    kernel: Kernel,
+    pub editor: WeakView<Editor>,
+    pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    messaging_task: Task<()>,
-    kernel_specification: KernelSpecification,
+    pub messaging_task: Task<()>,
+    pub kernel_specification: KernelSpecification,
+    _buffer_subscription: Subscription,
 }
 
 struct EditorBlock {
     editor: WeakView<Editor>,
     code_range: Range<Anchor>,
+    invalidation_anchor: Anchor,
     block_id: BlockId,
     execution_view: View<ExecutionView>,
 }
@@ -45,7 +50,25 @@ impl EditorBlock {
     ) -> anyhow::Result<Self> {
         let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
 
-        let block_id = editor.update(cx, |editor, cx| {
+        let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().clone();
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let end_point = code_range.end.to_point(&buffer_snapshot);
+            let next_row_start = end_point + Point::new(1, 0);
+            if next_row_start > buffer_snapshot.max_point() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit(
+                        [(
+                            buffer_snapshot.max_point()..buffer_snapshot.max_point(),
+                            "\n",
+                        )],
+                        None,
+                        cx,
+                    )
+                });
+            }
+
+            let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
                 position: code_range.end,
                 height: execution_view.num_lines(cx).saturating_add(1),
@@ -54,12 +77,14 @@ impl EditorBlock {
                 disposition: BlockDisposition::Below,
             };
 
-            editor.insert_blocks([block], None, cx)[0]
+            let block_id = editor.insert_blocks([block], None, cx)[0];
+            (block_id, invalidation_anchor)
         })?;
 
         anyhow::Ok(Self {
             editor,
             code_range,
+            invalidation_anchor,
             block_id,
             execution_view,
         })
@@ -89,6 +114,7 @@ impl EditorBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
+            let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
             // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
 
             let gutter_width = cx.gutter_dimensions.width;
@@ -101,6 +127,7 @@ impl EditorBlock {
                 .pl(gutter_width)
                 .child(
                     div()
+                        .text_size(text_font_size)
                         .font_family(text_font)
                         // .ml(gutter_width)
                         .mx_1()
@@ -118,6 +145,17 @@ impl EditorBlock {
 }
 
 impl Session {
+    pub fn working_directory(editor: WeakView<Editor>, cx: &WindowContext) -> PathBuf {
+        if let Some(working_directory) = editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).working_directory(cx))
+        {
+            working_directory
+        } else {
+            temp_dir()
+        }
+    }
+
     pub fn new(
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
@@ -125,7 +163,14 @@ impl Session {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-        let kernel = RunningKernel::new(kernel_specification.clone(), entity_id, fs.clone(), cx);
+
+        let kernel = RunningKernel::new(
+            kernel_specification.clone(),
+            entity_id,
+            Self::working_directory(editor.clone(), cx),
+            fs.clone(),
+            cx,
+        );
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -146,24 +191,6 @@ impl Session {
                                         .ok();
                                 }
                             });
-
-                            // For some reason sending a kernel info request will brick the ark (R) kernel.
-                            // Note that Deno and Python do not have this issue.
-                            if this.kernel_specification.name == "ark" {
-                                return;
-                            }
-
-                            // Get kernel info after (possibly) letting the kernel start
-                            cx.spawn(|this, mut cx| async move {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(120))
-                                    .await;
-                                this.update(&mut cx, |this, _cx| {
-                                    this.send(KernelInfoRequest {}.into(), _cx).ok();
-                                })
-                                .ok();
-                            })
-                            .detach();
                         })
                         .ok();
                     }
@@ -177,13 +204,53 @@ impl Session {
             })
             .shared();
 
+        let subscription = match editor.upgrade() {
+            Some(editor) => {
+                let buffer = editor.read(cx).buffer().clone();
+                cx.subscribe(&buffer, Self::on_buffer_event)
+            }
+            None => Subscription::new(|| {}),
+        };
+
         return Self {
             editor,
             kernel: Kernel::StartingKernel(pending_kernel),
             messaging_task: Task::ready(()),
             blocks: HashMap::default(),
             kernel_specification,
+            _buffer_subscription: subscription,
         };
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<MultiBuffer>,
+        event: &multi_buffer::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let multi_buffer::Event::Edited { .. } = event {
+            let snapshot = buffer.read(cx).snapshot(cx);
+
+            let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+
+            self.blocks.retain(|_id, block| {
+                if block.invalidation_anchor.is_valid(&snapshot) {
+                    true
+                } else {
+                    blocks_to_remove.insert(block.block_id);
+                    false
+                }
+            });
+
+            if !blocks_to_remove.is_empty() {
+                self.editor
+                    .update(cx, |editor, cx| {
+                        editor.remove_blocks(blocks_to_remove, None, cx);
+                    })
+                    .ok();
+                cx.notify();
+            }
+        }
     }
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
@@ -216,6 +283,10 @@ impl Session {
         } else {
             return;
         };
+
+        if code.is_empty() {
+            return;
+        }
 
         let execute_request = ExecuteRequest {
             code: code.to_string(),
@@ -259,6 +330,8 @@ impl Session {
             return;
         };
 
+        let new_cursor_pos = editor_block.invalidation_anchor;
+
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
 
@@ -282,6 +355,13 @@ impl Session {
             }
             _ => {}
         }
+
+        // Now move the cursor to after the block
+        editor.update(cx, move |editor, cx| {
+            editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
+                selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+            });
+        });
     }
 
     fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
@@ -308,7 +388,7 @@ impl Session {
         }
     }
 
-    fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
                 self.send(InterruptRequest {}.into(), cx).ok();
@@ -320,7 +400,7 @@ impl Session {
         }
     }
 
-    fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {

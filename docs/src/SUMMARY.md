@@ -17,11 +17,14 @@
 
 # Using Zed
 
+- [Multibuffers](./multibuffers.md)
 - [Assistant Panel](./assistant-panel.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
+- [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [REPL](./repl.md)
 
 # Language Support
 
@@ -50,6 +53,7 @@
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
+- [R](./languages/r.md)
 - [Racket](./languages/racket.md)
 - [Ruby](./languages/ruby.md)
 - [Rust](./languages/rust.md)
@@ -61,6 +65,7 @@
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
 - [YAML](./languages/yaml.md)
+- [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
 # Developing Zed

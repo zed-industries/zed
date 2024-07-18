@@ -1,5 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
-use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
+use crate::{
+    item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use client::DevServerProjectId;
@@ -7,13 +9,14 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Model, View, WeakView};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -21,7 +24,7 @@ use uuid::Uuid;
 pub struct SerializedDevServerProject {
     pub id: DevServerProjectId,
     pub dev_server_name: String,
-    pub path: String,
+    pub paths: Vec<SharedString>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -41,13 +44,6 @@ impl LocalPaths {
 
     pub fn paths(&self) -> &Arc<Vec<PathBuf>> {
         &self.0
-    }
-}
-
-impl From<LocalPaths> for SerializedWorkspaceLocation {
-    fn from(local_paths: LocalPaths) -> Self {
-        let order = LocalPathsOrder::default_for_paths(&local_paths);
-        Self::Local(local_paths, order)
     }
 }
 
@@ -119,7 +115,8 @@ impl Bind for &SerializedDevServerProject {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.dev_server_name, next_index)?;
-        statement.bind(&self.path, next_index)
+        let paths = serde_json::to_string(&self.paths)?;
+        statement.bind(&paths, next_index)
     }
 }
 
@@ -127,12 +124,18 @@ impl Column for SerializedDevServerProject {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let id = statement.column_int64(start_index)?;
         let dev_server_name = statement.column_text(start_index + 1)?.to_string();
-        let path = statement.column_text(start_index + 2)?.to_string();
+        let paths = statement.column_text(start_index + 2)?.to_string();
+        let paths: Vec<SharedString> = if paths.starts_with('[') {
+            serde_json::from_str(&paths).context("JSON deserialization of paths failed")?
+        } else {
+            vec![paths.into()]
+        };
+
         Ok((
             Self {
                 id: DevServerProjectId(id as u64),
                 dev_server_name,
-                path,
+                paths,
             },
             start_index + 3,
         ))
@@ -143,6 +146,63 @@ impl Column for SerializedDevServerProject {
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
     DevServer(SerializedDevServerProject),
+}
+
+impl SerializedWorkspaceLocation {
+    /// Create a new `SerializedWorkspaceLocation` from a list of local paths.
+    ///
+    /// The paths will be sorted and the order will be stored in the `LocalPathsOrder` struct.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use zed_workspace::SerializedWorkspaceLocation;
+    ///
+    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
+    ///     Path::new("path/to/workspace1"),
+    ///     Path::new("path/to/workspace2"),
+    /// ]);
+    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
+    ///    LocalPaths::new(vec![
+    ///         Path::new("path/to/workspace1"),
+    ///         Path::new("path/to/workspace2"),
+    ///    ]),
+    ///   LocalPathsOrder::new(vec![0, 1]),
+    /// ));
+    /// ```
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use zed_workspace::SerializedWorkspaceLocation;
+    ///
+    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
+    ///     Path::new("path/to/workspace2"),
+    ///     Path::new("path/to/workspace1"),
+    /// ]);
+    ///
+    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
+    ///    LocalPaths::new(vec![
+    ///         Path::new("path/to/workspace1"),
+    ///         Path::new("path/to/workspace2"),
+    ///   ]),
+    ///  LocalPathsOrder::new(vec![1, 0]),
+    /// ));
+    /// ```
+    pub fn from_local_paths<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
+        let mut indexed_paths: Vec<_> = paths
+            .into_iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .enumerate()
+            .collect();
+
+        indexed_paths.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        let sorted_paths: Vec<_> = indexed_paths.iter().map(|(_, path)| path.clone()).collect();
+        let order: Vec<_> = indexed_paths.iter().map(|(index, _)| *index).collect();
+
+        Self::Local(LocalPaths::new(sorted_paths), LocalPathsOrder::new(order))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -331,14 +391,14 @@ impl SerializedPane {
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
             item_tasks.push(pane.update(cx, |_, cx| {
-                if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-                    deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
-                } else {
-                    Task::ready(Err(anyhow::anyhow!(
-                        "Deserializer does not exist for item kind: {}",
-                        item.kind
-                    )))
-                }
+                SerializableItemRegistry::deserialize(
+                    &item.kind,
+                    project,
+                    workspace.clone(),
+                    workspace_id,
+                    item.item_id,
+                    cx,
+                )
             })?);
             if item.active {
                 active_item_index = Some(index);
@@ -442,5 +502,24 @@ impl Column for SerializedItem {
             },
             next_index,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serialize_local_paths() {
+        let paths = vec!["b", "a", "c"];
+        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
+
+        assert_eq!(
+            serialized,
+            SerializedWorkspaceLocation::Local(
+                LocalPaths::new(vec!["a", "b", "c"]),
+                LocalPathsOrder::new(vec![1, 0, 2])
+            )
+        );
     }
 }

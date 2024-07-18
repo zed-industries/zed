@@ -80,7 +80,9 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
 }
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
-    eprintln!("Zed failed to open a window: {e:?}");
+    eprintln!(
+        "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+    );
     #[cfg(not(target_os = "linux"))]
     {
         process::exit(1);
@@ -99,7 +101,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
                 .add_notification(
                     notification_id,
                     Notification::new("Zed failed to launch")
-                        .body(Some(format!("{e:?}").as_str()))
+                        .body(Some(
+                            format!(
+                                "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                            )
+                            .as_str(),
+                        ))
                         .priority(Priority::High)
                         .icon(ashpd::desktop::Icon::with_names(&[
                             "dialog-question-symbolic",
@@ -151,6 +158,26 @@ fn init_headless(
     )
 }
 
+// init_common is called for both headless and normal mode.
+fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
+    SystemAppearance::init(cx);
+    theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+    command_palette::init(cx);
+    snippet_provider::init(cx);
+    supermaven::init(app_state.client.clone(), cx);
+    inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
+    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    repl::init(cx);
+    extension::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.languages.clone(),
+        ThemeRegistry::global(cx),
+        cx,
+    );
+}
+
 fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     match cx.try_global::<AppMode>() {
         Some(AppMode::Headless(_)) => {
@@ -165,26 +192,24 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         }
     };
 
-    SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
     #[cfg(target_os = "linux")]
     crate::zed::linux_prompts::init(cx);
 
-    theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     app_state.languages.set_theme(cx.theme().clone());
-    command_palette::init(cx);
     editor::init(cx);
     image_viewer::init(cx);
     diagnostics::init(cx);
 
     audio::init(Assets, cx);
     workspace::init(app_state.clone(), cx);
-    recent_projects::init(cx);
 
+    recent_projects::init(cx);
     go_to_line::init(cx);
     file_finder::init(cx);
     tab_switcher::init(cx);
+    dev_server_projects::init(app_state.client.clone(), cx);
     outline::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
@@ -194,7 +219,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     search::init(cx);
     vim::init(cx);
     terminal_view::init(cx);
-
     journal::init(app_state.clone(), cx);
     language_selector::init(cx);
     theme_selector::init(cx);
@@ -215,13 +239,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         app_state.node_runtime.clone(),
         cx,
     );
-    supermaven::init(app_state.client.clone(), cx);
-
-    inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-
-    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-
-    repl::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -252,17 +269,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     telemetry.report_setting_event("theme", cx.theme().name.to_string());
     telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
     telemetry.flush_events();
-
-    extension::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        app_state.node_runtime.clone(),
-        app_state.languages.clone(),
-        ThemeRegistry::global(cx),
-        cx,
-    );
-
-    dev_server_projects::init(app_state.client.clone(), cx);
 
     let fs = app_state.fs.clone();
     load_user_themes_in_background(fs.clone(), cx);
@@ -435,8 +441,8 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-
         reliability::init(client.http_client(), installation_id, cx);
+        init_common(app_state.clone(), cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -707,8 +713,8 @@ fn init_logger() {
             Ok(log_file) => {
                 let mut config_builder = ConfigBuilder::new();
 
-                config_builder.set_time_format_str("%Y-%m-%dT%T%:z");
-                config_builder.set_time_to_local(true);
+                config_builder.set_time_format_rfc3339();
+                config_builder.set_time_offset_to_local().log_err();
 
                 #[cfg(target_os = "linux")]
                 {

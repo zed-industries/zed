@@ -43,10 +43,35 @@ async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extensions = app
+    let mut extensions = app
         .db
         .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
         .await?;
+
+    if let Some(filter) = params.filter.as_deref() {
+        let extension_id = filter.to_lowercase();
+        let mut exact_match = None;
+        extensions.retain(|extension| {
+            if extension.id.as_ref() == &extension_id {
+                exact_match = Some(extension.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if exact_match.is_none() {
+            exact_match = app
+                .db
+                .get_extensions_by_ids(&[&extension_id], None)
+                .await?
+                .first()
+                .cloned();
+        }
+
+        if let Some(exact_match) = exact_match {
+            extensions.insert(0, exact_match);
+        }
+    };
 
     if let Some(query) = params.filter.as_deref() {
         let count = extensions.len();

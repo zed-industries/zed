@@ -2,13 +2,9 @@
 //!
 //! This module uses the [ashpd] crate
 
-use std::sync::Arc;
-
-use anyhow::anyhow;
 use ashpd::desktop::settings::{ColorScheme, Settings};
-use calloop::channel::{Channel, Sender};
+use calloop::channel::Channel;
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
-use mio::Waker;
 use smol::stream::StreamExt;
 
 use crate::{BackgroundExecutor, WindowAppearance};
@@ -24,45 +20,31 @@ pub struct XDPEventSource {
 }
 
 impl XDPEventSource {
-    pub fn new(executor: &BackgroundExecutor, waker: Option<Arc<Waker>>) -> Self {
+    pub fn new(executor: &BackgroundExecutor) -> Self {
         let (sender, channel) = calloop::channel::channel();
 
         let background = executor.clone();
 
         executor
             .spawn(async move {
-                fn send_event<T>(
-                    sender: &Sender<T>,
-                    waker: &Option<Arc<Waker>>,
-                    event: T,
-                ) -> Result<(), std::sync::mpsc::SendError<T>> {
-                    sender.send(event)?;
-                    if let Some(waker) = waker {
-                        waker.wake().ok();
-                    };
-                    Ok(())
-                }
-
                 let settings = Settings::new().await?;
 
                 if let Ok(initial_appearance) = settings.color_scheme().await {
-                    send_event(
-                        &sender,
-                        &waker,
-                        Event::WindowAppearance(WindowAppearance::from_native(initial_appearance)),
-                    )?;
+                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
+                        initial_appearance,
+                    )))?;
                 }
                 if let Ok(initial_theme) = settings
                     .read::<String>("org.gnome.desktop.interface", "cursor-theme")
                     .await
                 {
-                    send_event(&sender, &waker, Event::CursorTheme(initial_theme))?;
+                    sender.send(Event::CursorTheme(initial_theme))?;
                 }
                 if let Ok(initial_size) = settings
                     .read::<u32>("org.gnome.desktop.interface", "cursor-size")
                     .await
                 {
-                    send_event(&sender, &waker, Event::CursorSize(initial_size))?;
+                    sender.send(Event::CursorSize(initial_size))?;
                 }
 
                 if let Ok(mut cursor_theme_changed) = settings
@@ -73,12 +55,11 @@ impl XDPEventSource {
                     .await
                 {
                     let sender = sender.clone();
-                    let waker = waker.clone();
                     background
                         .spawn(async move {
                             while let Some(theme) = cursor_theme_changed.next().await {
                                 let theme = theme?;
-                                send_event(&sender, &waker, Event::CursorTheme(theme))?;
+                                sender.send(Event::CursorTheme(theme))?;
                             }
                             anyhow::Ok(())
                         })
@@ -93,12 +74,11 @@ impl XDPEventSource {
                     .await
                 {
                     let sender = sender.clone();
-                    let waker = waker.clone();
                     background
                         .spawn(async move {
                             while let Some(size) = cursor_size_changed.next().await {
                                 let size = size?;
-                                send_event(&sender, &waker, Event::CursorSize(size))?;
+                                sender.send(Event::CursorSize(size))?;
                             }
                             anyhow::Ok(())
                         })
@@ -107,11 +87,9 @@ impl XDPEventSource {
 
                 let mut appearance_changed = settings.receive_color_scheme_changed().await?;
                 while let Some(scheme) = appearance_changed.next().await {
-                    send_event(
-                        &sender,
-                        &waker,
-                        Event::WindowAppearance(WindowAppearance::from_native(scheme)),
-                    )?;
+                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
+                        scheme,
+                    )))?;
                 }
 
                 anyhow::Ok(())
@@ -119,12 +97,6 @@ impl XDPEventSource {
             .detach();
 
         Self { channel }
-    }
-
-    pub fn try_recv(&self) -> anyhow::Result<Event> {
-        self.channel
-            .try_recv()
-            .map_err(|error| anyhow!("{}", error))
     }
 }
 

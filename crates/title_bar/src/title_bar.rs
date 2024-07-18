@@ -73,12 +73,20 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
+        let titlebar_color = if cfg!(target_os = "linux") {
+            if cx.is_window_active() {
+                cx.theme().colors().title_bar_background
+            } else {
+                cx.theme().colors().title_bar_inactive_background
+            }
+        } else {
+            cx.theme().colors().title_bar_background
+        };
 
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(Self::top_padding(cx))
-            .h(height + Self::top_padding(cx))
+            .h(height)
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
@@ -96,9 +104,13 @@ impl Render for TitleBar {
                     })
                     .when(!(tiling.top || tiling.left), |el| {
                         el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    }),
+                    })
+                    // this border is to avoid a transparent gap in the rounded corners
+                    .mt(px(-1.))
+                    .border(px(1.))
+                    .border_color(titlebar_color),
             })
-            .bg(cx.theme().colors().title_bar_background)
+            .bg(titlebar_color)
             .content_stretch()
             .child(
                 div()
@@ -229,28 +241,6 @@ impl TitleBar {
     pub fn height(_cx: &mut WindowContext) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn top_padding(_cx: &WindowContext) -> Pixels {
-        px(0.)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn top_padding(cx: &WindowContext) -> Pixels {
-        use windows::Win32::UI::{
-            HiDpi::GetSystemMetricsForDpi,
-            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
-        };
-
-        // This top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows:
-        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
-        if cx.is_maximized() {
-            px((padding * 2) as f32)
-        } else {
-            px(0.)
-        }
     }
 
     /// Sets the platform style.

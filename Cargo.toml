@@ -88,6 +88,7 @@ members = [
     "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
+    "crates/snippet_provider",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/story",
@@ -239,6 +240,7 @@ semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
+snippet_provider = { path = "crates/snippet_provider" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
@@ -272,7 +274,7 @@ zed_actions = { path = "crates/zed_actions" }
 alacritty_terminal = "0.23"
 any_vec = "0.13"
 anyhow = "1.0.57"
-ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "29f2e1a" }
+ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1" }
 async-fs = "1.6"
@@ -282,10 +284,10 @@ async-trait = "0.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
-bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+bitflags = "2.6.0"
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -363,6 +365,7 @@ shellexpand = "2.1.0"
 shlex = "1.3.0"
 signal-hook = "0.3.17"
 similar = "1.3"
+simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -449,11 +452,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
-    "Win32_System_Time",
     "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
@@ -516,7 +519,7 @@ single_range_in_vec_init = "allow"
 
 # There are a bunch of rules currently failing in the `style` group, so
 # allow all of those, for now.
-style = "allow"
+style = { level = "allow", priority = -1 }
 
 # Individual rules that have violations in the codebase:
 almost_complete_range = "allow"

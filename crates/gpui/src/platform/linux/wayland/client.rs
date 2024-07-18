@@ -11,6 +11,7 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
 
+use http::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -326,7 +327,7 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            state.common.quit_signal.quit();
+            state.common.signal.stop();
         }
     }
 }
@@ -422,7 +423,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()), None);
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -459,7 +460,7 @@ impl WaylandClient {
         let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
-            .insert_source(XDPEventSource::new(&common.background_executor, None), {
+            .insert_source(XDPEventSource::new(&common.background_executor), {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         if let Some(client) = client.0.upgrade() {
@@ -1119,7 +1120,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
+                // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
+                state.repeat.current_id += 1;
                 state.clipboard.set_offer(None);
+                state.clipboard.set_primary_offer(None);
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {
@@ -1403,6 +1407,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
+
                     if state.enter_token.is_some() {
                         state.enter_token = None;
                     }
@@ -1416,7 +1421,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
                     }
                     drop(state);
-                    window.set_focused(true);
+                    window.set_hovered(true);
                 }
             }
             wl_pointer::Event::Leave { .. } => {
@@ -1432,7 +1437,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                     drop(state);
                     focused_window.handle_input(input);
-                    focused_window.set_focused(false);
+                    focused_window.set_hovered(false);
                 }
             }
             wl_pointer::Event::Motion {
@@ -1791,7 +1796,8 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
-                                .map(|path| PathBuf::from(path.replace("file://", "")))
+                                .filter_map(|path| Url::parse(path).log_err())
+                                .filter_map(|url| url.to_file_path().log_err())
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 

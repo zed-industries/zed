@@ -49,7 +49,6 @@ use std::{
     slice, str,
     sync::Arc,
 };
-use time::UtcOffset;
 
 use super::renderer;
 
@@ -602,7 +601,7 @@ impl Platform for MacPlatform {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -632,7 +631,7 @@ impl Platform for MacPlatform {
                         };
 
                         if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(result);
+                            let _ = done_tx.send(Ok(result));
                         }
                     });
                     let block = block.copy();
@@ -643,7 +642,7 @@ impl Platform for MacPlatform {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
@@ -665,7 +664,7 @@ impl Platform for MacPlatform {
                         }
 
                         if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(result);
+                            let _ = done_tx.send(Ok(result));
                         }
                     });
                     let block = block.copy();
@@ -760,14 +759,6 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn local_timezone(&self) -> UtcOffset {
-        unsafe {
-            let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
-            let seconds_from_gmt: NSInteger = msg_send![local_timezone, secondsFromGMT];
-            UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
-        }
-    }
-
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
@@ -797,7 +788,7 @@ impl Platform for MacPlatform {
                 CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), verticalResizeCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
                 CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],

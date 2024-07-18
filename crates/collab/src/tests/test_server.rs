@@ -294,6 +294,8 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
+            assistant::FakeCompletionProvider::setup_test(cx);
+            assistant::context_store::init(&client);
         });
 
         client
@@ -803,9 +805,7 @@ impl TestClient {
     ) -> (Model<Project>, WorktreeId) {
         let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(root_path, true, cx)
-            })
+            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
             .await
             .unwrap();
         worktree

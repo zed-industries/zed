@@ -47,7 +47,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
+  // (On macOS) You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
@@ -94,6 +94,9 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // Whether to use the system provided dialogs for Open and Save As.
+  // When set to false, Zed will use the built-in keyboard-first pickers.
+  "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // How to highlight the current line in the editor.
@@ -116,6 +119,11 @@
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
+  // Show method signatures in the editor, when inside parentheses.
+  "auto_signature_help": false,
+  /// Whether to show the signature help after completion or a bracket pair inserted.
+  /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
+  "show_signature_help_after_edits": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if softwrap is set to 'preferred_line_length', and will show any
@@ -128,14 +136,7 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -262,6 +263,8 @@
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
+  // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
+  "search_wrap": true,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -431,7 +434,9 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
-    "close_position": "right"
+    "close_position": "right",
+    // Whether to show the file icon for a tab.
+    "file_icons": false
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -539,6 +544,14 @@
       // "delay_ms": 600
     }
   },
+  // Configuration for how direnv configuration should be loaded. May take 2 values:
+  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "load_direnv": "shell_hook"
+  // 2. Load direnv configuration using `direnv export json` directly.
+  //    This can help with some shells that otherwise would not detect
+  //    the direnv environment, such as nushell or elvish.
+  //      "load_direnv": "direct"
+  "load_direnv": "shell_hook",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
@@ -714,10 +727,12 @@
       }
     },
     "C": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "C++": {
-      "format_on_save": "off"
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "CSS": {
       "prettier": {
@@ -769,11 +784,13 @@
     },
     "Markdown": {
       "format_on_save": "off",
+      "use_on_type_format": false,
       "prettier": {
         "allowed": true
       }
     },
     "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -781,7 +798,7 @@
       }
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
     },
     "SCSS": {
       "prettier": {

@@ -168,7 +168,11 @@ impl TitleBar {
                                     cx.listener(move |this, _, cx| {
                                         this.workspace
                                             .update(cx, |workspace, cx| {
-                                                workspace.follow(peer_id, cx);
+                                                if is_following {
+                                                    workspace.unfollow(peer_id, cx);
+                                                } else {
+                                                    workspace.follow(peer_id, cx);
+                                                }
                                             })
                                             .ok();
                                     })
@@ -262,9 +266,8 @@ impl TitleBar {
                         ))
                         .children(if extra_count > 0 {
                             Some(
-                                div()
+                                Label::new(format!("+{extra_count}"))
                                     .ml_1()
-                                    .child(Label::new(format!("+{extra_count}")))
                                     .into_any_element(),
                             )
                         } else {

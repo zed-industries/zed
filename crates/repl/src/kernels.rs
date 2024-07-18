@@ -81,8 +81,54 @@ pub enum Kernel {
     Shutdown,
 }
 
+#[derive(Debug, Clone)]
+pub enum KernelStatus {
+    Idle,
+    Busy,
+    Starting,
+    Error,
+    ShuttingDown,
+    Shutdown,
+}
+impl KernelStatus {
+    pub fn is_connected(&self) -> bool {
+        match self {
+            KernelStatus::Idle | KernelStatus::Busy => true,
+            _ => false,
+        }
+    }
+}
+
+impl ToString for KernelStatus {
+    fn to_string(&self) -> String {
+        match self {
+            KernelStatus::Idle => "Idle".to_string(),
+            KernelStatus::Busy => "Busy".to_string(),
+            KernelStatus::Starting => "Starting".to_string(),
+            KernelStatus::Error => "Error".to_string(),
+            KernelStatus::ShuttingDown => "Shutting Down".to_string(),
+            KernelStatus::Shutdown => "Shutdown".to_string(),
+        }
+    }
+}
+
+impl From<&Kernel> for KernelStatus {
+    fn from(kernel: &Kernel) -> Self {
+        match kernel {
+            Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                ExecutionState::Idle => KernelStatus::Idle,
+                ExecutionState::Busy => KernelStatus::Busy,
+            },
+            Kernel::StartingKernel(_) => KernelStatus::Starting,
+            Kernel::ErroredLaunch(_) => KernelStatus::Error,
+            Kernel::ShuttingDown => KernelStatus::ShuttingDown,
+            Kernel::Shutdown => KernelStatus::Shutdown,
+        }
+    }
+}
+
 impl Kernel {
-    pub fn dot(&mut self) -> Indicator {
+    pub fn dot(&self) -> Indicator {
         match self {
             Kernel::RunningKernel(kernel) => match kernel.execution_state {
                 ExecutionState::Idle => Indicator::dot().color(Color::Success),
@@ -93,6 +139,10 @@ impl Kernel {
             Kernel::ShuttingDown => Indicator::dot().color(Color::Modified),
             Kernel::Shutdown => Indicator::dot().color(Color::Disabled),
         }
+    }
+
+    pub fn status(&self) -> KernelStatus {
+        self.into()
     }
 
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
@@ -121,6 +171,7 @@ pub struct RunningKernel {
     _control_task: Task<anyhow::Result<()>>,
     _routing_task: Task<anyhow::Result<()>>,
     connection_path: PathBuf,
+    pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
@@ -140,6 +191,7 @@ impl RunningKernel {
     pub fn new(
         kernel_specification: KernelSpecification,
         entity_id: EntityId,
+        working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<(Self, JupyterMessageChannel)>> {
@@ -170,7 +222,9 @@ impl RunningKernel {
             fs.atomic_write(connection_path.clone(), content).await?;
 
             let mut cmd = kernel_specification.command(&connection_path)?;
+
             let process = cmd
+                .current_dir(&working_directory)
                 // .stdout(Stdio::null())
                 // .stderr(Stdio::null())
                 .kill_on_drop(true)
@@ -251,6 +305,7 @@ impl RunningKernel {
                 Self {
                     process,
                     request_tx,
+                    working_directory,
                     _shell_task,
                     _iopub_task,
                     _control_task,

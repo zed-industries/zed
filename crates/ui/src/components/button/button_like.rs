@@ -332,7 +332,7 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
-    pub base: Div,
+    pub(super) base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
@@ -368,6 +368,14 @@ impl ButtonLike {
             on_click: None,
             layer: None,
         }
+    }
+
+    pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
+        Self::new(id).rounding(ButtonLikeRounding::Left)
+    }
+
+    pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
+        Self::new(id).rounding(ButtonLikeRounding::Right)
     }
 
     pub(crate) fn height(mut self, height: DefiniteLength) -> Self {

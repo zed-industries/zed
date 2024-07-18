@@ -8,14 +8,15 @@ use editor::{
     actions::SelectAll,
     items::active_match_index,
     scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
+    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
+    MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
     Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WeakView, WhiteSpace, WindowContext,
+    WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -29,14 +30,14 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
-    Selectable, Tooltip,
+    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, KeyBinding, Label, LabelCommon,
+    LabelSize, Selectable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    DeploySearch, ItemNavHistory, NewSearch, Pane, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
 };
 
@@ -143,7 +144,6 @@ pub struct ProjectSearchView {
     panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
-    query_editor_was_focused: bool,
     included_files_editor: View<Editor>,
     excluded_files_editor: View<Editor>,
     filters_enabled: bool,
@@ -226,7 +226,6 @@ impl ProjectSearch {
                     project::SearchResult::Buffer { buffer, ranges } => {
                         let mut match_ranges = this
                             .update(&mut cx, |this, cx| {
-                                this.no_results = Some(false);
                                 this.excerpts.update(cx, |excerpts, cx| {
                                     excerpts.stream_excerpts_with_context_lines(
                                         buffer,
@@ -239,8 +238,11 @@ impl ProjectSearch {
                             .ok()?;
 
                         while let Some(range) = match_ranges.next().await {
-                            this.update(&mut cx, |this, _| this.match_ranges.push(range))
-                                .ok()?;
+                            this.update(&mut cx, |this, _| {
+                                this.no_results = Some(false);
+                                this.match_ranges.push(range)
+                            })
+                            .ok()?;
                         }
                         this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                     }
@@ -286,30 +288,32 @@ impl Render for ProjectSearchView {
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
             let major_text = if is_search_underway {
-                Label::new("Searching...")
+                "Searching..."
             } else if has_no_results {
-                Label::new("No results")
+                "No results"
             } else {
-                Label::new("Search all files")
+                "Search all files"
             };
 
-            let major_text = div().justify_center().max_w_96().child(major_text);
+            let major_text = div()
+                .justify_center()
+                .max_w_96()
+                .child(Label::new(major_text).size(LabelSize::Large));
 
-            let minor_text: Option<SharedString> = if let Some(no_results) = model.no_results {
+            let minor_text: Option<AnyElement> = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
-                    Some("No results found in this project for the provided query".into())
+                    Some(
+                        Label::new("No results found in this project for the provided query")
+                            .size(LabelSize::Small)
+                            .into_any_element(),
+                    )
                 } else {
                     None
                 }
             } else {
-                Some(self.landing_text_minor())
+                Some(self.landing_text_minor(cx).into_any_element())
             };
-            let minor_text = minor_text.map(|text| {
-                div()
-                    .items_center()
-                    .max_w_96()
-                    .child(Label::new(text).size(LabelSize::Small))
-            });
+            let minor_text = minor_text.map(|text| div().items_center().max_w_96().child(text));
             v_flex()
                 .flex_1()
                 .size_full()
@@ -321,7 +325,7 @@ impl Render for ProjectSearchView {
                         .size_full()
                         .justify_center()
                         .child(h_flex().flex_1())
-                        .child(v_flex().child(major_text).children(minor_text))
+                        .child(v_flex().gap_1().child(major_text).children(minor_text))
                         .child(h_flex().flex_1()),
                 )
         }
@@ -366,7 +370,11 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::MagnifyingGlass))
+    }
+
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -377,24 +385,11 @@ impl Item for ProjectSearchView {
                 let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
-        let tab_name = last_query
-            .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project Search".into());
-        h_flex()
-            .gap_2()
-            .child(
-                Icon::new(IconName::MagnifyingGlass).color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
-            )
-            .child(Label::new(tab_name).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .into_any()
+        Some(
+            last_query
+                .filter(|query| !query.is_empty())
+                .unwrap_or_else(|| "Project Search".into()),
+        )
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -505,20 +500,6 @@ impl Item for ProjectSearchView {
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        None
-    }
-
-    fn deserialize(
-        _project: Model<Project>,
-        _workspace: WeakView<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
-        _cx: &mut ViewContext<Pane>,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        unimplemented!()
     }
 }
 
@@ -714,7 +695,6 @@ impl ProjectSearchView {
             search_options: options,
             panels_with_errors: HashSet::default(),
             active_match_index: None,
-            query_editor_was_focused: false,
             included_files_editor,
             excluded_files_editor,
             filters_enabled,
@@ -970,6 +950,16 @@ impl ProjectSearchView {
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
+
+            if !EditorSettings::get_global(cx).search_wrap {
+                if (direction == Direction::Next && index + 1 >= match_ranges.len())
+                    || (direction == Direction::Prev && index == 0)
+                {
+                    crate::show_no_more_matches(cx);
+                    return;
+                }
+            }
+
             let new_index = self.results_editor.update(cx, |editor, cx| {
                 editor.match_index_for_direction(&match_ranges, index, direction, 1, cx)
             });
@@ -989,7 +979,6 @@ impl ProjectSearchView {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&SelectAll, cx);
         });
-        self.query_editor_was_focused = true;
         let editor_handle = self.query_editor.focus_handle(cx);
         cx.focus(&editor_handle);
     }
@@ -1004,7 +993,6 @@ impl ProjectSearchView {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
-        self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
         cx.focus(&results_handle);
     }
@@ -1060,8 +1048,50 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self) -> SharedString {
-        "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into()
+    fn landing_text_minor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(Label::new("Hit enter to search. For more options:"))
+            .child(
+                Button::new("filter-paths", "Include/exclude specific paths")
+                    .icon(IconName::Filter)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleFilters, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleFilters.boxed_clone())),
+            )
+            .child(
+                Button::new("find-replace", "Find and replace")
+                    .icon(IconName::Replace)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleReplace, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleReplace.boxed_clone())),
+            )
+            .child(
+                Button::new("regex", "Match with regex")
+                    .icon(IconName::Regex)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleRegex, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleRegex.boxed_clone())),
+            )
+            .child(
+                Button::new("match-case", "Match case")
+                    .icon(IconName::CaseSensitive)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleCaseSensitive, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleCaseSensitive.boxed_clone())),
+            )
+            .child(
+                Button::new("match-whole-words", "Match whole words")
+                    .icon(IconName::WholeWord)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action(&ToggleWholeWord, cx))
+                    .on_click(|_event, cx| cx.dispatch_action(ToggleWholeWord.boxed_clone())),
+            )
     }
 
     fn border_color_for(&self, panel: InputPanel, cx: &WindowContext) -> Hsla {
@@ -1165,7 +1195,9 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_search_option(option, cx);
-                search_view.search(cx);
+                if search_view.model.read(cx).active_query.is_some() {
+                    search_view.search(cx);
+                }
             });
 
             cx.notify();
@@ -1402,6 +1434,7 @@ impl Render for ProjectSearchBar {
                 ),
         );
 
+        let limit_reached = search.model.read(cx).limit_reached;
         let match_text = search
             .active_match_index
             .and_then(|index| {
@@ -1409,14 +1442,16 @@ impl Render for ProjectSearchBar {
                 let match_quantity = search.model.read(cx).match_ranges.len();
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
-                    Some(format!("{index}/{match_quantity}").to_string())
+                    if limit_reached {
+                        Some(format!("{index}/{match_quantity}+").to_string())
+                    } else {
+                        Some(format!("{index}/{match_quantity}").to_string())
+                    }
                 } else {
                     None
                 }
             })
             .unwrap_or_else(|| "0/0".to_string());
-
-        let limit_reached = search.model.read(cx).limit_reached;
 
         let matches_column = h_flex()
             .child(
@@ -1447,6 +1482,7 @@ impl Render for ProjectSearchBar {
             )
             .child(
                 h_flex()
+                    .id("matches")
                     .min_w(rems_from_px(40.))
                     .child(
                         Label::new(match_text).color(if search.active_match_index.is_some() {
@@ -1454,15 +1490,13 @@ impl Render for ProjectSearchBar {
                         } else {
                             Color::Disabled
                         }),
-                    ),
-            )
-            .when(limit_reached, |this| {
-                this.child(
-                    div()
-                        .child(Label::new("Search limit reached").color(Color::Warning))
-                        .ml_2(),
-                )
-            });
+                    )
+                    .when(limit_reached, |el| {
+                        el.tooltip(|cx| {
+                            Tooltip::text("Search limits reached.\nTry narrowing your search.", cx)
+                        })
+                    }),
+            );
 
         let search_line = h_flex()
             .flex_1()
@@ -1507,6 +1541,7 @@ impl Render for ProjectSearchBar {
                 )
             });
             h_flex()
+                .pr(rems(5.5))
                 .gap_2()
                 .child(replace_column)
                 .child(replace_actions)
@@ -1519,31 +1554,23 @@ impl Render for ProjectSearchBar {
                 .child(
                     h_flex()
                         .flex_1()
-                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        // chosen so the total width of the search bar line
+                        // is about the same as the include/exclude line
+                        .min_w(rems(10.25))
+                        .max_w(rems(20.))
                         .h_8()
                         .px_2()
                         .py_1()
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Include, cx))
                         .rounded_lg()
-                        .child(self.render_text_input(&search.included_files_editor, cx))
-                        .child(
-                            SearchOptions::INCLUDE_IGNORED.as_button(
-                                search
-                                    .search_options
-                                    .contains(SearchOptions::INCLUDE_IGNORED),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
-                                }),
-                            ),
-                        ),
+                        .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
                     h_flex()
                         .flex_1()
-                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        .min_w(rems(10.25))
+                        .max_w(rems(20.))
                         .h_8()
                         .px_2()
                         .py_1()
@@ -1552,10 +1579,25 @@ impl Render for ProjectSearchBar {
                         .rounded_lg()
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
+                .child(
+                    SearchOptions::INCLUDE_IGNORED.as_button(
+                        search
+                            .search_options
+                            .contains(SearchOptions::INCLUDE_IGNORED),
+                        cx.listener(|this, _, cx| {
+                            this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+                        }),
+                    ),
+                )
         });
+        let mut key_context = KeyContext::default();
+        key_context.add("ProjectSearchBar");
+        if search.replacement_editor.focus_handle(cx).is_focused(cx) {
+            key_context.add("in_replace");
+        }
 
         v_flex()
-            .key_context("ProjectSearchBar")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);

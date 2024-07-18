@@ -21,6 +21,7 @@ use std::{
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
+use ashpd::desktop::ResponseError;
 use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
@@ -28,9 +29,7 @@ use calloop::{EventLoop, LoopHandle, LoopSignal};
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
-use mio::Waker;
 use parking_lot::Mutex;
-use time::UtcOffset;
 use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
@@ -54,6 +53,9 @@ pub(crate) const SCROLL_LINES: f64 = 3.0;
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+
+const FILE_PICKER_PORTAL_MISSING: &str =
+    "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
@@ -88,16 +90,6 @@ pub(crate) struct PlatformHandlers {
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
-pub trait QuitSignal {
-    fn quit(&mut self);
-}
-
-impl QuitSignal for LoopSignal {
-    fn quit(&mut self) {
-        self.stop();
-    }
-}
-
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -105,20 +97,17 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) quit_signal: Box<dyn QuitSignal>,
+    pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
-    pub fn new(
-        quit_signal: Box<dyn QuitSignal>,
-        main_waker: Option<Arc<Waker>>,
-    ) -> (Self, Channel<Runnable>) {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone(), main_waker));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
@@ -129,7 +118,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            quit_signal,
+            signal,
             menus: Vec::new(),
         };
 
@@ -163,7 +152,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.quit_signal.quit());
+        self.with_common(|common| common.signal.stop());
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -270,75 +259,84 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.multiple {
-                    if !options.files {
-                        "Open folders"
-                    } else {
-                        "Open files"
-                    }
+                let title = if options.directories {
+                    "Open Folder"
                 } else {
-                    if !options.files {
-                        "Open folder"
-                    } else {
-                        "Open file"
-                    }
+                    "Open File"
                 };
 
-                let result = OpenFileRequest::default()
+                let request = match OpenFileRequest::default()
                     .modal(true)
                     .title(title)
-                    .accept_label("Select")
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
                     .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
+                };
+
+                let result = match request.response() {
+                    Ok(response) => Ok(Some(
                         response
                             .uris()
                             .iter()
-                            .map(|uri| uri.to_file_path().ok())
-                            .collect()
-                    });
-
+                            .filter_map(|uri| uri.to_file_path().ok())
+                            .collect::<Vec<_>>(),
+                    )),
+                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let request = SaveFileRequest::default()
+                let request = match SaveFileRequest::default()
                     .modal(true)
-                    .title("Select new path")
-                    .accept_label("Accept")
-                    .current_folder(directory);
-
-                let result = if let Ok(request) = request {
-                    request
-                        .send()
-                        .await
-                        .ok()
-                        .and_then(|request| request.response().ok())
-                        .and_then(|response| {
-                            response
-                                .uris()
-                                .first()
-                                .and_then(|uri| uri.to_file_path().ok())
-                        })
-                } else {
-                    None
+                    .title("Save File")
+                    .current_folder(directory)
+                    .expect("pathbuf should not be nul terminated")
+                    .send()
+                    .await
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
                 };
 
+                let result = match request.response() {
+                    Ok(response) => Ok(response
+                        .uris()
+                        .first()
+                        .and_then(|uri| uri.to_file_path().ok())),
+                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
@@ -397,10 +395,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
-
-    fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::UTC
-    }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -516,11 +510,26 @@ pub(super) fn open_uri_internal(
     if let Some(uri) = url::Url::parse(uri).log_err() {
         executor
             .spawn(async move {
-                OpenUriRequest::default()
-                    .activation_token(activation_token.map(ActivationToken::from))
+                match OpenUriRequest::default()
+                    .activation_token(activation_token.clone().map(ActivationToken::from))
                     .send_uri(&uri)
                     .await
-                    .log_err();
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+
+                for mut command in open::commands(uri.to_string()) {
+                    if let Some(token) = activation_token.as_ref() {
+                        command.env("XDG_ACTIVATION_TOKEN", token);
+                    }
+                    match command.spawn() {
+                        Ok(_) => return,
+                        Err(e) => {
+                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                        }
+                    }
+                }
             })
             .detach();
     }
@@ -533,12 +542,20 @@ pub(super) fn reveal_path_internal(
 ) {
     executor
         .spawn(async move {
-            if let Some(dir) = File::open(path).log_err() {
-                OpenDirectoryRequest::default()
+            if let Some(dir) = File::open(path.clone()).log_err() {
+                match OpenDirectoryRequest::default()
                     .activation_token(activation_token.map(ActivationToken::from))
                     .send(&dir.as_fd())
                     .await
-                    .log_err();
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+                if path.is_dir() {
+                    open::that_detached(path).log_err();
+                } else {
+                    open::that_detached(path.parent().unwrap_or(Path::new(""))).log_err();
+                }
             }
         })
         .detach();
@@ -654,6 +671,8 @@ impl Keystroke {
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
+            Keysym::KP_Prior => "pageup".to_owned(),
+            Keysym::KP_Next => "pagedown".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -691,7 +710,14 @@ impl Keystroke {
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
 
-            _ => xkb::keysym_get_name(key_sym).to_lowercase(),
+            _ => {
+                let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                if key_sym.is_keypad_key() {
+                    name.replace("kp_", "")
+                } else {
+                    name
+                }
+            }
         };
 
         if modifiers.shift {
