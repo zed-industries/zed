@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::{Element as _, Icon};
+use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -144,8 +144,30 @@ pub struct TabContentParams {
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
-    fn tab_content(&self, _params: TabContentParams, _cx: &WindowContext) -> AnyElement {
-        gpui::Empty.into_any()
+
+    /// Returns the tab contents.
+    ///
+    /// By default this returns a [`Label`] that displays that text from
+    /// `tab_content_text`.
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        let Some(text) = self.tab_content_text(cx) else {
+            return gpui::Empty.into_any();
+        };
+
+        let color = if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+
+        Label::new(text).color(color).into_any_element()
+    }
+
+    /// Returns the textual contents of the tab.
+    ///
+    /// Use this if you don't need to customize the tab contents.
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        None
     }
 
     fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {

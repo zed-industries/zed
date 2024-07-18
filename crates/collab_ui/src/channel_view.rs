@@ -11,20 +11,20 @@ use editor::{
     EditorEvent,
 };
 use gpui::{
-    actions, AnyElement, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter,
-    FocusableView, IntoElement as _, Model, Pixels, Point, Render, Subscription, Task, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
+    Pixels, Point, Render, Subscription, Task, View, ViewContext, VisualContext as _, WeakView,
+    WindowContext,
 };
 use project::Project;
 use std::{
     any::{Any, TypeId},
     sync::Arc,
 };
-use ui::{prelude::*, Label};
+use ui::prelude::*;
 use util::ResultExt;
 use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle},
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
@@ -385,7 +385,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
         let label = if let Some(channel) = self.channel(cx) {
             match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),
@@ -398,13 +398,7 @@ impl Item for ChannelView {
         } else {
             "channel notes (disconnected)".to_string()
         };
-        Label::new(label)
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        Some(label.into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

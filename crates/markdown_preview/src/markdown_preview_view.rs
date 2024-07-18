@@ -6,13 +6,13 @@ use anyhow::Result;
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task,
-    View, ViewContext, WeakView,
+    list, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    WeakView,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
-use workspace::item::{Item, ItemHandle, TabContentParams};
+use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
@@ -456,18 +456,12 @@ impl Item for MarkdownPreviewView {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
-        Label::new(if let Some(description) = &self.tab_description {
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some(if let Some(description) = &self.tab_description {
             description.clone().into()
         } else {
             self.fallback_tab_description.clone()
         })
-        .color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        })
-        .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
