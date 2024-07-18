@@ -11760,8 +11760,11 @@ impl Editor {
         editor_snapshot: &EditorSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> Option<gpui::Point<Pixels>> {
-        let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
         let text_layout_details = self.text_layout_details(cx);
+        let line_height = text_layout_details
+            .editor_style
+            .text
+            .line_height_in_pixels(cx.rem_size());
         let source_point = source.to_display_point(editor_snapshot);
         let first_visible_line = text_layout_details
             .scroll_anchor
@@ -11771,7 +11774,9 @@ impl Editor {
             return None;
         }
         let source_x = editor_snapshot.x_for_display_point(source_point, &text_layout_details);
-        let source_y = line_height * (source_point.row() - first_visible_line.row()).0 as f32;
+        let source_y = line_height
+            * ((source_point.row() - first_visible_line.row()).0 as f32
+                - text_layout_details.scroll_anchor.offset.y);
         Some(gpui::Point::new(source_x, source_y))
     }
 

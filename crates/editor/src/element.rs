@@ -2506,19 +2506,19 @@ impl EditorElement {
 
     fn layout_mouse_context_menu(
         &self,
+        editor_snapshot: &EditorSnapshot,
         visible_range: Range<DisplayRow>,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let position = self.editor.update(cx, |editor, cx| {
-            let editor_snapshot = editor.snapshot(cx);
             let visible_start_point = editor.display_to_pixel_point(
                 DisplayPoint::new(visible_range.start, 0),
-                &editor_snapshot,
+                editor_snapshot,
                 cx,
             )?;
             let visible_end_point = editor.display_to_pixel_point(
                 DisplayPoint::new(visible_range.end, 0),
-                &editor_snapshot,
+                editor_snapshot,
                 cx,
             )?;
 
@@ -2530,8 +2530,8 @@ impl EditorElement {
                     offset_x,
                     offset_y,
                 } => {
-                    let source_display_point = source.to_display_point(&editor_snapshot);
-                    let mut source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
+                    let source_display_point = source.to_display_point(editor_snapshot);
+                    let mut source_point = editor.to_pixel_point(source, editor_snapshot, cx)?;
                     source_point.x += offset_x;
                     source_point.y += offset_y;
                     (Some(source_display_point), source_point)
@@ -5299,7 +5299,8 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let mouse_context_menu = self.layout_mouse_context_menu(start_row..end_row, cx);
+                    let mouse_context_menu =
+                        self.layout_mouse_context_menu(&snapshot, start_row..end_row, cx);
 
                     cx.with_element_namespace("gutter_fold_toggles", |cx| {
                         self.prepaint_gutter_fold_toggles(

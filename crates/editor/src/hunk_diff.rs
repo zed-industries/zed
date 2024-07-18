@@ -85,7 +85,9 @@ impl Editor {
         let end_point = self
             .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
             .unwrap_or(clicked_point);
-        let closest_source = if start_point.y < end_point.y {
+        let norm =
+            |a: gpui::Point<Pixels>, b: gpui::Point<Pixels>| (a.x - b.x).abs() + (a.y - b.y).abs();
+        let closest_source = if norm(start_point, clicked_point) < norm(end_point, clicked_point) {
             hovered_hunk.multi_buffer_range.start
         } else {
             hovered_hunk.multi_buffer_range.end
