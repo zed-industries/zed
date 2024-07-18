@@ -4,7 +4,7 @@ mod toolbar_controls;
 
 #[cfg(test)]
 mod diagnostics_tests;
-mod grouped_diagnostics;
+pub(crate) mod grouped_diagnostics;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};

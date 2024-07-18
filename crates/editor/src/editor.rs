@@ -12827,23 +12827,31 @@ pub fn highlight_diagnostic_message(
 
     let mut prev_offset = 0;
     let mut in_code_block = false;
+    let has_row_limit = max_message_rows.is_some();
     let mut newline_indices = diagnostic
         .message
         .match_indices('\n')
+        .filter(|_| has_row_limit)
         .map(|(ix, _)| ix)
         .fuse()
         .peekable();
-    for (ix, _) in diagnostic
+
+    for (quote_ix, _) in diagnostic
         .message
         .match_indices('`')
         .chain([(diagnostic.message.len(), "")])
     {
-        let mut trimmed_ix = ix;
-        while let Some(newline_index) = newline_indices.peek() {
-            if *newline_index < ix {
+        let mut first_newline_ix = None;
+        let mut last_newline_ix = None;
+        while let Some(newline_ix) = newline_indices.peek() {
+            if *newline_ix < quote_ix {
+                if first_newline_ix.is_none() {
+                    first_newline_ix = Some(*newline_ix);
+                }
+                last_newline_ix = Some(*newline_ix);
+
                 if let Some(rows_left) = &mut max_message_rows {
                     if *rows_left == 0 {
-                        trimmed_ix = newline_index.saturating_sub(1);
                         break;
                     } else {
                         *rows_left -= 1;
@@ -12855,14 +12863,14 @@ pub fn highlight_diagnostic_message(
             }
         }
         let prev_len = text_without_backticks.len();
-        let new_text = &diagnostic.message[prev_offset..trimmed_ix];
+        let new_text = &diagnostic.message[prev_offset..first_newline_ix.unwrap_or(quote_ix)];
         text_without_backticks.push_str(new_text);
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
         }
-        prev_offset = trimmed_ix + 1;
+        prev_offset = last_newline_ix.unwrap_or(quote_ix) + 1;
         in_code_block = !in_code_block;
-        if trimmed_ix != ix {
+        if first_newline_ix.map_or(false, |newline_ix| newline_ix < quote_ix) {
             text_without_backticks.push_str("...");
             break;
         }
