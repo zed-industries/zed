@@ -131,42 +131,25 @@ impl EditorBlock {
                     dbg!(event);
                 });
 
-            let close_button_width = IconSize::XSmall.square(cx);
-
-            let available_width = gutter_dimensions.width
-                // + gutter_dimensions.fold_area_width()
-                + gutter_dimensions.margin
-                + gutter_dimensions.left_padding
-                + gutter_dimensions.right_padding
-                // - gutter_dimensions.margin
-                - close_button_width;
-
             h_flex()
                 .w_full()
                 .bg(cx.theme().colors().background)
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
-                // .pl(gutter_width)
-                .pl(gutter_dimensions.width - close_button_width)
                 .child(
-                    h_flex()
-                        .debug_bg_cyan()
-                        // .w(gutter_dimensions.full_width()
-                        //     + gutter_dimensions.left_padding
-                        //     + gutter_dimensions.right_padding
-                        //     - close_button_width)
-                        // .pl(gutter_dimensions.left_padding)
-                        // .pr(gutter_dimensions.right_padding)
-                        // .m(gutter_dimensions.margin)
-                        .child(h_flex().debug_bg_red().child(close_button))
-                        .justify_end(),
-                    // .mr(gutter_dimensions.margin),
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .justify_center()
+                        .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                        .child(close_button),
                 )
                 .child(
                     div()
+                        .flex_1()
                         .text_size(text_font_size)
                         .font_family(text_font)
-                        .mx_1()
                         .my_2()
                         .h_full()
                         .w_full()
