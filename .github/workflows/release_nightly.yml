@@ -128,9 +128,6 @@ jobs:
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
-      - name: Build Linux remote server binaries
-        run: script/build-remote-server x86_64
-
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
 
@@ -182,9 +179,6 @@ jobs:
 
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
-
-      - name: Build Linux remote server binaries
-        run: script/build-remote-server aarch64
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz

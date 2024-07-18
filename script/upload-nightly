@@ -34,7 +34,7 @@ bucket_name="zed-nightly-host"
 sha=$(git rev-parse HEAD)
 echo ${sha} > target/latest-sha
 
-find . -type f -name "zed-remote-server-*.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
+find target -type f -name "zed-remote-server-*.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
     upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
     rm -f "$file_to_upload"
 done
@@ -53,8 +53,6 @@ case "$target" in
             upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
             rm -f "$file_to_upload"
         done
-        upload_to_blob_store $bucket_name "target/release/zed-remote-server-linux-x86_64.gz" "nightly/zed-remote-server-linux-x86_64.gz"
-        upload_to_blob_store $bucket_name "target/release/zed-remote-server-linux-aarch64.gz" "nightly/zed-remote-server-linux-aarch64.gz"
         upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha-linux-targz"
         rm -f "target/latest-sha"
         ;;
