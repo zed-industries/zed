@@ -94,11 +94,11 @@ pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
 };
 
+use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
 };
-use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
@@ -3943,16 +3943,7 @@ impl Workspace {
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                let (order, paths): (Vec<_>, Vec<_>) = local_paths
-                    .iter()
-                    .enumerate()
-                    .sorted_by(|a, b| a.1.cmp(b.1))
-                    .unzip();
-
-                Some(SerializedWorkspaceLocation::Local(
-                    LocalPaths::new(paths),
-                    LocalPathsOrder::new(order),
-                ))
+                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
             } else {
                 None
             }
