@@ -49,8 +49,6 @@ pub use app_menu::*;
 pub use keystroke::*;
 
 #[cfg(target_os = "linux")]
-pub(crate) use cosmic_text::*;
-#[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
