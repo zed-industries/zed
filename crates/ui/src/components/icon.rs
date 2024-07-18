@@ -77,7 +77,7 @@ impl IconSize {
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
         let icon_size = self.rems() * cx.rem_size();
         let padding = match self {
             IconSize::Indicator => Spacing::None.px(cx),

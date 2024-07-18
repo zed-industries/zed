@@ -12,7 +12,8 @@ use editor::{
 };
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
+    div, prelude::*, size, AvailableSpace, EventEmitter, Model, Render, Subscription, Task, View,
+    ViewContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -22,7 +23,7 @@ use runtimelib::{
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
+use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, Tooltip};
 
 pub struct Session {
     pub editor: WeakView<Editor>,
@@ -117,19 +118,54 @@ impl EditorBlock {
             let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
             // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
 
+            let gutter_dimensions = cx.gutter_dimensions;
+
             let gutter_width = cx.gutter_dimensions.width;
+
+            let close_button = IconButton::new("close_output_area", IconName::Close)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .tooltip(|cx| Tooltip::text("Close output area", cx))
+                .on_click(|event, _cx| {
+                    dbg!(event);
+                });
+
+            let close_button_width = IconSize::XSmall.square(cx);
+
+            let available_width = gutter_dimensions.width
+                // + gutter_dimensions.fold_area_width()
+                + gutter_dimensions.margin
+                + gutter_dimensions.left_padding
+                + gutter_dimensions.right_padding
+                // - gutter_dimensions.margin
+                - close_button_width;
 
             h_flex()
                 .w_full()
                 .bg(cx.theme().colors().background)
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
-                .pl(gutter_width)
+                // .pl(gutter_width)
+                .pl(gutter_dimensions.width - close_button_width)
+                .child(
+                    h_flex()
+                        .debug_bg_cyan()
+                        // .w(gutter_dimensions.full_width()
+                        //     + gutter_dimensions.left_padding
+                        //     + gutter_dimensions.right_padding
+                        //     - close_button_width)
+                        // .pl(gutter_dimensions.left_padding)
+                        // .pr(gutter_dimensions.right_padding)
+                        // .m(gutter_dimensions.margin)
+                        .child(h_flex().debug_bg_red().child(close_button))
+                        .justify_end(),
+                    // .mr(gutter_dimensions.margin),
+                )
                 .child(
                     div()
                         .text_size(text_font_size)
                         .font_family(text_font)
-                        // .ml(gutter_width)
                         .mx_1()
                         .my_2()
                         .h_full()
