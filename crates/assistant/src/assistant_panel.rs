@@ -1646,26 +1646,63 @@ impl ContextEditor {
                 })?;
             } else {
                 // If there are multiple buffers or suggestion groups, create a multibuffer
+                let mut inline_assist_suggestions = Vec::new();
                 let multibuffer = cx.new_model(|cx| {
                     let replica_id = project.read(cx).replica_id();
                     let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
                     for (buffer, suggestion_groups) in edit_suggestions {
-                        multibuffer.push_excerpts(
+                        let excerpt_ids = multibuffer.push_excerpts(
                             buffer,
                             suggestion_groups
-                                .into_iter()
+                                .iter()
                                 .map(|suggestion_group| ExcerptRange {
-                                    context: suggestion_group.context_range,
+                                    context: suggestion_group.context_range.clone(),
                                     primary: None,
                                 }),
                             cx,
                         );
+
+                        for (excerpt_id, suggestion_group) in
+                            excerpt_ids.into_iter().zip(suggestion_groups)
+                        {
+                            for suggestion in suggestion_group.suggestions {
+                                let description =
+                                    suggestion.description.unwrap_or_else(|| "Delete".into());
+                                let range = {
+                                    let multibuffer = multibuffer.read(cx);
+                                    multibuffer
+                                        .anchor_in_excerpt(excerpt_id, suggestion.range.start)
+                                        .unwrap()
+                                        ..multibuffer
+                                            .anchor_in_excerpt(excerpt_id, suggestion.range.end)
+                                            .unwrap()
+                                };
+                                let initial_text =
+                                    suggestion.prepend_newline.then(|| "\n".to_string());
+                                inline_assist_suggestions.push((range, description, initial_text));
+                            }
+                        }
                     }
                     multibuffer
                 })?;
 
                 let editor = cx
                     .new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
+                cx.update(|cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for (range, description, initial_text) in inline_assist_suggestions {
+                            assistant.suggest_assist(
+                                &editor,
+                                range,
+                                description,
+                                initial_text,
+                                Some(workspace.clone()),
+                                assistant_panel.upgrade().as_ref(),
+                                cx,
+                            );
+                        }
+                    })
+                })?;
                 workspace.update(&mut cx, |workspace, cx| {
                     workspace.add_item_to_active_pane(Box::new(editor), None, false, cx)
                 })?;
