@@ -13944,7 +13944,7 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "serde",
  "zed_extension_api 0.0.6",
