@@ -969,14 +969,23 @@ impl CompletionsMenu {
             .enumerate()
             .map(|(id, completion)| StringMatchCandidate::new(id, completion.to_string()))
             .collect();
-
+        let matches = choices
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| StringMatch {
+                candidate_id: id,
+                score: 1.,
+                positions: vec![],
+                string: completion.clone(),
+            })
+            .collect();
         Self {
             id,
             initial_position: old_range.start,
             buffer,
             completions: Arc::new(RwLock::new(completions)),
             match_candidates,
-            matches: Vec::new().into(),
+            matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
@@ -5306,7 +5315,7 @@ impl Editor {
                         ),
                     ));
 
-                    self.show_completions(&ShowCompletions { trigger: None }, cx);
+                    //self.show_completions(&ShowCompletions { trigger: None }, cx);
                     dbg!(self.context_menu.read());
                 }
             }
