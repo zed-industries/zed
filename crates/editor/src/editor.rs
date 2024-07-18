@@ -2904,6 +2904,10 @@ impl Editor {
             return true;
         }
 
+        if self.mouse_context_menu.take().is_some() {
+            return true;
+        }
+
         if self.discard_inline_completion(should_report_inline_completion_event, cx) {
             return true;
         }
@@ -11753,21 +11757,41 @@ impl Editor {
     pub fn to_pixel_point(
         &mut self,
         source: multi_buffer::Anchor,
+        editor_snapshot: &EditorSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
         let text_layout_details = self.text_layout_details(cx);
-        let editor_snapshot = self.snapshot(cx);
-        let source_point = source.to_display_point(&editor_snapshot);
+        let source_point = source.to_display_point(editor_snapshot);
         let first_visible_line = text_layout_details
             .scroll_anchor
             .anchor
-            .to_display_point(&editor_snapshot);
+            .to_display_point(editor_snapshot);
         if first_visible_line > source_point {
             return None;
         }
         let source_x = editor_snapshot.x_for_display_point(source_point, &text_layout_details);
         let source_y = line_height * (source_point.row() - first_visible_line.row()).0 as f32;
+        Some(gpui::Point::new(source_x, source_y))
+    }
+
+    pub fn display_to_pixel_point(
+        &mut self,
+        source: DisplayPoint,
+        editor_snapshot: &EditorSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::Point<Pixels>> {
+        let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
+        let text_layout_details = self.text_layout_details(cx);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(editor_snapshot);
+        if first_visible_line > source {
+            return None;
+        }
+        let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
+        let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
 }

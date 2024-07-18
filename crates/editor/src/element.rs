@@ -31,6 +31,7 @@ use crate::{
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use gpui::Subscription;
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
@@ -66,6 +67,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
@@ -2502,23 +2504,57 @@ impl EditorElement {
         true
     }
 
-    fn layout_mouse_context_menu(&self, cx: &mut WindowContext) -> Option<AnyElement> {
-        let mut element = self.editor.update(cx, |editor, cx| {
+    fn layout_mouse_context_menu(
+        &self,
+        visible_range: Range<DisplayRow>,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        let position = self.editor.update(cx, |editor, cx| {
+            let editor_snapshot = editor.snapshot(cx);
+            let visible_start_point = editor.display_to_pixel_point(
+                DisplayPoint::new(visible_range.start, 0),
+                &editor_snapshot,
+                cx,
+            )?;
+            let visible_end_point = editor.display_to_pixel_point(
+                DisplayPoint::new(visible_range.end, 0),
+                &editor_snapshot,
+                cx,
+            )?;
+
             let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-            let context_menu = mouse_context_menu.context_menu.clone();
-            let position = match mouse_context_menu.position {
-                MenuPosition::PinnedToScreen(point) => point,
+            let (source_display_point, position) = match mouse_context_menu.position {
+                MenuPosition::PinnedToScreen(point) => (None, point),
                 MenuPosition::PinnedToEditor {
                     source,
                     offset_x,
                     offset_y,
                 } => {
-                    let mut source_point = editor.to_pixel_point(source, cx)?;
+                    let source_display_point = source.to_display_point(&editor_snapshot);
+                    let mut source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
                     source_point.x += offset_x;
                     source_point.y += offset_y;
-                    source_point
+                    (Some(source_display_point), source_point)
                 }
             };
+
+            let source_included = source_display_point.map_or(true, |source_display_point| {
+                visible_range
+                    .to_inclusive()
+                    .contains(&source_display_point.row())
+            });
+            let position_included =
+                visible_start_point.y <= position.y && position.y <= visible_end_point.y;
+            if !source_included && !position_included {
+                None
+            } else {
+                Some(position)
+            }
+        })?;
+
+        let mut element = self.editor.update(cx, |editor, _| {
+            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+            let context_menu = mouse_context_menu.context_menu.clone();
 
             Some(
                 deferred(
@@ -2533,7 +2569,7 @@ impl EditorElement {
             )
         })?;
 
-        element.prepaint_as_root(gpui::Point::default(), AvailableSpace::min_size(), cx);
+        element.prepaint_as_root(position, AvailableSpace::min_size(), cx);
         Some(element)
     }
 
@@ -4086,15 +4122,16 @@ fn deploy_blame_entry_context_menu(
     position: gpui::Point<Pixels>,
     cx: &mut WindowContext<'_>,
 ) {
-    let context_menu = ContextMenu::build(cx, move |this, _| {
+    let context_menu = ContextMenu::build(cx, move |menu, _| {
         let sha = format!("{}", blame_entry.sha);
-        this.entry("Copy commit SHA", None, move |cx| {
-            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
-        })
-        .when_some(
-            details.and_then(|details| details.permalink.clone()),
-            |this, url| this.entry("Open permalink", None, move |cx| cx.open_url(url.as_str())),
-        )
+        menu.on_blur_subscription(Subscription::new(|| {}))
+            .entry("Copy commit SHA", None, move |cx| {
+                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+            })
+            .when_some(
+                details.and_then(|details| details.permalink.clone()),
+                |this, url| this.entry("Open permalink", None, move |cx| cx.open_url(url.as_str())),
+            )
     });
 
     editor.update(cx, move |editor, cx| {
@@ -5262,7 +5299,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let mouse_context_menu = self.layout_mouse_context_menu(cx);
+                    let mouse_context_menu = self.layout_mouse_context_menu(start_row..end_row, cx);
 
                     cx.with_element_namespace("gutter_fold_toggles", |cx| {
                         self.prepaint_gutter_fold_toggles(

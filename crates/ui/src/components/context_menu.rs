@@ -285,6 +285,11 @@ impl ContextMenu {
             cx.propagate()
         }
     }
+
+    pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {
+        self._on_blur_subscription = new_subscription;
+        self
+    }
 }
 
 impl ContextMenuItem {

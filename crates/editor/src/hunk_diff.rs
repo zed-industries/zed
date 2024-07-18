@@ -5,7 +5,7 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{Action, AppContext, Hsla, Model, MouseButton, Task, View};
+use gpui::{Action, AppContext, Hsla, Model, MouseButton, Subscription, Task, View};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -78,13 +78,26 @@ impl Editor {
             .hunks(false)
             .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
         let editor_handle = cx.view().clone();
+        let editor_snapshot = self.snapshot(cx);
+        let start_point = self
+            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
+            .unwrap_or(clicked_point);
+        let end_point = self
+            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
+            .unwrap_or(clicked_point);
+        let closest_source = if start_point.y < end_point.y {
+            hovered_hunk.multi_buffer_range.start
+        } else {
+            hovered_hunk.multi_buffer_range.end
+        };
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
-            hovered_hunk.multi_buffer_range.start,
+            closest_source,
             clicked_point,
             ContextMenu::build(cx, move |menu, _| {
-                menu.context(focus_handle)
+                menu.on_blur_subscription(Subscription::new(|| {}))
+                    .context(focus_handle)
                     .entry(
                         if expanded {
                             "Collapse Hunk"

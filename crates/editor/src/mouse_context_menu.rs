@@ -50,7 +50,8 @@ impl MouseContextMenu {
             },
         );
 
-        let source_point = editor.to_pixel_point(source, cx)?;
+        let editor_snapshot = editor.snapshot(cx);
+        let source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
         let offset = position - source_point;
 
         Some(Self {
@@ -149,6 +150,7 @@ pub fn deploy_context_menu(
         let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
+                .on_blur_subscription(Subscription::new(|| {}))
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
