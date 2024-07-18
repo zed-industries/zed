@@ -7,6 +7,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
+    scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::{FutureExt as _, StreamExt as _};
@@ -329,6 +330,8 @@ impl Session {
             return;
         };
 
+        let new_cursor_pos = editor_block.invalidation_anchor;
+
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
 
@@ -352,6 +355,13 @@ impl Session {
             }
             _ => {}
         }
+
+        // Now move the cursor to after the block
+        editor.update(cx, move |editor, cx| {
+            editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
+                selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+            });
+        });
     }
 
     fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
