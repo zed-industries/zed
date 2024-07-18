@@ -1,9 +1,9 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    GPUSpecs, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -1027,6 +1027,10 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        None
     }
 }
 

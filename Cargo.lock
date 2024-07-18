@@ -1650,7 +1650,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/zed-industries/blade?rev=7d52ce56b2c85b2c71052f5b04a6efc37049f874#7d52ce56b2c85b2c71052f5b04a6efc37049f874"
 dependencies = [
  "ash",
  "ash-window",
@@ -1667,7 +1667,7 @@ dependencies = [
  "khronos-egl",
  "libloading 0.8.0",
  "log",
- "metal",
+ "metal 0.29.0",
  "mint",
  "naga",
  "objc",
@@ -1680,7 +1680,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/zed-industries/blade?rev=7d52ce56b2c85b2c71052f5b04a6efc37049f874#7d52ce56b2c85b2c71052f5b04a6efc37049f874"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1690,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=a477c2008db27db0b9f745715e119b3ee7ab7818#a477c2008db27db0b9f745715e119b3ee7ab7818"
+source = "git+https://github.com/zed-industries/blade?rev=7d52ce56b2c85b2c71052f5b04a6efc37049f874#7d52ce56b2c85b2c71052f5b04a6efc37049f874"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -4903,7 +4903,7 @@ dependencies = [
  "linkme",
  "log",
  "media",
- "metal",
+ "metal 0.25.0",
  "num_cpus",
  "objc",
  "oo7",
@@ -6530,7 +6530,7 @@ dependencies = [
  "bindgen 0.65.1",
  "core-foundation",
  "foreign-types 0.5.0",
- "metal",
+ "metal 0.25.0",
  "objc",
 ]
 
@@ -6582,6 +6582,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "550b24b0cd4cf923f36bae78eca457b3a10d8a6a14a9c84cb2687b527e6a84af"
 dependencies = [
  "bitflags 1.3.2",
+ "block",
+ "core-graphics-types",
+ "foreign-types 0.5.0",
+ "log",
+ "objc",
+ "paste",
+]
+
+[[package]]
+name = "metal"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecfd3296f8c56b7c1f6fbac3c71cefa9d78ce009850c45000015f206dc7fa21"
+dependencies = [
+ "bitflags 2.6.0",
  "block",
  "core-graphics-types",
  "foreign-types 0.5.0",
@@ -6683,7 +6698,7 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 [[package]]
 name = "naga"
 version = "0.20.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=425526828f738c95ec50b016c6a761bc00d2fb25#425526828f738c95ec50b016c6a761bc00d2fb25"
+source = "git+https://github.com/gfx-rs/wgpu?rev=f44f52a85ddb3e7b93fe195fb98a8990b05575d8#f44f52a85ddb3e7b93fe195fb98a8990b05575d8"
 dependencies = [
  "arrayvec",
  "bit-set 0.6.0",
