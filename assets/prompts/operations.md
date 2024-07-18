@@ -16,14 +16,13 @@ The available operation types are:
 
 1. <update>: Modify an existing symbol in a file.
 2. <create_file>: Create a new file.
-3. <insert_sibling_before>: Add a new symbol as sibling before another symbol in a file.
-4. <insert_sibling_after>: Add a new symbol as sibling after an existing symbol in a file.
-5. <append_child>: Add a new symbol as the last child of an existing symbol in a file.
-6. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
-7. <delete>: Remove an existing symbol from a file. The `description` attribute is invalid for delete, but required for other ops.
+3. <insert_sibling_after>: Add a new symbol as sibling after an existing symbol in a file.
+4. <append_child>: Add a new symbol as the last child of an existing symbol in a file.
+5. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
+6. <delete>: Remove an existing symbol from a file. The `description` attribute is invalid for delete, but required for other ops.
 
 All operations *require* a path.
-Operations that *require* a symbol: <update>, <insert_sibling_before>, <insert_sibling_after>, <delete>
+Operations that *require* a symbol: <update>, <insert_sibling_after>, <delete>
 Operations that don't allow a symbol: <create>
 Operations that have an *optional* symbol: <prepend_child>, <append_child>
 
@@ -159,7 +158,7 @@ User:
 
 Assistant:
   <operations>
-      <insert_sibling_before path="src/vehicle.rs" symbol="impl Vehicle fn print_year" description="Add start_engine method"/>
+      <insert_sibling_after path="src/vehicle.rs" symbol="impl Vehicle fn new" description="Add start_engine method"/>
   </operations>
 
 Example 4:
@@ -228,4 +227,5 @@ User:
 
 Now generate the operations for the following step.
 Output only valid XML containing valid operations with their required attributes.
+NEVER output code or any other text inside <operation> tags. If you do, you will replaced with another model.
 Your response *must* begin with <operations> and end with </operations>:

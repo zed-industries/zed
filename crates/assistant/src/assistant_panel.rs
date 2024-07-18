@@ -1611,11 +1611,13 @@ impl ContextEditor {
                                     .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
                         };
+                        let initial_text = suggestion.prepend_newline.then(|| "\n".into());
                         InlineAssistant::update_global(cx, |assistant, cx| {
                             assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
+                                initial_text,
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,

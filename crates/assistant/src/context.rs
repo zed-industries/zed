@@ -350,6 +350,7 @@ pub struct EditSuggestion {
     pub range: Range<language::Anchor>,
     /// If None, assume this is a suggestion to delete the range rather than transform it.
     pub description: Option<String>,
+    pub prepend_newline: bool,
 }
 
 impl EditStep {
@@ -368,58 +369,96 @@ impl EditStep {
             .collect();
 
         cx.spawn(|mut cx| async move {
-            let suggestions_by_buffer = future::join_all(suggestion_tasks)
+            let suggestions = future::join_all(suggestion_tasks)
                 .await
                 .into_iter()
                 .filter_map(|task| task.log_err())
                 .collect::<Vec<_>>();
 
-            let mut suggestion_groups_by_buffer = HashMap::default();
-            for (buffer, suggestion_group) in suggestions_by_buffer {
-                suggestion_groups_by_buffer
+            let mut suggestions_by_buffer = HashMap::default();
+            for (buffer, suggestion) in suggestions {
+                suggestions_by_buffer
                     .entry(buffer)
                     .or_insert_with(Vec::new)
-                    .push(suggestion_group);
+                    .push(suggestion);
             }
 
-            for (buffer, suggestion_groups) in suggestion_groups_by_buffer.iter_mut() {
+            let mut suggestion_groups_by_buffer = HashMap::default();
+            for (buffer, mut suggestions) in suggestions_by_buffer {
+                let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
                 buffer
                     .update(&mut cx, |buffer, _cx| {
-                        suggestion_groups
-                            .sort_by(|a, b| a.context_range.cmp(&b.context_range, buffer));
-                        suggestion_groups.dedup_by(|a, b| {
-                            if a.context_range.intersects(&b.context_range, buffer) {
-                                a.suggestions.extend(b.suggestions.drain(..));
-                                a.suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-                                a.suggestions.dedup_by(|a, b| {
-                                    if a.range.intersects(&b.range, buffer) {
-                                        if b.range.start.cmp(&a.range.start, buffer).is_lt() {
-                                            a.range.start = b.range.start;
-                                        }
-                                        if b.range.end.cmp(&a.range.end, buffer).is_gt() {
-                                            a.range.end = b.range.end;
-                                        }
+                        // Sort suggestions by their range
+                        suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
 
-                                        if let (Some(a_desc), Some(b_desc)) =
-                                            (&mut a.description, &b.description)
-                                        {
-                                            a_desc.push('\n');
-                                            a_desc.push_str(b_desc);
-                                        } else if b.description.is_some() {
-                                            a.description = b.description.clone();
-                                        }
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                });
+                        // Dedup overlapping suggestions
+                        suggestions.dedup_by(|a, b| {
+                            if a.range.intersects(&b.range, buffer) {
+                                if b.range.start.cmp(&a.range.start, buffer).is_lt() {
+                                    a.range.start = b.range.start;
+                                }
+                                if b.range.end.cmp(&a.range.end, buffer).is_gt() {
+                                    a.range.end = b.range.end;
+                                }
+
+                                if let (Some(a_desc), Some(b_desc)) =
+                                    (a.description.as_mut(), b.description.as_mut())
+                                {
+                                    b_desc.push('\n');
+                                    b_desc.push_str(a_desc);
+                                } else if a.description.is_some() {
+                                    b.description = a.description.take();
+                                }
+
                                 true
                             } else {
                                 false
                             }
                         });
+
+                        // Create context ranges for each suggestion
+                        for suggestion in suggestions {
+                            let context_range = {
+                                let suggestion_point_range = suggestion.range.to_point(buffer);
+                                let start_row = suggestion_point_range.start.row.saturating_sub(5);
+                                let end_row = cmp::min(
+                                    suggestion_point_range.end.row + 5,
+                                    buffer.max_point().row,
+                                );
+                                let start = buffer.anchor_before(Point::new(start_row, 0));
+                                let end = buffer
+                                    .anchor_after(Point::new(end_row, buffer.line_len(end_row)));
+                                start..end
+                            };
+
+                            if let Some(last_group) = suggestion_groups.last_mut() {
+                                if last_group
+                                    .context_range
+                                    .end
+                                    .cmp(&context_range.start, buffer)
+                                    .is_ge()
+                                {
+                                    // Merge with the previous group if context ranges overlap
+                                    last_group.context_range.end = context_range.end;
+                                    last_group.suggestions.push(suggestion);
+                                } else {
+                                    // Create a new group
+                                    suggestion_groups.push(EditSuggestionGroup {
+                                        context_range,
+                                        suggestions: vec![suggestion],
+                                    });
+                                }
+                            } else {
+                                // Create the first group
+                                suggestion_groups.push(EditSuggestionGroup {
+                                    context_range,
+                                    suggestions: vec![suggestion],
+                                });
+                            }
+                        }
                     })
                     .ok();
+                suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
             }
 
             suggestion_groups_by_buffer
@@ -462,7 +501,7 @@ impl EditOperation {
         &self,
         project: Model<Project>,
         cx: &AppContext,
-    ) -> Task<Result<(Model<language::Buffer>, EditSuggestionGroup)>> {
+    ) -> Task<Result<(Model<language::Buffer>, EditSuggestion)>> {
         let path = self.path.clone();
         let kind = self.kind.clone();
         cx.spawn(move |mut cx| async move {
@@ -480,7 +519,8 @@ impl EditOperation {
                 parse_status.changed().await?;
             }
 
-            let context_range = if let Some(symbol) = kind.symbol() {
+            let prepend_newline = kind.prepend_newline();
+            let suggestion_range = if let Some(symbol) = kind.symbol() {
                 let outline = buffer
                     .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
                     .context("no outline for buffer")?;
@@ -490,74 +530,60 @@ impl EditOperation {
                     .find(|item| item.string == symbol)
                     .context("symbol not found")?;
                 buffer.update(&mut cx, |buffer, _| {
-                    let mut symbol_point_range = outline.items[candidate.id].range.to_point(buffer);
-                    symbol_point_range.start.column = 0;
-                    symbol_point_range.end.column = buffer.line_len(symbol_point_range.end.row);
-                    let context_point_range = match kind {
+                    let outline_item = &outline.items[candidate.id];
+                    let symbol_range = outline_item.range.to_point(buffer);
+                    let body_range = outline_item
+                        .body_range
+                        .as_ref()
+                        .map(|range| range.to_point(buffer))
+                        .unwrap_or(symbol_range.clone());
+
+                    match kind {
                         EditOperationKind::PrependChild { .. } => {
-                            let end = cmp::min(
-                                Point::new(symbol_point_range.start.row + 10, 0),
-                                symbol_point_range.end,
-                            );
-                            symbol_point_range.start..end
+                            let position = buffer.anchor_after(body_range.start);
+                            position..position
                         }
                         EditOperationKind::AppendChild { .. } => {
-                            let start = cmp::max(
-                                Point::new(symbol_point_range.end.row.saturating_sub(10), 0),
-                                symbol_point_range.start,
-                            );
-                            start..symbol_point_range.end
+                            let position = buffer.anchor_before(body_range.end);
+                            position..position
                         }
-                        _ => symbol_point_range,
-                    };
-                    buffer.anchor_before(context_point_range.start)
-                        ..buffer.anchor_after(context_point_range.end)
+                        EditOperationKind::InsertSiblingBefore { .. } => {
+                            let position = buffer.anchor_before(symbol_range.start);
+                            position..position
+                        }
+                        EditOperationKind::InsertSiblingAfter { .. } => {
+                            let position = buffer.anchor_after(symbol_range.end);
+                            position..position
+                        }
+                        EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
+                            let start = Point::new(symbol_range.start.row, 0);
+                            let end = Point::new(
+                                symbol_range.end.row,
+                                buffer.line_len(symbol_range.end.row),
+                            );
+                            buffer.anchor_before(start)..buffer.anchor_after(end)
+                        }
+                        EditOperationKind::Create { .. } => unreachable!(),
+                    }
                 })?
             } else {
                 match kind {
                     EditOperationKind::PrependChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let start = language::Anchor::MIN;
-                            let end = buffer
-                                .anchor_after(cmp::min(Point::new(10, 0), buffer.max_point()));
-                            start..end
-                        })?
+                        language::Anchor::MIN..language::Anchor::MIN
                     }
-                    EditOperationKind::AppendChild { .. } => {
-                        buffer.update(&mut cx, |buffer, _| {
-                            let start = buffer.anchor_before(Point::new(
-                                buffer.max_point().row.saturating_sub(10),
-                                0,
-                            ));
-                            let end = language::Anchor::MAX;
-                            start..end
-                        })?
-                    }
-                    EditOperationKind::Create { .. } => {
-                        language::Anchor::MIN..language::Anchor::MAX
+                    EditOperationKind::AppendChild { .. } | EditOperationKind::Create { .. } => {
+                        language::Anchor::MAX..language::Anchor::MAX
                     }
                     _ => unreachable!("All other operations should have a symbol"),
                 }
             };
 
-            let suggestion_range = match kind {
-                EditOperationKind::InsertSiblingBefore { .. }
-                | EditOperationKind::PrependChild { .. } => {
-                    context_range.start..context_range.start
-                }
-                EditOperationKind::InsertSiblingAfter { .. }
-                | EditOperationKind::AppendChild { .. } => context_range.end..context_range.end,
-                _ => context_range.clone(),
-            };
-
             Ok((
                 buffer,
-                EditSuggestionGroup {
-                    context_range,
-                    suggestions: vec![EditSuggestion {
-                        range: suggestion_range,
-                        description: kind.description().map(ToString::to_string),
-                    }],
+                EditSuggestion {
+                    range: suggestion_range,
+                    description: kind.description().map(ToString::to_string),
+                    prepend_newline,
                 },
             ))
         })
@@ -616,6 +642,16 @@ impl EditOperationKind {
             Self::PrependChild { description, .. } => Some(description),
             Self::AppendChild { description, .. } => Some(description),
             Self::Delete { .. } => None,
+        }
+    }
+
+    pub fn prepend_newline(&self) -> bool {
+        match self {
+            Self::PrependChild { .. }
+            | Self::AppendChild { .. }
+            | Self::InsertSiblingAfter { .. }
+            | Self::InsertSiblingBefore { .. } => true,
+            _ => false,
         }
     }
 }
