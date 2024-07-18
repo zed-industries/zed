@@ -27,6 +27,7 @@ pub(crate) struct WindowsDisplay {
     uuid: Uuid,
 }
 
+// The `HMONITOR` is thread-safe.
 unsafe impl Send for WindowsDisplay {}
 unsafe impl Sync for WindowsDisplay {}
 
