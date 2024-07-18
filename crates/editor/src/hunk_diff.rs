@@ -5,7 +5,7 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{Action, AppContext, Hsla, Model, MouseButton, Task, View};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -13,7 +13,7 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, ActiveTheme, Context as _, ContextMenu, FluentBuilder, InteractiveElement, IntoElement,
+    div, h_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
     ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
@@ -422,29 +422,43 @@ impl Editor {
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
+                    let close_button = editor.update(cx.context, |editor, cx| {
+                        let editor_snapshot = editor.snapshot(cx);
+                        let hunk_start_row = hunk
+                            .multi_buffer_range
+                            .start
+                            .to_display_point(&editor_snapshot)
+                            .row();
+                        editor.render_close_hunk_diff_button(
+                            hunk.clone(),
+                            false, // TODO kb
+                            hunk_start_row,
+                            cx,
+                        )
+                    });
                     let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
                     let click_editor = editor.clone();
-                    let global_modifiers = cx.modifiers();
-                    div()
+                    h_flex()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        // TODO kb add an X icon with toggle hunk action here
-                        .pl(gutter_dimensions.full_width())
-                        .when(
-                            global_modifiers.control || global_modifiers.platform,
-                            |gutter_div| gutter_div.cursor(CursorStyle::PointingHand),
+                        .child(
+                            div()
+                                .max_w(gutter_dimensions.full_width())
+                                .min_w(gutter_dimensions.full_width())
+                                .size_full()
+                                .on_mouse_down(MouseButton::Left, {
+                                    let click_hunk = hunk.clone();
+                                    move |e, cx| {
+                                        let modifiers = e.modifiers;
+                                        if modifiers.control || modifiers.platform {
+                                            click_editor.update(cx, |editor, cx| {
+                                                editor.toggle_hovered_hunk(&click_hunk, cx);
+                                            });
+                                        }
+                                    }
+                                })
+                                .child(close_button),
                         )
-                        .on_mouse_down(MouseButton::Left, {
-                            let click_hunk = hunk.clone();
-                            move |e, cx| {
-                                let modifiers = e.modifiers;
-                                if modifiers.control || modifiers.platform {
-                                    click_editor.update(cx, |editor, cx| {
-                                        editor.toggle_hovered_hunk(&click_hunk, cx);
-                                    });
-                                }
-                            }
-                        })
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),

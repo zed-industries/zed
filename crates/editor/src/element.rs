@@ -3901,7 +3901,6 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -3909,8 +3908,12 @@ impl EditorElement {
                 .into_iter()
                 .map(|(display_row, hunk)| {
                     let button = editor.render_close_hunk_diff_button(
-                        hunk,
-                        &self.style,
+                        HoveredHunk {
+                            multi_buffer_range: hunk.hunk_range,
+                            status: hunk.status,
+                            diff_base_byte_range: hunk.diff_base_byte_range,
+                        },
+                        // TODO kb
                         false,
                         display_row,
                         cx,
@@ -5231,7 +5234,6 @@ impl Element for EditorElement {
                         scroll_pixel_position,
                         &gutter_dimensions,
                         &gutter_hitbox,
-                        &snapshot,
                         cx,
                     );
 
