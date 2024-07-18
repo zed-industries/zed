@@ -129,7 +129,18 @@ impl DebugPanel {
 
                     task.await?;
 
-                    client.configuration_done().await
+                    // client.is_server_ready = true;
+                    client.configuration_done().await?;
+
+                    let request_args = client.config().request_args.map(|a| a.args);
+
+                    // send correct request based on adapter config
+                    match client.config().request {
+                        DebugRequestType::Launch => client.launch(request_args).await?,
+                        DebugRequestType::Attach => client.attach(request_args).await?,
+                    };
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -148,7 +159,8 @@ impl DebugPanel {
             Events::ProgressEnd(_) => {}
             Events::ProgressStart(_) => {}
             Events::ProgressUpdate(_) => {}
-            Events::Invalidated(_) => {}
+            Events::Invalidated(_) => {},
+            Events::Other(_) => {},
         }
     }
 

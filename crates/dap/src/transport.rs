@@ -45,6 +45,8 @@ pub enum Events {
     ProgressEnd(ProgressEndEvent),
     Invalidated(InvalidatedEvent),
     Memory(MemoryEvent),
+    #[serde(untagged)]
+    Other(HashMap<String, Value>)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
