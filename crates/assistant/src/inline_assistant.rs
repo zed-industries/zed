@@ -300,8 +300,6 @@ impl InlineAssistant {
         assist_group.assist_ids.push(assist_id);
         editor_assists.assist_ids.push(assist_id);
         self.assist_groups.insert(assist_group_id, assist_group);
-
-        self.focus_assist(assist_id, cx);
     }
 
     fn insert_assist_blocks(

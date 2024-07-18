@@ -288,7 +288,12 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 Some(tab_description),
                                 cx,
                             );
-                            workspace.add_item_to_active_pane(Box::new(view.clone()), None, cx);
+                            workspace.add_item_to_active_pane(
+                                Box::new(view.clone()),
+                                None,
+                                true,
+                                cx,
+                            );
                             cx.notify();
                         })
                         .log_err();

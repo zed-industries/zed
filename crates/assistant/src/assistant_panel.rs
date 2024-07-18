@@ -1595,7 +1595,7 @@ impl ContextEditor {
                 let suggestion_group = suggestion_groups.into_iter().next().unwrap();
                 let editor = workspace.update(&mut cx, |workspace, cx| {
                     let active_pane = workspace.active_pane().clone();
-                    workspace.open_project_item::<Editor>(active_pane, buffer, cx)
+                    workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
                 })?;
 
                 cx.update(|cx| {
@@ -1648,7 +1648,7 @@ impl ContextEditor {
                 let editor = cx
                     .new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
                 workspace.update(&mut cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor), None, cx)
+                    workspace.add_item_to_active_pane(Box::new(editor), None, false, cx)
                 })?;
             };
 

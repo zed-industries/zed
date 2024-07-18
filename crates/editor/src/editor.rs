@@ -2010,7 +2010,7 @@ impl Editor {
             workspace.update(&mut cx, |workspace, cx| {
                 let editor =
                     cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx));
-                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
                 editor
             })
         })
@@ -4655,7 +4655,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), true, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
@@ -9090,7 +9090,13 @@ impl Editor {
                                             workspace.active_pane().clone()
                                         };
 
-                                        workspace.open_project_item(pane, target.buffer.clone(), cx)
+                                        workspace.open_project_item(
+                                            pane,
+                                            target.buffer.clone(),
+                                            true,
+                                            true,
+                                            cx,
+                                        )
                                     });
                                 target_editor.update(cx, |target_editor, cx| {
                                     // When selecting a definition in a different buffer, disable the nav history
@@ -9388,7 +9394,7 @@ impl Editor {
                     None
                 }
             });
-            workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
+            workspace.add_item_to_active_pane(item.clone(), destination_index, true, cx);
         }
         workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
@@ -11315,7 +11321,8 @@ impl Editor {
                 };
 
                 for (buffer, ranges) in new_selections_by_buffer {
-                    let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
+                    let editor =
+                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                             s.select_ranges(ranges);

@@ -340,7 +340,7 @@ mod tests {
             workspace
                 .update(cx, |workspace, cx| {
                     // Now, let's switch the active item to .ts file.
-                    workspace.activate_item(&editor1, cx);
+                    workspace.activate_item(&editor1, true, true, cx);
                     task_context(workspace, cx)
                 })
                 .await,
