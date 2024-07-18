@@ -1354,6 +1354,14 @@ impl LspCommand for GetHover {
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
 
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        match capabilities.server_capabilities.hover_provider {
+            Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+            Some(lsp::HoverProviderCapability::Options(_)) => true,
+            None => false,
+        }
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -2059,17 +2067,6 @@ impl GetCodeActions {
             .and_then(|options| match options {
                 lsp::CodeActionProviderCapability::Simple(_is_supported) => None,
                 lsp::CodeActionProviderCapability::Options(options) => options.resolve_provider,
-            })
-            .unwrap_or(false)
-    }
-
-    pub fn supports_code_actions(capabilities: &ServerCapabilities) -> bool {
-        capabilities
-            .code_action_provider
-            .as_ref()
-            .map(|options| match options {
-                lsp::CodeActionProviderCapability::Simple(is_supported) => *is_supported,
-                lsp::CodeActionProviderCapability::Options(_) => true,
             })
             .unwrap_or(false)
     }
