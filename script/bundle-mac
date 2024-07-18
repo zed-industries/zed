@@ -13,6 +13,7 @@ bundle_name=""
 can_code_sign=false
 
 # This must match the team in the provisioning profile.
+IDENTITY="Zed Industries, Inc."
 APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
 
 # Function for displaying help info
@@ -79,10 +80,10 @@ local_target_triple=${host_line#*: }
 
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
-    cargo build ${build_flag} --package zed --package cli
+    cargo build ${build_flag} --package zed --package cli --package remote_server
 else
     echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    cargo build ${build_flag} --package zed --package cli --package remote_server --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
@@ -187,7 +188,7 @@ function prepare_binaries() {
     local architecture=$1
     local app_path=$2
 
-    echo "Unpacking dSYMs for $architecture"
+    echo "Unpacking dSYMs for $ architecture"
     dsymutil --flat target/${architecture}/${target_dir}/Zed
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
     if [ "$channel" == "nightly" ]; then
@@ -210,7 +211,7 @@ function prepare_binaries() {
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 }
 
-function sign_binaries() {
+function sign_app_binaries() {
     local app_path=$1
     local architecture=$2
     local architecture_dir=$3
@@ -232,11 +233,11 @@ function sign_binaries() {
     if [[ $can_code_sign = true ]]; then
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
-        /usr/bin/codesign --deep --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks/WebRTC.framework" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/git" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/zed" -v
-        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
+        /usr/bin/codesign --deep --force --timestamp --sign "$IDENTITY" "${app_path}/Contents/Frameworks/WebRTC.framework" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
+        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
         echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
         if [[ "$local_only" = false ]]; then
@@ -308,7 +309,7 @@ function sign_binaries() {
             hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
 
             echo "Code-signing DMG"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "$(pwd)/${dmg_file_path}" -v
+            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
 
             echo "Notarizing DMG with Apple"
             "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
@@ -337,7 +338,7 @@ function sign_binaries() {
 
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "$(pwd)/${dmg_file_path}" -v
+            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
             "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
@@ -348,8 +349,19 @@ function sign_binaries() {
     fi
 }
 
+function sign_binary() {
+    local binary_path=$1
+
+    if [[ $can_code_sign = true ]]; then
+        echo "Code signing executable $binary_path"
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}" -v
+    fi
+}
+
 if [ "$local_arch" = true ]; then
-    sign_binaries "$app_path" "$local_target_triple" "$local_target_triple"
+    sign_app_binaries "$app_path" "$local_target_triple" "$local_target_triple"
+
+    sign_binary "target/release/remote_server"
 else
     # Create universal binary
     prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
@@ -367,8 +379,11 @@ else
         target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
         -output \
         "${app_path}/Contents/MacOS/cli"
-    sign_binaries "$app_path" "universal" "."
 
-    sign_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
-    sign_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
+    sign_app_binaries "$app_path" "universal" "."
+    sign_app_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
+    sign_app_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
+
+    sign_binary "target/x86_64-apple-darwin/release/remote_server"
+    sign_binary "target/aarch64-apple-darwin/release/remote_server"
 fi
