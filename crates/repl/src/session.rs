@@ -358,7 +358,7 @@ impl Session {
 
         // Now move the cursor to after the block
         editor.update(cx, move |editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
                 selections.select_ranges([new_cursor_pos..new_cursor_pos]);
             });
         });
