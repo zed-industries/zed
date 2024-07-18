@@ -1331,7 +1331,10 @@ impl ProjectPanel {
 
             cx.spawn(|project_panel, mut cx| async move {
                 let entry_ids = futures::future::join_all(tasks).await;
-                if let Some(Some(entry)) = entry_ids.into_iter().rev().find_map(|entry_id| entry_id.ok())
+                if let Some(Some(entry)) = entry_ids
+                    .into_iter()
+                    .rev()
+                    .find_map(|entry_id| entry_id.ok())
                 {
                     project_panel
                         .update(&mut cx, |project_panel, _cx| {
@@ -3597,8 +3600,8 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two copy.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
@@ -3613,9 +3616,9 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy 1.txt",
+                "      one.two copy 1.txt  <== selected",
                 "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
