@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
@@ -200,13 +201,14 @@ impl SlashCommand for DocsSlashCommand {
         };
 
         let args = DocsSlashCommandArgs::parse(argument);
+        let executor = cx.background_executor().clone();
         let task = cx.background_executor().spawn({
             let store = args
                 .provider()
                 .ok_or_else(|| anyhow!("no docs provider specified"))
                 .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
-                let (provider, key) = match args {
+                let (provider, key) = match args.clone() {
                     DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
                     DocsSlashCommandArgs::SearchPackageDocs {
                         provider, package, ..
@@ -219,6 +221,24 @@ impl SlashCommand for DocsSlashCommand {
                 };
 
                 let store = store?;
+
+                let has_any_entries = store.any_with_prefix(key.clone()).await.unwrap_or_default();
+                if !has_any_entries {
+                    if let Some(package) = args.package() {
+                        let _ = store.clone().index(package.clone());
+
+                        loop {
+                            executor.timer(Duration::from_millis(200)).await;
+
+                            if store.any_with_prefix(key.clone()).await.unwrap_or_default()
+                                || !store.is_indexing(&package)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
                     let docs = store.load_many_by_prefix(prefix.to_string()).await?;
 
@@ -269,7 +289,7 @@ fn is_item_path_delimiter(char: char) -> bool {
     !char.is_alphanumeric() && char != '-' && char != '_'
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum DocsSlashCommandArgs {
     NoProvider,
     SearchPackageDocs {
