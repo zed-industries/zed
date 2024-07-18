@@ -672,7 +672,7 @@ impl WindowsDragDropHandler {
 }
 
 #[allow(non_snake_case)]
-impl IDropTarget_Impl for WindowsDragDropHandler {
+impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
         pdataobj: Option<&IDataObject>,
