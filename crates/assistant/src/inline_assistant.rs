@@ -484,6 +484,14 @@ impl InlineAssistant {
         cx.propagate();
     }
 
+    fn handle_editor_release(&mut self, editor: WeakView<Editor>, cx: &mut WindowContext) {
+        if let Some(editor_assists) = self.assists_by_editor.get_mut(&editor) {
+            for assist_id in editor_assists.assist_ids.clone() {
+                self.finish_assist(assist_id, true, cx);
+            }
+        }
+    }
+
     fn handle_editor_change(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
@@ -1189,6 +1197,14 @@ impl EditorInlineAssists {
                 }
             }),
             _subscriptions: vec![
+                cx.observe_release(editor, {
+                    let editor = editor.downgrade();
+                    |_, cx| {
+                        InlineAssistant::update_global(cx, |this, cx| {
+                            this.handle_editor_release(editor, cx);
+                        })
+                    }
+                }),
                 cx.observe(editor, move |editor, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_editor_change(editor, cx)

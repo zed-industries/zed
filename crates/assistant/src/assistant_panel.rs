@@ -32,7 +32,7 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, EventEmitter,
+    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
     UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
@@ -68,7 +68,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, BreadcrumbText, FollowableItem, Item, ItemHandle},
     notifications::NotifyTaskExt,
-    pane,
+    pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -973,6 +973,7 @@ struct ScrollPosition {
 struct ActiveEditStep {
     start: language::Anchor,
     assist_ids: Vec<InlineAssistId>,
+    editor: Option<WeakView<Editor>>,
     _open_editor: Task<Result<()>>,
 }
 
@@ -1564,20 +1565,45 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                let new_active_step = self.edit_step_for_cursor(cx);
-                if let Some(new_active_step) = new_active_step {
-                    if Some(new_active_step.source_range.start)
-                        != self.active_edit_step.as_ref().map(|step| step.start)
-                    {
+                if self
+                    .edit_step_for_cursor(cx)
+                    .map(|step| step.source_range.start)
+                    != self.active_edit_step.as_ref().map(|step| step.start)
+                {
+                    if let Some(old_active_edit_step) = self.active_edit_step.take() {
+                        if let Some(editor) = old_active_edit_step
+                            .editor
+                            .and_then(|editor| editor.upgrade())
+                        {
+                            self.workspace
+                                .update(cx, |workspace, cx| {
+                                    if let Some(pane) = workspace.pane_for(&editor) {
+                                        pane.update(cx, |pane, cx| {
+                                            let item_id = editor.entity_id();
+                                            if pane.is_active_preview_item(item_id) {
+                                                pane.close_item_by_id(
+                                                    item_id,
+                                                    SaveIntent::Skip,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                            }
+                                        });
+                                    }
+                                })
+                                .ok();
+                        }
+                    }
+
+                    if let Some(new_active_step) = self.edit_step_for_cursor(cx) {
                         let suggestions = new_active_step.edit_suggestions(&self.project, cx);
                         self.active_edit_step = Some(ActiveEditStep {
                             start: new_active_step.source_range.start,
                             assist_ids: Vec::new(),
+                            editor: None,
                             _open_editor: self.open_editor_for_edit_suggestions(suggestions, cx),
                         });
                     }
-                } else {
-                    self.active_edit_step = None;
                 }
             }
             _ => {}
@@ -1597,7 +1623,7 @@ impl ContextEditor {
             let edit_suggestions = edit_suggestions.await;
 
             let mut assist_ids = Vec::new();
-            if edit_suggestions.is_empty() {
+            let editor = if edit_suggestions.is_empty() {
                 return Ok(());
             } else if edit_suggestions.len() == 1
                 && edit_suggestions.values().next().unwrap().len() == 1
@@ -1656,6 +1682,8 @@ impl ContextEditor {
                         );
                     });
                 })?;
+
+                editor
             } else {
                 // If there are multiple buffers or suggestion groups, create a multibuffer
                 let mut inline_assist_suggestions = Vec::new();
@@ -1716,13 +1744,16 @@ impl ContextEditor {
                     })
                 })?;
                 workspace.update(&mut cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor), None, false, cx)
+                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
                 })?;
+
+                editor
             };
 
             this.update(&mut cx, |this, _cx| {
                 if let Some(step) = this.active_edit_step.as_mut() {
                     step.assist_ids = assist_ids;
+                    step.editor = Some(editor.downgrade());
                 }
             })
         })
