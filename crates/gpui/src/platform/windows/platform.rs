@@ -198,7 +198,7 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0)) {
+                                    if self.close_one_window(HWND(msg.lParam.0 as _)) {
                                         break 'a;
                                     }
                                 }
@@ -510,7 +510,7 @@ impl Platform for WindowsPlatform {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
         if lock.current_cursor.0 != hcursor.0 {
-            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0 as isize));
             lock.current_cursor = hcursor;
         }
     }
@@ -621,7 +621,7 @@ fn open_target(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
         }
     }
@@ -637,7 +637,7 @@ fn open_target_in_explorer(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!(
                 "Unable to open target in explorer: {}",
                 std::io::Error::last_os_error()
@@ -749,7 +749,7 @@ fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
         let handle = GlobalLock(global);
         u_memcpy(handle as _, data.as_ptr(), data.len() as _);
         let _ = GlobalUnlock(global);
-        SetClipboardData(format, HANDLE(global.0 as isize))?;
+        SetClipboardData(format, HANDLE(global.0))?;
     }
     Ok(())
 }
