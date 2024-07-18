@@ -51,18 +51,18 @@ pub fn init(cx: &mut AppContext) {
         .detach();
 }
 
-struct GroupedDiagnosticsEditor {
-    project: Model<Project>,
+pub struct GroupedDiagnosticsEditor {
+    pub project: Model<Project>,
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     editor: View<Editor>,
     summary: DiagnosticSummary,
     excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
-    include_warnings: bool,
+    pub paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    pub include_warnings: bool,
     context: u32,
-    update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
+    pub update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
     _update_excerpts_task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -260,7 +260,7 @@ impl GroupedDiagnosticsEditor {
         }
     }
 
-    fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
+    pub fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
         self.enqueue_update_all_excerpts(cx);
         cx.notify();
@@ -297,7 +297,7 @@ impl GroupedDiagnosticsEditor {
     /// to have changed. If a language server id is passed, then only the excerpts for
     /// that language server's diagnostics will be updated. Otherwise, all stale excerpts
     /// will be refreshed.
-    fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
+    pub fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
         for (path, server_id) in &self.paths_to_update {
             if language_server_id.map_or(true, |id| id == *server_id) {
                 self.update_paths_tx
@@ -340,7 +340,6 @@ impl GroupedDiagnosticsEditor {
             }
         };
 
-        // TODO kb when warnings are turned off, there's a lot of refresh for many paths happening, why?
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
