@@ -33,7 +33,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -393,11 +393,13 @@ impl EditStep {
 
                         // Dedup overlapping suggestions
                         suggestions.dedup_by(|a, b| {
-                            if a.range.intersects(&b.range, buffer) {
-                                if b.range.start.cmp(&a.range.start, buffer).is_lt() {
+                            let a_range = a.range.to_offset(buffer);
+                            let b_range = b.range.to_offset(buffer);
+                            if a_range.start <= b_range.end && b_range.start <= a_range.end {
+                                if b_range.start < a_range.start {
                                     a.range.start = b.range.start;
                                 }
-                                if b.range.end.cmp(&a.range.end, buffer).is_gt() {
+                                if b_range.end > a_range.end {
                                     a.range.end = b.range.end;
                                 }
 
