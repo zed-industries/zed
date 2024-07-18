@@ -428,6 +428,7 @@ impl Editor {
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
+                        // TODO kb add an X icon with toggle hunk action here
                         .pl(gutter_dimensions.full_width())
                         .when(
                             global_modifiers.control || global_modifiers.platform,

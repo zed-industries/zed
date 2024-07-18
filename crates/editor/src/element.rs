@@ -1,4 +1,5 @@
 use crate::editor_settings::ScrollBeyondLastLine;
+use crate::hunk_diff::ExpandedHunk;
 use crate::mouse_context_menu::MenuPosition;
 use crate::RangeToAnchorExt;
 use crate::TransformBlockId;
@@ -3099,8 +3100,11 @@ impl EditorElement {
                 }
             });
 
-            for test_indicators in layout.test_indicators.iter_mut() {
-                test_indicators.paint(cx);
+            for test_indicator in layout.test_indicators.iter_mut() {
+                test_indicator.paint(cx);
+            }
+            for close_indicator in layout.close_indicators.iter_mut() {
+                close_indicator.paint(cx);
             }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
@@ -3888,6 +3892,42 @@ impl EditorElement {
             .floor() as usize
             + 1;
         self.column_pixels(digit_count, cx)
+    }
+
+    fn layout_hunk_diff_close_indicators(
+        &self,
+        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<AnyElement> {
+        self.editor.update(cx, |editor, cx| {
+            expanded_hunks_by_rows
+                .into_iter()
+                .map(|(display_row, hunk)| {
+                    let button = editor.render_close_hunk_diff_button(
+                        hunk,
+                        &self.style,
+                        false,
+                        display_row,
+                        cx,
+                    );
+
+                    prepaint_gutter_button(
+                        button,
+                        display_row,
+                        line_height,
+                        gutter_dimensions,
+                        scroll_pixel_position,
+                        gutter_hitbox,
+                        cx,
+                    )
+                })
+                .collect()
+        })
     }
 }
 
@@ -5099,6 +5139,22 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
+                    let expanded_add_hunks_by_rows = self.editor.update(cx, |editor, _| {
+                        editor
+                            .expanded_hunks
+                            .hunks(false)
+                            .filter(|hunk| hunk.status == DiffHunkStatus::Added)
+                            .map(|expanded_hunk| {
+                                let start_row = expanded_hunk
+                                    .hunk_range
+                                    .start
+                                    .to_display_point(&snapshot)
+                                    .row();
+                                (start_row, expanded_hunk.clone())
+                            })
+                            .collect::<HashMap<_, _>>()
+                    });
+
                     let mut _context_menu_visible = false;
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
@@ -5122,25 +5178,34 @@ impl Element for EditorElement {
                             if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
-                                let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                    MultiBufferRow(newest_selection_point.row),
-                                );
-                                if let Some((buffer, range)) = buffer {
-                                    let buffer_id = buffer.remote_id();
-                                    let row = range.start.row;
-                                    let has_test_indicator =
-                                        self.editor.read(cx).tasks.contains_key(&(buffer_id, row));
+                                let newest_selection_display_row =
+                                    newest_selection_point.to_display_point(&snapshot).row();
+                                if !expanded_add_hunks_by_rows
+                                    .contains_key(&newest_selection_display_row)
+                                {
+                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
+                                        MultiBufferRow(newest_selection_point.row),
+                                    );
+                                    if let Some((buffer, range)) = buffer {
+                                        let buffer_id = buffer.remote_id();
+                                        let row = range.start.row;
+                                        let has_test_indicator = self
+                                            .editor
+                                            .read(cx)
+                                            .tasks
+                                            .contains_key(&(buffer_id, row));
 
-                                    if !has_test_indicator {
-                                        code_actions_indicator = self
-                                            .layout_code_actions_indicator(
-                                                line_height,
-                                                newest_selection_head,
-                                                scroll_pixel_position,
-                                                &gutter_dimensions,
-                                                &gutter_hitbox,
-                                                cx,
-                                            );
+                                        if !has_test_indicator {
+                                            code_actions_indicator = self
+                                                .layout_code_actions_indicator(
+                                                    line_height,
+                                                    newest_selection_head,
+                                                    scroll_pixel_position,
+                                                    &gutter_dimensions,
+                                                    &gutter_hitbox,
+                                                    cx,
+                                                );
+                                        }
                                     }
                                 }
                             }
@@ -5157,8 +5222,18 @@ impl Element for EditorElement {
                             cx,
                         )
                     } else {
-                        vec![]
+                        Vec::new()
                     };
+
+                    let close_indicators = self.layout_hunk_diff_close_indicators(
+                        expanded_add_hunks_by_rows,
+                        line_height,
+                        scroll_pixel_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &snapshot,
+                        cx,
+                    );
 
                     self.layout_signature_help(
                         &hitbox,
@@ -5270,6 +5345,7 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
+                        close_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
                         crease_trailers,
@@ -5402,6 +5478,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
+    close_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,

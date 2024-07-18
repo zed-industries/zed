@@ -77,8 +77,8 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HoveredHunk;
+use hunk_diff::{ExpandedHunk, ExpandedHunks};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
@@ -5119,6 +5119,30 @@ impl Editor {
                     cx,
                 );
             }))
+    }
+
+    fn render_close_hunk_diff_button(
+        &self,
+        hunk: ExpandedHunk,
+        _style: &EditorStyle,
+        is_active: bool,
+        row: DisplayRow,
+        cx: &mut ViewContext<Self>,
+    ) -> IconButton {
+        let hovered_hunk = HoveredHunk {
+            multi_buffer_range: hunk.hunk_range,
+            status: hunk.status,
+            diff_base_byte_range: hunk.diff_base_byte_range,
+        };
+        IconButton::new(
+            ("close_hunk_diff_indicator", row.0 as usize),
+            ui::IconName::Close,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(Color::Muted)
+        .selected(is_active)
+        .on_click(cx.listener(move |editor, _e, cx| editor.toggle_hovered_hunk(&hovered_hunk, cx)))
     }
 
     pub fn context_menu_visible(&self) -> bool {
