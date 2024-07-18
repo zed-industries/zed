@@ -61,7 +61,7 @@ Assign kernels by name to languages in your `settings.json`.
 }
 ```
 
-If you have `jupyter` installed, you can run `juptyer kernelspec list` to see the available kernels.
+If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
 ```
 $ jupyter kernelspec list
