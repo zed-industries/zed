@@ -38,25 +38,32 @@ This script supports `x86_64` and `AArch64`, as well as common Linux distributio
 
 If this script is insufficient for your use case or you run into problems running Zed, please see our [Linux-specific documentation](./linux.md).
 
-## Command Palette 
+## Command Palette
 
-The 'Command palette' is used to execute/trigger many things, and is the first non-obvious keystroke you need to learn, especially on linux.  
+The Command Palette is the main way to access functionality in Zed, and its keybinding is the first one you should make yourself familiar with.
 
-On Linux its **ctrl-shift-p** by default and can be found in the [Standard Linux bindings](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json)
+On macOS, use `⌘-P` (`cmd-shift-p`) to open the Command Palette.
 
-On macos its **cmd-shift-p** and can be found in the [Standard MacOS bindings](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json)
+On Linux, use `⌃-P` (`ctrl-shift-p`) to open the Command Palette.
 
-This will allow you to execute pretty much everything described later with 'zed: xxx'   or 'editor: xxx'  or 'task: xxx' "shortcuts", and *hundreds* of other shortcuts... and most importantly, it will tell you the *key bindings* to each of these in the popup GUI shown to you.
+The Command Palette allows you to access pretty much any functionality that's available in Zed.
+
+![The opened Command Palette](https://zed.dev/img/features/command-palette.jpg)
+
+Try it! Open the Command Palette and type in `new file`. You should see the list of commands being filtered down to `workspace: new file`. Hit return and you end up with a new buffer!
+
+Any time you see instructions that include commands of the form `zed: ...`  or `editor: ...`  and so on that means you need to execute them in the Command Palette.
 
 ## Configure Zed
 
-Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more. 
+Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
 
-Macos: You can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
-Linux: You can access the default configuration using the `Command Palette` above: ctrl-shift-p  and start typing: 'zed: open default settings'
+On macOS, you can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
+
+On Linux, you can access the default configuration via the Command Palette. Open it with `ctrl-shift-p` and type in `zed: open default settings` and then hit return.
 
 ## Set up your key bindings
 
-Macos:You can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your key bindings. See Key Bindings for more info.
-Linux: You can access the default configuration using the `Command Palette` above: ctrl-shift-p  and start typing: 'zed: open default keymap'
+On macOS, you can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your key bindings. See Key Bindings for more info.
 
+On Linux, you can access the default key bindings via the Command Palette.  Open it with `ctrl-shift-p` and type in `zed: open default keymap` and then hit return.
