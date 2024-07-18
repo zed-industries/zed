@@ -354,7 +354,11 @@ impl SupermavenAgent {
                     None => AccountStatus::Ready,
                 };
             }
+            SupermavenMessage::ActivationSuccess => {
+                self.account_status = AccountStatus::Ready;
+            }
             SupermavenMessage::ServiceTier { service_tier } => {
+                self.account_status = AccountStatus::Ready;
                 self.service_tier = Some(service_tier);
             }
             SupermavenMessage::Response(response) => {
