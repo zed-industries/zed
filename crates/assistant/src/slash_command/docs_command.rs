@@ -1,12 +1,13 @@
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use gpui::{AppContext, Model, Task, WeakView};
+use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
     ProviderId,
@@ -89,6 +90,55 @@ impl DocsSlashCommand {
                     .register_provider(Box::new(DocsDotRsProvider::new(http_client)));
             }
         }
+    }
+
+    /// Runs just-in-time indexing for a given package, in case the slash command
+    /// is run without any entries existing in the index.
+    fn run_just_in_time_indexing(
+        store: Arc<IndexedDocsStore>,
+        key: String,
+        package: PackageName,
+        executor: BackgroundExecutor,
+    ) -> Task<()> {
+        executor.clone().spawn(async move {
+            let (prefix, needs_full_index) = if let Some((prefix, _)) = key.split_once('*') {
+                // If we have a wildcard in the search, we want to wait until
+                // we've completely finished indexing so we get a full set of
+                // results for the wildcard.
+                (prefix.to_string(), true)
+            } else {
+                (key, false)
+            };
+
+            // If we already have some entries, we assume that we've indexed the package before
+            // and don't need to do it again.
+            let has_any_entries = store
+                .any_with_prefix(prefix.clone())
+                .await
+                .unwrap_or_default();
+            if has_any_entries {
+                return ();
+            };
+
+            let index_task = store.clone().index(package.clone());
+
+            if needs_full_index {
+                _ = index_task.await;
+            } else {
+                loop {
+                    executor.timer(Duration::from_millis(200)).await;
+
+                    if store
+                        .any_with_prefix(prefix.clone())
+                        .await
+                        .unwrap_or_default()
+                        || !store.is_indexing(&package)
+                    {
+                        break;
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -200,13 +250,14 @@ impl SlashCommand for DocsSlashCommand {
         };
 
         let args = DocsSlashCommandArgs::parse(argument);
+        let executor = cx.background_executor().clone();
         let task = cx.background_executor().spawn({
             let store = args
                 .provider()
                 .ok_or_else(|| anyhow!("no docs provider specified"))
                 .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
-                let (provider, key) = match args {
+                let (provider, key) = match args.clone() {
                     DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
                     DocsSlashCommandArgs::SearchPackageDocs {
                         provider, package, ..
@@ -219,6 +270,12 @@ impl SlashCommand for DocsSlashCommand {
                 };
 
                 let store = store?;
+
+                if let Some(package) = args.package() {
+                    Self::run_just_in_time_indexing(store.clone(), key.clone(), package, executor)
+                        .await;
+                }
+
                 let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
                     let docs = store.load_many_by_prefix(prefix.to_string()).await?;
 
@@ -269,7 +326,7 @@ fn is_item_path_delimiter(char: char) -> bool {
     !char.is_alphanumeric() && char != '-' && char != '_'
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum DocsSlashCommandArgs {
     NoProvider,
     SearchPackageDocs {
