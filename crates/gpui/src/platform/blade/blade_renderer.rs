@@ -32,6 +32,7 @@ pub unsafe fn new_renderer(
     native_view: *mut c_void,
     bounds: crate::Size<f32>,
     transparent: bool,
+    _gpu: Option<GPUPreference>,
 ) -> Renderer {
     use raw_window_handle as rwh;
     struct RawWindow {

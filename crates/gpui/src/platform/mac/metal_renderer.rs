@@ -2,7 +2,7 @@ use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
     Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline, GPU,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -38,8 +38,9 @@ pub unsafe fn new_renderer(
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
     _transparent: bool,
+    gpu: Option<GPU>,
 ) -> Renderer {
-    MetalRenderer::new(context)
+    MetalRenderer::new(context, gpu)
 }
 
 pub(crate) struct InstanceBufferPool {
@@ -108,13 +109,19 @@ pub(crate) struct MetalRenderer {
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
-        // Prefer low‐power integrated GPUs on Intel Mac. On Apple
-        // Silicon, there is only ever one GPU, so this is equivalent to
-        // `metal::Device::system_default()`.
-        let mut devices = metal::Device::all();
-        devices.sort_by_key(|device| (!device.is_removable(), device.is_low_power()));
-        let Some(device) = devices.pop() else {
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, gpu: Option<GPU>) -> Self {
+        let device = match gpu {
+            Some(GPU::Discrete) => metal::Device::system_default(),
+            _ => {
+                // By default, prefer low‐power integrated GPUs on Intel Mac. On Apple
+                // Silicon, there is only ever one GPU, so this is equivalent to
+                // `metal::Device::system_default()`.
+                let mut devices = metal::Device::all();
+                devices.sort_by_key(|device| (!device.is_removable(), device.is_low_power()));
+                devices.pop()
+            }
+        };
+        let Some(device) = device else {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);
         };

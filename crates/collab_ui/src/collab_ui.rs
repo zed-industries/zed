@@ -67,5 +67,6 @@ fn notification_window_options(
         app_id: Some(app_id.to_owned()),
         window_min_size: None,
         window_decorations: Some(WindowDecorations::Client),
+        gpu: None,
     }
 }

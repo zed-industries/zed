@@ -252,6 +252,16 @@ pub enum Decorations {
     },
 }
 
+/// A type to describe which GPU to prefer.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum GPU {
+    /// The window is rendered using the integrated (lower-power) GPU
+    #[default]
+    Integrated,
+    /// The window is rendered using the discrete GPU
+    Discrete,
+}
+
 /// What window controls this platform supports
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct WindowControls {
@@ -679,6 +689,10 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// Whether to prefer one GPU over another. macOS only
+    /// Note that this may be ignored.
+    pub gpu: Option<GPU>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -707,6 +721,11 @@ pub(crate) struct WindowParams {
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// Whether to prefer one GPU over another. macOS only
+    /// Note that this may be ignored.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub gpu: Option<GPU>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -757,6 +776,7 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            gpu: None,
         }
     }
 }

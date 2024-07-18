@@ -13699,6 +13699,7 @@ dependencies = [
  "release_channel",
  "repl",
  "rope",
+ "schemars",
  "search",
  "serde",
  "serde_json",
