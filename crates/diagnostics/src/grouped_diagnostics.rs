@@ -320,7 +320,7 @@ impl GroupedDiagnosticsEditor {
         });
 
         // TODO kb change selections as in the old panel, to the next primary diagnostics
-        // TODO kb make [shift-]f8 to work, jump to the next block group
+        // TODO make [shift-]f8 to work, jump to the next block group
         let _was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {
             project::compare_paths((&probe.path.path, true), (&path_to_update.path, true))
@@ -642,7 +642,7 @@ fn compare_diagnostic_ranges(
         })
 }
 
-// TODO kb wrong? What to do here instead?
+// TODO wrong? What to do here instead?
 fn compare_diagnostic_range_edges(
     old: &Range<language::Anchor>,
     new: &Range<language::Anchor>,
@@ -1325,59 +1325,67 @@ fn render_same_line_diagnostics(
             .map(|diagnostic| diagnostic_text_lines(diagnostic))
             .sum::<u8>();
         let editor_handle = editor_handle.clone();
-        let mut parent = v_flex();
-        let mut diagnostics_iter = diagnostics.iter().fuse();
-        if let Some(first_diagnostic) = diagnostics_iter.next() {
-            let mut renderer = diagnostic_block_renderer(
-                first_diagnostic.clone(),
-                Some(folded_block_height),
-                false,
-                true,
-            );
-            parent = parent.child(
-                h_flex()
-                    .when_some(toggle_expand_label, |parent, label| {
-                        parent.child(Button::new(cx.transform_block_id, label).on_click({
-                            let diagnostics = Arc::clone(&diagnostics);
-                            move |_, cx| {
-                                let new_expanded = !expanded;
-                                button_expanded.store(new_expanded, atomic::Ordering::Release);
-                                let new_size = if new_expanded {
-                                    expanded_block_height
-                                } else {
-                                    folded_block_height
-                                };
-                                editor_handle.update(cx, |editor, cx| {
-                                    editor.replace_blocks(
-                                        HashMap::from_iter(Some((
-                                            block_id,
-                                            (
-                                                Some(new_size),
-                                                render_same_line_diagnostics(
-                                                    Arc::clone(&button_expanded),
-                                                    Arc::clone(&diagnostics),
-                                                    editor_handle.clone(),
-                                                    folded_block_height,
-                                                ),
+        let parent = h_flex()
+            .items_start()
+            .child(v_flex().size_full().when_some_else(
+                toggle_expand_label,
+                |parent, label| {
+                    parent.child(Button::new(cx.transform_block_id, label).on_click({
+                        let diagnostics = Arc::clone(&diagnostics);
+                        move |_, cx| {
+                            let new_expanded = !expanded;
+                            button_expanded.store(new_expanded, atomic::Ordering::Release);
+                            let new_size = if new_expanded {
+                                expanded_block_height
+                            } else {
+                                folded_block_height
+                            };
+                            editor_handle.update(cx, |editor, cx| {
+                                editor.replace_blocks(
+                                    HashMap::from_iter(Some((
+                                        block_id,
+                                        (
+                                            Some(new_size),
+                                            render_same_line_diagnostics(
+                                                Arc::clone(&button_expanded),
+                                                Arc::clone(&diagnostics),
+                                                editor_handle.clone(),
+                                                folded_block_height,
                                             ),
-                                        ))),
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            }
-                        }))
-                    })
-                    .child(renderer(cx)),
-            );
-        }
+                                        ),
+                                    ))),
+                                    None,
+                                    cx,
+                                )
+                            });
+                        }
+                    }))
+                },
+                |parent| {
+                    parent.child(
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .invisible()
+                            .flex_none(),
+                    )
+                },
+            ));
+        let max_message_rows = if expanded {
+            None
+        } else {
+            Some(folded_block_height)
+        };
+        let mut renderer =
+            diagnostic_block_renderer(first_diagnostic.clone(), max_message_rows, false, true);
+        let mut diagnostics_element = v_flex();
+        diagnostics_element = diagnostics_element.child(renderer(cx));
         if expanded {
-            for diagnostic in diagnostics_iter {
+            for diagnostic in diagnostics.iter().skip(1) {
                 let mut renderer = diagnostic_block_renderer(diagnostic.clone(), None, false, true);
-                parent = parent.child(renderer(cx));
+                diagnostics_element = diagnostics_element.child(renderer(cx));
             }
         }
-        parent.into_any_element()
+        parent.child(diagnostics_element).into_any_element()
     })
 }
 
