@@ -1665,16 +1665,7 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .map(|tab| match indicator {
-                Some(indicator) => tab.start_slot(indicator),
-                None => tab.start_slot::<Icon>(icon.map(|icon| {
-                    icon.size(IconSize::XSmall).color(if is_active {
-                        Color::Default
-                    } else {
-                        Color::Muted
-                    })
-                })),
-            })
+            .start_slot::<Indicator>(indicator)
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)
@@ -1686,7 +1677,18 @@ impl Pane {
                             .detach_and_log_err(cx);
                     })),
             )
-            .child(label);
+            .child(
+                h_flex()
+                    .gap_1()
+                    .children(icon.map(|icon| {
+                        icon.size(IconSize::Small).color(if is_active {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                    }))
+                    .child(label),
+            );
 
         let single_entry_to_resolve = {
             let item_entries = self.items[ix].project_entry_ids(cx);

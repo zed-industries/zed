@@ -319,7 +319,7 @@ impl GroupedDiagnosticsEditor {
                 || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
-        // TODO kb change selections as in the old panel, to the next primary diagnostics
+        // TODO change selections as in the old panel, to the next primary diagnostics
         // TODO make [shift-]f8 to work, jump to the next block group
         let _was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {
