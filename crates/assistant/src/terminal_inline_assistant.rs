@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count,
     prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionProvider,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -17,6 +17,7 @@ use gpui::{
     Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
 };
 use language::Buffer;
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -558,8 +559,7 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
-                                    {
+                                    for model in CompletionProvider::global(cx).available_models() {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();

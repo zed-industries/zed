@@ -382,6 +382,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "completion",
  "ctor",
  "editor",
  "env_logger",
@@ -396,6 +397,7 @@ dependencies = [
  "indexed_docs",
  "indoc",
  "language",
+ "language_model",
  "log",
  "menu",
  "multi_buffer",
@@ -418,13 +420,11 @@ dependencies = [
  "settings",
  "similar",
  "smol",
- "strum",
  "telemetry_events",
  "terminal",
  "terminal_view",
  "text",
  "theme",
- "tiktoken-rs",
  "toml 0.8.10",
  "ui",
  "unindent",
@@ -2490,6 +2490,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "completion",
  "ctor",
  "dashmap",
  "dev_server_projects",
@@ -2668,6 +2669,42 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+]
+
+[[package]]
+name = "completion"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "client",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "ollama",
+ "open_ai",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "strum",
+ "text",
+ "theme",
+ "tiktoken-rs",
+ "ui",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -5991,6 +6028,28 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+]
+
+[[package]]
+name = "language_model"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "ctor",
+ "editor",
+ "env_logger",
+ "language",
+ "log",
+ "ollama",
+ "open_ai",
+ "project",
+ "proto",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "strum",
+ "text",
+ "unindent",
 ]
 
 [[package]]
@@ -9462,6 +9521,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "completion",
  "env_logger",
  "fs",
  "futures 0.3.28",
