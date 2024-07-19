@@ -46,21 +46,18 @@ impl FakeCompletionProvider {
     }
 
     pub fn send_last_completion_chunk(&self, chunk: String) {
-        if let Some(last_request) = self.pending_completions().last() {
-            self.send_completion_chunk(last_request, chunk);
-        }
+        self.send_completion_chunk(self.pending_completions().last().unwrap(), chunk);
     }
 
     pub fn finish_completion(&self, request: &LanguageModelRequest) {
         self.current_completion_txs
             .lock()
-            .remove(&serde_json::to_string(request).unwrap());
+            .remove(&serde_json::to_string(request).unwrap())
+            .unwrap();
     }
 
     pub fn finish_last_completion(&self) {
-        if let Some(last_request) = self.pending_completions().last() {
-            self.finish_completion(last_request);
-        }
+        self.finish_completion(self.pending_completions().last().unwrap());
     }
 }
 

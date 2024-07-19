@@ -1271,7 +1271,7 @@ impl Context {
         });
 
         // Insert new steps and generate their corresponding tasks
-        for (index, mut step) in new_edit_steps {
+        for (index, mut step) in new_edit_steps.into_iter().rev() {
             let task = self.generate_edit_step_operations(&step, cx);
             step.operations = Some(EditStepOperations::Pending(task));
             self.edit_steps.insert(index, step);
@@ -2475,7 +2475,7 @@ pub struct SavedContextMetadata {
 mod tests {
     use super::*;
     use crate::{
-        assistant_panel,
+        assistant_panel, prompt_library,
         slash_command::{active_command, file_command},
         FakeCompletionProvider, MessageId,
     };
@@ -2931,6 +2931,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+        cx.update(prompt_library::init);
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         let fake_provider = cx.update(FakeCompletionProvider::setup_test);
@@ -2957,7 +2958,7 @@ mod tests {
         let llm_response = indoc! {r#"
             Sure, I can help you refactor that code. Here's a step-by-step process:
 
-            <step id="1">
+            <step>
             First, let's extract the greeting into a separate function:
 
             ```rust
@@ -2971,7 +2972,7 @@ mod tests {
             ```
             </step>
 
-            <step id="2">
+            <step>
             Now, let's make the greeting customizable:
 
             ```rust
@@ -3015,8 +3016,6 @@ mod tests {
                 ]
             );
         });
-
-        // todo!("add tests for parsing operations")
 
         fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
             context
