@@ -181,6 +181,12 @@
     }
   },
   {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "cmd-enter": "repl::Run"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
@@ -568,12 +574,6 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
-    }
-  },
-  {
-    "context": "Editor && jupyter && !ContextEditor",
-    "bindings": {
-      "cmd-enter": "repl::Run"
     }
   },
   {
