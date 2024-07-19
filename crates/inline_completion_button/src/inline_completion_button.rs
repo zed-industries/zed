@@ -298,7 +298,9 @@ impl InlineCompletionButton {
 
     fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx).separator()
+            self.build_language_settings_menu(menu, cx)
+                .separator()
+                .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
     }
 
