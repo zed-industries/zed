@@ -30,7 +30,9 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
+        vim.store_visual_marks(cx);
         let count = vim.take_count(cx).unwrap_or(1);
+
         vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
