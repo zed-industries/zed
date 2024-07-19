@@ -177,7 +177,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
                     workspace.toggle_modal(cx, |cx| PasswordPrompt::new(prompt, tx, cx));
                 }
             })
-            .unwrap();
+            .ok();
         rx
     }
 
