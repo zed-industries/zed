@@ -215,10 +215,12 @@ impl TerminalView {
     ) {
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.action("New Terminal", Box::new(NewTerminal))
+                .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
+                .separator()
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
 
