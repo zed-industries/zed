@@ -118,21 +118,8 @@ impl EditorBlock {
             let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
             // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
 
-            let gutter_dimensions = cx.gutter_dimensions;
-
-            let gutter_width = cx.gutter_dimensions.width;
-
-            let close_button = IconButton::new(
-                ("close_output_area", EntityId::from(cx.block_id)),
-                IconName::Close,
-            )
-            .shape(IconButtonShape::Square)
-            .icon_size(IconSize::XSmall)
-            .icon_color(Color::Muted)
-            .tooltip(|cx| Tooltip::text("Close output area", cx))
-            .on_click(|event, _cx| {
-                dbg!(event);
-            });
+            let gutter = cx.gutter_dimensions;
+            let close_button_size = IconSize::XSmall;
 
             div()
                 .flex()
@@ -143,21 +130,34 @@ impl EditorBlock {
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
                 .child(
-                    h_flex()
-                        .py_2()
-                        .justify_center()
-                        .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
-                        .child(close_button),
+                    h_flex().w(gutter.full_width()).justify_end().child(
+                        h_flex()
+                            .py_2()
+                            .pr(gutter.width / 2. + gutter.margin
+                                - close_button_size.square(cx) / 1.125)
+                            .child(
+                                IconButton::new(
+                                    ("close_output_area", EntityId::from(cx.block_id)),
+                                    IconName::Close,
+                                )
+                                .shape(IconButtonShape::Square)
+                                .icon_size(close_button_size)
+                                .icon_color(Color::Muted)
+                                .tooltip(|cx| Tooltip::text("Close output area", cx))
+                                .on_click(|event, _cx| {
+                                    dbg!(event);
+                                }),
+                            ),
+                    ),
                 )
                 .child(
                     div()
                         .flex_1()
+                        .size_full()
+                        .my_2()
+                        .mr(gutter.width)
                         .text_size(text_font_size)
                         .font_family(text_font)
-                        .my_2()
-                        .h_full()
-                        .w_full()
-                        .mr(gutter_width)
                         .child(execution_view),
                 )
                 .into_any_element()
