@@ -944,7 +944,6 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         scroll_position: gpui::Point<f32>,
-        scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_width: Pixels,
         autoscroll_containing_element: bool,
@@ -1009,10 +1008,8 @@ impl EditorElement {
                         None
                     };
 
-                    let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = (cursor_position.row().as_f32()
-                        - scroll_pixel_position.y / line_height)
-                        * line_height;
+                    let x = cursor_character_x - scroll_position.x * em_width;
+                    let y = (cursor_position.row().as_f32() - scroll_position.y) * line_height;
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1152,7 +1149,7 @@ impl EditorElement {
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<f32>,
         gutter_hitbox: &Hitbox,
         cx: &mut WindowContext,
     ) {
@@ -3138,11 +3135,11 @@ impl EditorElement {
                 };
 
                 let start_y = layout.gutter_hitbox.top()
-                    + start_row.0 as f32 * layout.position_map.line_height
-                    - layout.position_map.scroll_pixel_position.y;
+                    + (start_row.0 as f32 - layout.position_map.scroll_position.y)
+                        * layout.position_map.line_height;
                 let end_y = layout.gutter_hitbox.top()
-                    + (end_row.0 + 1) as f32 * layout.position_map.line_height
-                    - layout.position_map.scroll_pixel_position.y;
+                    + ((end_row.0 + 1) as f32 - layout.position_map.scroll_position.y)
+                        * layout.position_map.line_height;
                 let bounds = Bounds::from_corners(
                     point(layout.gutter_hitbox.left(), start_y),
                     point(layout.gutter_hitbox.left() + highlight_width, end_y),
@@ -3638,8 +3635,9 @@ impl EditorElement {
                 line_height: layout.position_map.line_height,
                 corner_radius,
                 start_y: layout.content_origin.y
-                    + row_range.start.as_f32() * layout.position_map.line_height
-                    - layout.position_map.scroll_pixel_position.y,
+                    + (row_range.start.as_f32() - layout.position_map.scroll_position.y)
+                        * layout.position_map.line_height,
+
                 lines: row_range
                     .iter_rows()
                     .map(|row| {
@@ -3649,18 +3647,17 @@ impl EditorElement {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
                                     + line_layout.x_for_index(range.start.column() as usize)
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_x_offset()
                             } else {
-                                layout.content_origin.x
-                                    - layout.position_map.scroll_pixel_position.x
+                                layout.content_origin.x - layout.position_map.scroll_x_offset()
                             },
                             end_x: if row == range.end.row() {
                                 layout.content_origin.x
                                     + line_layout.x_for_index(range.end.column() as usize)
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_x_offset()
                             } else {
                                 layout.content_origin.x + line_layout.width + line_end_overshoot
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_x_offset()
                             },
                         }
                     })
@@ -4300,11 +4297,10 @@ impl LineWithInvisibles {
         cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = line_height
-            * (row.as_f32() - layout.position_map.scroll_pixel_position.y / line_height);
+        let line_y = line_height * (row.as_f32() - layout.position_map.scroll_position.y);
 
         let mut fragment_origin =
-            content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
+            content_origin + gpui::point(-layout.position_map.scroll_x_offset(), line_y);
 
         for fragment in &self.fragments {
             match fragment {
@@ -4358,7 +4354,7 @@ impl LineWithInvisibles {
                 (layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
             let origin = content_origin
                 + gpui::point(
-                    x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
+                    x_offset + invisible_offset - layout.position_map.scroll_x_offset(),
                     line_y,
                 );
 
@@ -4950,7 +4946,6 @@ impl Element for EditorElement {
                             scroll_position = snapshot.scroll_position();
                         }
                     });
-
                     let scroll_pixel_position = point(
                         scroll_position.x * em_width,
                         scroll_position.y * line_height,
@@ -5225,7 +5220,7 @@ impl Element for EditorElement {
                         mode: snapshot.mode,
                         position_map: Arc::new(PositionMap {
                             size: bounds.size,
-                            scroll_pixel_position,
+                            scroll_position,
                             scroll_max,
                             line_layouts,
                             line_height,
@@ -5523,7 +5518,7 @@ struct CreaseTrailerLayout {
 struct PositionMap {
     size: Size<Pixels>,
     line_height: Pixels,
-    scroll_pixel_position: gpui::Point<Pixels>,
+    scroll_position: gpui::Point<f32>,
     scroll_max: gpui::Point<f32>,
     em_width: Pixels,
     em_advance: Pixels,
@@ -5586,6 +5581,9 @@ impl PositionMap {
             exact_unclipped,
             column_overshoot_after_line_end,
         }
+    }
+    fn scroll_x_offset(&self) -> Pixels {
+        self.em_width * self.scroll_position.x
     }
 }
 
