@@ -19,6 +19,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/completion",
     "crates/copilot",
     "crates/db",
     "crates/dev_server_projects",
@@ -50,6 +51,7 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/language",
+    "crates/language_model",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -176,6 +178,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+completion = { path = "crates/completion" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }
@@ -205,6 +208,7 @@ inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
+language_model = { path = "crates/language_model" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }

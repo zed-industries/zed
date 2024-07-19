@@ -1,12 +1,12 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageStatus, Role,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider, MessageId,
+    MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
 };
-use client::{proto, telemetry::Telemetry};
+use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
@@ -18,6 +18,8 @@ use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscrip
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
 };
+use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequest, Role};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
@@ -2477,9 +2479,10 @@ mod tests {
     use crate::{
         assistant_panel, prompt_library,
         slash_command::{active_command, file_command},
-        FakeCompletionProvider, MessageId,
+        MessageId,
     };
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
+    use completion::FakeCompletionProvider;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
     use indoc::indoc;

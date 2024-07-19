@@ -1,14 +1,13 @@
-use crate::{
-    assistant_settings::AnthropicModel, CompletionProvider, LanguageModel, LanguageModelRequest,
-    Role,
-};
-use crate::{count_open_ai_tokens, LanguageModelCompletionProvider, LanguageModelRequestMessage};
-use anthropic::{stream_completion, Request, RequestMessage};
+use crate::CompletionProvider;
+use crate::LanguageModelCompletionProvider;
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
+use language_model::{CloudModel, LanguageModel, LanguageModelRequest, Role};
+use open_ai::Model as OpenAiModel;
+use open_ai::{stream_completion, Request, RequestMessage};
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -17,20 +16,103 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
 
-pub struct AnthropicCompletionProvider {
+pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
     api_url: String,
-    model: AnthropicModel,
+    model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
     settings_version: usize,
+    available_models_from_settings: Vec<OpenAiModel>,
 }
 
-impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
-        AnthropicModel::iter()
-            .map(LanguageModel::Anthropic)
-            .collect()
+impl OpenAiCompletionProvider {
+    pub fn new(
+        model: OpenAiModel,
+        api_url: String,
+        http_client: Arc<dyn HttpClient>,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+        available_models_from_settings: Vec<OpenAiModel>,
+    ) -> Self {
+        Self {
+            api_key: None,
+            api_url,
+            model,
+            http_client,
+            low_speed_timeout,
+            settings_version,
+            available_models_from_settings,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        model: OpenAiModel,
+        api_url: String,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) {
+        self.model = model;
+        self.api_url = api_url;
+        self.low_speed_timeout = low_speed_timeout;
+        self.settings_version = settings_version;
+    }
+
+    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
+        let model = match request.model {
+            LanguageModel::OpenAi(model) => model,
+            _ => self.model.clone(),
+        };
+
+        Request {
+            model,
+            messages: request
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => RequestMessage::User {
+                        content: msg.content,
+                    },
+                    Role::Assistant => RequestMessage::Assistant {
+                        content: Some(msg.content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => RequestMessage::System {
+                        content: msg.content,
+                    },
+                })
+                .collect(),
+            stream: true,
+            stop: request.stop,
+            temperature: request.temperature,
+            tools: Vec::new(),
+            tool_choice: None,
+        }
+    }
+}
+
+impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
+    fn available_models(&self) -> Vec<LanguageModel> {
+        if self.available_models_from_settings.is_empty() {
+            let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
+                vec![self.model.clone()]
+            } else {
+                OpenAiModel::iter()
+                    .filter(|model| !matches!(model, OpenAiModel::Custom { .. }))
+                    .collect()
+            };
+            available_models
+                .into_iter()
+                .map(LanguageModel::OpenAi)
+                .collect()
+        } else {
+            self.available_models_from_settings
+                .iter()
+                .cloned()
+                .map(LanguageModel::OpenAi)
+                .collect()
+        }
     }
 
     fn settings_version(&self) -> usize {
@@ -47,7 +129,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         } else {
             let api_url = self.api_url.clone();
             cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = env::var("ANTHROPIC_API_KEY") {
+                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
                     api_key
                 } else {
                     let (_, api_key) = cx
@@ -57,7 +139,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
+                    provider.update_current_as::<_, Self>(|provider| {
                         provider.api_key = Some(api_key);
                     });
                 })
@@ -70,7 +152,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
+                provider.update_current_as::<_, Self>(|provider| {
                     provider.api_key = None;
                 });
             })
@@ -83,7 +165,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
     }
 
     fn model(&self) -> LanguageModel {
-        LanguageModel::Anthropic(self.model.clone())
+        LanguageModel::OpenAi(self.model.clone())
     }
 
     fn count_tokens(
@@ -98,7 +180,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_anthropic_request(request);
+        let request = self.to_open_ai_request(request);
 
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
@@ -117,19 +199,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
             let stream = response
                 .filter_map(|response| async move {
                     match response {
-                        Ok(response) => match response {
-                            anthropic::ResponseEvent::ContentBlockStart {
-                                content_block, ..
-                            } => match content_block {
-                                anthropic::ContentBlock::Text { text } => Some(Ok(text)),
-                            },
-                            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
-                                match delta {
-                                    anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
-                                }
-                            }
-                            _ => None,
-                        },
+                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
                         Err(error) => Some(Err(error)),
                     }
                 })
@@ -144,116 +214,42 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
     }
 }
 
-impl AnthropicCompletionProvider {
-    pub fn new(
-        model: AnthropicModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) -> Self {
-        Self {
-            api_key: None,
-            api_url,
-            model,
-            http_client,
-            low_speed_timeout,
-            settings_version,
-        }
-    }
-
-    pub fn update(
-        &mut self,
-        model: AnthropicModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) {
-        self.model = model;
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
-    }
-
-    fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
-        preprocess_anthropic_request(&mut request);
-
-        let model = match request.model {
-            LanguageModel::Anthropic(model) => model,
-            _ => self.model.clone(),
-        };
-
-        let mut system_message = String::new();
-        if request
-            .messages
-            .first()
-            .map_or(false, |message| message.role == Role::System)
-        {
-            system_message = request.messages.remove(0).content;
-        }
-
-        Request {
-            model,
-            messages: request
+pub fn count_open_ai_tokens(
+    request: LanguageModelRequest,
+    background_executor: &gpui::BackgroundExecutor,
+) -> BoxFuture<'static, Result<usize>> {
+    background_executor
+        .spawn(async move {
+            let messages = request
                 .messages
-                .iter()
-                .map(|msg| RequestMessage {
-                    role: match msg.role {
-                        Role::User => anthropic::Role::User,
-                        Role::Assistant => anthropic::Role::Assistant,
-                        Role::System => unreachable!("filtered out by preprocess_request"),
+                .into_iter()
+                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
                     },
-                    content: msg.content.clone(),
+                    content: Some(message.content),
+                    name: None,
+                    function_call: None,
                 })
-                .collect(),
-            stream: true,
-            system: system_message,
-            max_tokens: 4092,
-        }
-    }
-}
+                .collect::<Vec<_>>();
 
-pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
-    let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages.drain(..) {
-        if message.content.is_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == message.role {
-                        last_message.content.push_str("\n\n");
-                        last_message.content.push_str(&message.content);
-                        continue;
-                    }
+            match request.model {
+                LanguageModel::Anthropic(_)
+                | LanguageModel::Cloud(CloudModel::Claude3_5Sonnet)
+                | LanguageModel::Cloud(CloudModel::Claude3Opus)
+                | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
+                | LanguageModel::Cloud(CloudModel::Claude3Haiku)
+                | LanguageModel::OpenAi(OpenAiModel::Custom { .. }) => {
+                    // Tiktoken doesn't yet support these models, so we manually use the
+                    // same tokenizer as GPT-4.
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
                 }
-
-                new_messages.push(message);
+                _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
             }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
-            }
-        }
-    }
-
-    if !system_message.is_empty() {
-        new_messages.insert(
-            0,
-            LanguageModelRequestMessage {
-                role: Role::System,
-                content: system_message,
-            },
-        );
-    }
-
-    request.messages = new_messages;
+        })
+        .boxed()
 }
 
 struct AuthenticationPrompt {
@@ -286,7 +282,7 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
+                provider.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
                 });
             })
@@ -323,11 +319,13 @@ impl AuthenticationPrompt {
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use the assistant panel or inline assistant, you need to add your Anthropic API key.",
-            "You can create an API key at: https://console.anthropic.com/settings/keys",
+        const INSTRUCTIONS: [&str; 6] = [
+            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
+            " - You can create an API key at: platform.openai.com/api-keys",
+            " - Make sure your OpenAI account has credits",
+            " - Having a subscription for another service like GitHub Copilot won't work.",
             "",
-            "Paste your Anthropic API key below and hit enter to use the assistant:",
+            "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
         v_flex()
@@ -349,7 +347,7 @@ impl Render for AuthenticationPrompt {
             )
             .child(
                 Label::new(
-                    "You can also assign the ANTHROPIC_API_KEY environment variable and restart Zed.",
+                    "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
                 )
                 .size(LabelSize::Small),
             )
