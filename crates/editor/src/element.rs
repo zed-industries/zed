@@ -1918,6 +1918,7 @@ impl EditorElement {
         line_elements
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_block(
         &self,
         block: &Block,
@@ -2348,6 +2349,7 @@ impl EditorElement {
         (element, size)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_blocks(
         &self,
         rows: Range<DisplayRow>,
