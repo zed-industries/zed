@@ -73,11 +73,13 @@ impl TerminalInlineAssistant {
         terminal_view: &View<TerminalView>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
+        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let prompt_buffer =
+            cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
         let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 

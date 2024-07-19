@@ -87,6 +87,7 @@ impl InlineAssistant {
         editor: &View<Editor>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
+        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -138,7 +139,8 @@ impl InlineAssistant {
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let prompt_buffer =
+            cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let mut assists = Vec::new();

@@ -20,7 +20,7 @@ pub use completion_provider::*;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
-use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
@@ -48,7 +48,6 @@ actions!(
         InsertIntoEditor,
         ToggleFocus,
         ResetKey,
-        InlineAssist,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
@@ -57,6 +56,13 @@ actions!(
         DebugEditSteps
     ]
 );
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct InlineAssist {
+    prompt: Option<String>,
+}
+
+impl_actions!(assistant, [InlineAssist]);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MessageId(clock::Lamport);
