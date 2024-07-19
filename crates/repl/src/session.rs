@@ -5,7 +5,7 @@ use crate::{
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
     },
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
@@ -37,7 +37,7 @@ struct EditorBlock {
     editor: WeakView<Editor>,
     code_range: Range<Anchor>,
     invalidation_anchor: Anchor,
-    block_id: BlockId,
+    block_id: CustomBlockId,
     execution_view: View<ExecutionView>,
 }
 
@@ -282,7 +282,7 @@ impl Session {
         if let multi_buffer::Event::Edited { .. } = event {
             let snapshot = buffer.read(cx).snapshot(cx);
 
-            let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+            let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
 
             self.blocks.retain(|_id, block| {
                 if block.invalidation_anchor.is_valid(&snapshot) {
@@ -316,7 +316,7 @@ impl Session {
     }
 
     pub fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
-        let blocks_to_remove: HashSet<BlockId> =
+        let blocks_to_remove: HashSet<CustomBlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
         self.editor
@@ -346,7 +346,7 @@ impl Session {
 
         let message: JupyterMessage = execute_request.into();
 
-        let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+        let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 

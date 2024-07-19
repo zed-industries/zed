@@ -464,6 +464,7 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.deferred_draws.clear();
+        self.focus = None;
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1460,7 +1461,6 @@ impl<'a> WindowContext<'a> {
                 &mut self.window.rendered_frame.dispatch_tree,
                 self.window.focus,
             );
-        self.window.next_frame.focus = self.window.focus;
         self.window.next_frame.window_active = self.window.active.get();
 
         // Register requested input handler with the platform window.
@@ -1574,7 +1574,7 @@ impl<'a> WindowContext<'a> {
         self.paint_deferred_draws(&sorted_deferred_draws);
 
         if let Some(mut prompt_element) = prompt_element {
-            prompt_element.paint(self)
+            prompt_element.paint(self);
         } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self);
         } else if let Some(mut tooltip_element) = tooltip_element {
@@ -2852,6 +2852,9 @@ impl<'a> WindowContext<'a> {
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
+        if focus_handle.is_focused(self) {
+            self.window.next_frame.focus = Some(focus_handle.id);
+        }
         self.window
             .next_frame
             .dispatch_tree

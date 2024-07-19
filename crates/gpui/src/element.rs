@@ -32,8 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId, LayoutId,
-    Pixels, Point, Size, Style, ViewContext, WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId, FocusHandle,
+    LayoutId, Pixels, Point, Size, Style, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -209,7 +209,7 @@ impl<C: RenderOnce> Element for Component<C> {
         _: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        element.paint(cx)
+        element.paint(cx);
     }
 }
 
@@ -498,8 +498,19 @@ impl AnyElement {
     }
 
     /// Paints the element stored in this `AnyElement`.
-    pub fn paint(&mut self, cx: &mut WindowContext) {
-        self.0.paint(cx)
+    /// If any element in the subtree beneath this element is focused, its FocusHandle is returned.
+    pub fn paint(&mut self, cx: &mut WindowContext) -> Option<FocusHandle> {
+        let focus_was_painted = cx.window.next_frame.focus.is_some();
+
+        self.0.paint(cx);
+
+        if !focus_was_painted {
+            if let Some(focus_id) = cx.window.next_frame.focus {
+                return FocusHandle::for_id(focus_id, &cx.window.focus_handles);
+            }
+        }
+
+        None
     }
 
     /// Performs layout for this element within the given available space and returns its size.
@@ -563,7 +574,7 @@ impl Element for AnyElement {
         _: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        self.paint(cx)
+        self.paint(cx);
     }
 }
 

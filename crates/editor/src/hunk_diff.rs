@@ -20,8 +20,8 @@ use util::{debug_panic, RangeExt};
 use crate::{
     editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    hunk_status, hunks_for_selections, BlockDisposition, BlockProperties, BlockStyle,
+    CustomBlockId, DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -55,7 +55,7 @@ impl ExpandedHunks {
 
 #[derive(Debug, Clone)]
 pub(super) struct ExpandedHunk {
-    pub block: Option<BlockId>,
+    pub block: Option<CustomBlockId>,
     pub hunk_range: Range<Anchor>,
     pub diff_base_byte_range: Range<usize>,
     pub status: DiffHunkStatus,
@@ -305,7 +305,7 @@ impl Editor {
         deleted_text_height: u8,
         hunk: &HunkToExpand,
         cx: &mut ViewContext<'_, Self>,
-    ) -> Option<BlockId> {
+    ) -> Option<CustomBlockId> {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
