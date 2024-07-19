@@ -3,7 +3,7 @@ use zed::{CodeLabel, CodeLabelSpan};
 use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, serde_json, Result};
 
-pub trait CommonPythonLSP {
+pub trait CommonPythonLsp {
     fn get_language_server_id(&self) -> &'static str;
 
     fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
