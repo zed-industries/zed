@@ -313,7 +313,7 @@ impl Render for AuthenticationPrompt {
                     .child(
                         Button::new("sign_in", "Sign In")
                             .icon_color(Color::Muted)
-                            .icon(IconName::ZedAssistant)
+                            .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::Medium)
                             .style(ui::ButtonStyle::Filled)
