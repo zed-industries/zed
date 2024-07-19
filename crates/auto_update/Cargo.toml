@@ -23,6 +23,7 @@ isahc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
+paths.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
