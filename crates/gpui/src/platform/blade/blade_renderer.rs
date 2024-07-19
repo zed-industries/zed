@@ -450,6 +450,7 @@ impl BladeRenderer {
         &self.atlas
     }
 
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub fn gpu_specs(&self) -> GPUSpecs {
         let info = self.gpu.device_information();
 
