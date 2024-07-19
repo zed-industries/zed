@@ -193,6 +193,11 @@ impl remote::SshClientDelegate for SshClientDelegate {
         .detach();
         rx
     }
+
+    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf> {
+        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
+        Ok(format!(".local/zed-remote-server-{}", release_channel.dev_name()).into())
+    }
 }
 
 async fn get_server_binary(

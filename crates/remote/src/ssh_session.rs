@@ -38,8 +38,6 @@ use std::{
 use tempfile::TempDir;
 use util::ResultExt as _;
 
-const SERVER_BINARY_REMOTE_PATH: &str = "./.zed_remote_server";
-
 pub struct SshSession {
     next_message_id: AtomicU32,
     response_channels: ResponseChannels,
@@ -86,6 +84,7 @@ pub trait SshClientDelegate {
         prompt: String,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<String>>;
+    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf>;
     fn get_server_binary(
         &self,
         platform: SshPlatform,
@@ -106,15 +105,22 @@ impl SshSession {
         let client_state = SshClientState::new(user, host, port, delegate.clone(), cx).await?;
 
         let platform = query_platform(&client_state).await?;
-        let (binary_path, version) = delegate.get_server_binary(platform, cx).await??;
-        ensure_server_binary(&client_state, &binary_path, version).await?;
+        let (local_binary_path, version) = delegate.get_server_binary(platform, cx).await??;
+        let remote_binary_path = delegate.remote_server_binary_path(cx)?;
+        ensure_server_binary(
+            &client_state,
+            &local_binary_path,
+            &remote_binary_path,
+            version,
+        )
+        .await?;
 
         let (spawn_process_tx, mut spawn_process_rx) = mpsc::unbounded::<SpawnRequest>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
         let mut remote_server_child = client_state
-            .ssh_command(SERVER_BINARY_REMOTE_PATH)
+            .ssh_command(&remote_binary_path)
             .arg("run")
             .spawn()
             .context("failed to spawn remote server")?;
@@ -571,11 +577,15 @@ async fn query_platform(session: &SshClientState) -> Result<SshPlatform> {
 async fn ensure_server_binary(
     session: &SshClientState,
     src_path: &Path,
+    dst_path: &Path,
     version: SemanticVersion,
 ) -> Result<()> {
-    let dst_path = Path::new(SERVER_BINARY_REMOTE_PATH);
     let mut dst_path_gz = dst_path.to_path_buf();
     dst_path_gz.set_extension("gz");
+
+    if let Some(parent) = dst_path.parent() {
+        run_cmd(session.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+    }
 
     let mut server_binary_exists = false;
     if let Ok(installed_version) = run_cmd(session.ssh_command(&dst_path).arg("version")).await {
