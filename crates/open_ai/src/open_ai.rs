@@ -59,6 +59,8 @@ pub enum Model {
     #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
     #[default]
     FourOmni,
+    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
+    FourOmniMini,
     #[serde(rename = "custom")]
     Custom { name: String, max_tokens: usize },
 }
@@ -70,6 +72,7 @@ impl Model {
             "gpt-4" => Ok(Self::Four),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
+            "gpt-4o-mini" => Ok(Self::FourOmniMini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -80,6 +83,7 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
+            Self::FourOmniMini => "gpt-4o-mini",
             Self::Custom { .. } => "custom",
         }
     }
@@ -90,17 +94,19 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
+            Self::FourOmniMini => "gpt-4o-mini",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Model::ThreePointFiveTurbo => 4096,
-            Model::Four => 8192,
-            Model::FourTurbo => 128000,
-            Model::FourOmni => 128000,
-            Model::Custom { max_tokens, .. } => *max_tokens,
+            Self::ThreePointFiveTurbo => 4096,
+            Self::Four => 8192,
+            Self::FourTurbo => 128000,
+            Self::FourOmni => 128000,
+            Self::FourOmniMini => 128000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }
