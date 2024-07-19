@@ -133,8 +133,12 @@ impl EditorBlock {
                     h_flex().w(gutter.full_width()).justify_end().child(
                         h_flex()
                             .py_2()
-                            .pr(gutter.width / 2. + gutter.margin
-                                - close_button_size.square(cx) / 1.125)
+                            .pr({
+                                let (close_button_width, close_button_padding) =
+                                    close_button_size.square_components(cx);
+
+                                gutter.width / 2. - close_button_width + close_button_padding / 2.
+                            })
                             .child(
                                 IconButton::new(
                                     ("close_output_area", EntityId::from(cx.block_id)),
