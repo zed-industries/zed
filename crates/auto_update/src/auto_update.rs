@@ -382,16 +382,14 @@ impl AutoUpdater {
     pub async fn get_latest_remote_server_release(
         os: &str,
         arch: &str,
+        mut release_channel: ReleaseChannel,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        let (this, mut release_channel) = cx.update(|cx| {
-            anyhow::Ok((
-                cx.default_global::<GlobalAutoUpdate>()
-                    .0
-                    .clone()
-                    .ok_or_else(|| anyhow!("auto-update not initialized"))?,
-                ReleaseChannel::global(cx),
-            ))
+        let this = cx.update(|cx| {
+            cx.default_global::<GlobalAutoUpdate>()
+                .0
+                .clone()
+                .ok_or_else(|| anyhow!("auto-update not initialized"))
         })??;
 
         if release_channel == ReleaseChannel::Dev {

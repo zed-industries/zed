@@ -233,8 +233,13 @@ async fn get_server_binary(
         }
     }
 
-    let binary_path =
-        AutoUpdater::get_latest_remote_server_release(platform.os, platform.arch, cx).await?;
+    let binary_path = AutoUpdater::get_latest_remote_server_release(
+        platform.os,
+        platform.arch,
+        release_channel,
+        cx,
+    )
+    .await?;
 
     Ok((binary_path, version))
 }
