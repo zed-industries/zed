@@ -10,6 +10,7 @@
       "backspace": "vim::Backspace",
       "j": "vim::Down",
       "down": "vim::Down",
+      "ctrl-j": "vim::Down",
       "enter": "vim::NextLineStart",
       "ctrl-m": "vim::NextLineStart",
       "+": "vim::NextLineStart",
