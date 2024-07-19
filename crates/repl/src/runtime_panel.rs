@@ -23,7 +23,10 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ClearOutputs, Interrupt, Shutdown]);
+actions!(
+    repl,
+    [Run, ClearOutputs, Interrupt, Shutdown, RefreshKernelspecs]
+);
 actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
@@ -31,6 +34,14 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<RuntimePanel>(cx);
+            });
+
+            workspace.register_action(|workspace, _: &RefreshKernelspecs, cx| {
+                if let Some(panel) = workspace.panel::<RuntimePanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.refresh_kernelspecs(cx).detach();
+                    });
+                }
             });
         },
     )
@@ -542,6 +553,13 @@ impl Render for RuntimePanel {
                                 binding.into_any_element()
                             )
                     )
+                )
+                .child(Label::new("Kernels available").size(LabelSize::Large))
+                .children(
+                    self.kernel_specifications.iter().map(|spec| {
+                        h_flex().gap_2().child(Label::new(spec.name.clone()))
+                            .child(Label::new(spec.kernelspec.language.clone()).color(Color::Muted))
+                    })
                 )
 
                 .into_any_element();
