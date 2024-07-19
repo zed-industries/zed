@@ -464,7 +464,7 @@ impl SshClientState {
         let askpass_script = format!(
             "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
             askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\0' \"$@\"",
+            print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
         );
         let askpass_script_path = temp_dir.path().join("askpass.sh");
