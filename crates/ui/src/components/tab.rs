@@ -155,7 +155,7 @@ impl RenderOnce for Tab {
                     .child(
                         h_flex()
                             .size_4()
-                            .mt(crate::custom_spacing(cx, 1.))
+                            .mt(crate::custom_spacing(cx, 1.)) // for optical alignment
                             .justify_center()
                             .absolute()
                             .map(|this| match self.close_side {
@@ -167,7 +167,7 @@ impl RenderOnce for Tab {
                     .child(
                         h_flex()
                             .size_4()
-                            .mt(crate::custom_spacing(cx, 1.))
+                            .mt(crate::custom_spacing(cx, 1.)) // for optical alignment
                             .justify_center()
                             .absolute()
                             .map(|this| match self.close_side {
