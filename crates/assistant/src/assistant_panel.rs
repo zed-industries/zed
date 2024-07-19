@@ -16,7 +16,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
-use breadcrumbs::Breadcrumbs;
 use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
 use completion::CompletionProvider;
@@ -50,6 +49,7 @@ use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
     ops::Range,
@@ -68,7 +68,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::{self, BreadcrumbText, FollowableItem, Item, ItemHandle},
+    item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotifyTaskExt,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
@@ -113,6 +113,8 @@ pub struct AssistantPanel {
     subscriptions: Vec<Subscription>,
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+    // TODO kb add a "refresh" button + follow the edit events to update the summary
+    model_summary_editor: View<Editor>,
 }
 
 #[derive(Clone)]
@@ -300,6 +302,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
+        let model_summary_editor = cx.new_view(|cx| Editor::single_line(cx));
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -345,10 +348,13 @@ impl AssistantPanel {
                     .into_any_element()
             });
             pane.toolbar().update(cx, |toolbar, cx| {
-                toolbar.add_item(cx.new_view(|_| Breadcrumbs::new()), cx);
                 toolbar.add_item(
                     cx.new_view(|_| {
-                        ContextEditorToolbarItem::new(workspace, model_selector_menu_handle.clone())
+                        ContextEditorToolbarItem::new(
+                            workspace,
+                            model_selector_menu_handle.clone(),
+                            model_summary_editor.clone(),
+                        )
                     }),
                     cx,
                 );
@@ -381,6 +387,7 @@ impl AssistantPanel {
             subscriptions,
             authentication_prompt: None,
             model_selector_menu_handle,
+            model_summary_editor,
         }
     }
 
@@ -390,10 +397,19 @@ impl AssistantPanel {
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        match event {
-            pane::Event::Remove => cx.emit(PanelEvent::Close),
-            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+        let update_model_summary = match event {
+            pane::Event::Remove => {
+                cx.emit(PanelEvent::Close);
+                false
+            }
+            pane::Event::ZoomIn => {
+                cx.emit(PanelEvent::ZoomIn);
+                false
+            }
+            pane::Event::ZoomOut => {
+                cx.emit(PanelEvent::ZoomOut);
+                false
+            }
 
             pane::Event::AddItem { item } => {
                 self.workspace
@@ -401,6 +417,7 @@ impl AssistantPanel {
                         item.added_to_pane(workspace, self.pane.clone(), cx)
                     })
                     .ok();
+                true
             }
 
             pane::Event::ActivateItem { local } => {
@@ -412,13 +429,24 @@ impl AssistantPanel {
                         .ok();
                 }
                 cx.emit(AssistantPanelEvent::ContextEdited);
+                true
             }
 
             pane::Event::RemoveItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
+                true
             }
 
-            _ => {}
+            _ => false,
+        };
+
+        if update_model_summary {
+            match self.active_context_editor(cx) {
+                Some(editor) => self.update_model_summary(&editor, cx),
+                None => self
+                    .model_summary_editor
+                    .update(cx, |editor, cx| editor.set_text("", cx)),
+            }
         }
     }
 
@@ -430,21 +458,26 @@ impl AssistantPanel {
         if self.is_authenticated(cx) {
             self.authentication_prompt = None;
 
-            if let Some(editor) = self.active_context_editor(cx) {
-                editor.update(cx, |active_context, cx| {
-                    active_context
-                        .context
-                        .update(cx, |context, cx| context.completion_provider_changed(cx))
-                })
+            match self.active_context_editor(cx) {
+                Some(editor) => {
+                    editor.update(cx, |active_context, cx| {
+                        active_context
+                            .context
+                            .update(cx, |context, cx| context.completion_provider_changed(cx))
+                    });
+                    self.update_model_summary(&editor, cx);
+                }
+                None => {
+                    self.new_context(cx);
+                }
             }
 
-            if self.active_context_editor(cx).is_none() {
-                self.new_context(cx);
-            }
             cx.notify();
         } else if self.authentication_prompt.is_none()
             || prev_settings_version != CompletionProvider::global(cx).settings_version()
         {
+            self.model_summary_editor
+                .update(cx, |editor, cx| editor.set_text("", cx));
             self.authentication_prompt =
                 Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
                     provider.authentication_prompt(cx)
@@ -637,18 +670,33 @@ impl AssistantPanel {
                 .push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
         }
 
+        self.update_model_summary(&context_editor, cx);
+
         cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
+    fn update_model_summary(
+        &self,
+        context_editor: &View<ContextEditor>,
+        cx: &mut ViewContext<AssistantPanel>,
+    ) {
+        let new_title = context_editor.read(cx).title(cx).to_string();
+        self.model_summary_editor
+            .update(cx, |editor, cx| editor.set_text(new_title, cx));
+    }
+
     fn handle_context_editor_event(
         &mut self,
-        _: View<ContextEditor>,
+        context_editor: View<ContextEditor>,
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            EditorEvent::TitleChanged { .. } => cx.notify(),
+            EditorEvent::TitleChanged => {
+                self.update_model_summary(&context_editor, cx);
+                cx.notify()
+            }
             EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
             _ => {}
         }
@@ -986,6 +1034,7 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
+    custom_title: Option<String>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1054,6 +1103,7 @@ impl ContextEditor {
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
             active_edit_step: None,
+            custom_title: None,
             assistant_panel,
         };
         this.update_message_headers(cx);
@@ -2035,12 +2085,17 @@ impl ContextEditor {
             .update(cx, |context, cx| context.save(None, self.fs.clone(), cx));
     }
 
-    fn title(&self, cx: &AppContext) -> String {
-        self.context
-            .read(cx)
-            .summary()
-            .map(|summary| summary.text.clone())
-            .unwrap_or_else(|| "New Context".into())
+    fn title(&self, cx: &AppContext) -> Cow<str> {
+        match &self.custom_title {
+            Some(title) => Cow::Borrowed(title.as_str()),
+            None => self
+                .context
+                .read(cx)
+                .summary()
+                .map(|summary| summary.text.clone())
+                .map(Cow::Owned)
+                .unwrap_or_else(|| Cow::Borrowed("New Context")),
+        }
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2146,7 +2201,6 @@ impl Item for ContextEditor {
         match event {
             EditorEvent::Edited { .. } => {
                 f(item::ItemEvent::Edit);
-                f(item::ItemEvent::UpdateBreadcrumbs);
             }
             EditorEvent::TitleChanged => {
                 f(item::ItemEvent::UpdateTab);
@@ -2156,46 +2210,11 @@ impl Item for ContextEditor {
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.title(cx).into())
+        Some(self.title(cx).to_string().into())
     }
 
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
-    }
-
-    fn breadcrumbs(
-        &self,
-        theme: &theme::Theme,
-        cx: &AppContext,
-    ) -> Option<Vec<item::BreadcrumbText>> {
-        let editor = self.editor.read(cx);
-        let cursor = editor.selections.newest_anchor().head();
-        let multibuffer = &editor.buffer().read(cx);
-        let (_, symbols) = multibuffer.symbols_containing(cursor, Some(&theme.syntax()), cx)?;
-
-        let settings = ThemeSettings::get_global(cx);
-
-        let mut breadcrumbs = Vec::new();
-
-        let title = self.title(cx);
-        if title.chars().count() > Self::MAX_TAB_TITLE_LEN {
-            breadcrumbs.push(BreadcrumbText {
-                text: title,
-                highlights: None,
-                font: Some(settings.buffer_font.clone()),
-            });
-        }
-
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
-            font: Some(settings.buffer_font.clone()),
-        }));
-        Some(breadcrumbs)
-    }
-
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
     }
 
     fn set_nav_history(&mut self, nav_history: pane::ItemNavHistory, cx: &mut ViewContext<Self>) {
@@ -2405,18 +2424,21 @@ pub struct ContextEditorToolbarItem {
     workspace: WeakView<Workspace>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+    model_summary_editor: View<Editor>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
         model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+        model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             active_context_editor: None,
             model_selector_menu_handle,
+            model_summary_editor,
         }
     }
 
@@ -2526,6 +2548,13 @@ impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .gap_2()
+            .child(Label::new(">>>>>>"))
+            .child(
+                div()
+                    .min_w(rems(30.0))
+                    .child(self.model_summary_editor.clone()),
+            )
+            .child(Label::new("<<<<<<"))
             .child(ModelSelector::new(
                 self.model_selector_menu_handle.clone(),
                 self.fs.clone(),
