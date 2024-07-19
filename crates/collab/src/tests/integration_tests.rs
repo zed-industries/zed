@@ -18,7 +18,9 @@ use gpui::{
     TestAppContext, UpdateGlobal,
 };
 use language::{
-    language_settings::{AllLanguageSettings, PrettierSettings, SelectedFormatter},
+    language_settings::{
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+    },
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -4409,11 +4411,12 @@ async fn test_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter =
-                    Some(SelectedFormatter::List(FormatterList(vec![External {
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(vec![
+                    Formatter::External {
                         command: "awk".into(),
                         arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
-                    }])));
+                    },
+                ])));
             });
         });
     });
@@ -4505,7 +4508,9 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::LanguageServer);
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(vec![
+                    Formatter::LanguageServer,
+                ])));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
