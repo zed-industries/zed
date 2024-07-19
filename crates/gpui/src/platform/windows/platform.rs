@@ -602,10 +602,6 @@ impl Platform for WindowsPlatform {
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
-
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
-        None
-    }
 }
 
 impl Drop for WindowsPlatform {
