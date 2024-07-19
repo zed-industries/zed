@@ -42,8 +42,8 @@ use http::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
     language_settings::{
-        language_settings, AllLanguageSettings, FormatOnSave, InlayHintKind, LanguageSettings,
-        SelectedFormatter,
+        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+        LanguageSettings, SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
@@ -5017,110 +5017,180 @@ impl Project {
                 .as_ref()
                 .zip(buffer_abs_path.as_ref());
 
-            let mut format_operation = None;
             let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx)
                     .prettier
                     .clone()
             })?;
-            match (&settings.formatter, &settings.format_on_save) {
-                (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
-                (
-                    SelectedFormatter::CodeActions(code_actions),
-                    FormatOnSave::On | FormatOnSave::Off,
-                )
-                | (_, FormatOnSave::CodeActions(code_actions)) => {
-                    let code_actions = deserialize_code_actions(code_actions);
-                    if !code_actions.is_empty() {
-                        Self::execute_code_actions_on_servers(
-                            &project,
-                            &adapters_and_servers,
-                            code_actions,
-                            buffer,
-                            push_to_history,
-                            &mut project_transaction,
-                            &mut cx,
-                        )
-                        .await?;
-                    }
-                }
-                (SelectedFormatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
-                | (_, FormatOnSave::LanguageServer) => {
-                    if let Some((language_server, buffer_abs_path)) = server_and_buffer {
-                        format_operation = Some(FormatOperation::Lsp(
-                            Self::format_via_lsp(
-                                &project,
-                                buffer,
-                                buffer_abs_path,
-                                language_server,
-                                &settings,
-                                &mut cx,
-                            )
-                            .await
-                            .context("failed to format via language server")?,
-                        ));
-                    }
-                }
+            let mut format_operations: Vec<FormatOperation> = vec![];
+            {
+                match trigger {
+                    FormatTrigger::Save => {
+                        match &settings.format_on_save {
+                            FormatOnSave::Off => {
+                                // nothing
+                            }
+                            FormatOnSave::On => {
+                                match &settings.formatter {
+                                    SelectedFormatter::Auto => {
+                                        // do the auto-format: prefer prettier, fallback to primary language server
+                                        let diff = {
+                                            if prettier_settings.allowed {
+                                                Self::format_with_formatter(
+                                                    &Formatter::Prettier,
+                                                    server_and_buffer,
+                                                    project.clone(),
+                                                    buffer,
+                                                    buffer_abs_path,
+                                                    &settings,
+                                                    &adapters_and_servers,
+                                                    push_to_history,
+                                                    &mut project_transaction,
+                                                    &mut cx,
+                                                )
+                                                .await
+                                            } else {
+                                                Self::format_with_formatter(
+                                                    &Formatter::LanguageServer,
+                                                    server_and_buffer,
+                                                    project.clone(),
+                                                    buffer,
+                                                    buffer_abs_path,
+                                                    &settings,
+                                                    &adapters_and_servers,
+                                                    push_to_history,
+                                                    &mut project_transaction,
+                                                    &mut cx,
+                                                )
+                                                .await
+                                            }
+                                        }
+                                        .log_err()
+                                        .flatten();
+                                        if let Some(op) = diff {
+                                            format_operations.push(op);
+                                        }
+                                    }
+                                    SelectedFormatter::List(formatters) => {
+                                        for formatter in formatters.0.clone() {
+                                            let diff = Self::format_with_formatter(
+                                                &formatter,
+                                                server_and_buffer,
+                                                project.clone(),
+                                                buffer,
+                                                buffer_abs_path,
+                                                &settings,
+                                                &adapters_and_servers,
+                                                push_to_history,
+                                                &mut project_transaction,
+                                                &mut cx,
+                                            )
+                                            .await
+                                            .log_err()
+                                            .flatten();
+                                            if let Some(op) = diff {
+                                                format_operations.push(op);
+                                            }
 
-                (
-                    SelectedFormatter::External { command, arguments },
-                    FormatOnSave::On | FormatOnSave::Off,
-                )
-                | (_, FormatOnSave::External { command, arguments }) => {
-                    let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                    format_operation = Self::format_via_external_command(
-                        buffer,
-                        buffer_abs_path,
-                        command,
-                        arguments,
-                        &mut cx,
-                    )
-                    .await
-                    .context(format!(
-                        "failed to format via external command {:?}",
-                        command
-                    ))?
-                    .map(FormatOperation::External);
-                }
-                (SelectedFormatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    let prettier = if prettier_settings.allowed {
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx)
-                            .await
-                            .transpose()
-                            .ok()
-                            .flatten()
-                    } else {
-                        None
-                    };
-
-                    if let Some(operation) = prettier {
-                        format_operation = Some(operation);
-                    } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
-                        format_operation = Some(FormatOperation::Lsp(
-                            Self::format_via_lsp(
-                                &project,
-                                buffer,
-                                buffer_abs_path,
-                                language_server,
-                                &settings,
-                                &mut cx,
-                            )
-                            .await
-                            .context("failed to format via language server")?,
-                        ));
+                                            // format with formatter
+                                        }
+                                    }
+                                }
+                            }
+                            FormatOnSave::List(formatters) => {
+                                for formatter in formatters.0.clone() {
+                                    let diff = Self::format_with_formatter(
+                                        &formatter,
+                                        server_and_buffer,
+                                        project.clone(),
+                                        buffer,
+                                        buffer_abs_path,
+                                        &settings,
+                                        &adapters_and_servers,
+                                        push_to_history,
+                                        &mut project_transaction,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .log_err()
+                                    .flatten();
+                                    if let Some(op) = diff {
+                                        format_operations.push(op);
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-                (SelectedFormatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    if prettier_settings.allowed {
-                        if let Some(operation) =
-                            prettier_support::format_with_prettier(&project, buffer, &mut cx).await
-                        {
-                            format_operation = Some(operation?);
+                    FormatTrigger::Manual => {
+                        match &settings.formatter {
+                            SelectedFormatter::Auto => {
+                                // do the auto-format: prefer prettier, fallback to primary language server
+                                let diff = {
+                                    if prettier_settings.allowed {
+                                        Self::format_with_formatter(
+                                            &Formatter::Prettier,
+                                            server_and_buffer,
+                                            project.clone(),
+                                            buffer,
+                                            buffer_abs_path,
+                                            &settings,
+                                            &adapters_and_servers,
+                                            push_to_history,
+                                            &mut project_transaction,
+                                            &mut cx,
+                                        )
+                                        .await
+                                    } else {
+                                        Self::format_with_formatter(
+                                            &Formatter::LanguageServer,
+                                            server_and_buffer,
+                                            project.clone(),
+                                            buffer,
+                                            buffer_abs_path,
+                                            &settings,
+                                            &adapters_and_servers,
+                                            push_to_history,
+                                            &mut project_transaction,
+                                            &mut cx,
+                                        )
+                                        .await
+                                    }
+                                }
+                                .log_err()
+                                .flatten();
+
+                                if let Some(op) = diff {
+                                    format_operations.push(op)
+                                }
+                            }
+                            SelectedFormatter::List(formatters) => {
+                                for formatter in formatters.0.clone() {
+                                    // format with formatter
+                                    let diff = Self::format_with_formatter(
+                                        &formatter,
+                                        server_and_buffer,
+                                        project.clone(),
+                                        buffer,
+                                        buffer_abs_path,
+                                        &settings,
+                                        &adapters_and_servers,
+                                        push_to_history,
+                                        &mut project_transaction,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .log_err()
+                                    .flatten();
+                                    if let Some(op) = diff {
+                                        format_operations.push(op);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            };
+            }
 
             buffer.update(&mut cx, |b, cx| {
                 // If the buffer had its whitespace formatted and was edited while the language-specific
@@ -5130,13 +5200,13 @@ impl Project {
                     if b.peek_undo_stack()
                         .map_or(true, |e| e.transaction_id() != transaction_id)
                     {
-                        format_operation.take();
+                        format_operations.clear();
                     }
                 }
 
                 // Apply any language-specific formatting, and group the two formatting operations
                 // in the buffer's undo history.
-                if let Some(operation) = format_operation {
+                for operation in format_operations {
                     match operation {
                         FormatOperation::Lsp(edits) => {
                             b.edit(edits, None, cx);
@@ -5166,6 +5236,80 @@ impl Project {
         }
 
         Ok(project_transaction)
+    }
+
+    async fn format_with_formatter(
+        formatter: &Formatter,
+        server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
+        project: WeakModel<Project>,
+        buffer: &Model<Buffer>,
+        buffer_abs_path: &Option<PathBuf>,
+        settings: &LanguageSettings,
+        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        push_to_history: bool,
+        transaction: &mut ProjectTransaction,
+        mut cx: &mut AsyncAppContext,
+    ) -> Result<Option<FormatOperation>, anyhow::Error> {
+        let result = match formatter {
+            Formatter::LanguageServer => {
+                if let Some((language_server, buffer_abs_path)) = server_and_buffer {
+                    Some(FormatOperation::Lsp(
+                        Self::format_via_lsp(
+                            &project,
+                            buffer,
+                            buffer_abs_path,
+                            language_server,
+                            settings,
+                            cx,
+                        )
+                        .await
+                        .context("failed to format via language server")?,
+                    ))
+                } else {
+                    None
+                }
+            }
+            Formatter::Prettier => {
+                prettier_support::format_with_prettier(&project, buffer, &mut cx)
+                    .await
+                    .transpose()
+                    .ok()
+                    .flatten()
+            }
+            Formatter::External { command, arguments } => {
+                let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
+                Self::format_via_external_command(
+                    buffer,
+                    buffer_abs_path,
+                    &command,
+                    &arguments,
+                    &mut cx,
+                )
+                .await
+                .context(format!(
+                    "failed to format via external command {:?}",
+                    command
+                ))?
+                .map(FormatOperation::External)
+            }
+            Formatter::CodeActions(code_actions) => {
+                let code_actions = deserialize_code_actions(&code_actions);
+                if !code_actions.is_empty() {
+                    Self::execute_code_actions_on_servers(
+                        &project,
+                        &adapters_and_servers,
+                        code_actions,
+                        buffer,
+                        push_to_history,
+                        transaction,
+                        cx,
+                    )
+                    .await?;
+                }
+                None
+            }
+        };
+        anyhow::Ok(result)
     }
 
     async fn format_via_lsp(

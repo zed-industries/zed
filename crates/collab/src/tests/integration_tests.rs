@@ -4409,10 +4409,11 @@ async fn test_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::External {
-                    command: "awk".into(),
-                    arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
-                });
+                file.defaults.formatter =
+                    Some(SelectedFormatter::List(FormatterList(vec![External {
+                        command: "awk".into(),
+                        arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                    }])));
             });
         });
     });

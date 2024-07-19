@@ -13,7 +13,7 @@ use futures::{
 };
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
-    language_settings::{LanguageSettings, SelectedFormatter},
+    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
     Buffer, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
@@ -30,12 +30,12 @@ pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,
 ) -> Option<&HashSet<String>> {
     match &language_settings.formatter {
-        SelectedFormatter::Prettier { .. } | SelectedFormatter::Auto => {
-            Some(&language_settings.prettier.plugins)
-        }
-        SelectedFormatter::LanguageServer
-        | SelectedFormatter::External { .. }
-        | SelectedFormatter::CodeActions(_) => None,
+        SelectedFormatter::Auto => Some(&language_settings.prettier.plugins),
+
+        SelectedFormatter::List(list) => list
+            .0
+            .contains(&Formatter::Prettier)
+            .then_some(&language_settings.prettier.plugins),
     }
 }
 
