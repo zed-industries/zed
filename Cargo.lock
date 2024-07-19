@@ -10426,6 +10426,7 @@ dependencies = [
  "settings",
  "smol",
  "supermaven_api",
+ "text",
  "theme",
  "ui",
  "util",

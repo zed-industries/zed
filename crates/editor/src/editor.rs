@@ -70,10 +70,10 @@ use gpui::{
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
     Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
     FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
+    KeyContext, ListSizingBehavior, Model, ModelContext, MouseButton, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
+    TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    VisualContext, WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -89,7 +89,7 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TransactionId, TruncationMode,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -532,7 +532,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
-    active_inline_completion: Option<(Inlay, Option<TruncationMode>)>,
+    active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
@@ -4929,7 +4929,7 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some((completion, truncation_mode)) = self.take_active_inline_completion(cx) else {
+        let Some((completion, delete_range)) = self.take_active_inline_completion(cx) else {
             return;
         };
         if let Some(provider) = self.inline_completion_provider() {
@@ -4941,19 +4941,15 @@ impl Editor {
             text: completion.text.to_string().into(),
         });
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
         let text = &completion.text.to_string();
 
         self.insert_internal(cx, |buffer, selections, cx| {
+            let snapshot = buffer.snapshot(cx);
+
             buffer.edit(
-                selections.iter().map(|s| {
-                    // truncate the line
-                    let edit_end = display_map.next_line_boundary(s.start).0;
-                    match truncation_mode {
-                        Some(TruncationMode::EndOfLine) => ((s.start..edit_end), text.clone()),
-                        None => ((s.start..s.end), text.clone()),
-                    }
+                selections.iter().map(|s| match delete_range.clone() {
+                    Some(range) => (range.to_point(&snapshot), text.clone()),
+                    None => ((s.start..s.end), text.clone()),
                 }),
                 None,
                 cx,
@@ -4969,7 +4965,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
-            if let Some((completion, truncation_mode)) = self.take_active_inline_completion(cx) {
+            if let Some((completion, delete_range)) = self.take_active_inline_completion(cx) {
                 let mut partial_completion = completion
                     .text
                     .chars()
@@ -4990,19 +4986,13 @@ impl Editor {
                     text: partial_completion.clone().into(),
                 });
 
-                let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
                 self.insert_internal(cx, |buffer, selections, cx| {
+                    let snapshot = buffer.snapshot(cx);
+
                     buffer.edit(
-                        selections.iter().map(|s| {
-                            // truncate the line
-                            let edit_end = display_map.next_line_boundary(s.start).0;
-                            match truncation_mode {
-                                Some(TruncationMode::EndOfLine) => {
-                                    ((s.start..edit_end), partial_completion.clone())
-                                }
-                                None => ((s.start..s.end), partial_completion.clone()),
-                            }
+                        selections.iter().map(|s| match delete_range.clone() {
+                            Some(range) => (range.to_point(&snapshot), partial_completion.clone()),
+                            None => ((s.start..s.end), partial_completion.clone()),
                         }),
                         None,
                         cx,
@@ -5039,7 +5029,7 @@ impl Editor {
     fn take_active_inline_completion(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(Inlay, Option<TruncationMode>)> {
+    ) -> Option<(Inlay, Option<Range<Anchor>>)> {
         let completion = self.active_inline_completion.take()?;
         self.display_map.update(cx, |map, cx| {
             map.splice_inlays(vec![completion.0.id], Default::default(), cx);
@@ -5057,6 +5047,8 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
+        let excerpt_id = cursor.excerpt_id;
+
         if self.context_menu.read().is_none()
             && self.completion_tasks.is_empty()
             && selection.start == selection.end
@@ -5065,7 +5057,7 @@ impl Editor {
                 if let Some((buffer, cursor_buffer_position)) =
                     self.buffer.read(cx).text_anchor_for_position(cursor, cx)
                 {
-                    if let Some((text, truncation_mode)) =
+                    if let Some((text, text_anchor_range)) =
                         provider.active_completion_text(&buffer, cursor_buffer_position, cx)
                     {
                         let text = Rope::from(text);
@@ -5076,8 +5068,17 @@ impl Editor {
 
                         let completion_inlay =
                             Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
+
+                        let multibuffer_anchor_range = text_anchor_range.and_then(|range| {
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            Some(
+                                snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?,
+                            )
+                        });
                         self.active_inline_completion =
-                            Some((completion_inlay.clone(), truncation_mode));
+                            Some((completion_inlay.clone(), multibuffer_anchor_range));
+
                         self.display_map.update(cx, move |map, cx| {
                             map.splice_inlays(to_remove, vec![completion_inlay], cx)
                         });

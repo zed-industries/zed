@@ -401,15 +401,6 @@ pub enum AutoindentMode {
     },
 }
 
-/// The truncation mode associated with an editing operation.
-/// For some editing operations, such as accepting an inline completion,
-/// the text is truncated to the right of the cursor.
-#[derive(Clone, Debug)]
-pub enum TruncationMode {
-    /// Truncate the current line to the right of the cursor.
-    EndOfLine,
-}
-
 #[derive(Clone)]
 struct AutoindentRequest {
     before_edit: BufferSnapshot,

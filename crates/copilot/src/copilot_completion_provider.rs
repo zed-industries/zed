@@ -5,10 +5,10 @@ use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, OffsetRangeExt, ToOffset, TruncationMode,
+    Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -239,7 +239,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<(&'a str, Option<TruncationMode>)> {
+    ) -> Option<(&'a str, Option<Range<language::Anchor>>)> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
