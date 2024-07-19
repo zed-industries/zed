@@ -8403,6 +8403,37 @@ impl Project {
         })
     }
 
+    /// Attempts to find a `ProjectPath` corresponding to the given full path.
+    ///
+    /// This method iterates through all worktrees in the project, trying to match
+    /// the given full path against each worktree's root name. If a match is found,
+    /// it returns a `ProjectPath` containing the worktree ID and the relative path
+    /// within that worktree.
+    ///
+    /// # Arguments
+    ///
+    /// * `full_path` - A reference to a `Path` representing the full path to resolve.
+    /// * `cx` - A reference to the `AppContext`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
+    pub fn project_path_for_full_path(
+        &self,
+        full_path: &Path,
+        cx: &AppContext,
+    ) -> Option<ProjectPath> {
+        self.worktrees.iter().find_map(|worktree| {
+            let worktree = worktree.upgrade()?;
+            let worktree_root_name = worktree.read(cx).root_name();
+            let relative_path = full_path.strip_prefix(worktree_root_name).ok()?;
+            Some(ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path.into(),
+            })
+        })
+    }
+
     pub fn get_workspace_root(
         &self,
         project_path: &ProjectPath,

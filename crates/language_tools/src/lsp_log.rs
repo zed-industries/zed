@@ -115,6 +115,7 @@ pub fn init(cx: &mut AppContext) {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
                     None,
+                    true,
                     cx,
                 );
             }

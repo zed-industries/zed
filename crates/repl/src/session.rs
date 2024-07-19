@@ -177,10 +177,61 @@ impl Session {
                 let kernel = kernel.await;
 
                 match kernel {
-                    Ok((kernel, mut messages_rx)) => {
+                    Ok((mut kernel, mut messages_rx)) => {
                         this.update(&mut cx, |this, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
+
+                            let status = kernel.process.status();
                             this.kernel = Kernel::RunningKernel(kernel);
+
+                            cx.spawn(|session, mut cx| async move {
+                                let error_message = match status.await {
+                                    Ok(status) => {
+                                        if status.success() {
+                                            log::info!("kernel process exited successfully");
+                                            return;
+                                        }
+
+                                        format!("kernel process exited with status: {:?}", status)
+                                    }
+                                    Err(err) => {
+                                        format!("kernel process exited with error: {:?}", err)
+                                    }
+                                };
+
+                                log::error!("{}", error_message);
+
+                                session
+                                    .update(&mut cx, |session, cx| {
+                                        session.kernel =
+                                            Kernel::ErroredLaunch(error_message.clone());
+
+                                        session.blocks.values().for_each(|block| {
+                                            block.execution_view.update(
+                                                cx,
+                                                |execution_view, cx| {
+                                                    match execution_view.status {
+                                                        ExecutionStatus::Finished => {
+                                                            // Do nothing when the output was good
+                                                        }
+                                                        _ => {
+                                                            // All other cases, set the status to errored
+                                                            execution_view.status =
+                                                                ExecutionStatus::KernelErrored(
+                                                                    error_message.clone(),
+                                                                )
+                                                        }
+                                                    }
+                                                    cx.notify();
+                                                },
+                                            );
+                                        });
+
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            })
+                            .detach();
 
                             this.messaging_task = cx.spawn(|session, mut cx| async move {
                                 while let Some(message) = messages_rx.next().await {

@@ -78,7 +78,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
-pub(crate) use hunk_diff::HunkToExpand;
+pub(crate) use hunk_diff::HoveredHunk;
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
@@ -1992,28 +1992,35 @@ impl Editor {
         _: &workspace::NewFile,
         cx: &mut ViewContext<Workspace>,
     ) {
+        Self::new_in_workspace(workspace, cx).detach_and_prompt_err(
+            "Failed to create buffer",
+            cx,
+            |e, _| match e.error_code() {
+                ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+                _ => None,
+            },
+        );
+    }
+
+    pub fn new_in_workspace(
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<Editor>>> {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.add_item_to_active_pane(
-                    Box::new(
-                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
-                    ),
-                    None,
-                    cx,
-                )
+                let editor =
+                    cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx));
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
+                editor
             })
         })
-        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
-            ErrorCode::RemoteUpgradeRequired => Some(format!(
-                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
-                e.error_tag("required").unwrap_or("the latest version")
-            )),
-            _ => None,
-        });
     }
 
     pub fn new_file_in_direction(
@@ -2866,7 +2873,10 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        self.clear_expanded_diff_hunks(cx);
+        if self.clear_clicked_diff_hunks(cx) {
+            cx.notify();
+            return;
+        }
         if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
@@ -2898,6 +2908,10 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
+            return true;
+        }
+
+        if self.mouse_context_menu.take().is_some() {
             return true;
         }
 
@@ -4658,7 +4672,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), true, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
@@ -5116,6 +5130,23 @@ impl Editor {
                     cx,
                 );
             }))
+    }
+
+    fn render_close_hunk_diff_button(
+        &self,
+        hunk: HoveredHunk,
+        row: DisplayRow,
+        cx: &mut ViewContext<Self>,
+    ) -> IconButton {
+        IconButton::new(
+            ("close_hunk_diff_indicator", row.0 as usize),
+            ui::IconName::Close,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(Color::Muted)
+        .tooltip(|cx| Tooltip::for_action("Close hunk diff", &ToggleHunkDiff, cx))
+        .on_click(cx.listener(move |editor, _e, cx| editor.toggle_hovered_hunk(&hunk, cx)))
     }
 
     pub fn context_menu_visible(&self) -> bool {
@@ -5872,22 +5903,7 @@ impl Editor {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
-                editor.buffer().update(cx, |multi_buffer, cx| {
-                    for (buffer_id, changes) in revert_changes {
-                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit(
-                                    changes.into_iter().map(|(range, text)| {
-                                        (range, text.to_string().map(Arc::<str>::from))
-                                    }),
-                                    None,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
-                });
-                editor.change_selections(None, cx, |selections| selections.refresh());
+                editor.revert(revert_changes, cx);
             });
         }
     }
@@ -5917,22 +5933,20 @@ impl Editor {
         cx: &mut ViewContext<'_, Editor>,
     ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
-        self.buffer.update(cx, |multi_buffer, cx| {
-            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
-                Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
-            }
-        });
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
+            Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
+        }
         revert_changes
     }
 
-    fn prepare_revert_change(
+    pub fn prepare_revert_change(
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
-        multi_buffer: &MultiBuffer,
+        multi_buffer: &Model<MultiBuffer>,
         hunk: &DiffHunk<MultiBufferRow>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Option<()> {
-        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = multi_buffer.read(cx).buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
         let original_text = buffer.diff_base()?.slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
@@ -9093,7 +9107,13 @@ impl Editor {
                                             workspace.active_pane().clone()
                                         };
 
-                                        workspace.open_project_item(pane, target.buffer.clone(), cx)
+                                        workspace.open_project_item(
+                                            pane,
+                                            target.buffer.clone(),
+                                            true,
+                                            true,
+                                            cx,
+                                        )
                                     });
                                 target_editor.update(cx, |target_editor, cx| {
                                     // When selecting a definition in a different buffer, disable the nav history
@@ -9391,7 +9411,7 @@ impl Editor {
                     None
                 }
             });
-            workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
+            workspace.add_item_to_active_pane(item.clone(), destination_index, true, cx);
         }
         workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
@@ -11342,7 +11362,8 @@ impl Editor {
                 };
 
                 for (buffer, ranges) in new_selections_by_buffer {
-                    let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
+                    let editor =
+                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                             s.select_ranges(ranges);
@@ -11723,15 +11744,81 @@ impl Editor {
     pub fn file_header_size(&self) -> u8 {
         self.file_header_size
     }
+
+    pub fn revert(
+        &mut self,
+        revert_changes: HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.buffer().update(cx, |multi_buffer, cx| {
+            for (buffer_id, changes) in revert_changes {
+                if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            changes.into_iter().map(|(range, text)| {
+                                (range, text.to_string().map(Arc::<str>::from))
+                            }),
+                            None,
+                            cx,
+                        );
+                    });
+                }
+            }
+        });
+        self.change_selections(None, cx, |selections| selections.refresh());
+    }
+
+    pub fn to_pixel_point(
+        &mut self,
+        source: multi_buffer::Anchor,
+        editor_snapshot: &EditorSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::Point<Pixels>> {
+        let text_layout_details = self.text_layout_details(cx);
+        let line_height = text_layout_details
+            .editor_style
+            .text
+            .line_height_in_pixels(cx.rem_size());
+        let source_point = source.to_display_point(editor_snapshot);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(editor_snapshot);
+        if first_visible_line > source_point {
+            return None;
+        }
+        let source_x = editor_snapshot.x_for_display_point(source_point, &text_layout_details);
+        let source_y = line_height
+            * ((source_point.row() - first_visible_line.row()).0 as f32
+                - text_layout_details.scroll_anchor.offset.y);
+        Some(gpui::Point::new(source_x, source_y))
+    }
+
+    pub fn display_to_pixel_point(
+        &mut self,
+        source: DisplayPoint,
+        editor_snapshot: &EditorSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::Point<Pixels>> {
+        let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
+        let text_layout_details = self.text_layout_details(cx);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(editor_snapshot);
+        if first_visible_line > source {
+            return None;
+        }
+        let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
+        let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
+        Some(gpui::Point::new(source_x, source_y))
+    }
 }
 
 fn hunks_for_selections(
     multi_buffer_snapshot: &MultiBufferSnapshot,
     selections: &[Selection<Anchor>],
 ) -> Vec<DiffHunk<MultiBufferRow>> {
-    let mut hunks = Vec::with_capacity(selections.len());
-    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
-        HashMap::default();
     let buffer_rows_for_selections = selections.iter().map(|selection| {
         let head = selection.head();
         let tail = selection.tail();
@@ -11744,7 +11831,17 @@ fn hunks_for_selections(
         }
     });
 
-    for selected_multi_buffer_rows in buffer_rows_for_selections {
+    hunks_for_rows(buffer_rows_for_selections, multi_buffer_snapshot)
+}
+
+pub fn hunks_for_rows(
+    rows: impl Iterator<Item = Range<MultiBufferRow>>,
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+) -> Vec<DiffHunk<MultiBufferRow>> {
+    let mut hunks = Vec::new();
+    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
+        HashMap::default();
+    for selected_multi_buffer_rows in rows {
         let query_rows =
             selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
@@ -12954,8 +13051,13 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-pub trait RangeToAnchorExt {
+pub trait RangeToAnchorExt: Sized {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
+
+    fn to_display_points(self, snapshot: &EditorSnapshot) -> Range<DisplayPoint> {
+        let anchor_range = self.to_anchors(&snapshot.buffer_snapshot);
+        anchor_range.start.to_display_point(&snapshot)..anchor_range.end.to_display_point(&snapshot)
+    }
 }
 
 impl<T: ToOffset> RangeToAnchorExt for Range<T> {

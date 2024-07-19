@@ -716,7 +716,7 @@ impl ProjectSearchView {
 
         let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
-        workspace.add_item_to_active_pane(Box::new(search.clone()), None, cx);
+        workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, cx);
         search.update(cx, |search, cx| {
             search
                 .included_files_editor
@@ -768,6 +768,7 @@ impl ProjectSearchView {
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
                     None,
+                    true,
                     cx,
                 );
             }
@@ -800,7 +801,7 @@ impl ProjectSearchView {
         });
 
         let search = if let Some(existing) = existing {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
             existing
         } else {
             let settings = cx
@@ -817,7 +818,7 @@ impl ProjectSearchView {
             let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             let view = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
 
-            workspace.add_item_to_active_pane(Box::new(view.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, cx);
             view
         };
 

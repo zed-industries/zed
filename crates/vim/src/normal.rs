@@ -58,6 +58,7 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         YankLine,
+        YankToEndOfLine,
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
@@ -82,6 +83,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
+    workspace.register_action(yank_to_end_of_line);
     workspace.register_action(toggle_comments);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
@@ -459,6 +461,21 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
+    })
+}
+
+fn yank_to_end_of_line(_: &mut Workspace, _: &YankToEndOfLine, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx);
+        yank_motion(
+            vim,
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            cx,
+        )
     })
 }
 
@@ -1432,6 +1449,15 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("helˇlo\n").await;
+        cx.simulate_shared_keystrokes("shift-y").await;
+        cx.shared_clipboard().await.assert_eq("lo");
     }
 
     #[gpui::test]

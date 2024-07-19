@@ -2615,7 +2615,8 @@ fn rust_lang() -> Language {
             "impl" @context
             trait: (_)? @name
             "for"? @context
-            type: (_) @name) @item
+            type: (_) @name
+            body: (_ "{" (_)* "}")) @item
         (function_item
             "fn" @context
             name: (_) @name) @item
