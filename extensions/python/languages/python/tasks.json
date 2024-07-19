@@ -1,0 +1,23 @@
+[
+  {
+    "label": "execute selection",
+    "command": "python3",
+    "args": ["-c", "$ZED_SELECTED_TEXT"]
+  },
+  {
+    "label": "run $ZED_FILE",
+    "command": "python3",
+    "args": ["$ZED_FILE"]
+  },
+  {
+    "label": "unittest $ZED_FILE",
+    "command": "python3",
+    "args": ["-m", "unittest", "$ZED_FILE"]
+  },
+  {
+    "label": "unittest $ZED_CUSTOM_PYTHON_UNITTEST_TARGET",
+    "command": "python3",
+    "args": ["-m", "unittest", "$ZED_CUSTOM_PYTHON_UNITTEST_TARGET"],
+    "tags": ["python-unittest-class", "python-unittest-method"]
+  }
+]
