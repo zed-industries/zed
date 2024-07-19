@@ -5280,6 +5280,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "system-configuration",
  "url",
 ]
 
@@ -10598,6 +10599,27 @@ dependencies = [
  "once_cell",
  "rayon",
  "windows 0.52.0",
+]
+
+[[package]]
+name = "system-configuration"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658bc6ee10a9b4fcf576e9b0819d95ec16f4d2c02d39fd83ac1c8789785c4a42"
+dependencies = [
+ "bitflags 2.6.0",
+ "core-foundation",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys 0.8.6",
+ "libc",
 ]
 
 [[package]]

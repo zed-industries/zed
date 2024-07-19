@@ -1,5 +1,8 @@
 pub mod github;
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
@@ -27,12 +30,27 @@ fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
         };
     }
 
+    #[cfg(target_os = "macos")]
+    let system_proxy = macos::SystemProxiesStore::new(|_| {})
+        .proxy_settings()
+        .select();
+    #[cfg(not(target_os = "macos"))]
+    let system_proxy: Option<String> = None;
+
     proxy
         .and_then(|input| {
             input
                 .parse::<isahc::http::Uri>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
+        })
+        .or_else(|| {
+            system_proxy.and_then(|input| {
+                input
+                    .parse::<isahc::http::Uri>()
+                    .inspect_err(|e| log::error!("Error system proxy settings: {}", e))
+                    .ok()
+            })
         })
         .or_else(|| {
             try_env!(
