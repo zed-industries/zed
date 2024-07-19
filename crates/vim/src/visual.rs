@@ -5,7 +5,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Bias, DisplayPoint, Editor, ToOffset, ToPoint,
+    Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -113,9 +113,6 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
                     let ranges = ranges
                         .into_iter()
                         .map(|(start, end, reversed)| {
-                            dbg!(&start.to_point(&map.buffer_snapshot));
-                            dbg!(&end.to_point(&map.buffer_snapshot));
-
                             let new_end =
                                 movement::saturating_right(&map, end.to_display_point(&map));
                             Selection {
