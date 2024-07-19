@@ -426,7 +426,8 @@ impl SshClientState {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
-        use smol::fs::unix::PermissionsExt as _;
+        use futures::{io::BufReader, AsyncBufReadExt as _};
+        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
         let url = format!("{user}@{host}");
@@ -434,15 +435,16 @@ impl SshClientState {
             .prefix("zed-ssh-session")
             .tempdir()?;
 
-        // Create a TCP listener to handle requests from the askpass program.
-        let listener = smol::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("failed to find open port");
-        let askpass_port = listener.local_addr().unwrap().port();
+        // Create a domain socket listener to handle requests from the askpass program.
+        let askpass_socket = temp_dir.path().join("askpass.sock");
+        let listener =
+            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+
         let askpass_task = cx.spawn(|mut cx| async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let mut buffer = Vec::new();
-                if stream.read_to_end(&mut buffer).await.is_err() {
+                let mut reader = BufReader::new(&mut stream);
+                if reader.read_until(b'\0', &mut buffer).await.is_err() {
                     buffer.clear();
                 }
                 let password_prompt = String::from_utf8_lossy(&buffer);
@@ -458,10 +460,12 @@ impl SshClientState {
             }
         });
 
-        // Create an askpass script that communicates back to this process using TCP.
+        // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n echo \"$@\" | nc 127.0.0.1 {askpass_port} 2> /dev/null",
-            shebang = "#!/bin/sh"
+            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+            askpass_socket = askpass_socket.display(),
+            print_args = "printf '%s\\0' \"$@\"",
+            shebang = "#!/bin/sh",
         );
         let askpass_script_path = temp_dir.path().join("askpass.sh");
         fs::write(&askpass_script_path, askpass_script).await?;
@@ -501,11 +505,11 @@ impl SshClientState {
         }
 
         Ok(Self {
-            _master_process: master_process,
-            port,
-            _temp_dir: temp_dir,
-            socket_path,
             url,
+            port,
+            socket_path,
+            _master_process: master_process,
+            _temp_dir: temp_dir,
         })
     }
 

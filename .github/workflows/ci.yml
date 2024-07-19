@@ -251,8 +251,8 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            target/zed-remote-server-mac-x86_64.gz
-            target/zed-remote-server-mac-aarch64.gz
+            target/zed-remote-server-macos-x86_64.gz
+            target/zed-remote-server-macos-aarch64.gz
             target/aarch64-apple-darwin/release/Zed-aarch64.dmg
             target/x86_64-apple-darwin/release/Zed-x86_64.dmg
             target/release/Zed.dmg

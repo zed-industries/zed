@@ -401,7 +401,15 @@ impl AutoUpdater {
             release_channel = ReleaseChannel::Nightly;
         }
 
-        let release = Self::get_latest_release(&this, "zed-remote-server", os, arch, cx).await?;
+        let release = Self::get_latest_release(
+            &this,
+            "zed-remote-server",
+            os,
+            arch,
+            Some(release_channel),
+            cx,
+        )
+        .await?;
 
         let servers_dir = paths::remote_servers_dir();
         let channel_dir = servers_dir.join(release_channel.dev_name());
@@ -423,6 +431,7 @@ impl AutoUpdater {
         asset: &str,
         os: &str,
         arch: &str,
+        release_channel: Option<ReleaseChannel>,
         cx: &mut AsyncAppContext,
     ) -> Result<JsonRelease> {
         let client = this.read_with(cx, |this, _| this.http_client.clone())?;
@@ -430,14 +439,10 @@ impl AutoUpdater {
             "/api/releases/latest?asset={}&os={}&arch={}",
             asset, os, arch
         ));
-        cx.update(|cx| {
-            if let Some(param) = ReleaseChannel::try_global(cx)
-                .and_then(|release_channel| release_channel.release_query_param())
-            {
-                url_string += "&";
-                url_string += param;
-            }
-        })?;
+        if let Some(param) = release_channel.and_then(|c| c.release_query_param()) {
+            url_string += "&";
+            url_string += param;
+        }
 
         let mut response = client.get(&url_string, Default::default(), true).await?;
 
@@ -448,17 +453,34 @@ impl AutoUpdater {
             .await
             .context("error reading release")?;
 
-        serde_json::from_slice(body.as_slice()).context("error deserializing release")
+        if !response.status().is_success() {
+            Err(anyhow!(
+                "failed to fetch release: {:?}",
+                String::from_utf8_lossy(&body),
+            ))?;
+        }
+
+        serde_json::from_slice(body.as_slice()).with_context(|| {
+            format!(
+                "error deserializing release {:?}",
+                String::from_utf8_lossy(&body),
+            )
+        })
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
-        let (client, current_version) = this.update(&mut cx, |this, cx| {
+        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
             cx.notify();
-            (this.http_client.clone(), this.current_version)
+            (
+                this.http_client.clone(),
+                this.current_version,
+                ReleaseChannel::try_global(cx),
+            )
         })?;
 
-        let release = Self::get_latest_release(&this, "zed", OS, ARCH, &mut cx).await?;
+        let release =
+            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
         let should_download = match *RELEASE_CHANNEL {
             ReleaseChannel::Nightly => cx
