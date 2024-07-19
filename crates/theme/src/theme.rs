@@ -16,7 +16,7 @@ mod schema;
 mod settings;
 mod styles;
 
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
@@ -28,8 +28,8 @@ pub use settings::*;
 pub use styles::*;
 
 use gpui::{
-    px, AppContext, AssetSource, Hsla, Pixels, SharedString, WindowAppearance,
-    WindowBackgroundAppearance,
+    px, AppContext, AssetSource, Hsla, ModelContext, Pixels, SharedString, ViewContext,
+    WindowAppearance, WindowBackgroundAppearance, WindowContext,
 };
 use serde::Deserialize;
 
@@ -101,6 +101,24 @@ pub trait ActiveTheme {
 impl ActiveTheme for AppContext {
     fn theme(&self) -> &Arc<Theme> {
         &ThemeSettings::get_global(self).active_theme
+    }
+}
+
+impl<'a, V> ActiveTheme for ViewContext<'a, V> {
+    fn theme(&self) -> &Arc<Theme> {
+        self.deref().theme()
+    }
+}
+
+impl<'a, V> ActiveTheme for ModelContext<'a, V> {
+    fn theme(&self) -> &Arc<Theme> {
+        self.deref().theme()
+    }
+}
+
+impl<'a> ActiveTheme for WindowContext<'a> {
+    fn theme(&self) -> &Arc<Theme> {
+        self.deref().theme()
     }
 }
 
