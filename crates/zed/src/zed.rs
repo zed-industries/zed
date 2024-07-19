@@ -138,28 +138,29 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        if let Some(specs) = cx.gpu_specs().filter(|info| info.is_cpu_emulator) {
+        if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
+            if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
             let message = format!(db::indoc!{r#"
-                Zed is currently running on a software emulated GPU.
-                It will be horribly slow and use 100% CPU.
+                Zed uses Vulkan for rendering and requires a compatible GPU.
 
-                Device name: {}
-                Driver name: {}
-                Driver info: {}
+
+                Currently you are using a software emulated GPU ({}) which
+                will result in awful performance.
 
                 For troubleshooting see: https://zed.dev/docs/linux
-                "#}, specs.device_name, specs.driver_name, specs.driver_info);
-            let prompt = cx.prompt(PromptLevel::Critical, "GPU configuration required", Some(&message),
-                &["Troubleshoot", "Ignore"]);
+                "#}, specs.device_name);
+            let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
+                &["Troubleshoot and Quit"]);
             cx.spawn(|_, mut cx| async move {
                 if prompt.await == Ok(0) {
                     cx.update(|cx| {
-                        cx.open_url("https://zed.dev/docs/linux");
+                        cx.open_url("https://zed.dev/docs/linux#zed-is-very-slow");
                         cx.quit();
                     }).ok();
                 }
             }).detach()
+            }
         }
 
         let inline_completion_button = cx.new_view(|cx| {

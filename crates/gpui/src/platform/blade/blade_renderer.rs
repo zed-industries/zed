@@ -454,7 +454,7 @@ impl BladeRenderer {
         let info = self.gpu.device_information();
 
         GPUSpecs {
-            is_cpu_emulator: info.device_kind == blade_graphics::DeviceKind::SoftwareEmulator,
+            is_software_emulated: info.is_software_emulated,
             device_name: info.device_name.clone(),
             driver_name: info.driver_name.clone(),
             driver_info: info.driver_info.clone(),
