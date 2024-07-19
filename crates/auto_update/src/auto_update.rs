@@ -28,7 +28,7 @@ use std::{
         consts::{ARCH, OS},
     },
     ffi::OsString,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -507,7 +507,14 @@ impl AutoUpdater {
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-auto-update")
             .tempdir()?;
-        let downloaded_asset = download_release(&temp_dir, release, "zed", client, &cx).await?;
+
+        let filename = match OS {
+            "macos" => Ok("Zed.dmg"),
+            "linux" => Ok("zed.tar.gz"),
+            _ => Err(anyhow!("not supported: {:?}", OS)),
+        }?;
+        let downloaded_asset = temp_dir.path().join(filename);
+        download_release(&downloaded_asset, release, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -588,13 +595,11 @@ async fn download_remote_server_binary(
 }
 
 async fn download_release(
-    temp_dir: &tempfile::TempDir,
+    target_path: &Path,
     release: JsonRelease,
-    target_filename: &str,
     client: Arc<HttpClientWithUrl>,
     cx: &AsyncAppContext,
-) -> Result<PathBuf> {
-    let target_path = temp_dir.path().join(target_filename);
+) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
     let (installation_id, release_channel, telemetry) = cx.update(|cx| {
@@ -616,7 +621,7 @@ async fn download_release(
     smol::io::copy(response.body_mut(), &mut target_file).await?;
     log::info!("downloaded update. path:{:?}", target_path);
 
-    Ok(target_path)
+    Ok(())
 }
 
 async fn install_release_linux(
