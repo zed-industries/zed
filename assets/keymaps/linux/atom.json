@@ -1,0 +1,94 @@
+// Default Keymap (Atom) for Zed on Linux
+[
+  {
+    "bindings": {
+      "ctrl-shift-f5": "workspace::Reload", // window:reload
+      "ctrl-k ctrl-n": "workspace::ActivatePreviousPane", // window:focus-next-pane
+      "ctrl-k ctrl-p": "workspace::ActivateNextPane" // window:focus-previous-pane
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-l": "language_selector::Toggle", // grammar-selector:show
+      "ctrl-|": "pane::RevealInProjectPanel", // tree-view:reveal-active-file
+      "ctrl-b": "editor::GoToDefinition", // fuzzy-finder:toggle-buffer-finder
+      "ctrl-alt-b": "editor::GoToDefinitionSplit", // N/A: From JetBrains
+      "ctrl-<": "editor::ScrollCursorCenter", // editor:scroll-to-cursor
+      "f3": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
+      "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
+      "alt-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
+      "alt-shift-up": "editor::AddSelectionAbove", // editor:add-selection-above
+      "ctrl-k ctrl-u": "editor::ConvertToUpperCase", // editor:upper-case
+      "ctrl-k ctrl-l": "editor::ConvertToLowerCase", // editor:lower-case
+      "ctrl-j": "editor::JoinLines", // editor:join-lines
+      "ctrl-shift-d": "editor::DuplicateLineDown", // editor:duplicate-lines
+      "ctrl-up": "editor::MoveLineUp", // editor:move-line-up
+      "ctrl-down": "editor::MoveLineDown", // editor:move-line-down
+      "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
+      "ctrl-shift-m": "markdown::OpenPreviewToTheSide" // markdown-preview:toggle
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-r": "outline::Toggle" // symbols-view:toggle-project-symbols
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "ctrl-f3": "search::SelectNextMatch", // find-and-replace:find-next-selected
+      "ctrl-shift-f3": "search::SelectPrevMatch" // find-and-replace:find-previous-selected
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
+      "ctrl-k ctrl-b": "workspace::ToggleLeftDock", // tree-view:toggle
+      "ctrl-t": "file_finder::Toggle", // fuzzy-finder:toggle-file-finder
+      "ctrl-r": "project_symbols::Toggle" // symbols-view:toggle-project-symbols
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      // "ctrl-0": "project_panel::ToggleFocus", // tree-view:toggle-focus
+      "ctrl-1": ["pane::ActivateItem", 0], // tree-view:open-selected-entry-in-pane-1
+      "ctrl-2": ["pane::ActivateItem", 1], // tree-view:open-selected-entry-in-pane-2
+      "ctrl-3": ["pane::ActivateItem", 2], // tree-view:open-selected-entry-in-pane-3
+      "ctrl-4": ["pane::ActivateItem", 3], // tree-view:open-selected-entry-in-pane-4
+      "ctrl-5": ["pane::ActivateItem", 4], // tree-view:open-selected-entry-in-pane-5
+      "ctrl-6": ["pane::ActivateItem", 5], // tree-view:open-selected-entry-in-pane-6
+      "ctrl-7": ["pane::ActivateItem", 6], // tree-view:open-selected-entry-in-pane-7
+      "ctrl-8": ["pane::ActivateItem", 7], // tree-view:open-selected-entry-in-pane-8
+      "ctrl-9": ["pane::ActivateItem", 8] // tree-view:open-selected-entry-in-pane-9
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "f2": "project_panel::Rename", // tree-view:rename
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "ctrl-x": "project_panel::Cut", // tree-view:cut
+      "ctrl-c": "project_panel::Copy", // tree-view:copy
+      "ctrl-v": "project_panel::Paste" // tree-view:paste
+    }
+  },
+  {
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      "ctrl-shift-c": "project_panel::CopyPath", // tree-view:copy-full-path
+      "ctrl-[": "project_panel::CollapseSelectedEntry", // tree-view:collapse-directory
+      "ctrl-b": "project_panel::CollapseSelectedEntry", // tree-view:collapse-directory
+      "ctrl-]": "project_panel::ExpandSelectedEntry", // tree-view:expand-item
+      "ctrl-f": "project_panel::ExpandSelectedEntry", // tree-view:expand-item
+      "a": "project_panel::NewFile", // tree-view:add-file
+      "d": "project_panel::Duplicate", // tree-view:duplicate
+      "home": "menu::SelectFirst", // core:move-to-top
+      "end": "menu::SelectLast", // core:move-to-bottom
+      "shift-a": "project_panel::NewDirectory" // tree-view:add-folder
+    }
+  }
+]

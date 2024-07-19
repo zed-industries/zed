@@ -81,6 +81,8 @@ impl LinuxClient for HeadlessClient {
 
     fn open_uri(&self, _uri: &str) {}
 
+    fn reveal_path(&self, _path: std::path::PathBuf) {}
+
     fn write_to_primary(&self, _item: crate::ClipboardItem) {}
 
     fn write_to_clipboard(&self, _item: crate::ClipboardItem) {}

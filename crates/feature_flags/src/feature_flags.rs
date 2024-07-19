@@ -29,6 +29,16 @@ impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";
 }
 
+pub struct TerminalInlineAssist {}
+impl FeatureFlag for TerminalInlineAssist {
+    const NAME: &'static str = "terminal-inline-assist";
+}
+
+pub struct GroupedDiagnostics {}
+impl FeatureFlag for GroupedDiagnostics {
+    const NAME: &'static str = "grouped-diagnostics";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

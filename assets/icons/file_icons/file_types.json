@@ -94,6 +94,7 @@
     "lua": "lua",
     "m4a": "audio",
     "m4v": "video",
+    "markdown": "document",
     "md": "document",
     "mdb": "storage",
     "mdf": "storage",

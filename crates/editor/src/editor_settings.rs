@@ -25,6 +25,11 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    pub search_wrap: bool,
+    pub auto_signature_help: bool,
+    pub show_signature_help_after_edits: bool,
+    #[serde(default)]
+    pub jupyter: Jupyter,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -62,6 +67,15 @@ pub enum DoubleClickInMultibuffer {
     /// Open the excerpt clicked as a new buffer in the new tab, if no `alt` modifier was pressed during double click.
     /// Otherwise, behave as a regular buffer and select the whole word.
     Open,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Jupyter {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: `false`
+    pub enabled: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -217,6 +231,23 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+    /// Whether the editor search results will loop
+    ///
+    /// Default: true
+    pub search_wrap: Option<bool>,
+
+    /// Whether to automatically show a signature help pop-up or not.
+    ///
+    /// Default: false
+    pub auto_signature_help: Option<bool>,
+
+    /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
+    ///
+    /// Default: true
+    pub show_signature_help_after_edits: Option<bool>,
+
+    /// Jupyter REPL settings.
+    pub jupyter: Option<Jupyter>,
 }
 
 // Toolbar related settings

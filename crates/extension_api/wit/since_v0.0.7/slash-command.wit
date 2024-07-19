@@ -28,4 +28,14 @@ interface slash-command {
         /// The label to display in the placeholder for this section.
         label: string,
     }
+
+    /// A completion for a slash command argument.
+    record slash-command-argument-completion {
+        /// The label to display for this completion.
+        label: string,
+        /// The new text that should be inserted into the command when this completion is accepted.
+        new-text: string,
+        /// Whether the command should be run when accepting this completion.
+        run-command: bool,
+    }
 }

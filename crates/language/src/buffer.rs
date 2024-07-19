@@ -31,6 +31,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    cell::Cell,
     cmp::{self, Ordering},
     collections::BTreeMap,
     ffi::OsStr,
@@ -113,6 +114,9 @@ pub struct Buffer {
     capability: Capability,
     has_conflict: bool,
     diff_base_version: usize,
+    /// Memoize calls to has_changes_since(saved_version).
+    /// The contents of a cell are (self.version, has_changes) at the time of a last call.
+    has_unsaved_edits: Cell<(clock::Global, bool)>,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -699,6 +703,7 @@ impl Buffer {
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
+            has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
             diff_base: diff_base
                 .map(|mut raw_diff_base| {
@@ -808,6 +813,8 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
+        self.has_unsaved_edits
+            .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
@@ -869,6 +876,8 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
+        self.has_unsaved_edits
+            .set((self.saved_version.clone(), false));
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         cx.emit(Event::Reloaded);
@@ -1525,10 +1534,25 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    fn has_unsaved_edits(&self) -> bool {
+        let (last_version, has_unsaved_edits) = self.has_unsaved_edits.take();
+
+        if last_version == self.version {
+            self.has_unsaved_edits
+                .set((last_version, has_unsaved_edits));
+            return has_unsaved_edits;
+        }
+
+        let has_edits = self.has_edits_since(&self.saved_version);
+        self.has_unsaved_edits
+            .set((self.version.clone(), has_edits));
+        has_edits
+    }
+
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.has_conflict
-            || self.has_edits_since(&self.saved_version)
+            || self.has_unsaved_edits()
             || self
                 .file
                 .as_ref()
@@ -1540,7 +1564,7 @@ impl Buffer {
     pub fn has_conflict(&self) -> bool {
         self.has_conflict
             || self.file.as_ref().map_or(false, |file| {
-                file.mtime() > self.saved_mtime && self.has_edits_since(&self.saved_version)
+                file.mtime() > self.saved_mtime && self.has_unsaved_edits()
             })
     }
 
@@ -1886,6 +1910,10 @@ impl Buffer {
             }
         }
         self.deferred_ops.insert(deferred_ops);
+    }
+
+    pub fn has_deferred_ops(&self) -> bool {
+        !self.deferred_ops.is_empty() || self.text.has_deferred_ops()
     }
 
     fn can_apply_op(&self, operation: &Operation) -> bool {

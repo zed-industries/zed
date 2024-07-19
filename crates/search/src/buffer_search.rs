@@ -9,14 +9,14 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorStyle,
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
 };
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
-    FontStyle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyContext,
-    ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, View,
-    ViewContext, VisualContext as _, WhiteSpace, WindowContext,
+    FontStyle, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
+    ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
+    WhiteSpace, WindowContext,
 };
 use project::{
     search::SearchQuery,
@@ -116,7 +116,7 @@ impl BufferSearchBar {
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.buffer_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -777,6 +777,15 @@ impl BufferSearchBar {
                     .get(&searchable_item.downgrade())
                     .filter(|matches| !matches.is_empty())
                 {
+                    // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
+                    if !EditorSettings::get_global(cx).search_wrap {
+                        if (direction == Direction::Next && index + count >= matches.len())
+                            || (direction == Direction::Prev && index < count)
+                        {
+                            crate::show_no_more_matches(cx);
+                            return;
+                        }
+                    }
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
 
@@ -1122,9 +1131,7 @@ impl BufferSearchBar {
                             .as_ref()
                             .clone()
                             .with_replacement(self.replacement(cx));
-                        for m in matches {
-                            searchable_item.replace(m, &query, cx);
-                        }
+                        searchable_item.replace_all(&mut matches.iter(), &query, cx);
                     }
                 }
             }

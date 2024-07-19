@@ -12,18 +12,28 @@ workspace = true
 path = "src/assistant.rs"
 doctest = false
 
+[features]
+test-support = [
+    "editor/test-support",
+    "language/test-support",
+    "project/test-support",
+    "text/test-support",
+]
+
 [dependencies]
-anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
 assistant_slash_command.workspace = true
 async-watch.workspace = true
+breadcrumbs.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
+clock.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true
-file_icons.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -31,6 +41,7 @@ gpui.workspace = true
 heed.workspace = true
 html_to_markdown.workspace = true
 http.workspace = true
+indexed_docs.workspace = true
 indoc.workspace = true
 language.workspace = true
 log.workspace = true
@@ -44,7 +55,6 @@ paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
-rustdoc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
@@ -56,6 +66,7 @@ smol.workspace = true
 strsim = "0.11"
 strum.workspace = true
 telemetry_events.workspace = true
+terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true
@@ -70,7 +81,9 @@ picker.workspace = true
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
+language = { workspace = true, features = ["test-support"] }
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

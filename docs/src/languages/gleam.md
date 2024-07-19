@@ -1,4 +1,3 @@
 # Gleam
 
-- Tree Sitter: [tree-sitter-gleam](https://github.com/gleam-lang/tree-sitter-gleam)
-- Language Server: [gleam](https://github.com/gleam-lang/gleam)
+Gleam support is available through the [Gleam extension](https://github.com/zed-industries/zed/tree/main/extensions/gleam).

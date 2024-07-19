@@ -64,7 +64,19 @@ use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 
 actions!(
     terminal,
-    [Clear, Copy, Paste, ShowCharacterPalette, SearchTest,]
+    [
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette,
+        SearchTest,
+        ScrollLineUp,
+        ScrollLineDown,
+        ScrollPageUp,
+        ScrollPageDown,
+        ScrollToTop,
+        ScrollToBottom,
+    ]
 );
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -307,12 +319,18 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        cx: &mut AppContext,
     ) -> Result<TerminalBuilder> {
         // TODO: Properly set the current locale,
         env.entry("LC_ALL".to_string())
             .or_insert_with(|| "en_US.UTF-8".to_string());
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert(
+            "TERM_PROGRAM_VERSION".to_string(),
+            release_channel::AppVersion::global(cx).to_string(),
+        );
 
         let pty_options = {
             let alac_shell = match shell.clone() {
@@ -328,6 +346,10 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
+                #[cfg(target_os = "linux")]
+                hold: !matches!(shell.clone(), Shell::System),
+                // with hold: true, macOS gets tasks stuck on ctrl-c interrupts periodically
+                #[cfg(not(target_os = "linux"))]
                 hold: false,
                 env: env.into_iter().collect(),
             }
@@ -933,6 +955,18 @@ impl Terminal {
         &self.last_content
     }
 
+    pub fn total_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.total_lines()
+    }
+
+    pub fn viewport_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.screen_lines()
+    }
+
     //To test:
     //- Activate match on terminal (scrolling and selection)
     //- Editor search snapping behavior
@@ -980,6 +1014,46 @@ impl Terminal {
 
     pub fn clear(&mut self) {
         self.events.push_back(InternalEvent::Clear)
+    }
+
+    pub fn scroll_line_up(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(1)));
+    }
+
+    pub fn scroll_up_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(lines as i32)));
+    }
+
+    pub fn scroll_line_down(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(-1)));
+    }
+
+    pub fn scroll_down_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(-(lines as i32))));
+    }
+
+    pub fn scroll_page_up(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::PageUp));
+    }
+
+    pub fn scroll_page_down(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::PageDown));
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Top));
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
     ///Resize the terminal and the PTY.
@@ -1392,6 +1466,13 @@ impl Terminal {
 
             all_search_matches(&term, &mut searcher).collect()
         })
+    }
+
+    pub fn working_directory(&self) -> Option<PathBuf> {
+        self.pty_info
+            .current
+            .as_ref()
+            .map(|process| process.cwd.clone())
     }
 
     pub fn title(&self, truncate: bool) -> String {

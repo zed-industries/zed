@@ -286,7 +286,7 @@ impl InlineCompletionButton {
             self.build_language_settings_menu(menu, cx)
                 .separator()
                 .link(
-                    "Copilot Settings",
+                    "Go to Copilot Settings",
                     OpenBrowser {
                         url: COPILOT_SETTINGS_URL.to_string(),
                     }

@@ -1477,6 +1477,7 @@ impl Pane {
                 }
             }
         }
+
         Ok(true)
     }
 
@@ -1588,6 +1589,7 @@ impl Pane {
             },
             cx,
         );
+        let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -1663,7 +1665,16 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
+            .map(|tab| match indicator {
+                Some(indicator) => tab.start_slot(indicator),
+                None => tab.start_slot::<Icon>(icon.map(|icon| {
+                    icon.size(IconSize::XSmall).color(if is_active {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    })
+                })),
+            })
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)

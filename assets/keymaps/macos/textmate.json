@@ -1,0 +1,84 @@
+[
+  {
+    "bindings": {
+      "cmd-shift-o": "projects::OpenRecent",
+      "cmd-alt-tab": "project_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "cmd-l": "go_to_line::Toggle",
+      "ctrl-shift-d": "editor::DuplicateLineDown",
+      "cmd-b": "editor::GoToDefinition",
+      "cmd-j": "editor::ScrollCursorCenter",
+      "cmd-enter": "editor::NewlineBelow",
+      "cmd-alt-enter": "editor::NewLineAbove",
+      "cmd-shift-l": "editor::SelectLine",
+      "cmd-shift-t": "outline::Toggle",
+      "alt-backspace": "editor::DeleteToPreviousWordStart",
+      "alt-shift-backspace": "editor::DeleteToNextWordEnd",
+      "alt-delete": "editor::DeleteToNextWordEnd",
+      "alt-shift-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-backspace": "editor::DeleteToPreviousSubwordStart",
+      "ctrl-delete": "editor::DeleteToNextSubwordEnd",
+      "alt-left": ["editor::MoveToPreviousWordStart", { "stop_at_soft_wraps": true }],
+      "alt-right": ["editor::MoveToNextWordEnd", { "stop_at_soft_wraps": true }],
+      "ctrl-left": "editor::MoveToPreviousSubwordStart",
+      "ctrl-right": "editor::MoveToNextSubwordEnd",
+      "cmd-shift-left": "editor::SelectToBeginningOfLine",
+      "cmd-shift-right": "editor::SelectToEndOfLine",
+      "alt-shift-left": ["editor::SelectToPreviousWordStart", { "stop_at_soft_wraps": true }],
+      "alt-shift-right": ["editor::SelectToNextWordEnd", { "stop_at_soft_wraps": true }],
+      "ctrl-shift-left": "editor::SelectToPreviousSubwordStart",
+      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-w": "editor::SelectNext",
+      "ctrl-u": "editor::ConvertToUpperCase",
+      "ctrl-shift-u": "editor::ConvertToLowerCase",
+      "ctrl-alt-u": "editor::ConvertToUpperCamelCase",
+      "ctrl-_": "editor::ConvertToSnakeCase"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {}
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "ctrl-s": "search::SelectNextMatch",
+      "ctrl-shift-s": "search::SelectPrevMatch"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-alt-ctrl-d": "workspace::ToggleLeftDock",
+      "cmd-t": "file_finder::Toggle",
+      "cmd-shift-t": "project_symbols::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "alt-cmd-r": "search::ToggleRegex",
+      "ctrl-tab": "project_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
+      "cmd-d": "project_panel::Duplicate",
+      "cmd-n": "project_panel::NewFolder",
+      "return": "project_panel::Rename",
+      "cmd-c": "project_panel::Copy",
+      "cmd-v": "project_panel::Paste",
+      "cmd-alt-c": "project_panel::CopyPath"
+    }
+  },
+  {
+    "context": "Dock",
+    "bindings": {}
+  }
+]

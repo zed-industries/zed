@@ -3,9 +3,8 @@ use crate::{
     InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use futures::{
     future::{self, BoxFuture, Shared},
@@ -34,7 +33,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
+    SharedString, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -42,7 +41,12 @@ use workspace::Workspace;
 
 actions!(
     prompt_library,
-    [NewPrompt, DeletePrompt, ToggleDefaultPrompt]
+    [
+        NewPrompt,
+        DeletePrompt,
+        DuplicatePrompt,
+        ToggleDefaultPrompt
+    ]
 );
 
 /// Init starts loading the PromptStore in the background and assigns
@@ -264,7 +268,7 @@ impl PickerDelegate for PromptPickerDelegate {
             .flex_none()
             .py_1()
             .px_2()
-            .mx_2()
+            .mx_1()
             .child(editor.clone())
     }
 }
@@ -411,6 +415,12 @@ impl PromptLibrary {
         }
     }
 
+    pub fn duplicate_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt_id) = self.active_prompt_id {
+            self.duplicate_prompt(active_prompt_id, cx);
+        }
+    }
+
     pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             self.toggle_default_for_prompt(active_prompt_id, cx);
@@ -437,7 +447,6 @@ impl PromptLibrary {
             self.set_active_prompt(Some(prompt_id), cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
-            let commands = SlashCommandRegistry::global(cx);
             let prompt = self.store.load(prompt_id);
             self.pending_load = cx.spawn(|this, mut cx| async move {
                 let prompt = prompt.await;
@@ -466,7 +475,7 @@ impl PromptLibrary {
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
-                                SlashCommandCompletionProvider::new(commands, None, None),
+                                SlashCommandCompletionProvider::new(None, None),
                             ));
                             if focus {
                                 editor.focus(cx);
@@ -559,6 +568,47 @@ impl PromptLibrary {
                     })?;
                 }
                 anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
+    pub fn duplicate_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
+            const DUPLICATE_SUFFIX: &str = " copy";
+            let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
+            let existing_titles = self
+                .prompt_editors
+                .iter()
+                .filter(|&(&id, _)| id != prompt_id)
+                .map(|(_, prompt_editor)| prompt_editor.title_editor.read(cx).text(cx))
+                .filter(|title| title.starts_with(&title_to_duplicate))
+                .collect::<HashSet<_>>();
+
+            let title = if existing_titles.is_empty() {
+                title_to_duplicate + DUPLICATE_SUFFIX
+            } else {
+                let mut i = 1;
+                loop {
+                    let new_title = format!("{title_to_duplicate}{DUPLICATE_SUFFIX} {i}");
+                    if !existing_titles.contains(&new_title) {
+                        break new_title;
+                    }
+                    i += 1;
+                }
+            };
+
+            let new_id = PromptId::new();
+            let body = prompt.body_editor.read(cx).text(cx);
+            let save = self
+                .store
+                .save(new_id, Some(title.into()), false, body.into());
+            self.picker.update(cx, |picker, cx| picker.refresh(cx));
+            cx.spawn(|this, mut cx| async move {
+                save.await?;
+                this.update(&mut cx, |prompt_library, cx| {
+                    prompt_library.load_prompt(new_id, true, cx)
+                })
             })
             .detach_and_log_err(cx);
         }
@@ -716,12 +766,13 @@ impl PromptLibrary {
             .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
+            .px_1()
             .w_1_3()
             .overflow_x_hidden()
             .child(
                 h_flex()
                     .p(Spacing::Small.rems(cx))
-                    .h(TitleBar::height(cx))
+                    .h_9()
                     .w_full()
                     .flex_none()
                     .justify_end()
@@ -897,24 +948,28 @@ impl PromptLibrary {
                                                         cx.dispatch_action(Box::new(DeletePrompt));
                                                     }),
                                                 )
-                                                // .child(
-                                                //     IconButton::new(
-                                                //         "duplicate-prompt",
-                                                //         IconName::BookCopy,
-                                                //     )
-                                                //     .size(ButtonSize::Large)
-                                                //     .style(ButtonStyle::Transparent)
-                                                //     .shape(IconButtonShape::Square)
-                                                //     .size(ButtonSize::Large)
-                                                //     .tooltip(move |cx| {
-                                                //         Tooltip::for_action(
-                                                //             "Duplicate Prompt",
-                                                //             &gpui::NoAction,
-                                                //             cx,
-                                                //         )
-                                                //     })
-                                                //     .disabled(true),
-                                                // )
+                                                .child(
+                                                    IconButton::new(
+                                                        "duplicate-prompt",
+                                                        IconName::BookCopy,
+                                                    )
+                                                    .size(ButtonSize::Large)
+                                                    .style(ButtonStyle::Transparent)
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::for_action(
+                                                            "Duplicate Prompt",
+                                                            &DuplicatePrompt,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            DuplicatePrompt,
+                                                        ));
+                                                    }),
+                                                )
                                                 .child(
                                                     IconButton::new(
                                                         "toggle-default-prompt",
@@ -973,6 +1028,7 @@ impl Render for PromptLibrary {
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
             .on_action(cx.listener(|this, &DeletePrompt, cx| this.delete_active_prompt(cx)))
+            .on_action(cx.listener(|this, &DuplicatePrompt, cx| this.duplicate_active_prompt(cx)))
             .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
                 this.toggle_default_for_active_prompt(cx)
             }))

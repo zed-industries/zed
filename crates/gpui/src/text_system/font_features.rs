@@ -144,13 +144,5 @@ impl schemars::JsonSchema for FontFeatures {
 }
 
 fn is_valid_feature_tag(tag: &str) -> bool {
-    if tag.len() != 4 {
-        return false;
-    }
-    for ch in tag.chars() {
-        if !ch.is_ascii_alphanumeric() {
-            return false;
-        }
-    }
-    true
+    tag.len() == 4 && tag.chars().all(|c| c.is_ascii_alphanumeric())
 }

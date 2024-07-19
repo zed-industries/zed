@@ -111,6 +111,7 @@ impl ChatPanel {
                 this.is_scrolled_to_bottom = !event.is_scrolled;
             }));
 
+            let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
                 fs,
                 client,
@@ -120,7 +121,7 @@ impl ChatPanel {
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_editor: input_editor,
-                local_timezone: cx.local_timezone(),
+                local_timezone: UtcOffset::from_whole_seconds(local_offset).unwrap(),
                 subscriptions: Vec::new(),
                 is_scrolled_to_bottom: true,
                 active: false,
@@ -355,11 +356,10 @@ impl ChatPanel {
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                 .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
                 .child(
-                    div().font_weight(FontWeight::SEMIBOLD).child(
-                        Label::new(format!("@{}", user_being_replied_to.github_login))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
+                    Label::new(format!("@{}", user_being_replied_to.github_login))
+                        .size(LabelSize::XSmall)
+                        .weight(FontWeight::SEMIBOLD)
+                        .color(Color::Muted),
                 )
                 .child(
                     div().overflow_y_hidden().child(
@@ -490,22 +490,16 @@ impl ChatPanel {
                         |this| {
                             this.child(
                                 h_flex()
+                                    .gap_2()
                                     .text_ui_sm(cx)
                                     .child(
-                                        div().absolute().child(
-                                            Avatar::new(message.sender.avatar_uri.clone())
-                                                .size(rems(1.)),
-                                        ),
+                                        Avatar::new(message.sender.avatar_uri.clone())
+                                            .size(rems(1.)),
                                     )
                                     .child(
-                                        div()
-                                            .pl(cx.rem_size() + px(6.0))
-                                            .pr(px(8.0))
-                                            .font_weight(FontWeight::BOLD)
-                                            .child(
-                                                Label::new(message.sender.github_login.clone())
-                                                    .size(LabelSize::Small),
-                                            ),
+                                        Label::new(message.sender.github_login.clone())
+                                            .size(LabelSize::Small)
+                                            .weight(FontWeight::BOLD),
                                     )
                                     .child(
                                         Label::new(time_format::format_localized_timestamp(
@@ -1044,13 +1038,12 @@ impl Render for ChatPanel {
                                         .id(("reply-preview", reply_to_message_id))
                                         .child(Label::new("Replying to ").size(LabelSize::Small))
                                         .child(
-                                            div().font_weight(FontWeight::BOLD).child(
-                                                Label::new(format!(
-                                                    "@{}",
-                                                    user_being_replied_to.github_login.clone()
-                                                ))
-                                                .size(LabelSize::Small),
-                                            ),
+                                            Label::new(format!(
+                                                "@{}",
+                                                user_being_replied_to.github_login.clone()
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .weight(FontWeight::BOLD),
                                         )
                                         .when_some(channel_id, |this, channel_id| {
                                             this.cursor_pointer().on_click(cx.listener(

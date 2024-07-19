@@ -15,7 +15,7 @@ use futures::{
 };
 use gpui::{AppContext, Context, Model, ModelContext, Task};
 use itertools::Itertools;
-use language::{ContextProvider, Language, Location};
+use language::{ContextProvider, File, Language, Location};
 use task::{
     static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
@@ -155,14 +155,16 @@ impl Inventory {
     /// returns all task templates with their source kinds, in no specific order.
     pub fn list_tasks(
         &self,
+        file: Option<Arc<dyn File>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
+        cx: &AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
         let language_tasks = language
-            .and_then(|language| language.context_provider()?.associated_tasks())
+            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
@@ -207,8 +209,11 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
+        let file = location
+            .as_ref()
+            .and_then(|location| location.buffer.read(cx).file().cloned());
         let language_tasks = language
-            .and_then(|language| language.context_provider()?.associated_tasks())
+            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
@@ -439,11 +444,6 @@ mod test_inventory {
 
     use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct TestTask {
-        name: String,
-    }
-
     pub(super) fn static_test_source(
         task_names: impl IntoIterator<Item = String>,
         updates: UnboundedSender<()>,
@@ -471,9 +471,9 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        inventory.update(cx, |inventory, _| {
+        inventory.update(cx, |inventory, cx| {
             inventory
-                .list_tasks(None, worktree)
+                .list_tasks(None, None, worktree, cx)
                 .into_iter()
                 .map(|(_, task)| task.label)
                 .sorted()
@@ -486,9 +486,9 @@ mod test_inventory {
         task_name: &str,
         cx: &mut TestAppContext,
     ) {
-        inventory.update(cx, |inventory, _| {
+        inventory.update(cx, |inventory, cx| {
             let (task_source_kind, task) = inventory
-                .list_tasks(None, None)
+                .list_tasks(None, None, None, cx)
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
@@ -639,7 +639,11 @@ impl ContextProviderWithTasks {
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn language::File>>,
+        _: &AppContext,
+    ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
     }
 }

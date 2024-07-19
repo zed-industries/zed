@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, TelemetrySettings, ZED_APP_PATH};
+use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use editor::{Editor, MultiBuffer};
@@ -448,12 +448,7 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        // We store the path of our current binary, before we install, since installation might
-        // delete it. Once deleted, it's hard to get the path to our binary on Linux.
-        // So we cache it here, which allows us to then restart later on.
-        let binary_path = cx.update(|cx| cx.app_path())??;
-
-        match OS {
+        let binary_path = match OS {
             "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
             "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
             _ => Err(anyhow!("not supported: {:?}", OS)),
@@ -536,9 +531,10 @@ async fn install_release_linux(
     temp_dir: &tempfile::TempDir,
     downloaded_tar_gz: PathBuf,
     cx: &AsyncAppContext,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
+    let running_app_path = cx.update(|cx| cx.app_path())??;
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
@@ -569,7 +565,16 @@ async fn install_release_linux(
     let app_folder_name = format!("zed{}.app", suffix);
 
     let from = extracted.join(&app_folder_name);
-    let to = home_dir.join(".local");
+    let mut to = home_dir.join(".local");
+
+    let expected_suffix = format!("{}/libexec/zed-editor", app_folder_name);
+
+    if let Some(prefix) = running_app_path
+        .to_str()
+        .and_then(|str| str.strip_suffix(&expected_suffix))
+    {
+        to = PathBuf::from(prefix);
+    }
 
     let output = Command::new("rsync")
         .args(&["-av", "--delete"])
@@ -586,17 +591,15 @@ async fn install_release_linux(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(())
+    Ok(to.join(expected_suffix))
 }
 
 async fn install_release_macos(
     temp_dir: &tempfile::TempDir,
     downloaded_dmg: PathBuf,
     cx: &AsyncAppContext,
-) -> Result<()> {
-    let running_app_path = ZED_APP_PATH
-        .clone()
-        .map_or_else(|| cx.update(|cx| cx.app_path())?, Ok)?;
+) -> Result<PathBuf> {
+    let running_app_path = cx.update(|cx| cx.app_path())??;
     let running_app_filename = running_app_path
         .file_name()
         .ok_or_else(|| anyhow!("invalid running app path"))?;
@@ -644,5 +647,5 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(())
+    Ok(running_app_path)
 }

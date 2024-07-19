@@ -335,7 +335,6 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
-    fn inspect_error(self, func: impl FnOnce(&E)) -> Self;
 }
 
 impl<T, E> ResultExt<E> for Result<T, E>
@@ -349,8 +348,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                let caller = Location::caller();
-                log::error!("{}:{}: {:?}", caller.file(), caller.line(), error);
+                log_error_with_caller(*Location::caller(), error, log::Level::Error);
                 None
             }
         }
@@ -364,24 +362,36 @@ where
         self
     }
 
+    #[track_caller]
     fn warn_on_err(self) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log::warn!("{:?}", error);
+                log_error_with_caller(*Location::caller(), error, log::Level::Warn);
                 None
             }
         }
     }
+}
 
-    /// https://doc.rust-lang.org/std/result/enum.Result.html#method.inspect_err
-    fn inspect_error(self, func: impl FnOnce(&E)) -> Self {
-        if let Err(err) = &self {
-            func(err);
-        }
+fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
+where
+    E: std::fmt::Debug,
+{
+    // In this codebase, the first segment of the file path is
+    // the 'crates' folder, followed by the crate name.
+    let target = caller.file().split('/').nth(1);
 
-        self
-    }
+    log::logger().log(
+        &log::Record::builder()
+            .target(target.unwrap_or(""))
+            .module_path(target)
+            .args(format_args!("{:?}", error))
+            .file(Some(caller.file()))
+            .line(Some(caller.line()))
+            .level(level)
+            .build(),
+    );
 }
 
 pub trait TryFutureExt {
@@ -457,13 +467,7 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log::log!(
-                        level,
-                        "{}:{}: {:?}",
-                        location.file(),
-                        location.line(),
-                        error
-                    );
+                    log_error_with_caller(location, error, level);
                     None
                 }
             }),

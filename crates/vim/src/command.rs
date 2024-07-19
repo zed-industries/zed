@@ -1,7 +1,10 @@
+use std::sync::OnceLock;
+
 use command_palette_hooks::CommandInterceptResult;
 use editor::actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
-use gpui::{impl_actions, Action, AppContext, ViewContext};
+use gpui::{impl_actions, Action, AppContext, Global, ViewContext};
 use serde_derive::Deserialize;
+use util::ResultExt;
 use workspace::{SaveIntent, Workspace};
 
 use crate::{
@@ -31,6 +34,261 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
 }
 
+struct VimCommand {
+    prefix: &'static str,
+    suffix: &'static str,
+    action: Option<Box<dyn Action>>,
+    action_name: Option<&'static str>,
+    bang_action: Option<Box<dyn Action>>,
+}
+
+impl VimCommand {
+    fn new(pattern: (&'static str, &'static str), action: impl Action) -> Self {
+        Self {
+            prefix: pattern.0,
+            suffix: pattern.1,
+            action: Some(action.boxed_clone()),
+            action_name: None,
+            bang_action: None,
+        }
+    }
+
+    // from_str is used for actions in other crates.
+    fn str(pattern: (&'static str, &'static str), action_name: &'static str) -> Self {
+        Self {
+            prefix: pattern.0,
+            suffix: pattern.1,
+            action: None,
+            action_name: Some(action_name),
+            bang_action: None,
+        }
+    }
+
+    fn bang(mut self, bang_action: impl Action) -> Self {
+        self.bang_action = Some(bang_action.boxed_clone());
+        self
+    }
+
+    fn parse(&self, mut query: &str, cx: &AppContext) -> Option<Box<dyn Action>> {
+        let has_bang = query.ends_with('!');
+        if has_bang {
+            query = &query[..query.len() - 1];
+        }
+
+        let Some(suffix) = query.strip_prefix(self.prefix) else {
+            return None;
+        };
+        if !self.suffix.starts_with(suffix) {
+            return None;
+        }
+
+        if has_bang && self.bang_action.is_some() {
+            Some(self.bang_action.as_ref().unwrap().boxed_clone())
+        } else if let Some(action) = self.action.as_ref() {
+            Some(action.boxed_clone())
+        } else if let Some(action_name) = self.action_name {
+            cx.build_action(action_name, None).log_err()
+        } else {
+            None
+        }
+    }
+}
+
+fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
+    vec![
+        VimCommand::new(
+            ("w", "rite"),
+            workspace::Save {
+                save_intent: Some(SaveIntent::Save),
+            },
+        )
+        .bang(workspace::Save {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("q", "uit"),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseActiveItem {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::new(
+            ("wq", ""),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::Save),
+            },
+        )
+        .bang(workspace::CloseActiveItem {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("x", "it"),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        )
+        .bang(workspace::CloseActiveItem {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("ex", "it"),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        )
+        .bang(workspace::CloseActiveItem {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("up", "date"),
+            workspace::Save {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        ),
+        VimCommand::new(
+            ("wa", "ll"),
+            workspace::SaveAll {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        )
+        .bang(workspace::SaveAll {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("qa", "ll"),
+            workspace::CloseAllItemsAndPanes {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseAllItemsAndPanes {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::new(
+            ("quita", "ll"),
+            workspace::CloseAllItemsAndPanes {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseAllItemsAndPanes {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::new(
+            ("xa", "ll"),
+            workspace::CloseAllItemsAndPanes {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        )
+        .bang(workspace::CloseAllItemsAndPanes {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(
+            ("wqa", "ll"),
+            workspace::CloseAllItemsAndPanes {
+                save_intent: Some(SaveIntent::SaveAll),
+            },
+        )
+        .bang(workspace::CloseAllItemsAndPanes {
+            save_intent: Some(SaveIntent::Overwrite),
+        }),
+        VimCommand::new(("cq", "uit"), zed_actions::Quit),
+        VimCommand::new(("sp", "lit"), workspace::SplitUp),
+        VimCommand::new(("vs", "plit"), workspace::SplitLeft),
+        VimCommand::new(
+            ("bd", "elete"),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseActiveItem {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::new(("bn", "ext"), workspace::ActivateNextItem),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem),
+        VimCommand::new(("bp", "revious"), workspace::ActivatePrevItem),
+        VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
+        VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
+        VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
+        VimCommand::new(
+            ("new", ""),
+            workspace::NewFileInDirection(workspace::SplitDirection::Up),
+        ),
+        VimCommand::new(
+            ("vne", "w"),
+            workspace::NewFileInDirection(workspace::SplitDirection::Left),
+        ),
+        VimCommand::new(("tabe", "dit"), workspace::NewFile),
+        VimCommand::new(("tabnew", ""), workspace::NewFile),
+        VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem),
+        VimCommand::new(("tabp", "revious"), workspace::ActivatePrevItem),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePrevItem),
+        VimCommand::new(
+            ("tabc", "lose"),
+            workspace::CloseActiveItem {
+                save_intent: Some(SaveIntent::Close),
+            },
+        ),
+        VimCommand::new(
+            ("tabo", "nly"),
+            workspace::CloseInactiveItems {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseInactiveItems {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::new(
+            ("on", "ly"),
+            workspace::CloseInactiveTabsAndPanes {
+                save_intent: Some(SaveIntent::Close),
+            },
+        )
+        .bang(workspace::CloseInactiveTabsAndPanes {
+            save_intent: Some(SaveIntent::Skip),
+        }),
+        VimCommand::str(("cl", "ist"), "diagnostics::Deploy"),
+        VimCommand::new(("cc", ""), editor::actions::Hover),
+        VimCommand::new(("ll", ""), editor::actions::Hover),
+        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic),
+        VimCommand::new(("j", "oin"), JoinLines),
+        VimCommand::new(("d", "elete"), editor::actions::DeleteLine),
+        VimCommand::new(("sor", "t"), SortLinesCaseSensitive),
+        VimCommand::new(("sort i", ""), SortLinesCaseInsensitive),
+        VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
+        VimCommand::str(("H", "explore"), "project_panel::ToggleFocus"),
+        VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
+        VimCommand::str(("S", "explore"), "project_panel::ToggleFocus"),
+        VimCommand::str(("Ve", "xplore"), "project_panel::ToggleFocus"),
+        VimCommand::str(("te", "rm"), "terminal_panel::ToggleFocus"),
+        VimCommand::str(("T", "erm"), "terminal_panel::ToggleFocus"),
+        VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
+        VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
+        VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
+        VimCommand::str(("A", "I"), "assistant::ToggleFocus"),
+        VimCommand::new(("$", ""), EndOfDocument),
+        VimCommand::new(("%", ""), EndOfDocument),
+        VimCommand::new(("0", ""), StartOfDocument),
+    ]
+}
+
+struct VimCommands(Vec<VimCommand>);
+// safety: we only ever access this from the main thread (as ensured by the cx argument)
+// actions are not Sync so we can't otherwise use a OnceLock.
+unsafe impl Sync for VimCommands {}
+impl Global for VimCommands {}
+
+fn commands(cx: &AppContext) -> &Vec<VimCommand> {
+    static COMMANDS: OnceLock<VimCommands> = OnceLock::new();
+    &COMMANDS
+        .get_or_init(|| VimCommands(generate_commands(cx)))
+        .0
+}
+
 pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
     // Note: this is a very poor simulation of vim's command palette.
     // In the future we should adjust it to handle parsing range syntax,
@@ -38,320 +296,52 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
     //
     // We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
-    //
-    // For now, you can only do a replace on the % range, and you can
-    // only use a specific line number range to "go to line"
     while query.starts_with(':') {
         query = &query[1..];
     }
 
-    let (name, action) = match query {
-        // save and quit
-        "w" | "wr" | "wri" | "writ" | "write" => (
-            "write",
-            workspace::Save {
-                save_intent: Some(SaveIntent::Save),
-            }
-            .boxed_clone(),
-        ),
-        "w!" | "wr!" | "wri!" | "writ!" | "write!" => (
-            "write!",
-            workspace::Save {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "q" | "qu" | "qui" | "quit" => (
-            "quit",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Close),
-            }
-            .boxed_clone(),
-        ),
-        "q!" | "qu!" | "qui!" | "quit!" => (
-            "quit!",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Skip),
-            }
-            .boxed_clone(),
-        ),
-        "wq" => (
-            "wq",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Save),
-            }
-            .boxed_clone(),
-        ),
-        "wq!" => (
-            "wq!",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "x" | "xi" | "xit" | "exi" | "exit" => (
-            "exit",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::SaveAll),
-            }
-            .boxed_clone(),
-        ),
-        "x!" | "xi!" | "xit!" | "exi!" | "exit!" => (
-            "exit!",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "up" | "upd" | "upda" | "updat" | "update" => (
-            "update",
-            workspace::Save {
-                save_intent: Some(SaveIntent::SaveAll),
-            }
-            .boxed_clone(),
-        ),
-        "wa" | "wal" | "wall" => (
-            "wall",
-            workspace::SaveAll {
-                save_intent: Some(SaveIntent::SaveAll),
-            }
-            .boxed_clone(),
-        ),
-        "wa!" | "wal!" | "wall!" => (
-            "wall!",
-            workspace::SaveAll {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "qa" | "qal" | "qall" | "quita" | "quital" | "quitall" => (
-            "quitall",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::Close),
-            }
-            .boxed_clone(),
-        ),
-        "qa!" | "qal!" | "qall!" | "quita!" | "quital!" | "quitall!" => (
-            "quitall!",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::Skip),
-            }
-            .boxed_clone(),
-        ),
-        "xa" | "xal" | "xall" => (
-            "xall",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::SaveAll),
-            }
-            .boxed_clone(),
-        ),
-        "xa!" | "xal!" | "xall!" => (
-            "xall!",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "wqa" | "wqal" | "wqall" => (
-            "wqall",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::SaveAll),
-            }
-            .boxed_clone(),
-        ),
-        "wqa!" | "wqal!" | "wqall!" => (
-            "wqall!",
-            workspace::CloseAllItemsAndPanes {
-                save_intent: Some(SaveIntent::Overwrite),
-            }
-            .boxed_clone(),
-        ),
-        "cq" | "cqu" | "cqui" | "cquit" | "cq!" | "cqu!" | "cqui!" | "cquit!" => {
-            ("cquit!", zed_actions::Quit.boxed_clone())
-        }
+    for command in commands(cx).iter() {
+        if let Some(action) = command.parse(query, cx) {
+            let string = ":".to_owned() + command.prefix + command.suffix;
+            let positions = generate_positions(&string, query);
 
-        // pane management
-        "sp" | "spl" | "spli" | "split" => ("split", workspace::SplitUp.boxed_clone()),
-        "vs" | "vsp" | "vspl" | "vspli" | "vsplit" => {
-            ("vsplit", workspace::SplitLeft.boxed_clone())
+            return Some(CommandInterceptResult {
+                action,
+                string,
+                positions,
+            });
         }
-        "new" => (
-            "new",
-            workspace::NewFileInDirection(workspace::SplitDirection::Up).boxed_clone(),
-        ),
-        "vne" | "vnew" => (
-            "vnew",
-            workspace::NewFileInDirection(workspace::SplitDirection::Left).boxed_clone(),
-        ),
-        "tabe" | "tabed" | "tabedi" | "tabedit" => ("tabedit", workspace::NewFile.boxed_clone()),
-        "tabnew" => ("tabnew", workspace::NewFile.boxed_clone()),
+    }
 
-        "tabn" | "tabne" | "tabnex" | "tabnext" => {
-            ("tabnext", workspace::ActivateNextItem.boxed_clone())
-        }
-        "tabp" | "tabpr" | "tabpre" | "tabprev" | "tabprevi" | "tabprevio" | "tabpreviou"
-        | "tabprevious" => ("tabprevious", workspace::ActivatePrevItem.boxed_clone()),
-        "tabN" | "tabNe" | "tabNex" | "tabNext" => {
-            ("tabNext", workspace::ActivatePrevItem.boxed_clone())
-        }
-        "tabc" | "tabcl" | "tabclo" | "tabclos" | "tabclose" => (
-            "tabclose",
-            workspace::CloseActiveItem {
-                save_intent: Some(SaveIntent::Close),
+    let (name, action) = if query.starts_with('/') || query.starts_with('?') {
+        (
+            query,
+            FindCommand {
+                query: query[1..].to_string(),
+                backwards: query.starts_with('?'),
             }
             .boxed_clone(),
-        ),
-        "tabo" | "tabon" | "tabonl" | "tabonly" => (
-            "tabonly",
-            workspace::CloseInactiveItems {
-                save_intent: Some(SaveIntent::Close),
+        )
+    } else if query.starts_with('%') {
+        (
+            query,
+            ReplaceCommand {
+                query: query.to_string(),
             }
             .boxed_clone(),
-        ),
-        "tabo!" | "tabon!" | "tabonl!" | "tabonly!" => (
-            "tabonly!",
-            workspace::CloseInactiveItems {
-                save_intent: Some(SaveIntent::Skip),
+        )
+    } else if let Ok(line) = query.parse::<u32>() {
+        (query, GoToLine { line }.boxed_clone())
+    } else if range_regex().is_match(query) {
+        (
+            query,
+            ReplaceCommand {
+                query: query.to_string(),
             }
             .boxed_clone(),
-        ),
-        "on" | "onl" | "only" => (
-            "only",
-            workspace::CloseInactiveTabsAndPanes {
-                save_intent: Some(SaveIntent::Close),
-            }
-            .boxed_clone(),
-        ),
-        "on!" | "onl!" | "only!" => (
-            "only!",
-            workspace::CloseInactiveTabsAndPanes {
-                save_intent: Some(SaveIntent::Skip),
-            }
-            .boxed_clone(),
-        ),
-
-        // quickfix / loclist (merged together for now)
-        "cl" | "cli" | "clis" | "clist" => (
-            "clist",
-            cx.build_action("diagnostics::Deploy", None).unwrap(),
-        ),
-        "cc" => ("cc", editor::actions::Hover.boxed_clone()),
-        "ll" => ("ll", editor::actions::Hover.boxed_clone()),
-        "cn" | "cne" | "cnex" | "cnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),
-        "lne" | "lnex" | "lnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),
-
-        "cpr" | "cpre" | "cprev" | "cprevi" | "cprevio" | "cpreviou" | "cprevious" => (
-            "cprevious",
-            editor::actions::GoToPrevDiagnostic.boxed_clone(),
-        ),
-        "cN" | "cNe" | "cNex" | "cNext" => {
-            ("cNext", editor::actions::GoToPrevDiagnostic.boxed_clone())
-        }
-        "lp" | "lpr" | "lpre" | "lprev" | "lprevi" | "lprevio" | "lpreviou" | "lprevious" => (
-            "lprevious",
-            editor::actions::GoToPrevDiagnostic.boxed_clone(),
-        ),
-        "lN" | "lNe" | "lNex" | "lNext" => {
-            ("lNext", editor::actions::GoToPrevDiagnostic.boxed_clone())
-        }
-
-        // modify the buffer (should accept [range])
-        "j" | "jo" | "joi" | "join" => ("join", JoinLines.boxed_clone()),
-        "d" | "de" | "del" | "dele" | "delet" | "delete" | "dl" | "dell" | "delel" | "deletl"
-        | "deletel" | "dp" | "dep" | "delp" | "delep" | "deletp" | "deletep" => {
-            ("delete", editor::actions::DeleteLine.boxed_clone())
-        }
-        "sor" | "sor " | "sort" | "sort " => ("sort", SortLinesCaseSensitive.boxed_clone()),
-        "sor i" | "sort i" => ("sort i", SortLinesCaseInsensitive.boxed_clone()),
-
-        // Explore, etc.
-        "E" | "Ex" | "Exp" | "Expl" | "Explo" | "Explor" | "Explore" => (
-            "Explore",
-            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
-        ),
-        "H" | "He" | "Hex" | "Hexp" | "Hexpl" | "Hexplo" | "Hexplor" | "Hexplore" => (
-            "Hexplore",
-            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
-        ),
-        "L" | "Le" | "Lex" | "Lexp" | "Lexpl" | "Lexplo" | "Lexplor" | "Lexplore" => (
-            "Lexplore",
-            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
-        ),
-        "S" | "Se" | "Sex" | "Sexp" | "Sexpl" | "Sexplo" | "Sexplor" | "Sexplore" => (
-            "Sexplore",
-            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
-        ),
-        "Ve" | "Vex" | "Vexp" | "Vexpl" | "Vexplo" | "Vexplor" | "Vexplore" => (
-            "Vexplore",
-            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
-        ),
-        "te" | "ter" | "term" => (
-            "term",
-            cx.build_action("terminal_panel::ToggleFocus", None)
-                .unwrap(),
-        ),
-        // Zed panes
-        "T" | "Te" | "Ter" | "Term" => (
-            "Term",
-            cx.build_action("terminal_panel::ToggleFocus", None)
-                .unwrap(),
-        ),
-        "C" | "Co" | "Col" | "Coll" | "Colla" | "Collab" => (
-            "Collab",
-            cx.build_action("collab_panel::ToggleFocus", None).unwrap(),
-        ),
-        "Ch" | "Cha" | "Chat" => (
-            "Chat",
-            cx.build_action("chat_panel::ToggleFocus", None).unwrap(),
-        ),
-        "No" | "Not" | "Noti" | "Notif" | "Notifi" | "Notific" | "Notifica" | "Notificat"
-        | "Notificati" | "Notificatio" | "Notification" => (
-            "Notifications",
-            cx.build_action("notification_panel::ToggleFocus", None)
-                .unwrap(),
-        ),
-        "A" | "AI" | "Ai" => (
-            "AI",
-            cx.build_action("assistant::ToggleFocus", None).unwrap(),
-        ),
-
-        // goto (other ranges handled under _ => )
-        "$" => ("$", EndOfDocument.boxed_clone()),
-        "%" => ("%", EndOfDocument.boxed_clone()),
-        "0" => ("0", StartOfDocument.boxed_clone()),
-
-        _ => {
-            if query.starts_with('/') || query.starts_with('?') {
-                (
-                    query,
-                    FindCommand {
-                        query: query[1..].to_string(),
-                        backwards: query.starts_with('?'),
-                    }
-                    .boxed_clone(),
-                )
-            } else if query.starts_with('%') {
-                (
-                    query,
-                    ReplaceCommand {
-                        query: query.to_string(),
-                    }
-                    .boxed_clone(),
-                )
-            } else if let Ok(line) = query.parse::<u32>() {
-                (query, GoToLine { line }.boxed_clone())
-            } else if range_regex().is_match(query) {
-                (
-                    query,
-                    ReplaceCommand {
-                        query: query.to_string(),
-                    }
-                    .boxed_clone(),
-                )
-            } else {
-                return None;
-            }
-        }
+        )
+    } else {
+        return None;
     };
 
     let string = ":".to_owned() + name;

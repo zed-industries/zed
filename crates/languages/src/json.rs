@@ -95,6 +95,10 @@ impl JsonLspAdapter {
                 "format": {
                     "enable": true,
                 },
+                "validate":
+                {
+                    "enable": true,
+                },
                 "schemas": [
                     {
                         "fileMatch": ["tsconfig.json"],
@@ -213,7 +217,12 @@ impl LspAdapter for JsonLspAdapter {
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
-        [("JSON".into(), "jsonc".into())].into_iter().collect()
+        [
+            ("JSON".into(), "json".into()),
+            ("JSONC".into(), "jsonc".into()),
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -308,8 +317,11 @@ impl LspAdapter for NodeVersionAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path =
-            container_dir.join(format!("package-version-server-{}", version.name));
+        let destination_path = container_dir.join(format!(
+            "package-version-server-{}{}",
+            version.name,
+            std::env::consts::EXE_SUFFIX
+        ));
         let destination_container_path =
             container_dir.join(format!("package-version-server-{}-tmp", version.name));
         if fs::metadata(&destination_path).await.is_err() {
@@ -331,7 +343,10 @@ impl LspAdapter for NodeVersionAdapter {
             }
 
             fs::copy(
-                destination_container_path.join("package-version-server"),
+                destination_container_path.join(format!(
+                    "package-version-server{}",
+                    std::env::consts::EXE_SUFFIX
+                )),
                 &destination_path,
             )
             .await?;
@@ -348,7 +363,7 @@ impl LspAdapter for NodeVersionAdapter {
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path.join("package-version-server"),
+            path: destination_path,
             env: None,
             arguments: Default::default(),
         })

@@ -1,17 +1,20 @@
 #!/usr/bin/env sh
 set -eu
 
+# Downloads the latest tarball from https://zed.dev/releases and unpacks it
+# into ~/.local/. If you'd prefer to do this manually, instructions are at
+# https://zed.dev/docs/linux.
+
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
-    temp="$(mktemp -d "/tmp/zed-XXXXX")"
+    temp="$(mktemp -d "/tmp/zed-XXXXXX")"
 
     if [ "$platform" = "Darwin" ]; then
         platform="macos"
     elif [ "$platform" = "Linux" ]; then
         platform="linux"
-        channel="${ZED_CHANNEL:-preview}"
     else
         echo "Unsupported platform $platform"
         exit 1
@@ -44,6 +47,29 @@ main() {
     fi
 
     "$platform" "$@"
+
+    if [ "$(which "zed")" = "$HOME/.local/bin/zed" ]; then
+        echo "Zed has been installed. Run with 'zed'"
+    else
+        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
+        echo "Run:"
+
+        case "$SHELL" in
+            *zsh)
+                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.zshrc"
+                echo "   source ~/.zshrc"
+                ;;
+            *fish)
+                echo "   fish_add_path -U $HOME/.local/bin"
+                ;;
+            *)
+                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
+                echo "   source ~/.bashrc"
+                ;;
+        esac
+
+        echo "To run Zed now, '~/.local/bin/zed'"
+    fi
 }
 
 linux() {
@@ -100,16 +126,6 @@ linux() {
     cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/libexec/zed-editor|g" "${desktop_file_path}"
-
-    if which "zed" >/dev/null 2>&1; then
-        echo "Zed has been installed. Run with 'zed'"
-    else
-        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
-        echo "Run:"
-        echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
-        echo "   source ~/.bashrc"
-        echo "To run Zed now, '~/.local/bin/zed'"
-    fi
 }
 
 macos() {
@@ -128,16 +144,6 @@ macos() {
     mkdir -p "$HOME/.local/bin"
     # Link the binary
     ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
-
-    if which "zed" >/dev/null 2>&1; then
-        echo "Zed has been installed. Run with 'zed'"
-    else
-        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
-        echo "Run:"
-        echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
-        echo "   source ~/.bashrc"
-        echo "To run Zed now, '~/.local/bin/zed'"
-    fi
 }
 
 main "$@"

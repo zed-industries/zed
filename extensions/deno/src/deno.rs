@@ -1,6 +1,7 @@
 use std::fs;
 use zed::lsp::CompletionKind;
 use zed::{serde_json, CodeLabel, CodeLabelSpan, LanguageServerId};
+use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, Result};
 
 struct DenoExtension {
@@ -115,6 +116,18 @@ impl zed::Extension for DenoExtension {
         Ok(Some(serde_json::json!({
             "provideFormatter": true,
         })))
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("deno", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 
     fn label_for_completion(

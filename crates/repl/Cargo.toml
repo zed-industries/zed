@@ -24,6 +24,7 @@ futures.workspace = true
 image.workspace = true
 language.workspace = true
 log.workspace = true
+multi_buffer.workspace = true
 project.workspace = true
 runtimelib.workspace = true
 schemars.workspace = true
@@ -35,6 +36,7 @@ theme.workspace = true
 terminal_view.workspace = true
 ui.workspace = true
 uuid.workspace = true
+util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

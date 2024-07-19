@@ -7,18 +7,19 @@ mod typed_envelope;
 pub use error::*;
 pub use typed_envelope::*;
 
+use anyhow::anyhow;
 use collections::HashMap;
-pub use prost::Message;
+use futures::{future::BoxFuture, Future};
+pub use prost::{DecodeError, Message};
 use serde::Serialize;
-use std::any::{Any, TypeId};
-use std::time::Instant;
 use std::{
+    any::{Any, TypeId},
     cmp,
-    fmt::Debug,
-    iter,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    fmt::{self, Debug},
+    iter, mem,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use std::{fmt, mem};
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
@@ -57,6 +58,51 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
 pub enum MessagePriority {
     Foreground,
     Background,
+}
+
+pub trait ProtoClient: Send + Sync {
+    fn request(
+        &self,
+        envelope: Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
+
+    fn send(&self, envelope: Envelope) -> anyhow::Result<()>;
+}
+
+#[derive(Clone)]
+pub struct AnyProtoClient(Arc<dyn ProtoClient>);
+
+impl<T> From<Arc<T>> for AnyProtoClient
+where
+    T: ProtoClient + 'static,
+{
+    fn from(client: Arc<T>) -> Self {
+        Self(client)
+    }
+}
+
+impl AnyProtoClient {
+    pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
+        Self(client)
+    }
+
+    pub fn request<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = anyhow::Result<T::Response>> {
+        let envelope = request.into_envelope(0, None, None);
+        let response = self.0.request(envelope, T::NAME);
+        async move {
+            T::Response::from_envelope(response.await?)
+                .ok_or_else(|| anyhow!("received response of the wrong type"))
+        }
+    }
+
+    pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
+        let envelope = request.into_envelope(0, None, None);
+        self.0.send(envelope)
+    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -204,6 +250,8 @@ messages!(
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
     (GetReferencesResponse, Background),
+    (GetSignatureHelp, Background),
+    (GetSignatureHelpResponse, Background),
     (GetSupermavenApiKey, Background),
     (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
@@ -329,6 +377,9 @@ messages!(
     (MultiLspQueryResponse, Background),
     (DevServerProjectsUpdate, Foreground),
     (ValidateDevServerProjectRequest, Background),
+    (ListRemoteDirectory, Background),
+    (ListRemoteDirectoryResponse, Background),
+    (UpdateDevServerProject, Background),
     (DeleteDevServer, Foreground),
     (DeleteDevServerProject, Foreground),
     (RegenerateDevServerToken, Foreground),
@@ -337,7 +388,13 @@ messages!(
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
     (LinkedEditingRange, Background),
-    (LinkedEditingRangeResponse, Background)
+    (LinkedEditingRangeResponse, Background),
+    (AdvertiseContexts, Foreground),
+    (OpenContext, Foreground),
+    (OpenContextResponse, Foreground),
+    (UpdateContext, Foreground),
+    (SynchronizeContexts, Foreground),
+    (SynchronizeContextsResponse, Foreground),
 );
 
 request_messages!(
@@ -376,9 +433,12 @@ request_messages!(
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetSignatureHelp, GetSignatureHelpResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
+    (ListRemoteDirectory, ListRemoteDirectoryResponse),
+    (UpdateDevServerProject, Ack),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
@@ -449,7 +509,9 @@ request_messages!(
     (DeleteDevServerProject, Ack),
     (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
     (RenameDevServer, Ack),
-    (RestartLanguageServers, Ack)
+    (RestartLanguageServers, Ack),
+    (OpenContext, OpenContextResponse),
+    (SynchronizeContexts, SynchronizeContextsResponse),
 );
 
 entity_messages!(
@@ -474,6 +536,7 @@ entity_messages!(
     GetHover,
     GetProjectSymbols,
     GetReferences,
+    GetSignatureHelp,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -511,6 +574,10 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    AdvertiseContexts,
+    OpenContext,
+    UpdateContext,
+    SynchronizeContexts,
 );
 
 entity_messages!(
