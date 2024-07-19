@@ -218,7 +218,6 @@ impl RunningKernel {
                 .with_context(|| format!("Failed to create jupyter runtime dir {runtime_dir:?}"))?;
             let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}.json"));
             let content = serde_json::to_string(&connection_info)?;
-            // write out file to disk for kernel
             fs.atomic_write(connection_path.clone(), content).await?;
 
             let mut cmd = kernel_specification.command(&connection_path)?;
