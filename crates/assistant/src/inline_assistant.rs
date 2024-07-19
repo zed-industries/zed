@@ -9,7 +9,7 @@ use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
@@ -310,7 +310,7 @@ impl InlineAssistant {
         range: &Range<Anchor>,
         prompt_editor: &View<PromptEditor>,
         cx: &mut WindowContext,
-    ) -> [BlockId; 2] {
+    ) -> [CustomBlockId; 2] {
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -1900,8 +1900,8 @@ impl InlineAssist {
         include_context: bool,
         editor: &View<Editor>,
         prompt_editor: &View<PromptEditor>,
-        prompt_block_id: BlockId,
-        end_block_id: BlockId,
+        prompt_block_id: CustomBlockId,
+        end_block_id: CustomBlockId,
         codegen: Model<Codegen>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -1995,10 +1995,10 @@ impl InlineAssist {
 }
 
 struct InlineAssistDecorations {
-    prompt_block_id: BlockId,
+    prompt_block_id: CustomBlockId,
     prompt_editor: View<PromptEditor>,
-    removed_line_block_ids: HashSet<BlockId>,
-    end_block_id: BlockId,
+    removed_line_block_ids: HashSet<CustomBlockId>,
+    end_block_id: CustomBlockId,
 }
 
 #[derive(Debug)]

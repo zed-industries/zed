@@ -568,6 +568,7 @@ pub struct Editor {
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
+    focused_block: Option<FocusedBlock>,
 }
 
 #[derive(Clone)]
@@ -785,7 +786,7 @@ pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
     pub editor: View<Editor>,
-    block_id: BlockId,
+    block_id: CustomBlockId,
 }
 
 struct InvalidationStack<T>(Vec<T>);
@@ -1537,7 +1538,7 @@ struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
     group_id: usize,
-    blocks: HashMap<BlockId, Diagnostic>,
+    blocks: HashMap<CustomBlockId, Diagnostic>,
     is_valid: bool,
 }
 
@@ -1583,6 +1584,11 @@ impl InlayHintRefreshReason {
             Self::ExcerptsRemoved(_) => "excerpts removed",
         }
     }
+}
+
+pub(crate) struct FocusedBlock {
+    id: BlockId,
+    focus_handle: WeakFocusHandle,
 }
 
 impl Editor {
@@ -1908,6 +1914,7 @@ impl Editor {
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
             breadcrumb_header: None,
+            focused_block: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -10150,7 +10157,7 @@ impl Editor {
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<BlockId> {
+    ) -> Vec<CustomBlockId> {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
@@ -10162,7 +10169,7 @@ impl Editor {
 
     pub fn replace_blocks(
         &mut self,
-        blocks: HashMap<BlockId, (Option<u8>, RenderBlock)>,
+        blocks: HashMap<CustomBlockId, (Option<u8>, RenderBlock)>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -10175,7 +10182,7 @@ impl Editor {
 
     pub fn remove_blocks(
         &mut self,
-        block_ids: HashSet<BlockId>,
+        block_ids: HashSet<CustomBlockId>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -10189,11 +10196,19 @@ impl Editor {
 
     pub fn row_for_block(
         &self,
-        block_id: BlockId,
+        block_id: CustomBlockId,
         cx: &mut ViewContext<Self>,
     ) -> Option<DisplayRow> {
         self.display_map
             .update(cx, |map, cx| map.row_for_block(block_id, cx))
+    }
+
+    pub(crate) fn set_focused_block(&mut self, focused_block: FocusedBlock) {
+        self.focused_block = Some(focused_block);
+    }
+
+    pub(crate) fn take_focused_block(&mut self) -> Option<FocusedBlock> {
+        self.focused_block.take()
     }
 
     pub fn insert_creases(
@@ -12830,7 +12845,7 @@ pub fn diagnostic_block_renderer(
         highlight_diagnostic_message(&diagnostic, max_message_rows);
 
     Box::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.transform_block_id.to_string().into();
+        let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
@@ -12842,7 +12857,7 @@ pub fn diagnostic_block_renderer(
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 
-        let buttons = |diagnostic: &Diagnostic, block_id: TransformBlockId| {
+        let buttons = |diagnostic: &Diagnostic, block_id: BlockId| {
             if multi_line_diagnostic {
                 v_flex()
             } else {
@@ -12873,12 +12888,12 @@ pub fn diagnostic_block_renderer(
             )
         };
 
-        let icon_size = buttons(&diagnostic, cx.transform_block_id)
+        let icon_size = buttons(&diagnostic, cx.block_id)
             .into_any_element()
             .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
-            .id(cx.transform_block_id)
+            .id(cx.block_id)
             .group(group_id.clone())
             .relative()
             .size_full()
@@ -12890,7 +12905,7 @@ pub fn diagnostic_block_renderer(
                     .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
-            .child(buttons(&diagnostic, cx.transform_block_id))
+            .child(buttons(&diagnostic, cx.block_id))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,

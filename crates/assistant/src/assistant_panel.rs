@@ -23,7 +23,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
+        ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
@@ -984,11 +985,11 @@ pub struct ContextEditor {
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
-    blocks: HashSet<BlockId>,
+    blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
+    pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
     _subscriptions: Vec<Subscription>,
     active_edit_step: Option<ActiveEditStep>,
     assistant_panel: WeakView<AssistantPanel>,

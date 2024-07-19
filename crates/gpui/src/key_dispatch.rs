@@ -92,6 +92,7 @@ pub(crate) struct DispatchNode {
 pub(crate) struct ReusedSubtree {
     old_range: Range<usize>,
     new_range: Range<usize>,
+    contains_focus: bool,
 }
 
 impl ReusedSubtree {
@@ -103,6 +104,10 @@ impl ReusedSubtree {
             self.old_range
         );
         DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
+    }
+
+    pub fn contains_focus(&self) -> bool {
+        self.contains_focus
     }
 }
 
@@ -246,9 +251,15 @@ impl DispatchTree {
         target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
     }
 
-    pub fn reuse_subtree(&mut self, old_range: Range<usize>, source: &mut Self) -> ReusedSubtree {
+    pub fn reuse_subtree(
+        &mut self,
+        old_range: Range<usize>,
+        source: &mut Self,
+        focus: Option<FocusId>,
+    ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
+        let mut contains_focus = false;
         let mut source_stack = vec![];
         for (source_node_id, source_node) in source
             .nodes
@@ -268,6 +279,9 @@ impl DispatchTree {
             }
 
             source_stack.push(source_node_id);
+            if source_node.focus_id.is_some() && source_node.focus_id == focus {
+                contains_focus = true;
+            }
             self.move_node(source_node);
         }
 
@@ -279,6 +293,7 @@ impl DispatchTree {
         ReusedSubtree {
             old_range,
             new_range,
+            contains_focus,
         }
     }
 
