@@ -362,9 +362,17 @@ fn show_hover(
                             base_text_style,
                             selection_background_color: { cx.theme().players().local().selection },
                             soft_break_delim: String::from("\n"),
+                            link: TextStyleRefinement {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(cx.theme().colors().editor_foreground),
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         };
-                        Markdown::new(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
 

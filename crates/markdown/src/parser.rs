@@ -88,6 +88,77 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     events
 }
 
+pub fn parse_text_with_links(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+    let mut events = Vec::new();
+    let mut within_link = false;
+    let mut within_metadata = false;
+    for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+        if within_metadata {
+            if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
+                pulldown_event
+            {
+                within_metadata = false;
+            }
+            continue;
+        }
+        match pulldown_event {
+            pulldown_cmark::Event::Start(tag) => {
+                match tag {
+                    pulldown_cmark::Tag::Link { .. } => within_link = true,
+                    pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
+                    _ => {}
+                }
+                events.push((range, MarkdownEvent::Start(tag.into())))
+            }
+            pulldown_cmark::Event::End(tag) => {
+                if let pulldown_cmark::TagEnd::Link = tag {
+                    within_link = false;
+                }
+                events.push((range, MarkdownEvent::End(tag)));
+            }
+
+            pulldown_cmark::Event::SoftBreak => events.push((range, MarkdownEvent::SoftBreak)),
+            pulldown_cmark::Event::HardBreak => events.push((range, MarkdownEvent::HardBreak)),
+            _ => {
+                // Automatically detect links in text if we're not already within a markdown
+                // link.
+                if !within_link {
+                    let mut finder = LinkFinder::new();
+                    finder.kinds(&[linkify::LinkKind::Url]);
+                    let text_range = range.clone();
+                    for link in finder.links(&text[text_range.clone()]) {
+                        let link_range =
+                            text_range.start + link.start()..text_range.start + link.end();
+
+                        if link_range.start > range.start {
+                            events.push((range.start..link_range.start, MarkdownEvent::Text));
+                        }
+
+                        events.push((
+                            link_range.clone(),
+                            MarkdownEvent::Start(MarkdownTag::Link {
+                                link_type: LinkType::Autolink,
+                                dest_url: SharedString::from(link.as_str().to_string()),
+                                title: SharedString::default(),
+                                id: SharedString::default(),
+                            }),
+                        ));
+                        events.push((link_range.clone(), MarkdownEvent::Text));
+                        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
+
+                        range.start = link_range.end;
+                    }
+                }
+
+                if range.start < range.end {
+                    events.push((range, MarkdownEvent::Text));
+                }
+            }
+        }
+    }
+    events
+}
+
 /// A static-lifetime equivalent of pulldown_cmark::Event so we can cache the
 /// parse result for rendering without resorting to unsafe lifetime coercion.
 #[derive(Clone, Debug, PartialEq)]
