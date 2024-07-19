@@ -1866,6 +1866,11 @@ impl Interactivity {
                 });
             }
 
+            // Ensure to remove active tooltip if tooltip builder is none
+            if self.tooltip_builder.is_none() {
+                element_state.active_tooltip.take();
+            }
+
             if let Some(tooltip_builder) = self.tooltip_builder.take() {
                 let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let active_tooltip = element_state
