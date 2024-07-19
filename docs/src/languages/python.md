@@ -6,6 +6,24 @@ Python support is available through the [Python extension](ttps://github.com/zed
 - Language Server: [basedpyright](https://github.com/detachhead/basedpyright)
 - Language Server: [pyright](https://github.com/microsoft/pyright)
 
+## Choosing a language server
+
+The Python extension offers both `basedpyright` and `pyright` language server support.
+
+`pyright` is enabled by default.
+
+To switch to `basedpyright`, add the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Python": {
+      "language_servers": ["basedpyright", "!pyright"]
+    }
+  }
+}
+```
+
 ### Configuration
 
 The [pyright](https://github.com/microsoft/pyright) language server offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. Pyright settings can also be specified in a `[tool.pyright]` section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedent over `pyproject.toml` if both are present.
