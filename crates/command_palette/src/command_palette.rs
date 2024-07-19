@@ -254,7 +254,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
-            query = alias.clone();
+            query = alias.to_string();
         }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_executor().spawn({
