@@ -47,6 +47,7 @@ fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |vim, editor, cx| {
         let mut edits = Vec::new();
         let mut new_anchors = Vec::new();
+        vim.store_visual_marks(cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         for selection in editor.selections.all_adjusted(cx) {
