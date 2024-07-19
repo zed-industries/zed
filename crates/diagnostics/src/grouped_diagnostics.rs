@@ -250,13 +250,13 @@ impl GroupedDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<GroupedDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
             let diagnostics = cx.new_view(|cx| {
                 GroupedDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
     }
 

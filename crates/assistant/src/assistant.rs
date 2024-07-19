@@ -7,7 +7,6 @@ mod inline_assistant;
 mod model_selector;
 mod prompt_library;
 mod prompts;
-mod search;
 mod slash_command;
 mod streaming_diff;
 mod terminal_inline_assistant;
@@ -53,9 +52,9 @@ actions!(
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
-        ApplyEdit,
         ConfirmCommand,
-        ToggleModelSelector
+        ToggleModelSelector,
+        DebugEditSteps
     ]
 );
 
