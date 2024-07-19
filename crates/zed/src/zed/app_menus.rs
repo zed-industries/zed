@@ -2,7 +2,7 @@ use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
 use terminal_view::terminal_panel;
 
-pub fn app_menus() -> Vec<Menu<'static>> {
+pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;
 
     vec![
