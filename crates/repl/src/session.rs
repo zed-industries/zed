@@ -134,16 +134,17 @@ impl EditorBlock {
                 dbg!(event);
             });
 
-            h_flex()
+            div()
+                .flex()
+                .flex_row()
+                .items_start()
                 .w_full()
                 .bg(cx.theme().colors().background)
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
+                    h_flex()
+                        .py_2()
                         .justify_center()
                         .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                         .child(close_button),
