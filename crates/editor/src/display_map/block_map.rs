@@ -1593,13 +1593,9 @@ mod tests {
             multi_buffer
         });
 
-        let font = if cfg!(target_os = "linux") {
-            font("DejaVu Sans")
-        } else {
-            font("Helvetica")
-        };
+        let font = font("Helvetica");
         let font_size = px(14.);
-        let font_id = cx.text_system().font_id(&font).unwrap();
+        let font_id = cx.text_system().resolve_font(&font);
         let mut wrap_width = px(0.);
         for c in "Buff".chars() {
             wrap_width += cx
