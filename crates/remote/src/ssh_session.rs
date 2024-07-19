@@ -6,9 +6,8 @@ use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     future::{BoxFuture, LocalBoxFuture},
-    AsyncWriteExt as _, Future,
+    select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use futures::{select_biased, AsyncReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, WeakModel};
 use parking_lot::Mutex;
 use rpc::{
@@ -19,10 +18,7 @@ use rpc::{
     TypedEnvelope,
 };
 use smol::{
-    fs::{
-        self,
-        unix::{MetadataExt, PermissionsExt as _},
-    },
+    fs,
     process::{self, Stdio},
 };
 use std::{
@@ -36,7 +32,6 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::ResultExt as _;
 
 pub struct SshSession {
     next_message_id: AtomicU32,
@@ -412,6 +407,7 @@ impl ProtoClient for SshSession {
 }
 
 impl SshClientState {
+    #[cfg(not(unix))]
     async fn new(
         user: String,
         host: String,
@@ -419,6 +415,20 @@ impl SshClientState {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
+        Err(anyhow!("ssh is not supported on this platform"))
+    }
+
+    #[cfg(unix)]
+    async fn new(
+        user: String,
+        host: String,
+        port: u16,
+        delegate: Arc<dyn SshClientDelegate>,
+        cx: &AsyncAppContext,
+    ) -> Result<Self> {
+        use smol::fs::unix::PermissionsExt as _;
+        use util::ResultExt as _;
+
         let url = format!("{user}@{host}");
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
@@ -600,7 +610,7 @@ async fn ensure_server_binary(
     }
 
     let src_stat = fs::metadata(src_path).await?;
-    let size = src_stat.size();
+    let size = src_stat.len();
     let server_mode = 0o755;
 
     let t0 = Instant::now();
