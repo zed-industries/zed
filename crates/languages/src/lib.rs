@@ -3,7 +3,6 @@ use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
-use python::PythonContextProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -18,7 +17,6 @@ mod c;
 mod css;
 mod go;
 mod json;
-mod python;
 mod rust;
 mod tailwind;
 mod typescript;
@@ -48,7 +46,6 @@ pub fn init(
         ("jsonc", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
         ("proto", tree_sitter_proto::language()),
-        ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
@@ -136,13 +133,6 @@ pub fn init(
         json_task_context()
     );
     language!("markdown");
-    language!(
-        "python",
-        vec![Arc::new(python::PythonLspAdapter::new(
-            node_runtime.clone(),
-        ))],
-        PythonContextProvider
-    );
     language!(
         "rust",
         vec![Arc::new(rust::RustLspAdapter)],

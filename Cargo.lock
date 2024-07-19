@@ -6077,7 +6077,6 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-markdown",
  "tree-sitter-proto",
- "tree-sitter-python",
  "tree-sitter-regex",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -11613,16 +11612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-python"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c93b1b1fbd0d399db3445f51fd3058e43d0b4dcff62ddbdb46e66550978aa5"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-regex"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13892,6 +13881,13 @@ name = "zed_purescript"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4",
+]
+
+[[package]]
+name = "zed_python"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]

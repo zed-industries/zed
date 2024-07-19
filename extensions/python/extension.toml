@@ -1,0 +1,19 @@
+id = "python"
+name = "Python"
+description = "Python support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Michał Mrówka <michal.z.mrowka@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.pyright]
+name = "Pyright"
+language = "Python"
+
+[language_servers.basedpyright]
+name = "BasedPyright"
+language = "Python"
+
+[grammars.python]
+repository = "https://github.com/tree-sitter/tree-sitter-python"
+commit = "0f9047c857ed0990931b1f899c7d3bf403703147"

@@ -1,8 +1,9 @@
 # Python
 
-Python support is available natively in Zed.
+Python support is available through the [Python extension](ttps://github.com/zed-industries/zed/tree/main/extensions/python).
 
 - Tree Sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+- Language Server: [basedpyright](https://github.com/detachhead/basedpyright)
 - Language Server: [pyright](https://github.com/microsoft/pyright)
 
 ### Configuration
@@ -16,6 +17,7 @@ For more information, see the Pyright [configuration documentation](https://micr
 The [pyright](https://github.com/microsoft/pyright) language server also accepts specific LSP related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
 
 For example, in order to:
+
 - use strict type-checking level
 - diagnose all files in the workspace instead of the only open files default
 - provide the path to a specific python interpreter
@@ -104,7 +106,7 @@ A common tool for formatting python code is [Black](https://black.readthedocs.io
   "languages": {
     "Python": {
       "formatter": {
-         "external": {
+        "external": {
           "command": "black",
           "arguments": ["-"]
         }
