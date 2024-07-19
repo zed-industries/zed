@@ -5037,7 +5037,7 @@ impl Project {
                                         // do the auto-format: prefer prettier, fallback to primary language server
                                         let diff = {
                                             if prettier_settings.allowed {
-                                                Self::format_with_formatter(
+                                                Self::perform_format(
                                                     &Formatter::Prettier,
                                                     server_and_buffer,
                                                     project.clone(),
@@ -5051,7 +5051,7 @@ impl Project {
                                                 )
                                                 .await
                                             } else {
-                                                Self::format_with_formatter(
+                                                Self::perform_format(
                                                     &Formatter::LanguageServer,
                                                     server_and_buffer,
                                                     project.clone(),
@@ -5074,7 +5074,7 @@ impl Project {
                                     }
                                     SelectedFormatter::List(formatters) => {
                                         for formatter in formatters.0.clone() {
-                                            let diff = Self::format_with_formatter(
+                                            let diff = Self::perform_format(
                                                 &formatter,
                                                 server_and_buffer,
                                                 project.clone(),
@@ -5100,7 +5100,7 @@ impl Project {
                             }
                             FormatOnSave::List(formatters) => {
                                 for formatter in formatters.0.clone() {
-                                    let diff = Self::format_with_formatter(
+                                    let diff = Self::perform_format(
                                         &formatter,
                                         server_and_buffer,
                                         project.clone(),
@@ -5128,7 +5128,7 @@ impl Project {
                                 // do the auto-format: prefer prettier, fallback to primary language server
                                 let diff = {
                                     if prettier_settings.allowed {
-                                        Self::format_with_formatter(
+                                        Self::perform_format(
                                             &Formatter::Prettier,
                                             server_and_buffer,
                                             project.clone(),
@@ -5142,7 +5142,7 @@ impl Project {
                                         )
                                         .await
                                     } else {
-                                        Self::format_with_formatter(
+                                        Self::perform_format(
                                             &Formatter::LanguageServer,
                                             server_and_buffer,
                                             project.clone(),
@@ -5167,7 +5167,7 @@ impl Project {
                             SelectedFormatter::List(formatters) => {
                                 for formatter in formatters.0.clone() {
                                     // format with formatter
-                                    let diff = Self::format_with_formatter(
+                                    let diff = Self::perform_format(
                                         &formatter,
                                         server_and_buffer,
                                         project.clone(),
@@ -5238,7 +5238,8 @@ impl Project {
         Ok(project_transaction)
     }
 
-    async fn format_with_formatter(
+    #[allow(clippy::too_many_arguments)]
+    async fn perform_format(
         formatter: &Formatter,
         server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
         project: WeakModel<Project>,
