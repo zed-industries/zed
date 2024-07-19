@@ -1,9 +1,9 @@
-use crate::TextStyleRefinement;
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
     SharedString, StyleRefinement, WhiteSpace,
 };
+use crate::{TextStyleRefinement, Truncate};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
@@ -56,6 +56,24 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .white_space = Some(WhiteSpace::Nowrap);
+        self
+    }
+
+    /// Sets the truncate overflowing text with an ellipsis (…) if needed.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
+    fn text_ellipsis(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .truncate = Some(Truncate::Ellipsis);
+        self
+    }
+
+    /// Sets the truncate overflowing text.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
+    fn truncate(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .truncate = Some(Truncate::Truncate);
         self
     }
 

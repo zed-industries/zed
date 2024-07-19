@@ -1,8 +1,8 @@
 use crate::{
-    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
-    TOOLTIP_DELAY,
+    size, ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId,
+    GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
+    WindowContext, WrappedLine, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -244,6 +244,8 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+static ELLIPSIS: &str = "…";
+
 impl TextLayout {
     fn lock(&self) -> MutexGuard<Option<TextLayoutInner>> {
         self.0.lock()
@@ -280,11 +282,68 @@ impl TextLayout {
                     None
                 };
 
+                let (truncate_width, ellipsis) = if let Some(truncate) = text_style.truncate {
+                    let width = known_dimensions.width.or(match available_space.width {
+                        crate::AvailableSpace::Definite(x) => Some(x),
+                        _ => None,
+                    });
+
+                    match truncate {
+                        Truncate::Truncate => (width, None),
+                        Truncate::Ellipsis => {
+                            let ellipsis_width = cx
+                                .text_system()
+                                .shape_line(
+                                    ELLIPSIS.into(),
+                                    font_size,
+                                    &[text_style.to_run(ELLIPSIS.len())],
+                                )
+                                .log_err();
+
+                            (
+                                width.map(|w| {
+                                    w - ellipsis_width.map(|e| e.width).unwrap_or_default()
+                                }),
+                                Some(ELLIPSIS),
+                            )
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
+
                 if let Some(text_layout) = element_state.0.lock().as_ref() {
                     if text_layout.size.is_some()
                         && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
                     {
                         return text_layout.size.unwrap();
+                    }
+                }
+
+                if let Some(truncate_width) = truncate_width {
+                    let text = if let Some(ellipsis) = &ellipsis {
+                        format!("{}{}", text, ellipsis).into()
+                    } else {
+                        text.clone()
+                    };
+
+                    if let Some(lines) = cx
+                        .text_system()
+                        .shape_text(text, font_size, &runs, Some(truncate_width))
+                        .log_err()
+                    {
+                        if lines.len() > 0 {
+                            let first_line = lines.first().unwrap();
+                            let size = size(first_line.width(), line_height);
+                            println!("----------- {:?}", first_line);
+                            element_state.lock().replace(TextLayoutInner {
+                                lines,
+                                line_height,
+                                wrap_width: Some(truncate_width),
+                                size: Some(size),
+                                bounds: None,
+                            });
+                        }
                     }
                 }
 

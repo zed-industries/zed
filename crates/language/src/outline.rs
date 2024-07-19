@@ -173,6 +173,7 @@ pub fn render_item<T>(
         underline: None,
         strikethrough: None,
         white_space: WhiteSpace::Normal,
+        truncate: None,
     };
     let highlights = gpui::combine_highlights(
         custom_highlights,
