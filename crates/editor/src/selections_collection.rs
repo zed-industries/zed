@@ -157,6 +157,18 @@ impl SelectionsCollection {
         selections
     }
 
+    /// Returns the newest selection, adjusted to take into account the selection line_mode
+    pub fn newest_adjusted(&self, cx: &mut AppContext) -> Selection<Point> {
+        let mut selection = self.newest::<Point>(cx);
+        if self.line_mode {
+            let map = self.display_map(cx);
+            let new_range = map.expand_to_line(selection.range());
+            selection.start = new_range.start;
+            selection.end = new_range.end;
+        }
+        selection
+    }
+
     pub fn all_adjusted_display(
         &self,
         cx: &mut AppContext,
@@ -423,46 +435,6 @@ impl<'a> MutableSelectionsCollection<'a> {
             },
             mode,
         });
-        self.selections_changed = true;
-    }
-
-    pub(crate) fn set_pending_display_range(
-        &mut self,
-        range: Range<DisplayPoint>,
-        mode: SelectMode,
-    ) {
-        let (start, end, reversed) = {
-            let display_map = self.display_map();
-            let buffer = self.buffer();
-            let mut start = range.start;
-            let mut end = range.end;
-            let reversed = if start > end {
-                mem::swap(&mut start, &mut end);
-                true
-            } else {
-                false
-            };
-
-            let end_bias = if end > start { Bias::Left } else { Bias::Right };
-            (
-                buffer.anchor_before(start.to_point(&display_map)),
-                buffer.anchor_at(end.to_point(&display_map), end_bias),
-                reversed,
-            )
-        };
-
-        let new_pending = PendingSelection {
-            selection: Selection {
-                id: post_inc(&mut self.collection.next_selection_id),
-                start,
-                end,
-                reversed,
-                goal: SelectionGoal::None,
-            },
-            mode,
-        };
-
-        self.collection.pending = Some(new_pending);
         self.selections_changed = true;
     }
 

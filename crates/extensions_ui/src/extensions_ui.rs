@@ -14,17 +14,17 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
+use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use vim::VimModeSetting;
-use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
@@ -54,13 +54,17 @@ pub fn init(cx: &mut AppContext) {
                     workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             })
-            .register_action(move |_, _: &InstallDevExtension, cx| {
+            .register_action(move |workspace, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
-                let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: false,
-                });
+                let prompt = workspace.prompt_for_open_path(
+                    gpui::PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                    },
+                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    cx,
+                );
 
                 let workspace_handle = cx.view().downgrade();
                 cx.deref_mut()
@@ -131,10 +135,14 @@ impl ExtensionFilter {
 enum Feature {
     Git,
     Vim,
+    LanguageBash,
     LanguageC,
     LanguageCpp,
+    LanguageGo,
     LanguagePython,
+    LanguageReact,
     LanguageRust,
+    LanguageTypescript,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
@@ -143,10 +151,17 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
             (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguageGo, vec!["go", "golang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
             (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
         ])
     })
 }
@@ -939,9 +954,14 @@ impl ExtensionsPage {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+            let telemetry = self.telemetry.clone();
             let upsell = match feature {
-                Feature::Git => FeatureUpsell::new("Zed comes with basic Git support for diffs and branches. More Git features are coming in the future."),
-                Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
+                Feature::Git => FeatureUpsell::new(
+                    telemetry,
+                    "Zed comes with basic Git support. More Git features are coming in the future.",
+                )
+                .docs_url("https://zed.dev/docs/git"),
+                Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
                         "enable-vim",
@@ -953,7 +973,7 @@ impl ExtensionsPage {
                         },
                         cx.listener(move |this, selection, cx| {
                             this.telemetry
-                                .report_app_event("extensions: toggle vim".to_string());
+                                .report_app_event("feature upsell: toggle vim".to_string());
                             this.update_settings::<VimModeSetting>(
                                 selection,
                                 cx,
@@ -961,14 +981,38 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
-                Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/c"),
-                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/cpp"),
-                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/python"),
-                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/rust"),
+                Feature::LanguageBash => {
+                    FeatureUpsell::new(telemetry, "Shell support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/bash")
+                }
+                Feature::LanguageC => {
+                    FeatureUpsell::new(telemetry, "C support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/c")
+                }
+                Feature::LanguageCpp => {
+                    FeatureUpsell::new(telemetry, "C++ support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/cpp")
+                }
+                Feature::LanguageGo => {
+                    FeatureUpsell::new(telemetry, "Go support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/go")
+                }
+                Feature::LanguagePython => {
+                    FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/python")
+                }
+                Feature::LanguageReact => {
+                    FeatureUpsell::new(telemetry, "React support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
+                Feature::LanguageRust => {
+                    FeatureUpsell::new(telemetry, "Rust support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/rust")
+                }
+                Feature::LanguageTypescript => {
+                    FeatureUpsell::new(telemetry, "Typescript support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
             };
 
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
@@ -1090,14 +1134,8 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        Label::new("Extensions")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Extensions".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

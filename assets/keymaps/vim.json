@@ -215,7 +215,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": ["vim::PushOperator", "Yank"],
-      "shift-y": "vim::YankLine",
+      "shift-y": "vim::YankToEndOfLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
@@ -333,7 +333,10 @@
     "context": "vim_mode == waiting",
     "bindings": {
       "tab": "vim::Tab",
-      "enter": "vim::Enter"
+      "enter": "vim::Enter",
+      "escape": "vim::ClearOperators",
+      "ctrl-c": "vim::ClearOperators",
+      "ctrl-[": "vim::ClearOperators"
     }
   },
   {

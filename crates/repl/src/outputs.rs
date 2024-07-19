@@ -363,7 +363,7 @@ impl LineHeight for OutputType {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub enum ExecutionStatus {
     #[default]
     Unknown,

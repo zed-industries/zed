@@ -1,10 +1,11 @@
 mod base_keymap_picker;
 mod base_keymap_setting;
+mod multibuffer_hint;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    actions, svg, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
@@ -14,11 +15,14 @@ use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
 pub use base_keymap_setting::BaseKeymap;
+pub use multibuffer_hint::*;
+
+actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 
@@ -30,6 +34,8 @@ pub fn init(cx: &mut AppContext) {
             let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, cx)
         });
+        workspace
+            .register_action(|_workspace, _: &ResetHints, cx| MultibufferHint::set_count(0, cx));
     })
     .detach();
 
@@ -297,14 +303,8 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        Label::new("Welcome to Zed!")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Welcome to Zed!".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

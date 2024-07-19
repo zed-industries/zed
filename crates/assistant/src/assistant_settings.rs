@@ -23,6 +23,7 @@ pub enum CloudModel {
     Gpt4Turbo,
     #[default]
     Gpt4Omni,
+    Gpt4OmniMini,
     Claude3_5Sonnet,
     Claude3Opus,
     Claude3Sonnet,
@@ -107,6 +108,7 @@ impl CloudModel {
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
             Self::Gpt4Omni => "gpt-4o",
+            Self::Gpt4OmniMini => "gpt-4o-mini",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
@@ -123,6 +125,7 @@ impl CloudModel {
             Self::Gpt4 => "GPT 4",
             Self::Gpt4Turbo => "GPT 4 Turbo",
             Self::Gpt4Omni => "GPT 4 Omni",
+            Self::Gpt4OmniMini => "GPT 4 Omni Mini",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
@@ -138,6 +141,7 @@ impl CloudModel {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
             Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
+            Self::Gpt4OmniMini => 128000,
             Self::Claude3_5Sonnet
             | Self::Claude3Opus
             | Self::Claude3Sonnet

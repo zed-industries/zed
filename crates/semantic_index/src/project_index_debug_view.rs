@@ -9,7 +9,7 @@ use settings::Settings;
 use std::{path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace::item::{Item, TabContentParams};
+use workspace::item::Item;
 
 pub struct ProjectIndexDebugView {
     index: Model<ProjectIndex>,
@@ -271,14 +271,8 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("Project Index (Debug)")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Project Index (Debug)".into())
     }
 
     fn clone_on_split(

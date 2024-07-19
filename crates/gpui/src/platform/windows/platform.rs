@@ -16,7 +16,6 @@ use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use time::UtcOffset;
 use windows::{
     core::*,
     Win32::{
@@ -35,7 +34,6 @@ use windows::{
             Ole::*,
             SystemInformation::*,
             Threading::*,
-            Time::*,
         },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -480,25 +478,6 @@ impl Platform for WindowsPlatform {
 
     fn app_path(&self) -> Result<PathBuf> {
         Ok(std::env::current_exe()?)
-    }
-
-    fn local_timezone(&self) -> UtcOffset {
-        let mut info = unsafe { std::mem::zeroed() };
-        let ret = unsafe { GetTimeZoneInformation(&mut info) };
-        if ret == TIME_ZONE_ID_INVALID {
-            log::error!(
-                "Unable to get local timezone: {}",
-                std::io::Error::last_os_error()
-            );
-            return UtcOffset::UTC;
-        }
-        // Windows treat offset as:
-        // UTC = localtime + offset
-        // so we add a minus here
-        let hours = -info.Bias / 60;
-        let minutes = -info.Bias % 60;
-
-        UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
     }
 
     // todo(windows)

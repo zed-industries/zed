@@ -1923,9 +1923,11 @@ impl ContextEditor {
             return;
         };
 
+        let selection = editor.update(cx, |editor, cx| editor.selections.newest_adjusted(cx));
         let editor = editor.read(cx);
-        let range = editor.selections.newest::<usize>(cx).range();
         let buffer = editor.buffer().read(cx).snapshot(cx);
+        let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+            ..editor::ToOffset::to_offset(&selection.end, &buffer);
         let start_language = buffer.language_at(range.start);
         let end_language = buffer.language_at(range.end);
         let language_name = if start_language == end_language {
@@ -2129,18 +2131,8 @@ impl FocusableView for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content(&self, params: item::TabContentParams, cx: &WindowContext) -> AnyElement {
-        let color = if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        };
-        Label::new(util::truncate_and_trailoff(
-            &self.title(cx),
-            Self::MAX_TAB_TITLE_LEN,
-        ))
-        .color(color)
-        .into_any_element()
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+        Some(util::truncate_and_trailoff(&self.title(cx), Self::MAX_TAB_TITLE_LEN).into())
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
@@ -2637,13 +2629,8 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content(&self, params: item::TabContentParams, _: &WindowContext) -> AnyElement {
-        let color = if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        };
-        Label::new("History").color(color).into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("History".into())
     }
 }
 

@@ -767,7 +767,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
     cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/external-src", false, cx)
+            project.find_or_create_worktree("/external-src", false, cx)
         })
     })
     .detach();
@@ -1513,7 +1513,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     project
         .update(cx, |project, cx| {
             project
-                .find_or_create_local_worktree("/test/project_2", true, cx)
+                .find_or_create_worktree("/test/project_2", true, cx)
                 .into_future()
         })
         .await

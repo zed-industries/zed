@@ -310,6 +310,13 @@ impl EsLintLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::new("source.fixAll.eslint"),
+        ])
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,

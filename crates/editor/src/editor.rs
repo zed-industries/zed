@@ -131,7 +131,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -272,7 +272,8 @@ pub fn init(cx: &mut AppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
-    workspace::register_deserializable_item::<Editor>(cx);
+    workspace::register_serializable_item::<Editor>(cx);
+
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
@@ -550,6 +551,7 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -1770,6 +1772,8 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
+            .detach();
         cx.on_focus_out(&focus_handle, Self::handle_focus_out)
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -1874,6 +1878,9 @@ impl Editor {
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+            serialize_dirty_buffers: ProjectSettings::get_global(cx)
+                .session
+                .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
             file_header_size,
@@ -3638,7 +3645,7 @@ impl Editor {
         if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(
                 &ShowCompletions {
-                    trigger: text.chars().last(),
+                    trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
                 },
                 cx,
             );
@@ -4062,15 +4069,18 @@ impl Editor {
                 Some(ContextMenu::Completions(_))
             )
         };
-        let trigger_kind = match (options.trigger, is_followup_invoke) {
+        let trigger_kind = match (&options.trigger, is_followup_invoke) {
             (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
-            (Some(_), _) => CompletionTriggerKind::TRIGGER_CHARACTER,
+            (Some(trigger), _) if buffer.read(cx).completion_triggers().contains(&trigger) => {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            }
+
             _ => CompletionTriggerKind::INVOKED,
         };
         let completion_context = CompletionContext {
-            trigger_character: options.trigger.and_then(|c| {
+            trigger_character: options.trigger.as_ref().and_then(|trigger| {
                 if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
-                    Some(String::from(c))
+                    Some(String::from(trigger))
                 } else {
                     None
                 }
@@ -9502,6 +9512,11 @@ impl Editor {
                         }
                         editor
                     });
+                    cx.subscribe(&rename_editor, |_, _, e, cx| match e {
+                        EditorEvent::Focused => cx.emit(EditorEvent::FocusedIn),
+                        _ => {}
+                    })
+                    .detach();
 
                     let write_highlights =
                         this.clear_background_highlights::<DocumentHighlightWrite>(cx);
@@ -10387,6 +10402,22 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn working_directory(&self, cx: &WindowContext) -> Option<PathBuf> {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(dir) = file.abs_path(cx).parent() {
+                    return Some(dir.to_owned());
+                }
+            }
+
+            if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                return Some(project_path.path.to_path_buf());
+            }
+        }
+
+        None
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
@@ -11256,8 +11287,11 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
+        let project_settings = ProjectSettings::get_global(cx);
+        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
+
         if self.mode == EditorMode::Full {
-            let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
+            let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, cx);
             }
@@ -11644,6 +11678,10 @@ impl Editor {
                 }
             });
         }
+    }
+
+    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(EditorEvent::FocusedIn)
     }
 
     fn handle_focus_out(&mut self, event: FocusOutEvent, _cx: &mut ViewContext<Self>) {
@@ -12250,6 +12288,7 @@ pub enum EditorEvent {
     },
     Reparsed(BufferId),
     Focused,
+    FocusedIn,
     Blurred,
     DirtyChanged,
     Saved,
@@ -12802,23 +12841,31 @@ pub fn highlight_diagnostic_message(
 
     let mut prev_offset = 0;
     let mut in_code_block = false;
+    let has_row_limit = max_message_rows.is_some();
     let mut newline_indices = diagnostic
         .message
         .match_indices('\n')
+        .filter(|_| has_row_limit)
         .map(|(ix, _)| ix)
         .fuse()
         .peekable();
-    for (ix, _) in diagnostic
+
+    for (quote_ix, _) in diagnostic
         .message
         .match_indices('`')
         .chain([(diagnostic.message.len(), "")])
     {
-        let mut trimmed_ix = ix;
-        while let Some(newline_index) = newline_indices.peek() {
-            if *newline_index < ix {
+        let mut first_newline_ix = None;
+        let mut last_newline_ix = None;
+        while let Some(newline_ix) = newline_indices.peek() {
+            if *newline_ix < quote_ix {
+                if first_newline_ix.is_none() {
+                    first_newline_ix = Some(*newline_ix);
+                }
+                last_newline_ix = Some(*newline_ix);
+
                 if let Some(rows_left) = &mut max_message_rows {
                     if *rows_left == 0 {
-                        trimmed_ix = newline_index.saturating_sub(1);
                         break;
                     } else {
                         *rows_left -= 1;
@@ -12830,14 +12877,14 @@ pub fn highlight_diagnostic_message(
             }
         }
         let prev_len = text_without_backticks.len();
-        let new_text = &diagnostic.message[prev_offset..trimmed_ix];
+        let new_text = &diagnostic.message[prev_offset..first_newline_ix.unwrap_or(quote_ix)];
         text_without_backticks.push_str(new_text);
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
         }
-        prev_offset = trimmed_ix + 1;
+        prev_offset = last_newline_ix.unwrap_or(quote_ix) + 1;
         in_code_block = !in_code_block;
-        if trimmed_ix != ix {
+        if first_newline_ix.map_or(false, |newline_ix| newline_ix < quote_ix) {
             text_without_backticks.push_str("...");
             break;
         }

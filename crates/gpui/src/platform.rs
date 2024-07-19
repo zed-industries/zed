@@ -60,7 +60,6 @@ pub(crate) use mac::*;
 pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
-use time::UtcOffset;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
@@ -159,7 +158,6 @@ pub(crate) trait Platform: 'static {
         ""
     }
     fn app_path(&self) -> Result<PathBuf>;
-    fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);

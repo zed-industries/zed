@@ -2566,6 +2566,7 @@ dependencies = [
  "anyhow",
  "call",
  "channel",
+ "chrono",
  "client",
  "collections",
  "db",
@@ -3595,6 +3596,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "chrono",
  "client",
  "clock",
  "collections",
@@ -3603,6 +3605,7 @@ dependencies = [
  "db",
  "emojis",
  "env_logger",
+ "file_icons",
  "futures 0.3.28",
  "fuzzy",
  "git",
@@ -5495,7 +5498,6 @@ dependencies = [
  "gpui",
  "project",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -8108,6 +8110,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "futures 0.3.28",
  "git",
  "gpui",
  "language",
@@ -8528,7 +8531,6 @@ dependencies = [
  "client",
  "dev_server_projects",
  "editor",
- "feature_flags",
  "fuzzy",
  "gpui",
  "language",
@@ -8540,6 +8542,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "task",
  "terminal_view",
@@ -10929,18 +10932,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.61"
+version = "1.0.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c546c80d6be4bc6a00c0f01730c08df82eaa7a7a61f11d656526506112cc1709"
+checksum = "f2675633b1499176c2dff06b0856a27976a8f9d436737b4cf4f312d4d91d8bbb"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.61"
+version = "1.0.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c3384250002a6d5af4d114f2845d37b57521033f30d5c3f46c4d70e1197533"
+checksum = "d20468752b09f49e909e55a5d338caa8bedf615594e9d80bc4c565d30faf798c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13346,7 +13349,6 @@ dependencies = [
  "derive_more",
  "dev_server_projects",
  "env_logger",
- "file_icons",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -13501,7 +13503,7 @@ dependencies = [
 [[package]]
 name = "xkbcommon"
 version = "0.7.0"
-source = "git+https://github.com/ConradIrwin/xkbcommon-rs?rev=2d4c4439160c7846ede0f0ece93bf73b1e613339#2d4c4439160c7846ede0f0ece93bf73b1e613339"
+source = "git+https://github.com/ConradIrwin/xkbcommon-rs?rev=fcbb4612185cc129ceeff51d22f7fb51810a03b2#fcbb4612185cc129ceeff51d22f7fb51810a03b2"
 dependencies = [
  "as-raw-xcb-connection",
  "libc",
@@ -13638,7 +13640,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.145.0"
+version = "0.146.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13780,7 +13782,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13880,9 +13882,9 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.0.6"
+version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
@@ -13901,7 +13903,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.0.6"
+version = "0.0.8"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13916,7 +13918,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13951,16 +13953,17 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
+ "serde",
  "zed_extension_api 0.0.6",
 ]
 
 [[package]]
 name = "zed_zig"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
- "zed_extension_api 0.0.7",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]

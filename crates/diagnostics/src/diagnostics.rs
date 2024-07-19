@@ -4,7 +4,7 @@ mod toolbar_controls;
 
 #[cfg(test)]
 mod diagnostics_tests;
-mod grouped_diagnostics;
+pub(crate) mod grouped_diagnostics;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
@@ -45,7 +45,7 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
@@ -649,11 +649,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
-                .color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
+                .color(params.text_color())
                 .into_any_element()
         } else {
             h_flex()
@@ -663,13 +659,10 @@ impl Item for ProjectDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(Label::new(self.summary.error_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.error_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .when(self.summary.warning_count > 0, |then| {
@@ -677,13 +670,10 @@ impl Item for ProjectDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                            .child(Label::new(self.summary.warning_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.warning_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .into_any_element()
@@ -785,20 +775,6 @@ impl Item for ProjectDiagnosticsEditor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("diagnostics")
-    }
-
-    fn deserialize(
-        project: Model<Project>,
-        workspace: WeakView<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<View<Self>>> {
-        Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 

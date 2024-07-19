@@ -268,6 +268,7 @@ impl Vim {
             EditorEvent::Edited { .. } => {
                 Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx))
             }
+            EditorEvent::FocusedIn => Vim::update(cx, |vim, cx| vim.sync_vim_settings(cx)),
             _ => {}
         }));
 
@@ -679,6 +680,9 @@ impl Vim {
                 | Operator::DeleteSurrounds
         ) {
             self.update_state(|state| state.operator_stack.clear());
+            if let Operator::AddSurrounds { target: None } = operator {
+                self.start_recording(cx);
+            }
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);

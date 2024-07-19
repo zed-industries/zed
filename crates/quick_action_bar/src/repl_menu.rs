@@ -1,8 +1,9 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, RuntimePanel, SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, RuntimePanel,
+    Session, SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -15,6 +16,22 @@ use util::ResultExt;
 use crate::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
+
+struct ReplMenuState {
+    tooltip: SharedString,
+    icon: IconName,
+    icon_color: Color,
+    icon_is_animating: bool,
+    popover_disabled: bool,
+    indicator: Option<Indicator>,
+
+    status: KernelStatus,
+    kernel_name: SharedString,
+    kernel_language: SharedString,
+    // TODO: Persist rotation state so the
+    // icon doesn't reset on every state change
+    // current_delta: Duration,
+}
 
 impl QuickActionBar {
     pub fn render_repl_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -50,7 +67,7 @@ impl QuickActionBar {
         });
 
         let session = match session {
-            SessionSupport::ActiveSession(session) => session.read(cx),
+            SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
                 let spec = *spec;
                 return self.render_repl_launch_menu(spec, cx);
@@ -61,101 +78,25 @@ impl QuickActionBar {
             SessionSupport::Unsupported => return None,
         };
 
-        let kernel_name: SharedString = session.kernel_specification.name.clone().into();
-        let kernel_language: SharedString = session
-            .kernel_specification
-            .kernelspec
-            .language
-            .clone()
-            .into();
-
-        struct ReplMenuState {
-            tooltip: SharedString,
-            icon: IconName,
-            icon_color: Color,
-            icon_is_animating: bool,
-            popover_disabled: bool,
-            indicator: Option<Indicator>,
-            // TODO: Persist rotation state so the
-            // icon doesn't reset on every state change
-            // current_delta: Duration,
-        }
-
-        impl Default for ReplMenuState {
-            fn default() -> Self {
-                Self {
-                    tooltip: "Nothing running".into(),
-                    icon: IconName::ReplNeutral,
-                    icon_color: Color::Default,
-                    icon_is_animating: false,
-                    popover_disabled: false,
-                    indicator: None,
-                    // current_delta: Duration::default(),
-                }
-            }
-        }
-
-        let menu_state = match &session.kernel {
-            Kernel::RunningKernel(kernel) => match &kernel.execution_state {
-                ExecutionState::Idle => ReplMenuState {
-                    tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
-                    indicator: Some(Indicator::dot().color(Color::Success)),
-                    ..Default::default()
-                },
-                ExecutionState::Busy => ReplMenuState {
-                    tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
-                    icon_is_animating: true,
-                    popover_disabled: false,
-                    indicator: None,
-                    ..Default::default()
-                },
-            },
-            Kernel::StartingKernel(_) => ReplMenuState {
-                tooltip: format!("{} is starting", kernel_name).into(),
-                icon_is_animating: true,
-                popover_disabled: true,
-                icon_color: Color::Muted,
-                indicator: Some(Indicator::dot().color(Color::Muted)),
-                ..Default::default()
-            },
-            Kernel::ErroredLaunch(e) => ReplMenuState {
-                tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
-                popover_disabled: false,
-                indicator: Some(Indicator::dot().color(Color::Error)),
-                ..Default::default()
-            },
-            Kernel::ShuttingDown => ReplMenuState {
-                tooltip: format!("{} is shutting down", kernel_name).into(),
-                popover_disabled: true,
-                icon_color: Color::Muted,
-                indicator: Some(Indicator::dot().color(Color::Muted)),
-                ..Default::default()
-            },
-            Kernel::Shutdown => ReplMenuState::default(),
-        };
+        let menu_state = session_state(session.clone(), cx);
 
         let id = "repl-menu".to_string();
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
-        let kernel = &session.kernel;
-        let status_borrow = &kernel.status();
-        let status = status_borrow.clone();
         let panel_clone = repl_panel.clone();
         let editor_clone = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
-                let kernel_name = kernel_name.clone();
-                let kernel_language = kernel_language.clone();
-                let status = status.clone();
                 let panel_clone = panel_clone.clone();
                 let editor_clone = editor_clone.clone();
-                ContextMenu::build(cx, move |menu, _cx| {
+                let session = session.clone();
+                ContextMenu::build(cx, move |menu, cx| {
+                    let menu_state = session_state(session, cx);
+                    let status = menu_state.status;
                     let editor_clone = editor_clone.clone();
                     let panel_clone = panel_clone.clone();
-                    let kernel_name = kernel_name.clone();
-                    let kernel_language = kernel_language.clone();
-                    let status = status.clone();
+
                     menu.when_else(
                         status.is_connected(),
                         |running| {
@@ -166,8 +107,8 @@ impl QuickActionBar {
                                         .child(
                                             Label::new(format!(
                                                 "kernel: {} ({})",
-                                                kernel_name.clone(),
-                                                kernel_language.clone()
+                                                menu_state.kernel_name.clone(),
+                                                menu_state.kernel_language.clone()
                                             ))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
@@ -370,4 +311,87 @@ impl QuickActionBar {
                 .into_any_element(),
         )
     }
+}
+
+fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
+    let session = session.read(cx);
+
+    let kernel_name: SharedString = session.kernel_specification.name.clone().into();
+    let kernel_language: SharedString = session
+        .kernel_specification
+        .kernelspec
+        .language
+        .clone()
+        .into();
+
+    let fill_fields = || {
+        ReplMenuState {
+            tooltip: "Nothing running".into(),
+            icon: IconName::ReplNeutral,
+            icon_color: Color::Default,
+            icon_is_animating: false,
+            popover_disabled: false,
+            indicator: None,
+            kernel_name: kernel_name.clone(),
+            kernel_language: kernel_language.clone(),
+            // todo!(): Technically not shutdown, but indeterminate
+            status: KernelStatus::Shutdown,
+            // current_delta: Duration::default(),
+        }
+    };
+
+    let menu_state = match &session.kernel {
+        Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+            ExecutionState::Idle => ReplMenuState {
+                tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
+                indicator: Some(Indicator::dot().color(Color::Success)),
+                status: session.kernel.status(),
+                ..fill_fields()
+            },
+            ExecutionState::Busy => ReplMenuState {
+                tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
+                icon_is_animating: true,
+                popover_disabled: false,
+                indicator: None,
+                status: session.kernel.status(),
+                ..fill_fields()
+            },
+        },
+        Kernel::StartingKernel(_) => ReplMenuState {
+            tooltip: format!("{} is starting", kernel_name).into(),
+            icon_is_animating: true,
+            popover_disabled: true,
+            icon_color: Color::Muted,
+            indicator: Some(Indicator::dot().color(Color::Muted)),
+            status: session.kernel.status(),
+            ..fill_fields()
+        },
+        Kernel::ErroredLaunch(e) => ReplMenuState {
+            tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
+            popover_disabled: false,
+            indicator: Some(Indicator::dot().color(Color::Error)),
+            status: session.kernel.status(),
+            ..fill_fields()
+        },
+        Kernel::ShuttingDown => ReplMenuState {
+            tooltip: format!("{} is shutting down", kernel_name).into(),
+            popover_disabled: true,
+            icon_color: Color::Muted,
+            indicator: Some(Indicator::dot().color(Color::Muted)),
+            status: session.kernel.status(),
+            ..fill_fields()
+        },
+        Kernel::Shutdown => ReplMenuState {
+            tooltip: "Nothing running".into(),
+            icon: IconName::ReplNeutral,
+            icon_color: Color::Default,
+            icon_is_animating: false,
+            popover_disabled: false,
+            indicator: None,
+            status: KernelStatus::Shutdown,
+            ..fill_fields()
+        },
+    };
+
+    menu_state
 }

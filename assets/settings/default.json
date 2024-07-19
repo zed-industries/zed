@@ -396,6 +396,7 @@
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
       // 4. "gpt-4o"
+      // 5. "gpt-4o-mini"
       "default_model": "gpt-4o"
     }
   },
@@ -436,7 +437,7 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": true
+    "file_icons": false
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -790,6 +791,7 @@
       }
     },
     "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -797,7 +799,7 @@
       }
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
     },
     "SCSS": {
       "prettier": {

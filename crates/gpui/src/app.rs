@@ -14,7 +14,6 @@ use derive_more::{Deref, DerefMut};
 use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use slotmap::SlotMap;
 use smol::future::FutureExt;
-use time::UtcOffset;
 
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -645,11 +644,6 @@ impl AppContext {
     /// Restart the application.
     pub fn restart(&self, binary_path: Option<PathBuf>) {
         self.platform.restart(binary_path)
-    }
-
-    /// Returns the local timezone at the platform level.
-    pub fn local_timezone(&self) -> UtcOffset {
-        self.platform.local_timezone()
     }
 
     /// Updates the http client assigned to GPUI

@@ -208,9 +208,16 @@ impl RuntimePanel {
         cx.notify();
     }
 
-    // Gets the active selection in the editor or the current line
-    fn selection(&self, editor: View<Editor>, cx: &mut ViewContext<Self>) -> Range<Anchor> {
+    pub fn snippet(
+        &self,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
+        let editor = editor.upgrade()?;
         let editor = editor.read(cx);
+
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+
         let selection = editor.selections.newest::<usize>(cx);
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -232,18 +239,7 @@ impl RuntimePanel {
             selection.range()
         };
 
-        range.to_anchors(&multi_buffer_snapshot)
-    }
-
-    pub fn snippet(
-        &self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
-        let editor = editor.upgrade()?;
-
-        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let anchor_range = self.selection(editor, cx);
+        let anchor_range = range.to_anchors(&multi_buffer_snapshot);
 
         let selected_text = buffer
             .text_for_range(anchor_range.clone())

@@ -40,7 +40,7 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::{debug_panic, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 use crate::project_diagnostics_settings::ProjectDiagnosticsSettings;
@@ -51,18 +51,18 @@ pub fn init(cx: &mut AppContext) {
         .detach();
 }
 
-struct GroupedDiagnosticsEditor {
-    project: Model<Project>,
+pub struct GroupedDiagnosticsEditor {
+    pub project: Model<Project>,
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     editor: View<Editor>,
     summary: DiagnosticSummary,
     excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
-    include_warnings: bool,
+    pub paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    pub include_warnings: bool,
     context: u32,
-    update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
+    pub update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
     _update_excerpts_task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -260,7 +260,7 @@ impl GroupedDiagnosticsEditor {
         }
     }
 
-    fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
+    pub fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
         self.enqueue_update_all_excerpts(cx);
         cx.notify();
@@ -297,7 +297,7 @@ impl GroupedDiagnosticsEditor {
     /// to have changed. If a language server id is passed, then only the excerpts for
     /// that language server's diagnostics will be updated. Otherwise, all stale excerpts
     /// will be refreshed.
-    fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
+    pub fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
         for (path, server_id) in &self.paths_to_update {
             if language_server_id.map_or(true, |id| id == *server_id) {
                 self.update_paths_tx
@@ -320,7 +320,7 @@ impl GroupedDiagnosticsEditor {
         });
 
         // TODO kb change selections as in the old panel, to the next primary diagnostics
-        // TODO kb make [shift-]f8 to work, jump to the next block group
+        // TODO make [shift-]f8 to work, jump to the next block group
         let _was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {
             project::compare_paths((&probe.path.path, true), (&path_to_update.path, true))
@@ -340,7 +340,6 @@ impl GroupedDiagnosticsEditor {
             }
         };
 
-        // TODO kb when warnings are turned off, there's a lot of refresh for many paths happening, why?
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
@@ -466,11 +465,7 @@ impl Item for GroupedDiagnosticsEditor {
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
-                .color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
+                .color(params.text_color())
                 .into_any_element()
         } else {
             h_flex()
@@ -480,13 +475,10 @@ impl Item for GroupedDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(Label::new(self.summary.error_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.error_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .when(self.summary.warning_count > 0, |then| {
@@ -494,13 +486,10 @@ impl Item for GroupedDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                            .child(Label::new(self.summary.warning_count.to_string()).color(
-                                if params.selected {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                },
-                            )),
+                            .child(
+                                Label::new(self.summary.warning_count.to_string())
+                                    .color(params.text_color()),
+                            ),
                     )
                 })
                 .into_any_element()
@@ -603,20 +592,6 @@ impl Item for GroupedDiagnosticsEditor {
         self.editor
             .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
     }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("diagnostics")
-    }
-
-    fn deserialize(
-        project: Model<Project>,
-        workspace: WeakView<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<View<Self>>> {
-        Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
-    }
 }
 
 fn compare_data_locations(
@@ -657,7 +632,7 @@ fn compare_diagnostic_ranges(
         })
 }
 
-// TODO kb wrong? What to do here instead?
+// TODO wrong? What to do here instead?
 fn compare_diagnostic_range_edges(
     old: &Range<language::Anchor>,
     new: &Range<language::Anchor>,
@@ -1340,59 +1315,67 @@ fn render_same_line_diagnostics(
             .map(|diagnostic| diagnostic_text_lines(diagnostic))
             .sum::<u8>();
         let editor_handle = editor_handle.clone();
-        let mut parent = v_flex();
-        let mut diagnostics_iter = diagnostics.iter().fuse();
-        if let Some(first_diagnostic) = diagnostics_iter.next() {
-            let mut renderer = diagnostic_block_renderer(
-                first_diagnostic.clone(),
-                Some(folded_block_height),
-                false,
-                true,
-            );
-            parent = parent.child(
-                h_flex()
-                    .when_some(toggle_expand_label, |parent, label| {
-                        parent.child(Button::new(cx.transform_block_id, label).on_click({
-                            let diagnostics = Arc::clone(&diagnostics);
-                            move |_, cx| {
-                                let new_expanded = !expanded;
-                                button_expanded.store(new_expanded, atomic::Ordering::Release);
-                                let new_size = if new_expanded {
-                                    expanded_block_height
-                                } else {
-                                    folded_block_height
-                                };
-                                editor_handle.update(cx, |editor, cx| {
-                                    editor.replace_blocks(
-                                        HashMap::from_iter(Some((
-                                            block_id,
-                                            (
-                                                Some(new_size),
-                                                render_same_line_diagnostics(
-                                                    Arc::clone(&button_expanded),
-                                                    Arc::clone(&diagnostics),
-                                                    editor_handle.clone(),
-                                                    folded_block_height,
-                                                ),
+        let parent = h_flex()
+            .items_start()
+            .child(v_flex().size_full().when_some_else(
+                toggle_expand_label,
+                |parent, label| {
+                    parent.child(Button::new(cx.transform_block_id, label).on_click({
+                        let diagnostics = Arc::clone(&diagnostics);
+                        move |_, cx| {
+                            let new_expanded = !expanded;
+                            button_expanded.store(new_expanded, atomic::Ordering::Release);
+                            let new_size = if new_expanded {
+                                expanded_block_height
+                            } else {
+                                folded_block_height
+                            };
+                            editor_handle.update(cx, |editor, cx| {
+                                editor.replace_blocks(
+                                    HashMap::from_iter(Some((
+                                        block_id,
+                                        (
+                                            Some(new_size),
+                                            render_same_line_diagnostics(
+                                                Arc::clone(&button_expanded),
+                                                Arc::clone(&diagnostics),
+                                                editor_handle.clone(),
+                                                folded_block_height,
                                             ),
-                                        ))),
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            }
-                        }))
-                    })
-                    .child(renderer(cx)),
-            );
-        }
+                                        ),
+                                    ))),
+                                    None,
+                                    cx,
+                                )
+                            });
+                        }
+                    }))
+                },
+                |parent| {
+                    parent.child(
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .invisible()
+                            .flex_none(),
+                    )
+                },
+            ));
+        let max_message_rows = if expanded {
+            None
+        } else {
+            Some(folded_block_height)
+        };
+        let mut renderer =
+            diagnostic_block_renderer(first_diagnostic.clone(), max_message_rows, false, true);
+        let mut diagnostics_element = v_flex();
+        diagnostics_element = diagnostics_element.child(renderer(cx));
         if expanded {
-            for diagnostic in diagnostics_iter {
+            for diagnostic in diagnostics.iter().skip(1) {
                 let mut renderer = diagnostic_block_renderer(diagnostic.clone(), None, false, true);
-                parent = parent.child(renderer(cx));
+                diagnostics_element = diagnostics_element.child(renderer(cx));
             }
         }
-        parent.into_any_element()
+        parent.child(diagnostics_element).into_any_element()
     })
 }
 
