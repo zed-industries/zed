@@ -125,17 +125,14 @@ impl LanguageModelCompletionProvider for CopilotChatCompletionProvider {
         let http_client = self.http_client.clone();
         let request: CopilotChatRequest = self.to_copilot_chat_request(request);
         let oauth_token = self.oauth_token.clone().unwrap();
-        let expires_at = self.api_key_expiry.clone();
+        let expires_at = self.api_key_expiry;
         let api_key = self.api_key.clone();
         let auth_api_url = self.auth_api_url.clone();
         let api_url = self.completion_api_url.clone();
-        let low_speed_timeout = self.low_speed_timeout.clone();
+        let low_speed_timeout = self.low_speed_timeout;
 
         cx.spawn(|mut cx| async move {
-            let api_key = if api_key.is_none()
-                || expires_at.is_none()
-                || (expires_at.unwrap() - Utc::now().naive_utc()) < TimeDelta::minutes(5)
-            {
+            async fn get_new_api_token(cx: &mut AsyncAppContext, oauth_token: String, auth_api_url: String, http_client: Arc<dyn HttpClient>, low_speed_timeout: Option<Duration>) -> Result<String> {
                 let (api_key, expires_at) = copilot_chat::request_api_token(
                     &oauth_token,
                     &auth_api_url,
@@ -143,7 +140,6 @@ impl LanguageModelCompletionProvider for CopilotChatCompletionProvider {
                     low_speed_timeout,
                 )
                 .await?;
-
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
                     provider.update_current_as::<_, CopilotChatCompletionProvider>(|provider| {
                         provider.api_key = Some(api_key.clone());
@@ -151,9 +147,18 @@ impl LanguageModelCompletionProvider for CopilotChatCompletionProvider {
                     });
                 })?;
 
-                api_key
-            } else {
-                api_key.unwrap()
+                Ok(api_key)
+            }
+
+            let api_key = match api_key {
+                Some(key) => {
+                    if expires_at.unwrap() - Utc::now().naive_utc() < TimeDelta::minutes(5) {
+                        get_new_api_token(&mut cx, oauth_token, auth_api_url, http_client.clone(), low_speed_timeout ).await?
+                    } else {
+                        key
+                    }
+                },
+                None => get_new_api_token(&mut cx, oauth_token, auth_api_url, http_client.clone(), low_speed_timeout).await?
             };
             let response = copilot_chat::stream_completion(
                 http_client,
@@ -302,7 +307,7 @@ impl AuthenticationPrompt {
 impl Render for AuthenticationPrompt {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         const LABEL: &str =
-            "To use the assistant panel or inline assistant, you must login to Github Copilot. Your Github account must have an active Copilot Chat subscription.";
+            "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
 
         const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
 

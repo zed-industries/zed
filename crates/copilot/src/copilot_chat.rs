@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime};
@@ -157,25 +157,16 @@ pub async fn request_api_token(
 }
 
 pub async fn fetch_copilot_oauth_token() -> Result<String, anyhow::Error> {
-    let path = if cfg!(target_os = "linux") {
-        PathBuf::from(env::var_os("XDG_CONFIG_HOME").unwrap_or("~/.config".into()))
-    } else if cfg!(target_os = "windows") {
-        PathBuf::from(env::var_os("APPDATA").unwrap_or("~/AppData".into()))
-    } else {
-        PathBuf::from(env::var_os("HOME").unwrap_or("~/".into())).join(".config")
-    }
-    .join("github-copilot")
-    .join("hosts.json");
-
-    match async_fs::metadata(&path).await {
+    let path = paths::copilot_chat_config_path();
+    match async_fs::metadata(path).await {
             Ok(_) => {
-                let contents = async_fs::read_to_string(&path).await?;
+                let contents = async_fs::read_to_string(path).await?;
 
                 let hosts: serde_json::Value  = serde_json::from_str(&contents)?;
 
                 let host = hosts.get("github.com").ok_or_else(|| anyhow::anyhow!("No host found for github.com"))?.clone();
 
-                let token = host.get("oauth_token").ok_or_else(|| anyhow::anyhow!("No oauth token found for github.com"))?.as_str().unwrap();
+                let token = host.get("oauth_token").ok_or_else(|| anyhow::anyhow!("No OAuth token found for github.com"))?.as_str().unwrap();
 
                 Ok(token.to_string())
             },
