@@ -448,7 +448,19 @@ impl AutoUpdater {
             .await
             .context("error reading release")?;
 
-        serde_json::from_slice(body.as_slice()).context("error deserializing release")
+        if !response.status().is_success() {
+            Err(anyhow!(
+                "failed to fetch release: {:?}",
+                String::from_utf8_lossy(&body),
+            ))?;
+        }
+
+        serde_json::from_slice(body.as_slice()).with_context(|| {
+            format!(
+                "error deserializing release {:?}",
+                String::from_utf8_lossy(&body),
+            )
+        })
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
