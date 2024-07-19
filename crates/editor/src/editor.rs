@@ -943,13 +943,13 @@ impl CompletionsMenu {
     fn new_snippet_choices(
         id: CompletionId,
         choices: &Vec<String>,
-        old_range: Range<Anchor>,
+        selection: Range<Anchor>,
         buffer: Model<Buffer>,
     ) -> Self {
         let completions = choices
             .iter()
             .map(|choice| Completion {
-                old_range: old_range.start.text_anchor..old_range.end.text_anchor,
+                old_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel {
                     text: choice.to_string(),
@@ -960,7 +960,7 @@ impl CompletionsMenu {
                 documentation: None,
                 lsp_completion: Default::default(),
                 confirm: None,
-                show_new_completions_on_confirm: true,
+                show_new_completions_on_confirm: false,
             })
             .collect();
 
@@ -981,7 +981,7 @@ impl CompletionsMenu {
             .collect();
         Self {
             id,
-            initial_position: old_range.start,
+            initial_position: selection.start,
             buffer,
             completions: Arc::new(RwLock::new(completions)),
             match_candidates,
@@ -5232,6 +5232,31 @@ impl Editor {
         context_menu
     }
 
+    fn show_snippet_choices(
+        &mut self,
+        choices: &Vec<String>,
+        selection: Range<Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if selection.start.buffer_id.is_none() {
+            return;
+        }
+        let buffer_id = selection.start.buffer_id.unwrap();
+        let buffer = self.buffer().read(cx).buffer(buffer_id);
+
+        if let Some(buffer) = buffer {
+            *self.context_menu.write() = Some(ContextMenu::Completions(
+                CompletionsMenu::new_snippet_choices(
+                    post_inc(&mut self.next_completion_id),
+                    choices,
+                    selection,
+                    buffer,
+                )
+                .suppress_documentation_resolution(),
+            ));
+        }
+    }
+
     pub fn insert_snippet(
         &mut self,
         insertion_ranges: &[Range<usize>],
@@ -5298,25 +5323,8 @@ impl Editor {
             });
 
             if let Some(choices) = &tabstop.choices {
-                let current_buffer = tabstop.ranges.first().and_then(|range| {
-                    Some((
-                        range.clone(),
-                        self.buffer().read(cx).buffer(range.start.buffer_id?)?,
-                    ))
-                });
-
-                if let Some((first_range, buffer)) = current_buffer {
-                    *self.context_menu.write() = Some(ContextMenu::Completions(
-                        CompletionsMenu::new_snippet_choices(
-                            post_inc(&mut self.next_completion_id),
-                            choices,
-                            first_range,
-                            buffer,
-                        ),
-                    ));
-
-                    //self.show_completions(&ShowCompletions { trigger: None }, cx);
-                    dbg!(self.context_menu.read());
+                if let Some(selection) = tabstop.ranges.first() {
+                    self.show_snippet_choices(choices, selection.clone(), cx)
                 }
             }
 
@@ -5413,9 +5421,11 @@ impl Editor {
                 });
 
                 // TODO: Finishing implementing the below lines
-                // if let Some(choices) = snippet.choices[snippet.active_index] {
-
-                // }
+                if let Some(choices) = &snippet.choices[snippet.active_index] {
+                    if let Some(selection) = current_ranges.first() {
+                        self.show_snippet_choices(&choices, selection.clone(), cx);
+                    }
+                }
 
                 // If snippet state is not at the last tabstop, push it back on the stack
                 if snippet.active_index + 1 < snippet.ranges.len() {
