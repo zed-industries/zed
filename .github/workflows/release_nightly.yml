@@ -33,6 +33,7 @@ jobs:
 
       - name: Run clippy
         run: ./script/clippy
+
   tests:
     timeout-minutes: 60
     name: Run tests
@@ -89,6 +90,9 @@ jobs:
 
       - name: Create macOS app bundle
         run: script/bundle-mac
+
+      - name: Build macOS remote server binaries
+        run: script/build-remote-server x86_64 aarch64
 
       - name: Upload Zed Nightly
         run: script/upload-nightly macos

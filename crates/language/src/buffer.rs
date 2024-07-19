@@ -372,7 +372,7 @@ pub trait File: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
-    fn to_proto(&self) -> rpc::proto::File;
+    fn to_proto(&self, cx: &AppContext) -> rpc::proto::File;
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
@@ -612,10 +612,10 @@ impl Buffer {
     }
 
     /// Serialize the buffer's state to a protobuf message.
-    pub fn to_proto(&self) -> proto::BufferState {
+    pub fn to_proto(&self, cx: &AppContext) -> proto::BufferState {
         proto::BufferState {
             id: self.remote_id().into(),
-            file: self.file.as_ref().map(|f| f.to_proto()),
+            file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
@@ -3940,7 +3940,7 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn to_proto(&self) -> rpc::proto::File {
+    fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
         unimplemented!()
     }
 

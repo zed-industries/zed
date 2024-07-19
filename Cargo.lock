@@ -984,6 +984,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
+ "paths",
  "release_channel",
  "schemars",
  "serde",
@@ -2526,6 +2527,8 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "release_channel",
+ "remote",
+ "remote_server",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -8076,6 +8079,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "release_channel",
+ "remote",
  "rpc",
  "schemars",
  "serde",
@@ -8671,6 +8675,50 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "once_cell",
+]
+
+[[package]]
+name = "remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "log",
+ "parking_lot",
+ "prost",
+ "rpc",
+ "smol",
+ "tempfile",
+ "util",
+]
+
+[[package]]
+name = "remote_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_toml",
+ "client",
+ "clock",
+ "env_logger",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "log",
+ "node_runtime",
+ "project",
+ "remote",
+ "rpc",
+ "serde_json",
+ "settings",
+ "smol",
+ "toml 0.8.10",
+ "worktree",
 ]
 
 [[package]]
@@ -13700,6 +13748,7 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "remote",
  "repl",
  "rope",
  "search",
@@ -13720,6 +13769,7 @@ dependencies = [
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "ui",
+ "url",
  "urlencoding",
  "util",
  "uuid",
