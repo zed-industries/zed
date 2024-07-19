@@ -130,6 +130,7 @@ impl ProjectIndex {
         project: Model<Project>,
         db_connection: heed::Env,
         embedding_provider: Arc<dyn EmbeddingProvider>,
+        summary_provider: Arc<dyn SummaryProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
@@ -488,6 +489,7 @@ struct WorktreeIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
+    completion_provider: Arc<dyn CompletionProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
     _index_entries: Task<Result<()>>,
     _subscription: Subscription,
@@ -586,6 +588,7 @@ impl WorktreeIndex {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
+        // TODO: summarize in here
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
