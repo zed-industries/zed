@@ -1170,7 +1170,7 @@ pub async fn spawn_ssh_task(
         "-x".to_string(),
         "-c".to_string(),
         format!(
-            r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#,
+            r#"~/.local/bin/zed -v >/dev/stderr || (curl -f https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | sh && ~/.local/bin/zed --dev-server-token {}"#,
             access_token
         ),
     ];
