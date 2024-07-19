@@ -1359,6 +1359,9 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut WindowContext) -> R,
     ) -> R {
         self.content_size = content_size;
+        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+            cx.set_focus_handle(&focus_handle);
+        }
         cx.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, cx| {
@@ -1997,9 +2000,6 @@ impl Interactivity {
         let action_listeners = mem::take(&mut self.action_listeners);
         if let Some(context) = self.key_context.clone() {
             cx.set_key_context(context);
-        }
-        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(focus_handle);
         }
 
         for listener in key_down_listeners {

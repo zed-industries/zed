@@ -2371,11 +2371,7 @@ impl EditorElement {
     ) -> Vec<BlockLayout> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
-            .partition::<Vec<_>, _>(|(_, block)| match block {
-                Block::ExcerptHeader { .. } => false,
-                Block::Custom(block) => block.style() == BlockStyle::Fixed,
-                Block::ExcerptFooter { .. } => false,
-            });
+            .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
 
         let mut focused_block = self
             .editor
@@ -2390,7 +2386,7 @@ impl EditorElement {
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
-                focused_block.take();
+                focused_block = None;
             }
 
             let (element, element_size) = self.render_block(
@@ -2419,11 +2415,7 @@ impl EditorElement {
             });
         }
         for (row, block) in non_fixed_blocks {
-            let style = match block {
-                Block::Custom(block) => block.style(),
-                Block::ExcerptHeader { .. } => BlockStyle::Sticky,
-                Block::ExcerptFooter { .. } => BlockStyle::Sticky,
-            };
+            let style = block.style();
             let width = match style {
                 BlockStyle::Sticky => hitbox.size.width,
                 BlockStyle::Flex => hitbox
@@ -2440,7 +2432,7 @@ impl EditorElement {
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
-                focused_block.take();
+                focused_block = None;
             }
 
             let (element, _) = self.render_block(
@@ -2471,7 +2463,49 @@ impl EditorElement {
         if let Some(focused_block) = focused_block {
             if let Some(focus_handle) = focused_block.focus_handle.upgrade() {
                 if focus_handle.is_focused(cx) {
-                    // if let Some((row, block)) = snapshot.block_for_id(focused_block.id) {}
+                    if let Some(block) = snapshot.block_for_id(focused_block.id) {
+                        let style = block.style();
+                        let width = match style {
+                            BlockStyle::Fixed => AvailableSpace::MinContent,
+                            BlockStyle::Flex => AvailableSpace::Definite(
+                                hitbox
+                                    .size
+                                    .width
+                                    .max(fixed_block_max_width)
+                                    .max(gutter_dimensions.width + *scroll_width),
+                            ),
+                            BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
+                        };
+                        let available_space = size(
+                            width,
+                            AvailableSpace::Definite(block.height() as f32 * line_height),
+                        );
+
+                        let (element, _) = self.render_block(
+                            &block,
+                            available_space,
+                            focused_block.id,
+                            rows.end,
+                            snapshot,
+                            text_x,
+                            &rows,
+                            line_layouts,
+                            gutter_dimensions,
+                            line_height,
+                            em_width,
+                            text_hitbox,
+                            scroll_width,
+                            cx,
+                        );
+
+                        blocks.push(BlockLayout {
+                            id: block.id(),
+                            row: rows.end,
+                            element,
+                            available_space,
+                            style,
+                        });
+                    }
                 }
             }
         }
@@ -2497,9 +2531,19 @@ impl EditorElement {
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
             }
-            block
+
+            let focus_handle = block
                 .element
                 .prepaint_as_root(origin, block.available_space, cx);
+
+            if let Some(focus_handle) = focus_handle {
+                self.editor.update(cx, |editor, _cx| {
+                    editor.set_focused_block(FocusedBlock {
+                        id: block.id,
+                        focus_handle: focus_handle.downgrade(),
+                    });
+                });
+            }
         }
     }
 
@@ -3740,14 +3784,7 @@ impl EditorElement {
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         for mut block in layout.blocks.drain(..) {
-            if let Some(focus_handle) = block.element.paint(cx) {
-                self.editor.update(cx, |editor, _cx| {
-                    editor.set_focused_block(FocusedBlock {
-                        id: block.id,
-                        focus_handle: focus_handle.downgrade(),
-                    });
-                });
-            }
+            block.element.paint(cx);
         }
     }
 
@@ -4741,7 +4778,9 @@ impl Element for EditorElement {
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
+        let focus_handle = self.editor.focus_handle(cx);
         cx.set_view_id(self.editor.entity_id());
+        cx.set_focus_handle(&focus_handle);
 
         let rem_size = self.rem_size(cx);
         cx.with_rem_size(rem_size, |cx| {
@@ -5345,7 +5384,6 @@ impl Element for EditorElement {
     ) {
         let focus_handle = self.editor.focus_handle(cx);
         let key_context = self.editor.read(cx).key_context(cx);
-        cx.set_focus_handle(&focus_handle);
         cx.set_key_context(key_context);
         cx.handle_input(
             &focus_handle,

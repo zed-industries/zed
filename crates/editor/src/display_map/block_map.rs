@@ -237,6 +237,14 @@ impl Block {
             Block::ExcerptFooter { height, .. } => *height,
         }
     }
+
+    pub fn style(&self) -> BlockStyle {
+        match self {
+            Block::Custom(block) => block.style,
+            Block::ExcerptHeader { .. } => BlockStyle::Sticky,
+            Block::ExcerptFooter { .. } => BlockStyle::Sticky,
+        }
+    }
 }
 
 impl Debug for Block {

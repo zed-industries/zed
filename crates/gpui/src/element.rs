@@ -493,24 +493,23 @@ impl AnyElement {
 
     /// Prepares the element to be painted by storing its bounds, giving it a chance to draw hitboxes and
     /// request autoscroll before the final paint pass is confirmed.
-    pub fn prepaint(&mut self, cx: &mut WindowContext) {
-        self.0.prepaint(cx)
-    }
+    pub fn prepaint(&mut self, cx: &mut WindowContext) -> Option<FocusHandle> {
+        let focus_assigned = cx.window.next_frame.focus.is_some();
 
-    /// Paints the element stored in this `AnyElement`.
-    /// If any element in the subtree beneath this element is focused, its FocusHandle is returned.
-    pub fn paint(&mut self, cx: &mut WindowContext) -> Option<FocusHandle> {
-        let focus_was_painted = cx.window.next_frame.focus.is_some();
+        self.0.prepaint(cx);
 
-        self.0.paint(cx);
-
-        if !focus_was_painted {
+        if !focus_assigned {
             if let Some(focus_id) = cx.window.next_frame.focus {
                 return FocusHandle::for_id(focus_id, &cx.window.focus_handles);
             }
         }
 
         None
+    }
+
+    /// Paints the element stored in this `AnyElement`.
+    pub fn paint(&mut self, cx: &mut WindowContext) {
+        self.0.paint(cx);
     }
 
     /// Performs layout for this element within the given available space and returns its size.
@@ -523,19 +522,25 @@ impl AnyElement {
     }
 
     /// Prepaints this element at the given absolute origin.
-    pub fn prepaint_at(&mut self, origin: Point<Pixels>, cx: &mut WindowContext) {
-        cx.with_absolute_element_offset(origin, |cx| self.0.prepaint(cx));
+    /// If any element in the subtree beneath this element is focused, its FocusHandle is returned.
+    pub fn prepaint_at(
+        &mut self,
+        origin: Point<Pixels>,
+        cx: &mut WindowContext,
+    ) -> Option<FocusHandle> {
+        cx.with_absolute_element_offset(origin, |cx| self.prepaint(cx))
     }
 
     /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.
+    /// If any element in the subtree beneath this element is focused, its FocusHandle is returned.
     pub fn prepaint_as_root(
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
-    ) {
+    ) -> Option<FocusHandle> {
         self.layout_as_root(available_space, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.0.prepaint(cx));
+        cx.with_absolute_element_offset(origin, |cx| self.prepaint(cx))
     }
 }
 
@@ -563,7 +568,7 @@ impl Element for AnyElement {
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) {
-        self.prepaint(cx)
+        self.prepaint(cx);
     }
 
     fn paint(

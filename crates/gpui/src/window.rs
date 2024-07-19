@@ -1730,7 +1730,13 @@ impl<'a> WindowContext<'a> {
         let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut window.rendered_frame.dispatch_tree,
+            window.focus,
         );
+
+        if reused_subtree.contains_focus() {
+            window.next_frame.focus = window.focus;
+        }
+
         window.next_frame.deferred_draws.extend(
             window.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
@@ -2845,12 +2851,12 @@ impl<'a> WindowContext<'a> {
     /// Sets the focus handle for the current element. This handle will be used to manage focus state
     /// and keyboard event dispatch for the element.
     ///
-    /// This method should only be called as part of the paint phase of element drawing.
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
         debug_assert_eq!(
             self.window.draw_phase,
-            DrawPhase::Paint,
-            "this method can only be called during paint"
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
         );
         if focus_handle.is_focused(self) {
             self.window.next_frame.focus = Some(focus_handle.id);
