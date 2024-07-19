@@ -3,7 +3,7 @@ pub mod terminal_element;
 pub mod terminal_panel;
 
 use collections::HashSet;
-use editor::{scroll::Autoscroll, Editor};
+use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
@@ -33,8 +33,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, OpenVisible, Pane, ToolbarItemLocation, Workspace,
-    WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
+    Workspace, WorkspaceId,
 };
 
 use anyhow::Context;
@@ -214,7 +214,11 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         let context_menu = ContextMenu::build(cx, |menu, _| {
-            menu.action("Clear", Box::new(Clear))
+            menu.action("New Terminal", Box::new(NewTerminal))
+                .action("Copy", Box::new(Copy))
+                .action("Paste", Box::new(Paste))
+                .action("Select All", Box::new(SelectAll))
+                .action("Clear", Box::new(Clear))
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
 
