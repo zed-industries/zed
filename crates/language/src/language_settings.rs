@@ -7,10 +7,10 @@ use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
@@ -46,6 +46,17 @@ pub fn all_language_settings<'a>(
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| f.as_ref().into());
     AllLanguageSettings::get(location, cx)
+}
+
+fn multi_entry<'de, T: for<'d> Deserialize<'d>, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error> {
+    let v = SingleOrVec::<T>::deserialize(deserializer)?;
+
+    Ok(match v {
+        SingleOrVec::Single(single) => vec![*single],
+        SingleOrVec::Vec(v) => v,
+    })
 }
 
 /// The settings for all languages.
@@ -89,7 +100,7 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: Formatter,
+    pub formatter: SelectedFormatter,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
@@ -274,7 +285,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
-    pub formatter: Option<Formatter>,
+    pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -388,17 +399,7 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
-    /// Files should be formatted using the current language server.
-    LanguageServer,
-    /// The external program to use to format the files on save.
-    External {
-        /// The external program to run.
-        command: Arc<str>,
-        /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
-    },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    List(FormatterList),
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -423,11 +424,23 @@ pub enum ShowWhitespaceSetting {
 /// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum Formatter {
+pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    List(FormatterList),
+}
+
+/// Controls which formatter should be used when formatting code.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FormatterList(#[serde(deserialize_with = "multi_entry")] pub Vec<Formatter>);
+
+/// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Formatter {
     /// Format code using the current language server.
     LanguageServer,
     /// Format code using Zed's Prettier integration.

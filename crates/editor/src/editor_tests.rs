@@ -6559,7 +6559,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::Formatter::LanguageServer)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::LanguageServer)
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -6720,7 +6720,7 @@ async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::Formatter::Auto)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
     });
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -9723,7 +9723,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::Formatter::Prettier)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Prettier)
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -9783,7 +9783,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     );
 
     update_test_language_settings(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::Formatter::Auto)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
     });
     let format = editor.update(cx, |editor, cx| {
         editor.perform_format(project.clone(), FormatTrigger::Manual, cx)

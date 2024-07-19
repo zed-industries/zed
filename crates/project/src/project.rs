@@ -42,8 +42,8 @@ use http::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
     language_settings::{
-        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
-        LanguageSettings,
+        language_settings, AllLanguageSettings, FormatOnSave, InlayHintKind, LanguageSettings,
+        SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
@@ -5026,7 +5026,10 @@ impl Project {
             match (&settings.formatter, &settings.format_on_save) {
                 (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
-                (Formatter::CodeActions(code_actions), FormatOnSave::On | FormatOnSave::Off)
+                (
+                    SelectedFormatter::CodeActions(code_actions),
+                    FormatOnSave::On | FormatOnSave::Off,
+                )
                 | (_, FormatOnSave::CodeActions(code_actions)) => {
                     let code_actions = deserialize_code_actions(code_actions);
                     if !code_actions.is_empty() {
@@ -5042,7 +5045,7 @@ impl Project {
                         .await?;
                     }
                 }
-                (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
+                (SelectedFormatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
                 | (_, FormatOnSave::LanguageServer) => {
                     if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
@@ -5061,7 +5064,7 @@ impl Project {
                 }
 
                 (
-                    Formatter::External { command, arguments },
+                    SelectedFormatter::External { command, arguments },
                     FormatOnSave::On | FormatOnSave::Off,
                 )
                 | (_, FormatOnSave::External { command, arguments }) => {
@@ -5080,7 +5083,7 @@ impl Project {
                     ))?
                     .map(FormatOperation::External);
                 }
-                (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
+                (SelectedFormatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
                     let prettier = if prettier_settings.allowed {
                         prettier_support::format_with_prettier(&project, buffer, &mut cx)
                             .await
@@ -5108,7 +5111,7 @@ impl Project {
                         ));
                     }
                 }
-                (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
+                (SelectedFormatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
                     if prettier_settings.allowed {
                         if let Some(operation) =
                             prettier_support::format_with_prettier(&project, buffer, &mut cx).await
