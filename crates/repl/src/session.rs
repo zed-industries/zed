@@ -12,8 +12,8 @@ use editor::{
 };
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, size, AvailableSpace, EventEmitter, Model, Render, Subscription, Task, View,
-    ViewContext, WeakView,
+    div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
+    WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -122,14 +122,17 @@ impl EditorBlock {
 
             let gutter_width = cx.gutter_dimensions.width;
 
-            let close_button = IconButton::new("close_output_area", IconName::Close)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
-                .tooltip(|cx| Tooltip::text("Close output area", cx))
-                .on_click(|event, _cx| {
-                    dbg!(event);
-                });
+            let close_button = IconButton::new(
+                ("close_output_area", EntityId::from(cx.block_id)),
+                IconName::Close,
+            )
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Muted)
+            .tooltip(|cx| Tooltip::text("Close output area", cx))
+            .on_click(|event, _cx| {
+                dbg!(event);
+            });
 
             h_flex()
                 .w_full()
