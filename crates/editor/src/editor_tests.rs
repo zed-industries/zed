@@ -23,7 +23,7 @@ use language::{
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
     ParsedMarkdown, Point,
 };
-use language_settings::IndentGuideSettings;
+use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::FakeFs;
@@ -6559,7 +6559,9 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::LanguageServer)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
+            FormatterList(vec![Formatter::LanguageServer]),
+        ))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -9723,7 +9725,9 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Prettier)
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
+            FormatterList(vec![Formatter::Prettier]),
+        ))
     });
 
     let fs = FakeFs::new(cx.executor());
