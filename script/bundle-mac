@@ -189,9 +189,9 @@ function prepare_binaries() {
     local app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
-    if ! dsymutil --flat target/${architecture}/${target_dir}/Zed 2> ${target_dir}/dsymutil.log; then
-        echo "dsymmutil failed"
-        cat ${target_dir}/dsymutil.log
+    if ! dsymutil --flat target/${architecture}/${target_dir}/Zed 2> target/dsymutil.log; then
+        echo "dsymutil failed"
+        cat target/dsymutil.log
         exit 1
     fi
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
