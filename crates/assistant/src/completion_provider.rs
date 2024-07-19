@@ -155,7 +155,8 @@ impl CompletionProvider {
         let provider = self.provider.clone();
         cx.foreground_executor().spawn(async move {
             let lock = rate_limiter.acquire_arc().await;
-            let response = provider.read().stream_completion(request).await?;
+            let response = provider.read().stream_completion(request);
+            let response = response.await?;
             Ok(CompletionResponse {
                 inner: response,
                 _lock: lock,

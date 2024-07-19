@@ -219,6 +219,7 @@ impl InlineAssistant {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &View<Editor>,
