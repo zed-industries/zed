@@ -150,7 +150,7 @@ impl TerminalView {
                     cx,
                 )
             });
-            workspace.add_item_to_active_pane(Box::new(view), None, cx)
+            workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
         }
     }
 

@@ -94,7 +94,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         count_open_ai_tokens(request, cx.background_executor())
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

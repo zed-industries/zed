@@ -1161,6 +1161,29 @@ impl<'a> WindowContext<'a> {
         )
     }
 
+    /// Register a callback to be invoked when the given Model or View is released.
+    pub fn observe_release<E, T>(
+        &mut self,
+        entity: &E,
+        mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        let entity_id = entity.entity_id();
+        let window_handle = self.window.handle;
+        let (subscription, activate) = self.app.release_listeners.insert(
+            entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
     /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {

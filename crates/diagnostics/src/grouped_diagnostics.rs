@@ -250,13 +250,13 @@ impl GroupedDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<GroupedDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
             let diagnostics = cx.new_view(|cx| {
                 GroupedDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
     }
 
@@ -319,7 +319,7 @@ impl GroupedDiagnosticsEditor {
                 || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
-        // TODO kb change selections as in the old panel, to the next primary diagnostics
+        // TODO change selections as in the old panel, to the next primary diagnostics
         // TODO make [shift-]f8 to work, jump to the next block group
         let _was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {

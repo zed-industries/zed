@@ -2380,9 +2380,17 @@ impl Workspace {
         &mut self,
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
+        focus_item: bool,
         cx: &mut WindowContext,
     ) {
-        self.add_item(self.active_pane.clone(), item, destination_index, cx)
+        self.add_item(
+            self.active_pane.clone(),
+            item,
+            destination_index,
+            false,
+            focus_item,
+            cx,
+        )
     }
 
     pub fn add_item(
@@ -2390,6 +2398,8 @@ impl Workspace {
         pane: View<Pane>,
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
+        activate_pane: bool,
+        focus_item: bool,
         cx: &mut WindowContext,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
@@ -2399,7 +2409,7 @@ impl Workspace {
         }
 
         pane.update(cx, |pane, cx| {
-            pane.add_item(item, true, true, destination_index, cx)
+            pane.add_item(item, activate_pane, focus_item, destination_index, cx)
         });
     }
 
@@ -2410,7 +2420,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-        self.add_item(new_pane, item, None, cx);
+        self.add_item(new_pane, item, None, true, true, cx);
     }
 
     pub fn open_abs_path(
@@ -2565,6 +2575,8 @@ impl Workspace {
         &mut self,
         pane: View<Pane>,
         project_item: Model<T::Item>,
+        activate_pane: bool,
+        focus_item: bool,
         cx: &mut ViewContext<Self>,
     ) -> View<T>
     where
@@ -2577,7 +2589,7 @@ impl Workspace {
             .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
-            self.activate_item(&item, cx);
+            self.activate_item(&item, activate_pane, focus_item, cx);
             return item;
         }
 
@@ -2596,7 +2608,14 @@ impl Workspace {
             pane.set_preview_item_id(Some(item.item_id()), cx)
         });
 
-        self.add_item(pane, Box::new(item.clone()), destination_index, cx);
+        self.add_item(
+            pane,
+            Box::new(item.clone()),
+            destination_index,
+            activate_pane,
+            focus_item,
+            cx,
+        );
         item
     }
 
@@ -2608,14 +2627,22 @@ impl Workspace {
         }
     }
 
-    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut WindowContext) -> bool {
+    pub fn activate_item(
+        &mut self,
+        item: &dyn ItemHandle,
+        activate_pane: bool,
+        focus_item: bool,
+        cx: &mut WindowContext,
+    ) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
                 .index_for_item(item)
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(ix, activate_pane, focus_item, cx)
+            });
             true
         } else {
             false
@@ -5568,7 +5595,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(0)));
 
@@ -5580,7 +5607,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
@@ -5594,7 +5621,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
@@ -5638,7 +5665,7 @@ mod tests {
 
         // Add an item to an empty pane
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1), None, cx)
+            workspace.add_item_to_active_pane(Box::new(item1), None, true, cx)
         });
         project.update(cx, |project, cx| {
             assert_eq!(
@@ -5652,7 +5679,7 @@ mod tests {
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2), None, cx)
+            workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
         });
         assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
         project.update(cx, |project, cx| {
@@ -5707,7 +5734,7 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.new_view(|cx| TestItem::new(cx));
         workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item1.clone()), None, cx)
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx)
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
@@ -5721,8 +5748,8 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
-            w.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+            w.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.executor().run_until_parked();
@@ -5762,8 +5789,8 @@ mod tests {
                 .with_serialize(|| Some(Task::ready(Ok(()))))
         });
         workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
-            w.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
@@ -5801,10 +5828,10 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
         });
         let pane = workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, true, cx);
             workspace.active_pane().clone()
         });
 
@@ -5926,9 +5953,9 @@ mod tests {
         //     multi-entry items:   (3, 4)
         let left_pane = workspace.update(cx, |workspace, cx| {
             let left_pane = workspace.active_pane().clone();
-            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, true, cx);
             for item in single_entry_items {
-                workspace.add_item_to_active_pane(Box::new(item), None, cx);
+                workspace.add_item_to_active_pane(Box::new(item), None, true, cx);
             }
             left_pane.update(cx, |pane, cx| {
                 pane.activate_item(2, true, true, cx);
@@ -5999,7 +6026,7 @@ mod tests {
         });
         let item_id = item.entity_id();
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
         });
 
         // Autosave on window change.
@@ -6084,7 +6111,7 @@ mod tests {
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
         });
         item.update(cx, |item, cx| {
             item.project_items[0].update(cx, |item, _| {
@@ -6122,7 +6149,7 @@ mod tests {
         let toolbar_notify_count = Rc::new(RefCell::new(0));
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
             let toolbar_notification_count = toolbar_notify_count.clone();
             cx.observe(&toolbar, move |_, _, _| {
                 *toolbar_notification_count.borrow_mut() += 1
