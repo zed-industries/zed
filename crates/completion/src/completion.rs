@@ -1,6 +1,5 @@
 mod anthropic;
 mod cloud;
-#[cfg(any(test, feature = "test-support"))]
 mod fake;
 mod ollama;
 mod open_ai;
@@ -9,7 +8,6 @@ pub use anthropic::*;
 use anyhow::Result;
 use client::Client;
 pub use cloud::*;
-#[cfg(any(test, feature = "test-support"))]
 pub use fake::*;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AnyView, AppContext, Task, WindowContext};
