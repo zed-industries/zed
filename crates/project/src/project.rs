@@ -2984,9 +2984,10 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
+        let (root_file, is_local) =
+            worktree.update(cx, |tree, cx| (tree.root_file(cx), tree.is_local()));
         let settings = language_settings(Some(&language), root_file.map(|f| f as _).as_ref(), cx);
-        if !settings.enable_language_server {
+        if !settings.enable_language_server || !is_local {
             return;
         }
 
