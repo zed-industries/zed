@@ -1,6 +1,6 @@
 # Python
 
-Python support is available through the [Python extension](ttps://github.com/zed-industries/zed/tree/main/extensions/python).
+Python support is available through the [Python extension](https://github.com/zed-industries/zed/tree/main/extensions/python).
 
 - Tree Sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 - Language Server: [basedpyright](https://github.com/detachhead/basedpyright)
