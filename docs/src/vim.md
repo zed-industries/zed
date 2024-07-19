@@ -261,6 +261,11 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "gutter": {
     // disable line numbers completely:
     "line_numbers": false
+  },
+  "command_aliases": {
+    "W": "w",
+    "Wq": "wq",
+    "Q": "q"
   }
 }
 ```
