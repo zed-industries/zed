@@ -81,9 +81,9 @@ pub struct AutoUpdater {
 }
 
 #[derive(Deserialize)]
-pub struct JsonRelease {
-    pub version: String,
-    pub url: String,
+struct JsonRelease {
+    version: String,
+    url: String,
 }
 
 struct AutoUpdateSetting(bool);
