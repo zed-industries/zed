@@ -26,35 +26,38 @@ pub enum Model {
     #[default]
     #[serde(alias = "gpt-4", rename = "gpt-4")]
     Gpt4,
-    #[serde(alias = "gpt-3.5", rename = "gpt-3.5")]
-    Gpt3_5,
+    #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
+    Gpt3_5Turbo,
 }
 
 impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-4" => Ok(Self::Gpt4),
-            "gpt-3.5" => Ok(Self::Gpt3_5),
+            "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
 
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Gpt3_5 => "gpt-3.5",
+            Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            Self::Gpt3_5 => "GPT-3.5",
+            Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
         }
     }
 
     pub fn max_token_count(&self) -> usize {
-        8192
+        match self {
+            Self::Gpt4 => 8192,
+            Self::Gpt3_5Turbo => 16385,
+        }
     }
 }
 
