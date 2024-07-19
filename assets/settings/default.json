@@ -396,6 +396,7 @@
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
       // 4. "gpt-4o"
+      // 5. "gpt-4o-mini"
       "default_model": "gpt-4o"
     }
   },
