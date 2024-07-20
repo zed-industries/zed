@@ -10,7 +10,7 @@ use gpui::{
     TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
-use parser::{parse_markdown, parse_text_with_links, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
@@ -63,7 +63,7 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
-    parse_text_only: bool,
+    parse_links_only: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -89,7 +89,7 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_text_only: false,
+            parse_links_only: false,
         };
         this.parse(cx);
         this
@@ -115,7 +115,7 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_text_only: true,
+            parse_links_only: true,
         };
         this.parse(cx);
         this
@@ -166,11 +166,11 @@ impl Markdown {
         }
 
         let text = self.source.clone();
-        let parse_text_only = self.parse_text_only;
+        let parse_text_only = self.parse_links_only;
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
             let events = match parse_text_only {
-                true => Arc::from(parse_text_with_links(text.as_ref())),
+                true => Arc::from(parse_links_only(text.as_ref())),
                 false => Arc::from(parse_markdown(text.as_ref())),
             };
             anyhow::Ok(ParsedMarkdown {
