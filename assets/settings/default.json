@@ -25,9 +25,7 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": [
-    "Zed Plex Mono"
-  ],
+  "buffer_font_family": ["Zed Plex Mono"],
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -413,9 +411,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": [
-    "..."
-  ],
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -560,9 +556,7 @@
   "load_direnv": "shell_hook",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -673,12 +667,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
@@ -731,9 +720,7 @@
     "Astro": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-astro"
-        ]
+        "plugins": ["prettier-plugin-astro"]
       }
     },
     "Blade": {
@@ -771,12 +758,7 @@
       }
     },
     "HEEX": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -786,17 +768,11 @@
     "Java": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-java"
-        ]
+        "plugins": ["prettier-plugin-java"]
       }
     },
     "JavaScript": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -819,26 +795,15 @@
       }
     },
     "PHP": {
-      "language_servers": [
-        "phpactor",
-        "!intelephense",
-        "..."
-      ],
+      "language_servers": ["phpactor", "!intelephense", "..."],
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-php"
-        ],
+        "plugins": ["@prettier/plugin-php"],
         "parser": "php"
       }
     },
     "Ruby": {
-      "language_servers": [
-        "solargraph",
-        "!ruby-lsp",
-        "!rubocop",
-        "..."
-      ]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
     },
     "SCSS": {
       "prettier": {
@@ -848,9 +813,7 @@
     "SQL": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-sql"
-        ]
+        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Starlark": {
@@ -859,17 +822,11 @@
     "Svelte": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-svelte"
-        ]
+        "plugins": ["prettier-plugin-svelte"]
       }
     },
     "TSX": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -880,11 +837,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -897,9 +850,7 @@
     "XML": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-xml"
-        ]
+        "plugins": ["@prettier/plugin-xml"]
       }
     },
     "YAML": {
