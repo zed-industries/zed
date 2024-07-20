@@ -269,7 +269,7 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             if let Some(proxy) = self.http.proxy() {
-                command.args(["--proxy", proxy]);
+                command.args(["--proxy", &proxy]);
             }
 
             #[cfg(windows)]

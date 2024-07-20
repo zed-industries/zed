@@ -20,7 +20,7 @@ use futures::{
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{HttpClient, HttpClientWithUrl};
+use http::{proxy::create_proxy_info, HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
@@ -30,7 +30,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsStore};
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -539,9 +539,15 @@ impl Client {
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
+        let proxy = create_proxy_info(ProxySettings::get_global(cx).proxy.clone());
+        let proxy_clone = proxy.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            proxy_clone.update_zed_settings(ProxySettings::get_global(cx).proxy.clone())
+        })
+        .detach();
         let http = Arc::new(HttpClientWithUrl::new(
             &ClientSettings::get_global(cx).server_url,
-            ProxySettings::get_global(cx).proxy.clone(),
+            proxy,
         ));
         Self::new(clock, http.clone(), cx)
     }

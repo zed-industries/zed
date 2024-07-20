@@ -1,7 +1,5 @@
 pub mod github;
-
-#[cfg(target_os = "macos")]
-pub mod macos;
+pub mod proxy;
 
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
@@ -11,103 +9,39 @@ pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
+use parking_lot::Mutex;
+use proxy::ProxyInfo;
 #[cfg(feature = "test-support")]
 use std::fmt;
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 pub use url::Url;
-
-fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<isahc::http::Uri>().ok();
-                }
-            )+
-        };
-    }
-
-    #[cfg(target_os = "macos")]
-    let system_proxy = macos::SystemProxiesStore::new(|_| {})
-        .proxy_settings()
-        .select();
-    #[cfg(not(target_os = "macos"))]
-    let system_proxy: Option<String> = None;
-
-    proxy
-        .and_then(|input| {
-            input
-                .parse::<isahc::http::Uri>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                .ok()
-        })
-        .or_else(|| {
-            system_proxy.and_then(|input| {
-                input
-                    .parse::<isahc::http::Uri>()
-                    .inspect_err(|e| log::error!("Error system proxy settings: {}", e))
-                    .ok()
-            })
-        })
-        .or_else(|| {
-            try_env!(
-                "ALL_PROXY",
-                "all_proxy",
-                "HTTPS_PROXY",
-                "https_proxy",
-                "HTTP_PROXY",
-                "http_proxy"
-            );
-            None
-        })
-}
 
 /// An [`HttpClient`] that has a base URL.
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
-    client: Arc<dyn HttpClient>,
-    proxy: Option<String>,
+    client_builder: Arc<dyn Fn(Option<isahc::http::Uri>) -> Arc<dyn HttpClient> + Send + Sync>,
+    proxy: Arc<dyn ProxyInfo>,
 }
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
-    pub fn new(base_url: impl Into<String>, unparsed_proxy: Option<String>) -> Self {
-        let parsed_proxy = get_proxy(unparsed_proxy);
-        let proxy_string = parsed_proxy.as_ref().map(|p| {
-            // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
-            // NodeRuntime without environment information can not parse `localhost`
-            // correctly.
-            // TODO: map to `[::1]` if we are using ipv6
-            p.to_string()
-                .to_ascii_lowercase()
-                .replace("localhost", "127.0.0.1")
-        });
+    pub fn new(base_url: impl Into<String>, proxy_info: Arc<dyn ProxyInfo>) -> Self {
         Self {
             base_url: Mutex::new(base_url.into()),
-            client: client(parsed_proxy),
-            proxy: proxy_string,
+            client_builder: Arc::new(client),
+            proxy: proxy_info,
         }
     }
 
     /// Returns the base URL.
     pub fn base_url(&self) -> String {
-        self.base_url
-            .lock()
-            .map_or_else(|_| Default::default(), |url| url.clone())
+        self.base_url.lock().clone()
     }
 
     /// Sets the base URL.
     pub fn set_base_url(&self, base_url: impl Into<String>) {
         let base_url = base_url.into();
-        self.base_url
-            .lock()
-            .map(|mut url| {
-                *url = base_url;
-            })
-            .ok();
+        *self.base_url.lock() = base_url;
     }
 
     /// Builds a URL using the given path.
@@ -130,6 +64,10 @@ impl HttpClientWithUrl {
             query,
         )?)
     }
+
+    fn client(&self) -> Arc<dyn HttpClient> {
+        (self.client_builder)(self.proxy.proxy_uri())
+    }
 }
 
 impl HttpClient for Arc<HttpClientWithUrl> {
@@ -137,11 +75,11 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        self.client().send(req)
     }
 
-    fn proxy(&self) -> Option<&str> {
-        self.proxy.as_deref()
+    fn proxy(&self) -> Option<String> {
+        self.proxy.proxy_string()
     }
 }
 
@@ -150,11 +88,11 @@ impl HttpClient for HttpClientWithUrl {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        self.client().send(req)
     }
 
-    fn proxy(&self) -> Option<&str> {
-        self.proxy.as_deref()
+    fn proxy(&self) -> Option<String> {
+        self.proxy.proxy_string()
     }
 }
 
@@ -201,7 +139,7 @@ pub trait HttpClient: Send + Sync {
         }
     }
 
-    fn proxy(&self) -> Option<&str>;
+    fn proxy(&self) -> Option<String>;
 }
 
 pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
@@ -224,7 +162,7 @@ impl HttpClient for isahc::HttpClient {
         Box::pin(async move { client.send_async(req).await })
     }
 
-    fn proxy(&self) -> Option<&str> {
+    fn proxy(&self) -> Option<String> {
         None
     }
 }
@@ -247,14 +185,17 @@ impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
         Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
-        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
+        F: Fn(Request<AsyncBody>) -> Fut + Clone + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),
-            client: Arc::new(Self {
-                handler: Box::new(move |req| Box::pin(handler(req))),
+            client_builder: Arc::new(move |_| {
+                let handler = handler.clone();
+                Arc::new(Self {
+                    handler: Box::new(move |req| Box::pin(handler(req))),
+                })
             }),
-            proxy: None,
+            proxy: Arc::new(proxy::DefaultProxyInfo),
         })
     }
 
@@ -294,7 +235,7 @@ impl HttpClient for FakeHttpClient {
         Box::pin(async move { future.await.map(Into::into) })
     }
 
-    fn proxy(&self) -> Option<&str> {
+    fn proxy(&self) -> Option<String> {
         None
     }
 }

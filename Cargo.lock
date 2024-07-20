@@ -5279,6 +5279,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "isahc",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "system-configuration",

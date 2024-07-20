@@ -930,10 +930,12 @@
   // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
-  // By default no proxy will be used, or Zed will try get proxy settings from
-  // environment variables.
+  // Set to `system` to use the system proxy settings (currently available on macOS).
+  // By default, the settings is set to `null`, and Zed will try get proxy settings
+  // from environment variables.
   //
   // Examples:
+  //   - "proxy": "system"
   //   - "proxy": "socks5://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null

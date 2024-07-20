@@ -24,6 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 futures-lite.workspace = true
 url.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.6"
