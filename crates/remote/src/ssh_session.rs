@@ -85,6 +85,7 @@ pub trait SshClientDelegate {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
@@ -104,9 +105,11 @@ impl SshSession {
         let remote_binary_path = delegate.remote_server_binary_path(cx)?;
         ensure_server_binary(
             &client_state,
+            &delegate,
             &local_binary_path,
             &remote_binary_path,
             version,
+            cx,
         )
         .await?;
 
@@ -590,9 +593,11 @@ async fn query_platform(session: &SshClientState) -> Result<SshPlatform> {
 
 async fn ensure_server_binary(
     session: &SshClientState,
+    delegate: &Arc<dyn SshClientDelegate>,
     src_path: &Path,
     dst_path: &Path,
     version: SemanticVersion,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let mut dst_path_gz = dst_path.to_path_buf();
     dst_path_gz.set_extension("gz");
@@ -618,6 +623,7 @@ async fn ensure_server_binary(
     let server_mode = 0o755;
 
     let t0 = Instant::now();
+    delegate.set_status(Some("uploading remote development server"), cx);
     log::info!("uploading remote development server ({}kb)", size / 1024);
     session
         .upload_file(src_path, &dst_path_gz)
@@ -625,7 +631,7 @@ async fn ensure_server_binary(
         .context("failed to upload server binary")?;
     log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
-    log::info!("extracting remote development server");
+    delegate.set_status(Some("extracting remote development server"), cx);
     run_cmd(
         session
             .ssh_command("gunzip")
@@ -634,7 +640,7 @@ async fn ensure_server_binary(
     )
     .await?;
 
-    log::info!("unzipping remote development server");
+    delegate.set_status(Some("unzipping remote development server"), cx);
     run_cmd(
         session
             .ssh_command("chmod")

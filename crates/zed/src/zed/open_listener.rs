@@ -1,4 +1,6 @@
-use crate::{handle_open_request, init_headless, init_ui, zed::password_prompt::PasswordPrompt};
+use crate::{
+    handle_open_request, init_headless, init_ui, zed::ssh_connection_modal::SshConnectionModal,
+};
 use anyhow::{anyhow, Context, Result};
 use auto_update::AutoUpdater;
 use cli::{ipc, IpcHandshake};
@@ -12,7 +14,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Global, SemanticVersion, VisualContext as _, WindowHandle,
+    AppContext, AsyncAppContext, Global, SemanticVersion, View, VisualContext as _, WindowHandle,
 };
 use language::{Bias, Point};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -155,8 +157,10 @@ impl OpenListener {
     }
 }
 
+#[derive(Clone)]
 struct SshClientDelegate {
     window: WindowHandle<Workspace>,
+    modal: View<SshConnectionModal>,
     known_password: Option<String>,
 }
 
@@ -168,17 +172,22 @@ impl remote::SshClientDelegate for SshClientDelegate {
     ) -> oneshot::Receiver<Result<String>> {
         let (tx, rx) = oneshot::channel();
         let mut known_password = self.known_password.clone();
-        self.window
-            .update(cx, |workspace, cx| {
-                cx.activate_window();
-                if let Some(password) = known_password.take() {
-                    tx.send(Ok(password)).ok();
-                } else {
-                    workspace.toggle_modal(cx, |cx| PasswordPrompt::new(prompt, tx, cx));
-                }
-            })
-            .ok();
+        if let Some(password) = known_password.take() {
+            tx.send(Ok(password)).ok();
+        } else {
+            self.window
+                .update(cx, |_, cx| {
+                    self.modal.update(cx, |modal, cx| {
+                        modal.set_prompt(prompt, tx, cx);
+                    });
+                })
+                .ok();
+        }
         rx
+    }
+
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+        self.update_status(status, cx)
     }
 
     fn get_server_binary(
@@ -187,8 +196,10 @@ impl remote::SshClientDelegate for SshClientDelegate {
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
         let (tx, rx) = oneshot::channel();
+        let this = self.clone();
         cx.spawn(|mut cx| async move {
-            tx.send(get_server_binary(platform, &mut cx).await).ok();
+            tx.send(this.get_server_binary_impl(platform, &mut cx).await)
+                .ok();
         })
         .detach();
         rx
@@ -200,48 +211,63 @@ impl remote::SshClientDelegate for SshClientDelegate {
     }
 }
 
-async fn get_server_binary(
-    platform: SshPlatform,
-    cx: &mut AsyncAppContext,
-) -> Result<(PathBuf, SemanticVersion)> {
-    let (version, release_channel) =
-        cx.update(|cx| (AppVersion::global(cx), ReleaseChannel::global(cx)))?;
-
-    // In dev mode, build the remote server binary from source
-    #[cfg(debug_assertions)]
-    if crate::stdout_is_a_pty()
-        && release_channel == ReleaseChannel::Dev
-        && platform.arch == std::env::consts::ARCH
-        && platform.os == std::env::consts::OS
-    {
-        use smol::process::{Command, Stdio};
-
-        log::info!("building remote server binary from source");
-        run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
-        run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
-        run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
-
-        let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
-        return Ok((path, version));
-
-        async fn run_cmd(command: &mut Command) -> Result<()> {
-            let output = command.stderr(Stdio::inherit()).output().await?;
-            if !output.status.success() {
-                Err(anyhow!("failed to run command: {:?}", command))?;
-            }
-            Ok(())
-        }
+impl SshClientDelegate {
+    fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+        self.window
+            .update(cx, |_, cx| {
+                self.modal.update(cx, |modal, cx| {
+                    modal.set_status(status.map(|s| s.to_string()), cx);
+                });
+            })
+            .ok();
     }
 
-    let binary_path = AutoUpdater::get_latest_remote_server_release(
-        platform.os,
-        platform.arch,
-        release_channel,
-        cx,
-    )
-    .await?;
+    async fn get_server_binary_impl(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(PathBuf, SemanticVersion)> {
+        let (version, release_channel) =
+            cx.update(|cx| (AppVersion::global(cx), ReleaseChannel::global(cx)))?;
 
-    Ok((binary_path, version))
+        // In dev mode, build the remote server binary from source
+        #[cfg(debug_assertions)]
+        if crate::stdout_is_a_pty()
+            && release_channel == ReleaseChannel::Dev
+            && platform.arch == std::env::consts::ARCH
+            && platform.os == std::env::consts::OS
+        {
+            use smol::process::{Command, Stdio};
+
+            self.update_status(Some("building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
+            run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
+            run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+
+            let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+            return Ok((path, version));
+
+            async fn run_cmd(command: &mut Command) -> Result<()> {
+                let output = command.stderr(Stdio::inherit()).output().await?;
+                if !output.status.success() {
+                    Err(anyhow!("failed to run command: {:?}", command))?;
+                }
+                Ok(())
+            }
+        }
+
+        self.update_status(Some("checking for latest version of remote server"), cx);
+        let binary_path = AutoUpdater::get_latest_remote_server_release(
+            platform.os,
+            platform.arch,
+            release_channel,
+            cx,
+        )
+        .await?;
+
+        Ok((binary_path, version))
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -315,12 +341,21 @@ pub async fn open_ssh_paths(
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
     })?;
 
+    let modal = window.update(cx, |workspace, cx| {
+        cx.activate_window();
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(connection_info.host.clone(), cx)
+        });
+        workspace.active_modal::<SshConnectionModal>(cx).unwrap()
+    })?;
+
     let session = remote::SshSession::client(
         connection_info.username,
         connection_info.host,
         connection_info.port,
         Arc::new(SshClientDelegate {
             window,
+            modal,
             known_password: connection_info.password,
         }),
         cx,
