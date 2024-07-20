@@ -266,7 +266,6 @@ fn handle_syskeydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("SYSKEY DONW");
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
@@ -276,11 +275,9 @@ fn handle_syskeydown_msg(
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
     let result = if !func(PlatformInput::KeyDown(event)).propagate {
-        println!("-> HANDLED");
         state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
-        println!("-> No");
         None
     };
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
