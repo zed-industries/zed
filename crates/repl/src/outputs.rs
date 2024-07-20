@@ -281,7 +281,7 @@ impl ErrorView {
             v_flex()
                 .w_full()
                 .bg(colors.background)
-                .p_4()
+                .py(cx.line_height() / 2.)
                 .border_l_1()
                 .border_color(theme.status().error_border)
                 .child(
@@ -297,7 +297,7 @@ impl ErrorView {
 
 impl LineHeight for ErrorView {
     fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 0;
+        let mut height: u8 = 1; // Start at 1 to account for the y padding
         height = height.saturating_add(self.ename.lines().count() as u8);
         height = height.saturating_add(self.evalue.lines().count() as u8);
         height = height.saturating_add(self.traceback.num_lines(cx));
