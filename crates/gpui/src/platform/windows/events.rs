@@ -81,7 +81,7 @@ pub(crate) fn handle_msg(
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
-        WM_SYSCOMMAND => handle_system_command(),
+        WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
@@ -277,6 +277,7 @@ fn handle_syskeydown_msg(
     };
     let result = if !func(PlatformInput::KeyDown(event)).propagate {
         println!("-> HANDLED");
+        state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
         println!("-> No");
@@ -1071,8 +1072,14 @@ fn handle_system_settings_changed(
     Some(0)
 }
 
-fn handle_system_command() -> Option<isize> {
-    println!("SYS command");
+fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    if wparam.0 == SC_KEYMENU as usize {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.system_key_handled {
+            lock.system_key_handled = false;
+            return Some(0);
+        }
+    }
     None
 }
 
