@@ -1,4 +1,4 @@
-use editor::{Editor, ToPoint};
+use editor::Editor;
 use gpui::{AppContext, Subscription, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
