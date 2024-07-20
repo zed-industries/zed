@@ -108,8 +108,8 @@ impl zed::Extension for RuffExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        _language_server_id: &LanguageServerId,
-        _worktree: &zed_extension_api::Worktree,
+        server_id: &LanguageServerId,
+        worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
@@ -117,6 +117,7 @@ impl zed::Extension for RuffExtension {
             .unwrap_or_default();
         Ok(Some(settings))
     }
+
     fn language_server_workspace_configuration(
         &mut self,
         server_id: &LanguageServerId,
