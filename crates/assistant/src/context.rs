@@ -350,7 +350,7 @@ pub struct EditSuggestion {
     pub range: Range<language::Anchor>,
     /// If None, assume this is a suggestion to delete the range rather than transform it.
     pub description: Option<String>,
-    pub prepend_newline: bool,
+    pub insert_newline: bool,
 }
 
 impl EditStep {
@@ -521,7 +521,7 @@ impl EditOperation {
                 parse_status.changed().await?;
             }
 
-            let prepend_newline = kind.prepend_newline();
+            let insert_newline = kind.insert_newline();
             let suggestion_range = if let Some(symbol) = kind.symbol() {
                 let outline = buffer
                     .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
@@ -585,7 +585,7 @@ impl EditOperation {
                 EditSuggestion {
                     range: suggestion_range,
                     description: kind.description().map(ToString::to_string),
-                    prepend_newline,
+                    insert_newline,
                 },
             ))
         })
@@ -647,7 +647,7 @@ impl EditOperationKind {
         }
     }
 
-    pub fn prepend_newline(&self) -> bool {
+    pub fn insert_newline(&self) -> bool {
         match self {
             Self::PrependChild { .. }
             | Self::AppendChild { .. }
