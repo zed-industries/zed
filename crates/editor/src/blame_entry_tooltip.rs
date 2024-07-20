@@ -2,8 +2,8 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
-    Asset, Element, ParentElement, Render, ScrollHandle, StatefulInteractiveElement, WeakView,
-    WindowContext,
+    Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle, StatefulInteractiveElement,
+    WeakView, WindowContext,
 };
 use settings::Settings;
 use std::hash::Hash;
@@ -11,8 +11,8 @@ use theme::{ActiveTheme, ThemeSettings};
 use time::UtcOffset;
 use ui::{
     div, h_flex, tooltip_container, v_flex, Avatar, Button, ButtonStyle, Clickable as _, Color,
-    FluentBuilder, Icon, IconName, IconPosition, InteractiveElement as _, IntoElement,
-    SharedString, Styled as _, ViewContext,
+    FluentBuilder, Icon, IconButton, IconName, IconPosition, InteractiveElement as _, IntoElement,
+    Selectable, SelectableButton, SharedString, Styled as _, ViewContext,
 };
 use ui::{ButtonCommon, Disableable as _};
 use workspace::Workspace;
@@ -130,6 +130,10 @@ impl Render for BlameEntryTooltip {
         let author_email = self.blame_entry.author_mail.clone();
 
         let short_commit_id = self.blame_entry.sha.display_short();
+        let full_sha = self.blame_entry.sha.to_string().clone();
+        let sha_copied = cx
+            .read_from_clipboard()
+            .map_or(false, |clipboard| clipboard.text() == &full_sha);
         let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry);
 
         let message = self
@@ -240,6 +244,21 @@ impl Render for BlameEntryTooltip {
                                                     })
                                                 },
                                             ),
+                                        )
+                                        .child(
+                                            IconButton::new("copy-sha-button", IconName::Copy)
+                                                .icon_color(Color::Muted)
+                                                .on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.write_to_clipboard(ClipboardItem::new(
+                                                        full_sha.clone(),
+                                                    ))
+                                                })
+                                                .selected_icon(IconName::Check)
+                                                .selected_style(ButtonStyle::Tinted(
+                                                    ui::TintColor::Accent,
+                                                ))
+                                                .selected(sha_copied),
                                         ),
                                 ),
                         ),
