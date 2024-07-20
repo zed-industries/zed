@@ -392,7 +392,7 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
                 .to_offset(&snapshot.buffer_snapshot);
             let offset = anchor.to_offset(&snapshot.buffer_snapshot);
 
-            // Here we do basically the same as in `same_info_hover`, see comment there for explanation
+            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
             (hover_range.start..=hover_range.end).contains(&offset)
         })
         .unwrap_or(false)
