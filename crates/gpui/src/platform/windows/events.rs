@@ -81,6 +81,7 @@ pub(crate) fn handle_msg(
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
+        WM_SYSCOMMAND => handle_system_command(),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
@@ -265,6 +266,7 @@ fn handle_syskeydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("SYSKEY DONW");
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
@@ -273,9 +275,11 @@ fn handle_syskeydown_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-    let result = if func(PlatformInput::KeyDown(event)).default_prevented {
+    let result = if !func(PlatformInput::KeyDown(event)).propagate {
+        println!("-> HANDLED");
         Some(0)
     } else {
+        println!("-> No");
         None
     };
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
@@ -1065,6 +1069,11 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.udpate(handle).log_err();
     Some(0)
+}
+
+fn handle_system_command() -> Option<isize> {
+    println!("SYS command");
+    None
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
