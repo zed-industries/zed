@@ -628,6 +628,7 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
