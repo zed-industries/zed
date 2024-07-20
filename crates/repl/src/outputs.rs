@@ -553,9 +553,10 @@ impl LineHeight for ExecutionView {
         self.outputs
             .iter()
             .map(|output| output.num_lines(cx))
-            .fold(0, |acc, additional_height| {
+            .fold(0_u8, |acc, additional_height| {
                 acc.saturating_add(additional_height)
             })
+            .max(1)
     }
 }
 
