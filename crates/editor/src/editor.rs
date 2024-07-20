@@ -12444,6 +12444,7 @@ impl Render for Editor {
                 underline: None,
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
+                truncate: None,
             },
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
@@ -12457,6 +12458,7 @@ impl Render for Editor {
                 underline: None,
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
+                truncate: None,
             },
         };
 

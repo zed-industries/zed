@@ -304,6 +304,7 @@ impl AuthenticationPrompt {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            truncate: None,
         };
         EditorElement::new(
             &self.api_key,
