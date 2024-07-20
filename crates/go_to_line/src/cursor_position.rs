@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::fmt::Write;
-use text::{Point, Selection};
+use text::{Point, PointUtf16, Selection, ToPointUtf16};
 use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
     Render, Tooltip, ViewContext,
@@ -20,7 +20,7 @@ struct SelectionStats {
 }
 
 pub struct CursorPosition {
-    position: Option<Point>,
+    position: Option<PointUtf16>,
     selected_count: SelectionStats,
     workspace: WeakView<Workspace>,
     _observe_active_editor: Option<Subscription>,
@@ -38,7 +38,13 @@ impl CursorPosition {
 
     fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let buffer = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .snapshot();
 
         self.selected_count = Default::default();
         self.selected_count.selections = editor.selections.count();
@@ -60,7 +66,7 @@ impl CursorPosition {
                 }
             }
         }
-        self.position = last_selection.map(|s| s.head().to_point(&buffer));
+        self.position = last_selection.map(|s| s.head().to_point_utf16(&buffer));
 
         cx.notify();
     }

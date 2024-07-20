@@ -7,7 +7,7 @@ use gpui::{
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
 use settings::Settings;
-use text::{Bias, Point};
+use text::{Bias, Point, PointUtf16};
 use theme::ActiveTheme;
 use ui::{h_flex, prelude::*, v_flex, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -57,7 +57,7 @@ impl GoToLine {
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
         let editor = active_editor.read(cx);
-        let cursor = editor.selections.last::<Point>(cx).head();
+        let cursor = editor.selections.last::<PointUtf16>(cx).head();
 
         let line = cursor.row + 1;
         let column = cursor.column + 1;
