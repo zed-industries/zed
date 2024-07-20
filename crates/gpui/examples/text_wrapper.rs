@@ -4,7 +4,7 @@ struct HelloWorld {}
 
 impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let text = "The longest word in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
+        let text = "The longest word in any of the major English language 以及中文的测试 dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
         div()
             .id("page")
             .size_full()
