@@ -3,7 +3,7 @@ pub mod macos;
 
 use isahc::http::Uri;
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 pub fn create_proxy_info(zed_proxy_settings: Option<String>) -> Arc<dyn ProxyInfo> {
     #[cfg(target_os = "macos")]
@@ -63,12 +63,21 @@ impl<S: SystemProxiesStore> ProxyInfo for ProxyInfoImpl<S> {
     }
 
     fn update_zed_settings(&self, zed_proxy_settings: Option<String>) {
-        self.zed_proxy_settings
-            .lock()
-            .clone_from(&zed_proxy_settings);
+        let mut zed_proxy_settings_lock = self.zed_proxy_settings.lock();
+        if zed_proxy_settings_lock.deref() == &zed_proxy_settings {
+            // no update to proxy settings, early return
+            return;
+        } else {
+            zed_proxy_settings_lock.clone_from(&zed_proxy_settings);
+        }
+        drop(zed_proxy_settings_lock);
+
         let system_proxy = self.system_proxy_store.lock().proxy_settings().select();
         let new_settings = Self::get_proxy(zed_proxy_settings, system_proxy);
-        log::debug!("updated proxy settings to {:?}", new_settings);
+        log::debug!(
+            "updated proxy settings to {:?} (on zed settings update)",
+            new_settings
+        );
         *self.current_proxy.lock() = new_settings;
     }
 }
@@ -79,11 +88,18 @@ impl<S: SystemProxiesStore> ProxyInfoImpl<S> {
         let zed_proxy_settings = Arc::new(Mutex::new(zed_proxy_string.clone()));
 
         // callback when system proxy get updated.
-        let update_callback = |new_sys_proxy: &SysProxiesSettings| {
-            let zed_proxy_settings = zed_proxy_settings.lock().clone();
-            let new_settings = Self::get_proxy(zed_proxy_settings, new_sys_proxy.select());
-            log::debug!("updated proxy settings to {:?}", new_settings);
-            *current_proxy.lock() = new_settings;
+        let update_callback = {
+            let current_proxy = current_proxy.clone();
+            let zed_proxy_settings = zed_proxy_settings.clone();
+            move |new_sys_proxy: &SysProxiesSettings| {
+                let zed_proxy_settings = zed_proxy_settings.lock().clone();
+                let new_settings = Self::get_proxy(zed_proxy_settings, new_sys_proxy.select());
+                log::debug!(
+                    "updated proxy settings to {:?} (on sys settings update)",
+                    new_settings
+                );
+                *current_proxy.lock() = new_settings;
+            }
         };
         let system_proxy_store = Mutex::new(S::new(update_callback));
 
@@ -133,7 +149,7 @@ impl<S: SystemProxiesStore> ProxyInfoImpl<S> {
                 }
             })
             .or_else(|| {
-                log::debug!("trying system proxy settings");
+                log::debug!("trying env proxy settings");
                 try_env!(
                     "ALL_PROXY",
                     "all_proxy",
@@ -158,7 +174,9 @@ pub struct SysProxiesSettings {
 /// Trait representing a system proxy store.
 pub trait SystemProxiesStore: Send {
     /// Pass a callback function to receive system settings update.
-    fn new<F: FnMut(&SysProxiesSettings)>(update_callback: F) -> Self;
+    fn new<F>(update_callback: F) -> Self
+    where
+        F: FnMut(&SysProxiesSettings) + Send + Sync + 'static;
     /// Query latest proxy settings.
     fn proxy_settings(&self) -> SysProxiesSettings {
         return SysProxiesSettings::default();

@@ -19,7 +19,7 @@ pub use url::Url;
 /// An [`HttpClient`] that has a base URL.
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
-    client_builder: Arc<dyn Fn(Option<isahc::http::Uri>) -> Arc<dyn HttpClient> + Send + Sync>,
+    client_builder: Arc<dyn Fn(Option<Uri>) -> Arc<dyn HttpClient> + Send + Sync>,
     proxy: Arc<dyn ProxyInfo>,
 }
 

@@ -5275,6 +5275,8 @@ name = "http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bindgen 0.65.1",
+ "cbindgen",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "isahc",

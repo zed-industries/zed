@@ -1,26 +1,44 @@
+#![allow(non_camel_case_types)]
 use super::{SysProxiesSettings, SystemProxiesStore};
 use system_configuration::{
     core_foundation::{
         array::CFArray,
-        base::CFType,
+        base::{CFType, TCFType},
         dictionary::CFDictionary,
         number::CFNumber,
         string::{CFString, CFStringRef},
     },
     dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder, SCDynamicStoreCallBackContext},
-    sys::schema_definitions::{
-        kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
-        kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
-        kSCPropNetProxiesSOCKSEnable, kSCPropNetProxiesSOCKSPort, kSCPropNetProxiesSOCKSProxy,
+    sys::{
+        dispatch_queue_t,
+        dynamic_store::SCDynamicStoreSetDispatchQueue,
+        schema_definitions::{
+            kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
+            kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+            kSCPropNetProxiesSOCKSEnable, kSCPropNetProxiesSOCKSPort, kSCPropNetProxiesSOCKSProxy,
+        },
     },
 };
+pub(crate) mod dispatch_sys {
+    include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
+}
+use dispatch_sys::*;
+pub(crate) fn dispatch_get_queue() -> dispatch_queue_t {
+    unsafe {
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0) as *const _
+            as dispatch_queue_t
+    }
+}
 
 #[derive(Clone)]
 pub struct MacSysProxiesStore(SCDynamicStore);
 unsafe impl Send for MacSysProxiesStore {}
 
 impl SystemProxiesStore for MacSysProxiesStore {
-    fn new<F: FnMut(&SysProxiesSettings)>(update_callback: F) -> Self {
+    fn new<F>(update_callback: F) -> Self
+    where
+        F: FnMut(&SysProxiesSettings) + Send + Sync + 'static,
+    {
         struct ProxyCallbackInfo<F> {
             proxy_settings: SysProxiesSettings,
             update_callback: F,
@@ -39,6 +57,13 @@ impl SystemProxiesStore for MacSysProxiesStore {
             })
             .build();
         dynamic_store.set_notification_keys(&notification_keys(), &notification_patterns());
+        // Enable the callback on the dispatch queue.
+        unsafe {
+            SCDynamicStoreSetDispatchQueue(
+                dynamic_store.as_concrete_TypeRef(),
+                dispatch_get_queue(),
+            );
+        }
         Self(dynamic_store)
     }
 
