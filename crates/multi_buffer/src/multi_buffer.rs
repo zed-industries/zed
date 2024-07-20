@@ -4807,7 +4807,7 @@ mod tests {
     fn test_remote(cx: &mut AppContext) {
         let host_buffer = cx.new_model(|cx| Buffer::local("a", cx));
         let guest_buffer = cx.new_model(|cx| {
-            let state = host_buffer.read(cx).to_proto();
+            let state = host_buffer.read(cx).to_proto(cx);
             let ops = cx
                 .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));

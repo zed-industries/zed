@@ -22,7 +22,7 @@ use util::ResultExt;
 #[cfg(windows)]
 use smol::process::windows::CommandExt;
 
-const VERSION: &str = "v18.15.0";
+const VERSION: &str = "v22.5.1";
 
 #[cfg(not(windows))]
 const NODE_PATH: &str = "bin/node";

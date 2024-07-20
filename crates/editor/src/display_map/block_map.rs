@@ -136,12 +136,12 @@ impl From<BlockId> for EntityId {
     }
 }
 
-impl Into<ElementId> for BlockId {
-    fn into(self) -> ElementId {
-        match self {
-            Self::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            Self::ExcerptHeader(id) => ("ExcerptHeader", EntityId::from(id)).into(),
-            Self::ExcerptFooter(id) => ("ExcerptFooter", EntityId::from(id)).into(),
+impl From<BlockId> for ElementId {
+    fn from(value: BlockId) -> Self {
+        match value {
+            BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
+            BlockId::ExcerptHeader(id) => ("ExcerptHeader", EntityId::from(id)).into(),
+            BlockId::ExcerptFooter(id) => ("ExcerptFooter", EntityId::from(id)).into(),
         }
     }
 }

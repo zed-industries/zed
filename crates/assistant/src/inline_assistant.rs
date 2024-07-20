@@ -1,7 +1,6 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, LanguageModelRequest,
-    LanguageModelRequestMessage, Role, StreamingDiff,
+    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -28,6 +27,7 @@ use gpui::{
     WhiteSpace, WindowContext,
 };
 use language::{Buffer, Point, Selection, TransactionId};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
@@ -1432,8 +1432,7 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
-                                    {
+                                    for model in CompletionProvider::global(cx).available_models() {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -2606,7 +2605,7 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FakeCompletionProvider;
+    use completion::FakeCompletionProvider;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;

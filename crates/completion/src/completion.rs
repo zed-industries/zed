@@ -6,52 +6,19 @@ mod ollama;
 mod open_ai;
 
 pub use anthropic::*;
+use anyhow::Result;
+use client::Client;
 pub use cloud::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake::*;
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
+use gpui::{AnyView, AppContext, Task, WindowContext};
+use language_model::{LanguageModel, LanguageModelRequest};
 pub use ollama::*;
 pub use open_ai::*;
 use parking_lot::RwLock;
 use smol::lock::{Semaphore, SemaphoreGuardArc};
-
-use crate::{
-    assistant_settings::{AssistantProvider, AssistantSettings},
-    LanguageModel, LanguageModelRequest,
-};
-use anyhow::Result;
-use client::Client;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
-use gpui::{AnyView, AppContext, BorrowAppContext, Task, WindowContext};
-use settings::{Settings, SettingsStore};
-use std::{any::Any, pin::Pin, sync::Arc, task::Poll, time::Duration};
-
-/// Choose which model to use for openai provider.
-/// If the model is not available, try to use the first available model, or fallback to the original model.
-fn choose_openai_model(
-    model: &::open_ai::Model,
-    available_models: &[::open_ai::Model],
-) -> ::open_ai::Model {
-    available_models
-        .iter()
-        .find(|&m| m == model)
-        .or_else(|| available_models.first())
-        .unwrap_or_else(|| model)
-        .clone()
-}
-
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let provider = create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(CompletionProvider::new(provider, Some(client)));
-
-    let mut settings_version = 0;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        settings_version += 1;
-        cx.update_global::<CompletionProvider, _>(|provider, cx| {
-            provider.update_settings(settings_version, cx);
-        })
-    })
-    .detach();
-}
+use std::{any::Any, pin::Pin, sync::Arc, task::Poll};
 
 pub struct CompletionResponse {
     inner: BoxStream<'static, Result<String>>,
@@ -70,7 +37,7 @@ impl futures::Stream for CompletionResponse {
 }
 
 pub trait LanguageModelCompletionProvider: Send + Sync {
-    fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel>;
+    fn available_models(&self) -> Vec<LanguageModel>;
     fn settings_version(&self) -> usize;
     fn is_authenticated(&self) -> bool;
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
@@ -110,8 +77,8 @@ impl CompletionProvider {
         }
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
-        self.provider.read().available_models(cx)
+    pub fn available_models(&self) -> Vec<LanguageModel> {
+        self.provider.read().available_models()
     }
 
     pub fn settings_version(&self) -> usize {
@@ -176,6 +143,17 @@ impl CompletionProvider {
             Ok(completion)
         })
     }
+
+    pub fn update_provider(
+        &mut self,
+        get_provider: impl FnOnce(Arc<Client>) -> Arc<RwLock<dyn LanguageModelCompletionProvider>>,
+    ) {
+        if let Some(client) = &self.client {
+            self.provider = get_provider(Arc::clone(client));
+        } else {
+            log::warn!("completion provider cannot be updated because its client was not set");
+        }
+    }
 }
 
 impl gpui::Global for CompletionProvider {}
@@ -196,109 +174,6 @@ impl CompletionProvider {
             None
         }
     }
-
-    pub fn update_settings(&mut self, version: usize, cx: &mut AppContext) {
-        let updated = match &AssistantSettings::get_global(cx).provider {
-            AssistantProvider::ZedDotDev { model } => self
-                .update_current_as::<_, CloudCompletionProvider>(|provider| {
-                    provider.update(model.clone(), version);
-                }),
-            AssistantProvider::OpenAi {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-                available_models,
-            } => self.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
-                provider.update(
-                    choose_openai_model(&model, &available_models),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                );
-            }),
-            AssistantProvider::Anthropic {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-            } => self.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
-                provider.update(
-                    model.clone(),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                );
-            }),
-            AssistantProvider::Ollama {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-            } => self.update_current_as::<_, OllamaCompletionProvider>(|provider| {
-                provider.update(
-                    model.clone(),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                    cx,
-                );
-            }),
-        };
-
-        // Previously configured provider was changed to another one
-        if updated.is_none() {
-            if let Some(client) = self.client.clone() {
-                self.provider = create_provider_from_settings(client, version, cx);
-            } else {
-                log::warn!("completion provider cannot be created because client is not set");
-            }
-        }
-    }
-}
-
-fn create_provider_from_settings(
-    client: Arc<Client>,
-    settings_version: usize,
-    cx: &mut AppContext,
-) -> Arc<RwLock<dyn LanguageModelCompletionProvider>> {
-    match &AssistantSettings::get_global(cx).provider {
-        AssistantProvider::ZedDotDev { model } => Arc::new(RwLock::new(
-            CloudCompletionProvider::new(model.clone(), client.clone(), settings_version, cx),
-        )),
-        AssistantProvider::OpenAi {
-            model,
-            api_url,
-            low_speed_timeout_in_seconds,
-            available_models,
-        } => Arc::new(RwLock::new(OpenAiCompletionProvider::new(
-            choose_openai_model(&model, &available_models),
-            api_url.clone(),
-            client.http_client(),
-            low_speed_timeout_in_seconds.map(Duration::from_secs),
-            settings_version,
-        ))),
-        AssistantProvider::Anthropic {
-            model,
-            api_url,
-            low_speed_timeout_in_seconds,
-        } => Arc::new(RwLock::new(AnthropicCompletionProvider::new(
-            model.clone(),
-            api_url.clone(),
-            client.http_client(),
-            low_speed_timeout_in_seconds.map(Duration::from_secs),
-            settings_version,
-        ))),
-        AssistantProvider::Ollama {
-            model,
-            api_url,
-            low_speed_timeout_in_seconds,
-        } => Arc::new(RwLock::new(OllamaCompletionProvider::new(
-            model.clone(),
-            api_url.clone(),
-            client.http_client(),
-            low_speed_timeout_in_seconds.map(Duration::from_secs),
-            settings_version,
-            cx,
-        ))),
-    }
 }
 
 #[cfg(test)]
@@ -311,8 +186,8 @@ mod tests {
     use smol::stream::StreamExt;
 
     use crate::{
-        completion_provider::MAX_CONCURRENT_COMPLETION_REQUESTS, CompletionProvider,
-        FakeCompletionProvider, LanguageModelRequest,
+        CompletionProvider, FakeCompletionProvider, LanguageModelRequest,
+        MAX_CONCURRENT_COMPLETION_REQUESTS,
     };
 
     #[gpui::test]

@@ -4,15 +4,18 @@ mod vim_test_context;
 
 use std::time::Duration;
 
+use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 pub use neovim_backed_test_context::*;
+use settings::SettingsStore;
 pub use vim_test_context::*;
 
 use indoc::indoc;
 use search::BufferSearchBar;
+use workspace::WorkspaceSettings;
 
 use crate::{insert::NormalBefore, motion, state::Mode, ModeIndicator};
 
@@ -1297,4 +1300,20 @@ async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_matches();
     cx.simulate_shared_keystrokes("+").await;
     cx.shared_state().await.assert_matches();
+}
+
+#[gpui::test]
+async fn test_command_alias(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+            let mut aliases = HashMap::default();
+            aliases.insert("Q".to_string(), "upper".to_string());
+            s.command_aliases = Some(aliases)
+        });
+    });
+
+    cx.set_state("ˇhello world", Mode::Normal);
+    cx.simulate_keystrokes(": Q");
+    cx.set_state("ˇHello world", Mode::Normal);
 }

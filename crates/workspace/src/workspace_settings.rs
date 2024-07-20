@@ -1,4 +1,5 @@
 use anyhow::Result;
+use collections::HashMap;
 use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ pub struct WorkspaceSettings {
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
+    pub command_aliases: HashMap<String, String>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -89,6 +91,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub use_system_path_prompts: Option<bool>,
+    /// Aliases for the command palette. When you type a key in this map,
+    /// it will be assumed to equal the value.
+    ///
+    /// Default: true
+    pub command_aliases: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]

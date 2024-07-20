@@ -51,6 +51,7 @@ prettier.workspace = true
 worktree.workspace = true
 rand.workspace = true
 regex.workspace = true
+remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 task.workspace = true

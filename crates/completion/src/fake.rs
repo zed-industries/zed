@@ -62,7 +62,7 @@ impl FakeCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for FakeCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+    fn available_models(&self) -> Vec<LanguageModel> {
         vec![LanguageModel::default()]
     }
 

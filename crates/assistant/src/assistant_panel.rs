@@ -8,18 +8,18 @@ use crate::{
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
-    EditStepOperations, EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant,
-    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector,
+    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepOperations,
+    EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
+    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, ResetKey, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use breadcrumbs::Breadcrumbs;
 use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
+use completion::CompletionProvider;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
@@ -43,6 +43,7 @@ use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
+use language_model::Role;
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
