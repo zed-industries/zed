@@ -10638,10 +10638,10 @@ impl Editor {
         }
     }
 
-    pub fn copy_file_line(&mut self, _: &CopyFileLine, cx: &mut ViewContext<Self>) {
+    pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.abs_path(cx).to_str() {
+                if let Some(path) = file.path().to_str() {
                     let selection = self.selections.newest::<Point>(cx).start.row + 1;
                     cx.write_to_clipboard(ClipboardItem::new(format!("{path}:{selection}")));
                 }

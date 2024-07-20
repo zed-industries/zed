@@ -188,7 +188,7 @@ gpui::actions!(
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
-        CopyFileLine,
+        CopyFileLocation,
         CopyRelativePath,
         Cut,
         CutToEndOfLine,
