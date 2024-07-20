@@ -219,7 +219,7 @@ impl Perform for TerminalHandler {
             }
             _ => {
                 // Format as hex
-                println!("[execute] byte={:02x}", byte);
+                // println!("[execute] byte={:02x}", byte);
             }
         }
     }
