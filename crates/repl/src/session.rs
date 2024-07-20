@@ -5,7 +5,8 @@ use crate::{
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
-        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, CustomBlockId,
+        RenderBlock,
     },
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
@@ -40,13 +41,18 @@ struct EditorBlock {
     invalidation_anchor: Anchor,
     block_id: CustomBlockId,
     execution_view: View<ExecutionView>,
+    on_close: CloseBlockFn,
 }
+
+type CloseBlockFn =
+    Arc<dyn for<'a> Fn(CustomBlockId, &'a mut WindowContext) + Send + Sync + 'static>;
 
 impl EditorBlock {
     fn new(
         editor: WeakView<Editor>,
         code_range: Range<Anchor>,
         status: ExecutionStatus,
+        on_close: CloseBlockFn,
         cx: &mut ViewContext<Session>,
     ) -> anyhow::Result<Self> {
         let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
@@ -74,7 +80,7 @@ impl EditorBlock {
                 position: code_range.end,
                 height: execution_view.num_lines(cx).saturating_add(1),
                 style: BlockStyle::Sticky,
-                render: Self::create_output_area_render(execution_view.clone()),
+                render: Self::create_output_area_render(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
             };
 
@@ -88,6 +94,7 @@ impl EditorBlock {
             invalidation_anchor,
             block_id,
             execution_view,
+            on_close,
         })
     }
 
@@ -99,11 +106,15 @@ impl EditorBlock {
         self.editor
             .update(cx, |editor, cx| {
                 let mut replacements = HashMap::default();
+
                 replacements.insert(
                     self.block_id,
                     (
                         Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                        Self::create_output_area_render(self.execution_view.clone()),
+                        Self::create_output_area_render(
+                            self.execution_view.clone(),
+                            self.on_close.clone(),
+                        ),
                     ),
                 );
                 editor.replace_blocks(replacements, None, cx);
@@ -111,15 +122,20 @@ impl EditorBlock {
             .ok();
     }
 
-    fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
+    fn create_output_area_render(
+        execution_view: View<ExecutionView>,
+        on_close: CloseBlockFn,
+    ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
             let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-            // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
 
             let gutter = cx.gutter_dimensions;
             let close_button_size = IconSize::XSmall;
+
+            let block_id = cx.block_id;
+            let on_close = on_close.clone();
 
             div()
                 .flex()
@@ -148,8 +164,10 @@ impl EditorBlock {
                                 .icon_size(close_button_size)
                                 .icon_color(Color::Muted)
                                 .tooltip(|cx| Tooltip::text("Close output area", cx))
-                                .on_click(|event, _cx| {
-                                    dbg!(event);
+                                .on_click(move |_, cx| {
+                                    if let BlockId::Custom(block_id) = block_id {
+                                        (on_close)(block_id, cx)
+                                    }
                                 }),
                             ),
                     ),
@@ -400,8 +418,30 @@ impl Session {
             Kernel::Shutdown => ExecutionStatus::Shutdown,
         };
 
+        let parent_message_id = message.header.msg_id.clone();
+        let session_view = cx.view().downgrade();
+        let weak_editor = self.editor.clone();
+
+        let on_close: CloseBlockFn =
+            Arc::new(move |block_id: CustomBlockId, cx: &mut WindowContext| {
+                if let Some(session) = session_view.upgrade() {
+                    session.update(cx, |session, cx| {
+                        session.blocks.remove(&parent_message_id);
+                        cx.notify();
+                    });
+                }
+
+                if let Some(editor) = weak_editor.upgrade() {
+                    editor.update(cx, |editor, cx| {
+                        let mut block_ids = HashSet::default();
+                        block_ids.insert(block_id);
+                        editor.remove_blocks(block_ids, None, cx);
+                    });
+                }
+            });
+
         let editor_block = if let Ok(editor_block) =
-            EditorBlock::new(self.editor.clone(), anchor_range, status, cx)
+            EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)
         {
             editor_block
         } else {
