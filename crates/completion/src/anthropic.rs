@@ -1,14 +1,12 @@
-use crate::{
-    assistant_settings::AnthropicModel, CompletionProvider, LanguageModel, LanguageModelRequest,
-    Role,
-};
-use crate::{count_open_ai_tokens, LanguageModelCompletionProvider, LanguageModelRequestMessage};
-use anthropic::{stream_completion, Request, RequestMessage};
+use crate::{count_open_ai_tokens, LanguageModelCompletionProvider};
+use crate::{CompletionProvider, LanguageModel, LanguageModelRequest};
+use anthropic::{stream_completion, Model as AnthropicModel, Request, RequestMessage};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
+use language_model::Role;
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -27,7 +25,7 @@ pub struct AnthropicCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+    fn available_models(&self) -> Vec<LanguageModel> {
         AnthropicModel::iter()
             .map(LanguageModel::Anthropic)
             .collect()
@@ -94,7 +92,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         count_open_ai_tokens(request, cx.background_executor())
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -176,7 +174,7 @@ impl AnthropicCompletionProvider {
     }
 
     fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
-        preprocess_anthropic_request(&mut request);
+        request.preprocess_anthropic();
 
         let model = match request.model {
             LanguageModel::Anthropic(model) => model,
@@ -211,49 +209,6 @@ impl AnthropicCompletionProvider {
             max_tokens: 4092,
         }
     }
-}
-
-pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
-    let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages.drain(..) {
-        if message.content.is_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == message.role {
-                        last_message.content.push_str("\n\n");
-                        last_message.content.push_str(&message.content);
-                        continue;
-                    }
-                }
-
-                new_messages.push(message);
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
-            }
-        }
-    }
-
-    if !system_message.is_empty() {
-        new_messages.insert(
-            0,
-            LanguageModelRequestMessage {
-                role: Role::System,
-                content: system_message,
-            },
-        );
-    }
-
-    request.messages = new_messages;
 }
 
 struct AuthenticationPrompt {

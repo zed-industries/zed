@@ -113,7 +113,7 @@ impl MetalRenderer {
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
         let mut devices = metal::Device::all();
-        devices.sort_by_key(|device| (!device.is_removable(), device.is_low_power()));
+        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
         let Some(device) = devices.pop() else {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);

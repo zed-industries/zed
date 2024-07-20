@@ -19,7 +19,6 @@
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -79,10 +78,8 @@
       "shift-down": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
+      "ctrl-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
@@ -110,7 +107,6 @@
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "ctrl-shift-enter": "editor::NewlineBelow",
-      "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
@@ -118,6 +114,12 @@
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol"
+    }
+  },
+  {
+    "context": "Editor && mode == full && !jupyter",
+    "bindings": {
+      "ctrl-enter": "editor::NewlineAbove"
     }
   },
   {
@@ -208,7 +210,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-alt-enter": "search::ReplaceAll"
@@ -261,20 +263,19 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": "editor::AddSelectionAbove",
-      "shift-alt-down": "editor::AddSelectionBelow",
+      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
       "ctrl-alt-shift-up": "editor::DuplicateLineUp",
       "ctrl-alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
-      "ctrl-shift-l": "editor::SelectAllMatches",
-      "ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": false }],
+      "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
+      "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
+      "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],
       "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-k ctrl-i": "editor::Hover",
@@ -327,7 +328,7 @@
       "alt-9": ["pane::ActivateItem", 8],
       "alt-0": "pane::ActivateLastItem",
       "ctrl-alt--": "pane::GoBack",
-      "ctrl-alt-shift--": "pane::GoForward",
+      "ctrl-alt-_": "pane::GoForward",
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPrevMatch",
@@ -482,6 +483,12 @@
     }
   },
   {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-enter": "repl::Run"
+    }
+  },
+  {
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
@@ -565,6 +572,13 @@
     "context": "ChannelModal",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "Picker > Editor",
+    "bindings": {
+      "tab": "picker::ConfirmCompletion",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }]
     }
   },
   {

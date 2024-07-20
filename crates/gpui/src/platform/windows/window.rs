@@ -11,7 +11,7 @@ use std::{
 };
 
 use ::util::ResultExt;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -69,7 +69,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
-    ) -> Self {
+    ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -84,7 +84,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let renderer = windows_renderer::windows_renderer(hwnd, transparent);
+        let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -92,7 +92,7 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
 
-        Self {
+        Ok(Self {
             origin,
             logical_size,
             fullscreen_restore_bounds,
@@ -108,7 +108,7 @@ impl WindowsWindowState {
             display,
             fullscreen,
             hwnd,
-        }
+        })
     }
 
     #[inline]
@@ -203,23 +203,23 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowStatePtr {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Rc<Self> {
+    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
             context.transparent,
             cs,
             context.current_cursor,
             context.display,
-        ));
+        )?);
 
-        Rc::new(Self {
+        Ok(Rc::new(Self {
             state,
             hwnd,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
             executor: context.executor.clone(),
-        })
+        }))
     }
 }
 
@@ -236,7 +236,7 @@ pub(crate) struct Callbacks {
 }
 
 struct WindowCreateContext {
-    inner: Option<Rc<WindowsWindowStatePtr>>,
+    inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
@@ -253,7 +253,7 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
-    ) -> Self {
+    ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
@@ -310,15 +310,15 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
-        register_drag_drop(state_ptr.clone());
+        let state_ptr = context.inner.take().unwrap()?;
+        register_drag_drop(state_ptr.clone())?;
 
         unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(raw_hwnd, &mut placement).log_err();
+            GetWindowPlacement(raw_hwnd, &mut placement)?;
             // the bounds may be not inside the display
             let bounds = if display.check_given_bounds(params.bounds) {
                 params.bounds
@@ -327,14 +327,14 @@ impl WindowsWindow {
             };
             let mut lock = state_ptr.state.borrow_mut();
             let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.udpate(raw_hwnd).unwrap();
+            lock.border_offset.udpate(raw_hwnd)?;
             placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
             drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement).log_err();
+            SetWindowPlacement(raw_hwnd, &placement)?;
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
+        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
 
-        Self(state_ptr)
+        Ok(Self(state_ptr))
     }
 }
 
@@ -921,10 +921,14 @@ unsafe extern "system" fn wnd_proc(
         let cs = unsafe { &*cs };
         let ctx = cs.lpCreateParams as *mut WindowCreateContext;
         let ctx = unsafe { &mut *ctx };
-        let state_ptr = WindowsWindowStatePtr::new(ctx, hwnd, cs);
-        let weak = Box::new(Rc::downgrade(&state_ptr));
+        let creation_result = WindowsWindowStatePtr::new(ctx, hwnd, cs);
+        if creation_result.is_err() {
+            ctx.inner = Some(creation_result);
+            return LRESULT(0);
+        }
+        let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
-        ctx.inner = Some(state_ptr);
+        ctx.inner = Some(creation_result);
         return LRESULT(1);
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
@@ -972,7 +976,7 @@ fn get_module_handle() -> HMODULE {
     }
 }
 
-fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
+fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     let window_handle = state_ptr.hwnd;
     let handler = WindowsDragDropHandler(state_ptr);
     // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
@@ -981,8 +985,9 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
     let drag_drop_handler: IDropTarget = handler.into();
     unsafe {
         RegisterDragDrop(window_handle, &drag_drop_handler)
-            .expect("unable to register drag-drop event")
-    };
+            .context("unable to register drag-drop event")?;
+    }
+    Ok(())
 }
 
 fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
@@ -1045,7 +1050,7 @@ mod windows_renderer {
         platform::blade::{BladeRenderer, BladeSurfaceConfig},
     };
 
-    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> BladeRenderer {
+    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
         let raw = RawWindow { hwnd: hwnd.0 };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
@@ -1058,14 +1063,14 @@ mod windows_renderer {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
         let config = BladeSurfaceConfig {
             size: gpu::Extent::default(),
             transparent,
         };
 
-        BladeRenderer::new(gpu, config)
+        Ok(BladeRenderer::new(gpu, config))
     }
 
     struct RawWindow {

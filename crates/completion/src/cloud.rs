@@ -1,11 +1,12 @@
 use crate::{
-    assistant_settings::CloudModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
-    LanguageModelCompletionProvider, LanguageModelRequest,
+    count_open_ai_tokens, CompletionProvider, LanguageModel, LanguageModelCompletionProvider,
+    LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, Task};
+use language_model::CloudModel;
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -52,7 +53,7 @@ impl CloudCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for CloudCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+    fn available_models(&self) -> Vec<LanguageModel> {
         let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
             Some(custom_model)
         } else {
@@ -135,7 +136,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
         }
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

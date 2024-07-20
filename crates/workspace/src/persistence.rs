@@ -1059,7 +1059,7 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1069,7 +1069,7 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: LocalPaths::new(["/tmp"]).into(),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1095,7 +1095,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = LocalPaths::new(["/tmp", "/tmp3"]).into();
+        workspace_1.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp3"]);
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -1213,7 +1213,7 @@ mod tests {
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: LocalPaths::new(["/tmp"]).into(),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1239,7 +1239,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = LocalPaths::new(["/tmp", "/tmp2"]).into();
+        workspace_2.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]);
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -1268,7 +1268,8 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.location = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]).into();
+        workspace_3.location =
+            SerializedWorkspaceLocation::from_local_paths(["/tmp3", "/tmp4", "/tmp2"]);
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -1287,7 +1288,7 @@ mod tests {
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            location: LocalPaths::new(workspace_id).into(),
+            location: SerializedWorkspaceLocation::from_local_paths(workspace_id),
             center_group: center_group.clone(),
             window_bounds: Default::default(),
             display: Default::default(),

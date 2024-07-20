@@ -460,9 +460,8 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
-            let is_local = project.is_local();
             let is_read_only = project.is_read_only();
-            let is_remote = project.is_remote();
+            let is_remote = project.is_remote() && project.dev_server_project_id().is_none();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).when_else(
@@ -526,14 +525,12 @@ impl ProjectPanel {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                                     .action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(is_local & is_root, |menu| {
+                            .when(!is_remote & is_root, |menu| {
                                 menu.separator()
-                                    .when(!is_remote, |menu| {
-                                        menu.action(
-                                            "Add Folder to Project…",
-                                            Box::new(workspace::AddFolderToProject),
-                                        )
-                                    })
+                                    .action(
+                                        "Add Folder to Project…",
+                                        Box::new(workspace::AddFolderToProject),
+                                    )
                                     .entry(
                                         "Remove from Project",
                                         None,
@@ -544,7 +541,7 @@ impl ProjectPanel {
                                         }),
                                     )
                             })
-                            .when(is_local & is_root, |menu| {
+                            .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
                             })
@@ -1310,6 +1307,8 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
+            let mut tasks = Vec::new();
+
             for clipboard_entry in clipboard_entries.items() {
                 if clipboard_entry.worktree_id != worktree_id {
                     return None;
@@ -1321,15 +1320,34 @@ impl ProjectPanel {
                         .update(cx, |project, cx| {
                             project.rename_entry(clipboard_entry.entry_id, new_path, cx)
                         })
-                        .detach_and_log_err(cx)
+                        .detach_and_log_err(cx);
                 } else {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.copy_entry(clipboard_entry.entry_id, new_path, cx)
-                        })
-                        .detach_and_log_err(cx)
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                    });
+                    tasks.push(task);
                 }
             }
+
+            cx.spawn(|project_panel, mut cx| async move {
+                let entry_ids = futures::future::join_all(tasks).await;
+                if let Some(Some(entry)) = entry_ids
+                    .into_iter()
+                    .rev()
+                    .find_map(|entry_id| entry_id.ok())
+                {
+                    project_panel
+                        .update(&mut cx, |project_panel, _cx| {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id: entry.id,
+                            });
+                        })
+                        .ok();
+                }
+            })
+            .detach();
+
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
@@ -2171,24 +2189,22 @@ impl ProjectPanel {
                                     });
                                 }
                             } else if event.down.modifiers.secondary() {
-                                if !this.marked_entries.insert(selection) {
+                                if event.down.click_count > 1 {
+                                    this.split_entry(entry_id, cx);
+                                } else if !this.marked_entries.insert(selection) {
                                     this.marked_entries.remove(&selection);
                                 }
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
                                 let click_count = event.up.click_count;
-                                if click_count > 1 && event.down.modifiers.secondary() {
-                                    this.split_entry(entry_id, cx);
-                                } else {
-                                    this.open_entry(
-                                        entry_id,
-                                        cx.modifiers().secondary(),
-                                        click_count > 1,
-                                        click_count == 1,
-                                        cx,
-                                    );
-                                }
+                                this.open_entry(
+                                    entry_id,
+                                    cx.modifiers().secondary(),
+                                    click_count > 1,
+                                    click_count == 1,
+                                    cx,
+                                );
                             }
                         }
                     }))
@@ -3584,8 +3600,8 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two copy.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
@@ -3600,9 +3616,9 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy 1.txt",
+                "      one.two copy 1.txt  <== selected",
                 "      one.two copy.txt",
-                "      one.two.txt  <== selected",
+                "      one.two.txt",
                 "      one.txt",
             ]
         );
@@ -3687,10 +3703,13 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 //
-                "v root  <== selected",
+                "v root",
                 "    > a",
-                "    > a copy",
-                "    > a copy 1",
+                "    v a copy",
+                "        > a  <== selected",
+                "        > inner_dir",
+                "          one.txt",
+                "          two.txt",
                 "    v b",
                 "        v a",
                 "            v inner_dir",

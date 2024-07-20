@@ -18,7 +18,7 @@ use std::{
     fmt::{self, Debug},
     iter, mem,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
@@ -377,6 +377,9 @@ messages!(
     (MultiLspQueryResponse, Background),
     (DevServerProjectsUpdate, Foreground),
     (ValidateDevServerProjectRequest, Background),
+    (ListRemoteDirectory, Background),
+    (ListRemoteDirectoryResponse, Background),
+    (UpdateDevServerProject, Background),
     (DeleteDevServer, Foreground),
     (DeleteDevServerProject, Foreground),
     (RegenerateDevServerToken, Foreground),
@@ -392,6 +395,9 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
+    // Remote development
+    (AddWorktree, Foreground),
+    (AddWorktreeResponse, Foreground),
 );
 
 request_messages!(
@@ -434,6 +440,8 @@ request_messages!(
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
+    (ListRemoteDirectory, ListRemoteDirectoryResponse),
+    (UpdateDevServerProject, Ack),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
@@ -507,6 +515,8 @@ request_messages!(
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
+    // Remote development
+    (AddWorktree, AddWorktreeResponse),
 );
 
 entity_messages!(

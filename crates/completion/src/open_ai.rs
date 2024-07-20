@@ -1,15 +1,13 @@
-use crate::assistant_settings::CloudModel;
-use crate::assistant_settings::{AssistantProvider, AssistantSettings};
+use crate::CompletionProvider;
 use crate::LanguageModelCompletionProvider;
-use crate::{
-    assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
-};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
 use http::HttpClient;
-use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
+use language_model::{CloudModel, LanguageModel, LanguageModelRequest, Role};
+use open_ai::Model as OpenAiModel;
+use open_ai::{stream_completion, Request, RequestMessage};
 use settings::Settings;
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -25,6 +23,7 @@ pub struct OpenAiCompletionProvider {
     http_client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
     settings_version: usize,
+    available_models_from_settings: Vec<OpenAiModel>,
 }
 
 impl OpenAiCompletionProvider {
@@ -34,6 +33,7 @@ impl OpenAiCompletionProvider {
         http_client: Arc<dyn HttpClient>,
         low_speed_timeout: Option<Duration>,
         settings_version: usize,
+        available_models_from_settings: Vec<OpenAiModel>,
     ) -> Self {
         Self {
             api_key: None,
@@ -42,6 +42,7 @@ impl OpenAiCompletionProvider {
             http_client,
             low_speed_timeout,
             settings_version,
+            available_models_from_settings,
         }
     }
 
@@ -92,30 +93,26 @@ impl OpenAiCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
-    fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
-        if let AssistantProvider::OpenAi {
-            available_models, ..
-        } = &AssistantSettings::get_global(cx).provider
-        {
-            if !available_models.is_empty() {
-                return available_models
-                    .iter()
-                    .cloned()
-                    .map(LanguageModel::OpenAi)
-                    .collect();
-            }
-        }
-        let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
-            vec![self.model.clone()]
-        } else {
-            OpenAiModel::iter()
-                .filter(|model| !matches!(model, OpenAiModel::Custom { .. }))
+    fn available_models(&self) -> Vec<LanguageModel> {
+        if self.available_models_from_settings.is_empty() {
+            let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
+                vec![self.model.clone()]
+            } else {
+                OpenAiModel::iter()
+                    .filter(|model| !matches!(model, OpenAiModel::Custom { .. }))
+                    .collect()
+            };
+            available_models
+                .into_iter()
+                .map(LanguageModel::OpenAi)
                 .collect()
-        };
-        available_models
-            .into_iter()
-            .map(LanguageModel::OpenAi)
-            .collect()
+        } else {
+            self.available_models_from_settings
+                .iter()
+                .cloned()
+                .map(LanguageModel::OpenAi)
+                .collect()
+        }
     }
 
     fn settings_version(&self) -> usize {
@@ -179,7 +176,7 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
         count_open_ai_tokens(request, cx.background_executor())
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -253,16 +250,6 @@ pub fn count_open_ai_tokens(
             }
         })
         .boxed()
-}
-
-impl From<Role> for open_ai::Role {
-    fn from(val: Role) -> Self {
-        match val {
-            Role::User => OpenAiRole::User,
-            Role::Assistant => OpenAiRole::Assistant,
-            Role::System => OpenAiRole::System,
-        }
-    }
 }
 
 struct AuthenticationPrompt {
