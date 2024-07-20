@@ -92,15 +92,19 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut events = Vec::new();
     let mut finder = LinkFinder::new();
     finder.kinds(&[linkify::LinkKind::Url]);
-    let mut text_range = Range {
-        start: 0,
-        end: text.len(),
-    };
-    for link in finder.links(&text[text_range.clone()]) {
+    let mut text_range = 0..text.len();
+    let mut links = finder.links(&text[text_range.clone()]).peekable();
+
+    if links.peek().is_none() {
+        events.push((text_range, MarkdownEvent::Text));
+        return events;
+    }
+
+    for link in links {
         let link_range = text_range.start + link.start()..text_range.start + link.end();
 
-        if link_range.start > text_range.start {
-            events.push((text_range.start..link_range.start, MarkdownEvent::Text));
+        if link_range.start - 1 > text_range.start {
+            events.push((text_range.start..link_range.start - 1, MarkdownEvent::Text));
         }
 
         events.push((
@@ -115,11 +119,12 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         events.push((link_range.clone(), MarkdownEvent::Text));
         events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
 
-        text_range.start = link_range.end;
+        text_range.start = link_range.end + 1;
     }
 
-    events.push((text_range, MarkdownEvent::Text));
-
+    if text_range.end > text_range.start {
+        events.push((text_range, MarkdownEvent::Text));
+    }
     events
 }
 
