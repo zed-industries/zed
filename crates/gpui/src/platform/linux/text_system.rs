@@ -4,7 +4,7 @@ use crate::{
     ShapedGlyph, SharedString, Size,
 };
 use anyhow::{anyhow, Context, Ok, Result};
-use collections::HashMap;
+use collections::{BTreeSet, HashMap};
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontSystem, ShapeBuffer, ShapeLine,
     SwashCache,
@@ -64,16 +64,15 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        let ret = self
-            .0
+        self.0
             .read()
             .font_system
             .db()
             .faces()
             .filter_map(|face| face.families.first().map(|family| family.0.clone()))
-            .collect_vec();
-        println!("{:#?}", ret);
-        ret
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect_vec()
     }
 
     fn all_font_families(&self) -> Vec<String> {
