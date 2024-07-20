@@ -3,8 +3,10 @@ pub mod macos;
 
 use isahc::http::Uri;
 use parking_lot::Mutex;
-use std::{ops::Deref, sync::Arc};
+use std::{marker::PhantomData, ops::Deref, sync::Arc};
 
+/// Given the initial value of zed proxy settings, create
+/// a dynamically updated ProxyInfo object.
 pub fn create_proxy_info(zed_proxy_settings: Option<String>) -> Arc<dyn ProxyInfo> {
     #[cfg(target_os = "macos")]
     return Arc::new(ProxyInfoImpl::<macos::MacSysProxiesStore>::new(
@@ -17,7 +19,7 @@ pub fn create_proxy_info(zed_proxy_settings: Option<String>) -> Arc<dyn ProxyInf
     ));
 }
 
-/// Trait representing current proxy settings.
+/// Read proxy info and update proxy settings from zed settings.
 pub trait ProxyInfo: Send + Sync {
     fn proxy_string(&self) -> Option<String>;
     fn proxy_uri(&self) -> Option<Uri>;
@@ -25,23 +27,44 @@ pub trait ProxyInfo: Send + Sync {
     fn update_zed_settings(&self, zed_proxy_settings: Option<String>);
 }
 
-pub struct DefaultProxyInfo;
+/// Struct representing system proxy settings.
+#[derive(Default, Clone, Debug)]
+pub struct SysProxiesSettings {
+    pub http: Option<String>,
+    pub https: Option<String>,
+    pub socks: Option<String>,
+}
 
-impl ProxyInfo for DefaultProxyInfo {
-    fn proxy_string(&self) -> Option<String> {
-        None
+/// Trait representing a system proxy store.
+pub trait SystemProxiesStore: Send + Sync + 'static {
+    /// Pass a callback function to receive system proxy settings update notifications.
+    fn init<F>(update_callback: F) -> SysProxiesSettings
+    where
+        F: FnMut(&SysProxiesSettings) + Send + Sync + 'static;
+}
+
+impl SysProxiesSettings {
+    /// prioritize socks over https over http
+    pub fn select(&self) -> Option<String> {
+        if let Some(socks) = &self.socks {
+            Some(socks.as_str())
+        } else if let Some(https) = &self.https {
+            Some(https.as_str())
+        } else if let Some(http) = &self.http {
+            Some(http.as_str())
+        } else {
+            None
+        }
+        .map(str::to_string)
     }
-    fn proxy_uri(&self) -> Option<Uri> {
-        None
-    }
-    fn update_zed_settings(&self, _: Option<String>) {}
 }
 
 /// A dynamic proxy info that's shared across the app.
 pub struct ProxyInfoImpl<S> {
     current_proxy: Arc<Mutex<Option<Uri>>>,
     zed_proxy_settings: Arc<Mutex<Option<String>>>,
-    system_proxy_store: Mutex<S>,
+    sys_proxy_settings: Arc<Mutex<SysProxiesSettings>>,
+    _phantom: PhantomData<S>,
 }
 
 impl<S: SystemProxiesStore> ProxyInfo for ProxyInfoImpl<S> {
@@ -72,7 +95,7 @@ impl<S: SystemProxiesStore> ProxyInfo for ProxyInfoImpl<S> {
         }
         drop(zed_proxy_settings_lock);
 
-        let system_proxy = self.system_proxy_store.lock().proxy_settings().select();
+        let system_proxy = self.sys_proxy_settings.lock().select();
         let new_settings = Self::get_proxy(zed_proxy_settings, system_proxy);
         log::debug!(
             "updated proxy settings to {:?} (on zed settings update)",
@@ -86,30 +109,35 @@ impl<S: SystemProxiesStore> ProxyInfoImpl<S> {
     pub fn new(zed_proxy_string: Option<String>) -> Self {
         let current_proxy = Arc::new(Mutex::new(None));
         let zed_proxy_settings = Arc::new(Mutex::new(zed_proxy_string.clone()));
+        let sys_proxy_settings = Arc::new(Mutex::new(SysProxiesSettings::default()));
 
         // callback when system proxy get updated.
         let update_callback = {
             let current_proxy = current_proxy.clone();
             let zed_proxy_settings = zed_proxy_settings.clone();
+            let sys_proxy_settings = sys_proxy_settings.clone();
             move |new_sys_proxy: &SysProxiesSettings| {
+                *sys_proxy_settings.lock() = new_sys_proxy.clone();
                 let zed_proxy_settings = zed_proxy_settings.lock().clone();
-                let new_settings = Self::get_proxy(zed_proxy_settings, new_sys_proxy.select());
+                let new_sys_settings = Self::get_proxy(zed_proxy_settings, new_sys_proxy.select());
                 log::debug!(
                     "updated proxy settings to {:?} (on sys settings update)",
-                    new_settings
+                    new_sys_settings
                 );
-                *current_proxy.lock() = new_settings;
+                *current_proxy.lock() = new_sys_settings;
             }
         };
-        let system_proxy_store = Mutex::new(S::new(update_callback));
 
-        let info = Self {
+        // initial write
+        *sys_proxy_settings.lock() = S::init(update_callback);
+        // let sys_proxy_store = Mutex::new(store);
+
+        Self {
             current_proxy,
             zed_proxy_settings,
-            system_proxy_store,
-        };
-        info.update_zed_settings(zed_proxy_string);
-        info
+            sys_proxy_settings,
+            _phantom: Default::default(),
+        }
     }
 
     /// The priority being:
@@ -131,13 +159,11 @@ impl<S: SystemProxiesStore> ProxyInfoImpl<S> {
         zed_proxy_settings
             .and_then(|proxy| {
                 if proxy != USE_SYSTEM_PROXY {
-                    log::debug!("trying zed proxy settings");
                     proxy
                         .parse::<isahc::http::Uri>()
                         .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                         .ok()
                 } else {
-                    log::debug!("trying system proxy settings");
                     system_proxy.and_then(|input| {
                         input
                             .parse::<isahc::http::Uri>()
@@ -163,47 +189,24 @@ impl<S: SystemProxiesStore> ProxyInfoImpl<S> {
     }
 }
 
-/// System proxy settings.
-#[derive(Default)]
-pub struct SysProxiesSettings {
-    pub http: Option<String>,
-    pub https: Option<String>,
-    pub socks: Option<String>,
-}
-
-/// Trait representing a system proxy store.
-pub trait SystemProxiesStore: Send {
-    /// Pass a callback function to receive system settings update.
-    fn new<F>(update_callback: F) -> Self
-    where
-        F: FnMut(&SysProxiesSettings) + Send + Sync + 'static;
-    /// Query latest proxy settings.
-    fn proxy_settings(&self) -> SysProxiesSettings {
-        return SysProxiesSettings::default();
-    }
-}
-
-impl SysProxiesSettings {
-    /// prioritize socks over https over http
-    pub fn select(&self) -> Option<String> {
-        if let Some(socks) = &self.socks {
-            Some(socks.as_str())
-        } else if let Some(https) = &self.https {
-            Some(https.as_str())
-        } else if let Some(http) = &self.http {
-            Some(http.as_str())
-        } else {
-            None
-        }
-        .map(str::to_string)
-    }
-}
-
 #[derive(Clone)]
 pub struct DefaultSystemProxiesStore;
 
 impl SystemProxiesStore for DefaultSystemProxiesStore {
-    fn new<F: FnMut(&SysProxiesSettings)>(_: F) -> Self {
-        Self
+    fn init<F: FnMut(&SysProxiesSettings)>(_: F) -> SysProxiesSettings {
+        Default::default()
     }
+}
+
+/// For tests.
+pub struct DefaultProxyInfo;
+
+impl ProxyInfo for DefaultProxyInfo {
+    fn proxy_string(&self) -> Option<String> {
+        None
+    }
+    fn proxy_uri(&self) -> Option<Uri> {
+        None
+    }
+    fn update_zed_settings(&self, _: Option<String>) {}
 }

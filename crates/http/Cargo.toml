@@ -27,7 +27,8 @@ url.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = "0.6"
+core-foundation.workspace = true
+core-foundation-sys.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"
