@@ -24,7 +24,7 @@ Build the application bundle for macOS.
 
 Options:
   -d    Compile in debug mode
-  -l    Compile for local architecture and copy bundle to /Applications.
+  -l    Compile for local architecture only.
   -o    Open dir with the resulting DMG or launch the app itself in local mode.
   -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
   -h    Display this help and exit.
