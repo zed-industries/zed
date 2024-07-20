@@ -4,8 +4,9 @@ struct HelloWorld {}
 
 impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let text = "Hello, world 你好世界，this is GPUI.";
+        let text = "The longest word in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
         div()
+            .id("page")
             .size_full()
             .flex()
             .flex_col()
@@ -16,25 +17,38 @@ impl Render for HelloWorld {
                 div()
                     .text_xl()
                     .whitespace_nowrap()
+                    .overflow_hidden()
                     .text_ellipsis()
-                    .w(px(220.))
-                    .child(text),
+                    .border_1()
+                    .border_color(gpui::red())
+                    .child("ELLIPSIS: ".to_owned() + text),
             )
             .child(
                 div()
                     .text_xl()
                     .whitespace_nowrap()
+                    .overflow_hidden()
                     .truncate()
-                    .w(px(220.))
-                    .child(text),
+                    .border_1()
+                    .border_color(gpui::green())
+                    .child("TRUNCATE: ".to_owned() + text),
             )
-            .child(div().text_xl().whitespace_nowrap().w(px(220.)).child(text))
+            .child(
+                div()
+                    .text_xl()
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(gpui::blue())
+                    .child("NOWRAP: ".to_owned() + text),
+            )
+            .child(div().text_xl().w_full().child(text))
     }
 }
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+        let bounds = Bounds::centered(None, size(px(600.0), px(480.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

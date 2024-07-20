@@ -1,8 +1,8 @@
 use crate::{
-    size, ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId,
-    GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
-    WindowContext, WrappedLine, TOOLTIP_DELAY,
+    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace, WindowContext,
+    WrappedLine, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -320,37 +320,17 @@ impl TextLayout {
                     }
                 }
 
-                if let Some(truncate_width) = truncate_width {
-                    let text = if let Some(ellipsis) = &ellipsis {
-                        format!("{}{}", text, ellipsis).into()
-                    } else {
-                        text.clone()
-                    };
-
-                    if let Some(lines) = cx
-                        .text_system()
-                        .shape_text(text, font_size, &runs, Some(truncate_width))
-                        .log_err()
-                    {
-                        if lines.len() > 0 {
-                            let first_line = lines.first().unwrap();
-                            let size = size(first_line.width(), line_height);
-                            println!("----------- {:?}", first_line);
-                            element_state.lock().replace(TextLayoutInner {
-                                lines,
-                                line_height,
-                                wrap_width: Some(truncate_width),
-                                size: Some(size),
-                                bounds: None,
-                            });
-                        }
-                    }
-                }
+                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                let text = if let Some(truncate_width) = truncate_width {
+                    line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis)
+                } else {
+                    text.clone()
+                };
 
                 let Some(lines) = cx
                     .text_system()
                     .shape_text(
-                        text.clone(),
+                        text.into(),
                         font_size,
                         &runs,
                         wrap_width, // Wrap if we know the width.
