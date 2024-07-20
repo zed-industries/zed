@@ -314,10 +314,7 @@ impl TextLayout {
                 let Some(lines) = cx
                     .text_system()
                     .shape_text(
-                        text.into(),
-                        font_size,
-                        &runs,
-                        wrap_width, // Wrap if we know the width.
+                        text, font_size, &runs, wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {

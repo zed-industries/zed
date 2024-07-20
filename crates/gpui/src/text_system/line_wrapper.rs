@@ -99,8 +99,8 @@ impl LineWrapper {
     }
 
     /// Truncate a line of text to the given width with this wrapper's font and font size.
-    pub fn truncate_line<'a>(
-        &'a mut self,
+    pub fn truncate_line(
+        &mut self,
         line: SharedString,
         truncate_width: Pixels,
         ellipsis: Option<&str>,
