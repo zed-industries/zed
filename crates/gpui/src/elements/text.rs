@@ -290,23 +290,7 @@ impl TextLayout {
 
                     match truncate {
                         Truncate::Truncate => (width, None),
-                        Truncate::Ellipsis => {
-                            let ellipsis_width = cx
-                                .text_system()
-                                .shape_line(
-                                    ELLIPSIS.into(),
-                                    font_size,
-                                    &[text_style.to_run(ELLIPSIS.len())],
-                                )
-                                .log_err();
-
-                            (
-                                width.map(|w| {
-                                    w - ellipsis_width.map(|e| e.width).unwrap_or_default()
-                                }),
-                                Some(ELLIPSIS),
-                            )
-                        }
+                        Truncate::Ellipsis => (width, Some(ELLIPSIS)),
                     }
                 } else {
                     (None, None)

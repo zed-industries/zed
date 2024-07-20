@@ -16,7 +16,6 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .text_xl()
-                    .whitespace_nowrap()
                     .overflow_hidden()
                     .text_ellipsis()
                     .border_1()
@@ -26,7 +25,6 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .text_xl()
-                    .whitespace_nowrap()
                     .overflow_hidden()
                     .truncate()
                     .border_1()
