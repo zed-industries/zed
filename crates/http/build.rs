@@ -2,7 +2,6 @@ use std::env;
 
 fn main() {
     let target = env::var("CARGO_CFG_TARGET_OS");
-    println!("cargo::rustc-check-cfg=cfg(gles)");
     match target.as_deref() {
         Ok("macos") => {
             #[cfg(target_os = "macos")]
@@ -17,12 +16,8 @@ mod macos {
     use std::{env, path::PathBuf};
 
     pub(super) fn build() {
-        generate_dispatch_bindings();
-    }
-
-    fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
-        println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
+        println!("cargo:rerun-if-changed=src/proxy/dispatch.h");
 
         let bindings = bindgen::Builder::default()
             .header("src/proxy/dispatch.h")
