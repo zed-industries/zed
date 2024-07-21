@@ -64,15 +64,10 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf, proxy: Option<&str>) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
-            http: http::client(proxy.and_then(|input| {
-                input
-                    .parse::<isahc::http::Uri>()
-                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                    .ok()
-            })),
+            http: http_client,
         }
     }
 

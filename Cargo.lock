@@ -5316,6 +5316,7 @@ name = "http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "isahc",
@@ -14008,6 +14009,13 @@ dependencies = [
 [[package]]
 name = "zed_ruby"
 version = "0.0.8"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_ruff"
+version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

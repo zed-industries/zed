@@ -281,7 +281,7 @@ impl ErrorView {
             v_flex()
                 .w_full()
                 .bg(colors.background)
-                .p_4()
+                .py(cx.line_height() / 2.)
                 .border_l_1()
                 .border_color(theme.status().error_border)
                 .child(
@@ -297,7 +297,7 @@ impl ErrorView {
 
 impl LineHeight for ErrorView {
     fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 0;
+        let mut height: u8 = 1; // Start at 1 to account for the y padding
         height = height.saturating_add(self.ename.lines().count() as u8);
         height = height.saturating_add(self.evalue.lines().count() as u8);
         height = height.saturating_add(self.traceback.num_lines(cx));
@@ -503,29 +503,38 @@ impl ExecutionView {
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
-            return match &self.status {
-                ExecutionStatus::ConnectingToKernel => {
-                    div().child(Label::new("Connecting to kernel...").color(Color::Muted))
-                }
-                ExecutionStatus::Executing => {
-                    div().child(Label::new("Executing...").color(Color::Muted))
-                }
-                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
-                ExecutionStatus::Unknown => {
-                    div().child(div().child(Label::new("Unknown status").color(Color::Muted)))
-                }
-                ExecutionStatus::ShuttingDown => {
-                    div().child(Label::new("Kernel shutting down...").color(Color::Muted))
-                }
-                ExecutionStatus::Shutdown => {
-                    div().child(Label::new("Kernel shutdown").color(Color::Muted))
-                }
-                ExecutionStatus::Queued => div().child(Label::new("Queued").color(Color::Muted)),
-                ExecutionStatus::KernelErrored(error) => {
-                    div().child(Label::new(format!("Kernel error: {}", error)).color(Color::Error))
-                }
-            }
-            .into_any_element();
+            return v_flex()
+                .min_h(cx.line_height())
+                .justify_center()
+                .child(match &self.status {
+                    ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    ExecutionStatus::Executing => Label::new("Executing...")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    ExecutionStatus::Finished => Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                    ExecutionStatus::Unknown => Label::new("Unknown status")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    ExecutionStatus::Queued => {
+                        Label::new("Queued").color(Color::Muted).into_any_element()
+                    }
+                    ExecutionStatus::KernelErrored(error) => {
+                        Label::new(format!("Kernel error: {}", error))
+                            .color(Color::Error)
+                            .into_any_element()
+                    }
+                })
+                .into_any_element();
         }
 
         div()
@@ -544,9 +553,10 @@ impl LineHeight for ExecutionView {
         self.outputs
             .iter()
             .map(|output| output.num_lines(cx))
-            .fold(0, |acc, additional_height| {
+            .fold(0_u8, |acc, additional_height| {
                 acc.saturating_add(additional_height)
             })
+            .max(1)
     }
 }
 
