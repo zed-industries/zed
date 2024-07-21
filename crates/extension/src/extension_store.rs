@@ -243,7 +243,10 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(build_dir, http_client.clone())),
+            builder: Arc::new(ExtensionBuilder::new(
+                build_dir,
+                http::client(http_client.proxy()),
+            )),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
