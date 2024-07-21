@@ -248,9 +248,10 @@ impl NodeRuntime for RealNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new("powershell.exe");
-            command.arg(node_binary);
-            // command.env_clear();
+            let mut command = Command::new(node_binary);
+            // let mut command = Command::new("powershell.exe");
+            // command.arg(node_binary);
+            command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), installation_path.join("cache")]);
