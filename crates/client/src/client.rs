@@ -5,7 +5,7 @@ pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context as _, Result};
-use async_compat::CompatExt as _;
+use async_compat::CompatExt;
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
@@ -1199,16 +1199,17 @@ impl Client {
             };
             let stream = match socks_proxy {
                 Some(socks_proxy) => {
-                    let stream = smol::net::TcpStream::connect(socks_proxy.to_string()).await?;
-                    let mut stream = stream.compat();
+                    let mut stream = CompatExt::compat(
+                        smol::net::TcpStream::connect(socks_proxy.to_string()).await?,
+                    );
                     async_socks5::connect(&mut stream, rpc_host, None)
                         .await
                         .map_err(|err| anyhow!("error connecting to socks {}", err))?;
                     stream
                 }
-                None => smol::net::TcpStream::connect(rpc_host).await?.compat(),
-            }
-            .compat();
+                None => CompatExt::compat(smol::net::TcpStream::connect(rpc_host).await?),
+            };
+            let stream = CompatExt::compat(stream);
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
