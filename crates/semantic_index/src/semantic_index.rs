@@ -1261,3 +1261,6 @@ mod tests {
         );
     }
 }
+
+// See https://github.com/zed-industries/zed/pull/14823#discussion_r1684616398 for why this is here and when it should be removed.
+type _TODO = completion::CompletionProvider;

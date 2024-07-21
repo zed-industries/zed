@@ -12,10 +12,9 @@ use core_graphics::{
     event::{CGEvent, CGEventFlags, CGKeyCode},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
-use ctor::ctor;
 use metal::foreign_types::ForeignType as _;
 use objc::{class, msg_send, sel, sel_impl};
-use std::{borrow::Cow, mem, ptr};
+use std::{borrow::Cow, mem, ptr, sync::Once};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
@@ -25,13 +24,22 @@ const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
+fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
+    static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
+    static INIT_EVENT_SOURCE: Once = Once::new();
 
-#[ctor]
-unsafe fn build_event_source() {
-    let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
-    EVENT_SOURCE = source.as_ptr();
+    INIT_EVENT_SOURCE.call_once(|| {
+        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        unsafe {
+            EVENT_SOURCE = source.as_ptr();
+        };
+        mem::forget(source);
+    });
+
+    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
+    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
     mem::forget(source);
+    event
 }
 
 pub fn key_to_native(key: &str) -> Cow<str> {
@@ -335,9 +343,7 @@ fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
     // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
     // an event with the given flags instead lets us access `characters`, which always
     // returns a valid string.
-    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
-    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
-    mem::forget(source);
+    let event = synthesize_keyboard_event(code);
 
     let mut flags = CGEventFlags::empty();
     if cmd {

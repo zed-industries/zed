@@ -1,7 +1,6 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, LanguageModelRequest,
-    LanguageModelRequestMessage, Role, StreamingDiff,
+    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -9,7 +8,7 @@ use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
@@ -28,6 +27,7 @@ use gpui::{
     WhiteSpace, WindowContext,
 };
 use language::{Buffer, Point, Selection, TransactionId};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
@@ -87,6 +87,7 @@ impl InlineAssistant {
         editor: &View<Editor>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
+        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -138,7 +139,8 @@ impl InlineAssistant {
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let prompt_buffer =
+            cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let mut assists = Vec::new();
@@ -310,7 +312,7 @@ impl InlineAssistant {
         range: &Range<Anchor>,
         prompt_editor: &View<PromptEditor>,
         cx: &mut WindowContext,
-    ) -> [BlockId; 2] {
+    ) -> [CustomBlockId; 2] {
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -1430,8 +1432,7 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
-                                    {
+                                    for model in CompletionProvider::global(cx).available_models() {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -1900,8 +1901,8 @@ impl InlineAssist {
         include_context: bool,
         editor: &View<Editor>,
         prompt_editor: &View<PromptEditor>,
-        prompt_block_id: BlockId,
-        end_block_id: BlockId,
+        prompt_block_id: CustomBlockId,
+        end_block_id: CustomBlockId,
         codegen: Model<Codegen>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -1995,10 +1996,10 @@ impl InlineAssist {
 }
 
 struct InlineAssistDecorations {
-    prompt_block_id: BlockId,
+    prompt_block_id: CustomBlockId,
     prompt_editor: View<PromptEditor>,
-    removed_line_block_ids: HashSet<BlockId>,
-    end_block_id: BlockId,
+    removed_line_block_ids: HashSet<CustomBlockId>,
+    end_block_id: CustomBlockId,
 }
 
 #[derive(Debug)]
@@ -2604,7 +2605,7 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FakeCompletionProvider;
+    use completion::FakeCompletionProvider;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;

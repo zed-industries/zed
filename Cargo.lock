@@ -382,6 +382,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "completion",
  "ctor",
  "editor",
  "env_logger",
@@ -396,6 +397,7 @@ dependencies = [
  "indexed_docs",
  "indoc",
  "language",
+ "language_model",
  "log",
  "menu",
  "multi_buffer",
@@ -418,13 +420,11 @@ dependencies = [
  "settings",
  "similar",
  "smol",
- "strum",
  "telemetry_events",
  "terminal",
  "terminal_view",
  "text",
  "theme",
- "tiktoken-rs",
  "toml 0.8.10",
  "ui",
  "unindent",
@@ -984,6 +984,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
+ "paths",
  "release_channel",
  "schemars",
  "serde",
@@ -2490,6 +2491,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "completion",
  "ctor",
  "dashmap",
  "dev_server_projects",
@@ -2526,6 +2528,8 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "release_channel",
+ "remote",
+ "remote_server",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -2668,6 +2672,42 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+]
+
+[[package]]
+name = "completion"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "client",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "ollama",
+ "open_ai",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "strum",
+ "text",
+ "theme",
+ "tiktoken-rs",
+ "ui",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -5998,6 +6038,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_model"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "ctor",
+ "editor",
+ "env_logger",
+ "language",
+ "log",
+ "ollama",
+ "open_ai",
+ "project",
+ "proto",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "strum",
+ "text",
+ "unindent",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -8080,6 +8142,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "release_channel",
+ "remote",
  "rpc",
  "schemars",
  "serde",
@@ -8675,6 +8738,50 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "once_cell",
+]
+
+[[package]]
+name = "remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "log",
+ "parking_lot",
+ "prost",
+ "rpc",
+ "smol",
+ "tempfile",
+ "util",
+]
+
+[[package]]
+name = "remote_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_toml",
+ "client",
+ "clock",
+ "env_logger",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "log",
+ "node_runtime",
+ "project",
+ "remote",
+ "rpc",
+ "serde_json",
+ "settings",
+ "smol",
+ "toml 0.8.10",
+ "worktree",
 ]
 
 [[package]]
@@ -9466,6 +9573,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "completion",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -13704,6 +13812,7 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "remote",
  "repl",
  "rope",
  "search",
@@ -13724,6 +13833,7 @@ dependencies = [
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "ui",
+ "url",
  "urlencoding",
  "util",
  "uuid",
@@ -13901,6 +14011,13 @@ dependencies = [
 [[package]]
 name = "zed_ruby"
 version = "0.0.8"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_ruff"
+version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

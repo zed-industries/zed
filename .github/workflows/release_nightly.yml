@@ -33,6 +33,7 @@ jobs:
 
       - name: Run clippy
         run: ./script/clippy
+
   tests:
     timeout-minutes: 60
     name: Run tests
@@ -132,7 +133,6 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
       - hosted-linux-arm-1
     needs: tests
     env:

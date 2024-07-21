@@ -25,6 +25,7 @@ use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
+use remote::SshSession;
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
@@ -294,7 +295,7 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
-            assistant::FakeCompletionProvider::setup_test(cx);
+            completion::FakeCompletionProvider::setup_test(cx);
             assistant::context_store::init(&client);
         });
 
@@ -811,6 +812,30 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub async fn build_ssh_project(
+        &self,
+        root_path: impl AsRef<Path>,
+        ssh: Arc<SshSession>,
+        cx: &mut TestAppContext,
+    ) -> (Model<Project>, WorktreeId) {
+        let project = cx.update(|cx| {
+            Project::ssh(
+                ssh,
+                self.client().clone(),
+                self.app_state.node_runtime.clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
+                cx,
+            )
+        });
+        let (worktree, _) = project
+            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
+            .await
+            .unwrap();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 

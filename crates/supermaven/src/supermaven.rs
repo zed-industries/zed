@@ -9,7 +9,9 @@ use client::{proto, Client};
 use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{
+    actions, AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel,
+};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
@@ -24,6 +26,8 @@ use smol::{
 use std::{path::PathBuf, process::Stdio, sync::Arc};
 use ui::prelude::*;
 use util::ResultExt;
+
+actions!(supermaven, [SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let supermaven = cx.new_model(|_| Supermaven::Starting);
@@ -46,6 +50,12 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         }
     })
     .detach();
+
+    cx.on_action(|_: &SignOut, cx| {
+        if let Some(supermaven) = Supermaven::global(cx) {
+            supermaven.update(cx, |supermaven, _cx| supermaven.sign_out());
+        }
+    });
 }
 
 pub enum Supermaven {
@@ -173,6 +183,19 @@ impl Supermaven {
             )
         } else {
             None
+        }
+    }
+
+    pub fn sign_out(&mut self) {
+        if let Self::Spawned(agent) = self {
+            agent
+                .outgoing_tx
+                .unbounded_send(OutboundMessage::Logout)
+                .ok();
+            // The account status will get set to RequiresActivation or Ready when the next
+            // message from the agent comes in. Until that happens, set the status to Unknown
+            // to disable the button.
+            agent.account_status = AccountStatus::Unknown;
         }
     }
 }
