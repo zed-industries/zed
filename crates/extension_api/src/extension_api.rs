@@ -6,7 +6,6 @@ pub mod settings;
 use core::fmt;
 use std::path::PathBuf;
 
-use serde::de::IntoDeserializer;
 use wit::*;
 
 pub use serde_json;
