@@ -119,11 +119,11 @@ impl SysProxiesSettings {
 }
 
 /// Compute current proxy settings based on zed settings, system settings,
-/// and environemnt variable.
+/// and environment variable.
 ///
 /// ## Compute Logic
 /// If zed proxy settings is `"system"`, then try to use system proxy settings.
-/// Otherise, try to use the url of zed proxy settings.
+/// Otherwise, try to use the url of zed proxy settings.
 /// If both are not available, try environment variables.
 fn get_current_proxy(
     zed_proxy_settings: &Option<String>,
