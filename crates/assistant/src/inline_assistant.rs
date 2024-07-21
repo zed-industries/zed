@@ -45,7 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 use util::RangeExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1461,7 +1461,7 @@ impl Render for PromptEditor {
                             })
                             .trigger(
                                 IconButton::new("context", IconName::Settings)
-                                    .size(ButtonSize::None)
+                                    .shape(IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip(move |cx| {
@@ -1473,7 +1473,7 @@ impl Render for PromptEditor {
                                                     .display_name()
                                             ),
                                             None,
-                                            "Click to Change Model",
+                                            "Change Model",
                                             cx,
                                         )
                                     }),
