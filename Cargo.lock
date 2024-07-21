@@ -5315,6 +5315,7 @@ name = "http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "isahc",
