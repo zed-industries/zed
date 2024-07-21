@@ -44,7 +44,7 @@ impl Proxy {
     /// Static proxy object with env proxy.
     pub fn env_proxy() -> Self {
         let proxy = Proxy::no_proxy();
-        *proxy.current_proxy.lock() = get_env_proxy();
+        *proxy.current_proxy.lock() = read_proxy_from_env();
         proxy
     }
 
@@ -166,26 +166,23 @@ fn get_current_proxy(
                 })
             }
         })
-        .or_else(|| get_env_proxy())
+        .or_else(|| read_proxy_from_env())
 }
 
-pub fn get_env_proxy() -> Option<Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<Uri>().ok();
-                }
-            )+
-        };
-    }
-    try_env!(
+pub fn read_proxy_from_env() -> Option<Uri> {
+    const ENV_VARS: &[&str] = &[
         "ALL_PROXY",
         "all_proxy",
         "HTTPS_PROXY",
         "https_proxy",
         "HTTP_PROXY",
-        "http_proxy"
-    );
+        "http_proxy",
+    ];
+
+    for var in ENV_VARS {
+        if let Ok(env) = std::env::var(var) {
+            return env.parse::<Uri>().ok();
+        }
+    }
     None
 }
