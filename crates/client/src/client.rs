@@ -1191,17 +1191,19 @@ impl Client {
                 let Some(schema) = proxy_uri.scheme_str() else {
                     break 'get_socks None;
                 };
-                if schema.starts_with("socks") {
-                    Some(proxy_uri)
+                if !schema.starts_with("socks") {
+                    break 'get_socks None;
+                }
+                if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
+                    Some((host.to_string(), port))
                 } else {
                     None
                 }
             };
             let stream = match socks_proxy {
                 Some(socks_proxy) => {
-                    let mut stream = CompatExt::compat(
-                        smol::net::TcpStream::connect(socks_proxy.to_string()).await?,
-                    );
+                    let mut stream =
+                        CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
                     async_socks5::connect(&mut stream, rpc_host, None)
                         .await
                         .map_err(|err| anyhow!("error connecting to socks {}", err))?;
