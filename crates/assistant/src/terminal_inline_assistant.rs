@@ -17,7 +17,9 @@ use gpui::{
     ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -215,8 +217,6 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let model = LanguageModelCompletionProvider::global(cx).model();
-
         let shell = std::env::var("SHELL").ok();
         let working_directory = assist
             .terminal
@@ -268,7 +268,6 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
-            model,
             messages,
             stop: Vec::new(),
             temperature: 1.0,
@@ -559,20 +558,31 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in LanguageModelCompletionProvider::global(cx)
-                                        .available_models()
+                                    for available_model in
+                                        LanguageModelRegistry::read_global(cx).available_models(cx)
                                     {
                                         menu = menu.custom_entry(
                                             {
-                                                let model = model.clone();
+                                                let model_name =
+                                                    available_model.model.name.0.clone();
+                                                let provider = available_model.provider.0.clone();
                                                 move |_| {
-                                                    Label::new(model.display_name())
-                                                        .into_any_element()
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_between()
+                                                        .child(Label::new(model_name.clone()))
+                                                        .child(
+                                                            div().ml_4().child(
+                                                                Label::new(provider.clone())
+                                                                    .color(Color::Muted),
+                                                            ),
+                                                        )
+                                                        .into_any()
                                                 }
                                             },
                                             {
                                                 let fs = fs.clone();
-                                                let model = model.clone();
+                                                let model = available_model.clone();
                                                 move |cx| {
                                                     let model = model.clone();
                                                     update_settings_file::<AssistantSettings>(
@@ -597,9 +607,10 @@ impl Render for PromptEditor {
                                         Tooltip::with_meta(
                                             format!(
                                                 "Using {}",
-                                                LanguageModelCompletionProvider::global(cx)
-                                                    .model()
-                                                    .display_name()
+                                                LanguageModelCompletionProvider::read_global(cx)
+                                                    .active_model()
+                                                    .map(|model| model.name().0)
+                                                    .unwrap_or_default()
                                             ),
                                             None,
                                             "Click to Change Model",
@@ -750,7 +761,9 @@ impl PromptEditor {
                 })??;
 
             let token_count = cx
-                .update(|cx| LanguageModelCompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                })?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -880,7 +893,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1025,8 +1038,12 @@ impl Codegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
 
         let telemetry = self.telemetry.clone();
-        let model_telemetry_id = prompt.model.telemetry_id();
-        let response = LanguageModelCompletionProvider::global(cx).stream_completion(prompt, cx);
+        let model_telemetry_id = LanguageModelCompletionProvider::read_global(cx)
+            .active_model()
+            .map(|m| m.telemetry_id())
+            .unwrap_or_default();
+        let response =
+            LanguageModelCompletionProvider::read_global(cx).stream_completion(prompt, cx);
 
         self.generation = cx.spawn(|this, mut cx| async move {
             let response = response.await;

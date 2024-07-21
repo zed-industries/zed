@@ -77,9 +77,7 @@ impl LanguageModelCompletionProvider {
         provider_name: LanguageModelProviderName,
         cx: &mut ModelContext<Self>,
     ) {
-        self.active_provider = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .provider(&provider_name);
+        self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_name);
         cx.notify();
     }
 
@@ -88,9 +86,8 @@ impl LanguageModelCompletionProvider {
     }
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
-        self.active_provider = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .provider(&model.provider_name());
+        self.active_provider =
+            LanguageModelRegistry::read_global(cx).provider(&model.provider_name());
         self.active_model = Some(model);
         cx.notify();
     }

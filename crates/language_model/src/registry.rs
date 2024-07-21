@@ -57,6 +57,10 @@ impl LanguageModelRegistry {
         cx.global::<GlobalLanguageModelRegistry>().0.clone()
     }
 
+    pub fn read_global(cx: &AppContext) -> &Self {
+        cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
+    }
+
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
         provider: T,

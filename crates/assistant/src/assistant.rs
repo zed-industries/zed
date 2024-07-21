@@ -19,9 +19,7 @@ use completion::LanguageModelCompletionProvider;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
-use gpui::{
-    actions, impl_actions, AppContext, BorrowAppContext, Global, SharedString, UpdateGlobal,
-};
+use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::LanguageModelResponseMessage;
@@ -182,7 +180,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
     context_store::init(&client);
     prompt_library::init(cx);
-    init_completion_provider(Arc::clone(&client), cx);
+    completion::init(cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
@@ -203,20 +201,6 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
             let settings = AssistantSettings::get_global(cx);
             assistant.set_enabled(settings.enabled, cx);
         });
-    })
-    .detach();
-}
-
-fn init_completion_provider(client: Arc<Client>, cx: &mut AppContext) {
-    let provider = assistant_settings::create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(LanguageModelCompletionProvider::new(provider, Some(client)));
-
-    let mut settings_version = 0;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        settings_version += 1;
-        cx.update_global::<LanguageModelCompletionProvider, _>(|provider, cx| {
-            assistant_settings::update_completion_provider_settings(provider, settings_version, cx);
-        })
     })
     .detach();
 }

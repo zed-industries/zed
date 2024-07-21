@@ -1,3 +1,4 @@
+mod model;
 pub mod provider;
 mod registry;
 mod request;
@@ -10,6 +11,7 @@ use anyhow::Result;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, SharedString, Task, WindowContext};
 
+pub use model::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;

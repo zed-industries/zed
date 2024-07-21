@@ -4,6 +4,7 @@ use crate::{
     assistant_settings::AssistantSettings, LanguageModelCompletionProvider, ToggleModelSelector,
 };
 use fs::Fs;
+use language_model::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -25,15 +26,27 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for model in LanguageModelCompletionProvider::global(cx).available_models() {
+                    for available_model in
+                        LanguageModelRegistry::read_global(cx).available_models(cx)
+                    {
                         menu = menu.custom_entry(
                             {
-                                let model = model.clone();
-                                move |_| Label::new(model.display_name()).into_any_element()
+                                let model_name = available_model.model.name.0.clone();
+                                let provider = available_model.provider.0.clone();
+                                move |_| {
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(model_name.clone()))
+                                        .child(div().ml_4().child(
+                                            Label::new(provider.clone()).color(Color::Muted),
+                                        ))
+                                        .into_any()
+                                }
                             },
                             {
                                 let fs = self.fs.clone();
-                                let model = model.clone();
+                                let model = available_model.clone();
                                 move |cx| {
                                     let model = model.clone();
                                     update_settings_file::<AssistantSettings>(
@@ -63,9 +76,10 @@ impl RenderOnce for ModelSelector {
                                     .whitespace_nowrap()
                                     .child(
                                         Label::new(
-                                            LanguageModelCompletionProvider::global(cx)
-                                                .model()
-                                                .display_name(),
+                                            LanguageModelCompletionProvider::read_global(cx)
+                                                .active_model()
+                                                .map(|model| model.name().0)
+                                                .unwrap_or_default(),
                                         )
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
