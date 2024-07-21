@@ -16,35 +16,35 @@ use std::{
 };
 pub use url::Url;
 
-fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
+pub fn proxy_from_env() -> Option<String> {
     macro_rules! try_env {
         ($($env:literal),+) => {
             $(
                 if let Ok(env) = std::env::var($env) {
-                    return env.parse::<isahc::http::Uri>().ok();
+                    return Some(env);
                 }
             )+
         };
     }
 
-    proxy
-        .and_then(|input| {
-            input
-                .parse::<isahc::http::Uri>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                .ok()
-        })
-        .or_else(|| {
-            try_env!(
-                "ALL_PROXY",
-                "all_proxy",
-                "HTTPS_PROXY",
-                "https_proxy",
-                "HTTP_PROXY",
-                "http_proxy"
-            );
-            None
-        })
+    try_env!(
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy"
+    );
+    None
+}
+
+fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
+    proxy.or_else(proxy_from_env).and_then(|input| {
+        input
+            .parse::<isahc::http::Uri>()
+            .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+            .ok()
+    })
 }
 
 /// An [`HttpClient`] that has a base URL.
