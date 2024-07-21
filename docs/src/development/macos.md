@@ -122,3 +122,18 @@ Then clean and rebuild the project:
 cargo clean
 cargo run
 ```
+
+### Failed to load source for dependency `pathfinder_simd`
+This usually happens if you have the following on your `.gitconfig`
+```
+[url "git@github.com:"]
+  insteadOf = https://github.com/
+```
+
+To fix this, run the following
+```
+eval `ssh-agent -s`
+ssh-add
+```
+
+This should fix all the cargo commands
