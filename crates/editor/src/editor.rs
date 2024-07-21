@@ -69,11 +69,11 @@ use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
     Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
-    FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
+    FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
+    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
+    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
+    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -12438,12 +12438,8 @@ impl Render for Editor {
                 font_features: settings.ui_font.features.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: settings.ui_font.weight,
-                font_style: FontStyle::Normal,
                 line_height: relative(settings.buffer_line_height.value()),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-                white_space: WhiteSpace::Normal,
+                ..Default::default()
             },
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
@@ -12451,12 +12447,8 @@ impl Render for Editor {
                 font_features: settings.buffer_font.features.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
-                font_style: FontStyle::Normal,
                 line_height: relative(settings.buffer_line_height.value()),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-                white_space: WhiteSpace::Normal,
+                ..Default::default()
             },
         };
 

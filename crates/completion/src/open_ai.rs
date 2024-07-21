@@ -3,7 +3,7 @@ use crate::LanguageModelCompletionProvider;
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
+use gpui::{AnyView, AppContext, Task, TextStyle, View};
 use http::HttpClient;
 use language_model::{CloudModel, LanguageModel, LanguageModelRequest, Role};
 use open_ai::Model as OpenAiModel;
@@ -298,12 +298,8 @@ impl AuthenticationPrompt {
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key,
