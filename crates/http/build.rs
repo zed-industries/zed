@@ -21,7 +21,7 @@ mod macos {
     }
 
     fn gen_system_configuration() {
-        println!("cargo:rerun-if-changed=src/proxy.macos/system_configuration.h");
+        println!("cargo:rerun-if-changed=src/proxy/macos/system_configuration.h");
         let bindings = bindgen::Builder::default()
             .generate_comments(true)
             .clang_arg(format!("-isysroot{}", sdk_path()))
