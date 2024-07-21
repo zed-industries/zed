@@ -7,14 +7,9 @@ use gpui::{
 };
 use settings::Settings;
 use std::hash::Hash;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ThemeSettings;
 use time::UtcOffset;
-use ui::{
-    div, h_flex, tooltip_container, v_flex, Avatar, Button, ButtonStyle, Clickable as _, Color,
-    FluentBuilder, Icon, IconButton, IconName, IconPosition, InteractiveElement as _, IntoElement,
-    Selectable, SelectableButton, SharedString, Styled as _, ViewContext,
-};
-use ui::{ButtonCommon, Disableable as _};
+use ui::{prelude::*, tooltip_container, Avatar};
 use workspace::Workspace;
 
 use crate::git::blame::{CommitDetails, GitRemote};
@@ -131,9 +126,6 @@ impl Render for BlameEntryTooltip {
 
         let short_commit_id = self.blame_entry.sha.display_short();
         let full_sha = self.blame_entry.sha.to_string().clone();
-        let sha_copied = cx
-            .read_from_clipboard()
-            .map_or(false, |clipboard| clipboard.text() == &full_sha);
         let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry);
 
         let message = self
@@ -253,12 +245,7 @@ impl Render for BlameEntryTooltip {
                                                     cx.write_to_clipboard(ClipboardItem::new(
                                                         full_sha.clone(),
                                                     ))
-                                                })
-                                                .selected_icon(IconName::Check)
-                                                .selected_style(ButtonStyle::Tinted(
-                                                    ui::TintColor::Accent,
-                                                ))
-                                                .selected(sha_copied),
+                                                }),
                                         ),
                                 ),
                         ),
