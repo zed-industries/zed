@@ -64,10 +64,10 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(cache_dir: PathBuf, proxy: Option<isahc::http::Uri>) -> Self {
         Self {
             cache_dir,
-            http: http::client(None),
+            http: http::client(proxy),
         }
     }
 
