@@ -114,7 +114,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http::client(Proxy::init(&None)),
+            http::client(Proxy::no_proxy()),
         ))
     }
 
@@ -125,7 +125,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http::client(Proxy::init(&None)),
+            http::client(Proxy::no_proxy()),
         ))
     }
 
