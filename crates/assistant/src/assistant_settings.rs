@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use anthropic::Model as AnthropicModel;
 use client::Client;
 use completion::{
-    AnthropicCompletionProvider, CloudCompletionProvider, CompletionProvider,
+    AnthropicCompletionProvider, CloudCompletionProvider, LanguageModelCompletionProvider,
     LanguageModelCompletionProvider, OllamaCompletionProvider, OpenAiCompletionProvider,
 };
 use gpui::{AppContext, Pixels};
@@ -474,7 +474,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 }
 
 pub fn update_completion_provider_settings(
-    provider: &mut CompletionProvider,
+    provider: &mut LanguageModelCompletionProvider,
     version: usize,
     cx: &mut AppContext,
 ) {

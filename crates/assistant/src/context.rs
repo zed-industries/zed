@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider, MessageId,
-    MessageStatus,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, LanguageModelCompletionProvider,
+    MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -1124,7 +1124,9 @@ impl Context {
                     .await;
 
                 let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                    .update(|cx| {
+                        LanguageModelCompletionProvider::global(cx).count_tokens(request, cx)
+                    })?
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
@@ -1308,7 +1310,7 @@ impl Context {
             });
 
             let raw_output = cx
-                .update(|cx| CompletionProvider::global(cx).complete(request, cx))?
+                .update(|cx| LanguageModelCompletionProvider::global(cx).complete(request, cx))?
                 .await?;
 
             let operations = Self::parse_edit_operations(&raw_output);
@@ -1612,13 +1614,13 @@ impl Context {
                 .then_some(message.id)
         })?;
 
-        if !CompletionProvider::global(cx).is_authenticated() {
+        if !LanguageModelCompletionProvider::global(cx).is_authenticated() {
             log::info!("completion provider has no credentials");
             return None;
         }
 
         let request = self.to_completion_request(cx);
-        let stream = CompletionProvider::global(cx).stream_completion(request, cx);
+        let stream = LanguageModelCompletionProvider::global(cx).stream_completion(request, cx);
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
@@ -1698,7 +1700,7 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        let model = CompletionProvider::global(cx).model();
+                        let model = LanguageModelCompletionProvider::global(cx).model();
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
@@ -1727,7 +1729,7 @@ impl Context {
             .map(|message| message.to_request_message(self.buffer.read(cx)));
 
         LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
+            model: LanguageModelCompletionProvider::global(cx).model(),
             messages: messages.collect(),
             stop: vec![],
             temperature: 1.0,
@@ -1970,7 +1972,7 @@ impl Context {
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
         if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
+            if !LanguageModelCompletionProvider::global(cx).is_authenticated() {
                 return;
             }
 
@@ -1982,13 +1984,13 @@ impl Context {
                     content: "Summarize the context into a short title without punctuation.".into(),
                 }));
             let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
+                model: LanguageModelCompletionProvider::global(cx).model(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).stream_completion(request, cx);
+            let stream = LanguageModelCompletionProvider::global(cx).stream_completion(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
                     let mut messages = stream.await?;

@@ -1,6 +1,6 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, StreamingDiff,
+    AssistantPanel, AssistantPanelEvent, Hunk, LanguageModelCompletionProvider, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -844,7 +844,9 @@ impl InlineAssistant {
         }
 
         let codegen = assist.codegen.clone();
-        let telemetry_id = CompletionProvider::global(cx).model().telemetry_id();
+        let telemetry_id = LanguageModelCompletionProvider::global(cx)
+            .model()
+            .telemetry_id();
         let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
@@ -854,7 +856,10 @@ impl InlineAssistant {
                 async move {
                     let request = request.await?;
                     let chunks = cx
-                        .update(|cx| CompletionProvider::global(cx).stream_completion(request, cx))?
+                        .update(|cx| {
+                            LanguageModelCompletionProvider::global(cx)
+                                .stream_completion(request, cx)
+                        })?
                         .await?;
                     Ok(chunks.boxed())
                 }
@@ -906,7 +911,7 @@ impl InlineAssistant {
                     });
                     let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
                     let range = assist.codegen.read(cx).range.clone();
-                    let model = CompletionProvider::global(cx).model();
+                    let model = LanguageModelCompletionProvider::global(cx).model();
                     anyhow::Ok((
                         user_prompt,
                         context_request,
@@ -1432,7 +1437,9 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models() {
+                                    for model in LanguageModelCompletionProvider::global(cx)
+                                        .available_models()
+                                    {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -1468,7 +1475,7 @@ impl Render for PromptEditor {
                                         Tooltip::with_meta(
                                             format!(
                                                 "Using {}",
-                                                CompletionProvider::global(cx)
+                                                LanguageModelCompletionProvider::global(cx)
                                                     .model()
                                                     .display_name()
                                             ),
@@ -1668,7 +1675,7 @@ impl PromptEditor {
                 .await?;
 
             let token_count = cx
-                .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| LanguageModelCompletionProvider::global(cx).count_tokens(request, cx))?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -1796,7 +1803,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::global(cx).model();
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 

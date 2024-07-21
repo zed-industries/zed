@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{assistant_settings::AssistantSettings, CompletionProvider, ToggleModelSelector};
+use crate::{
+    assistant_settings::AssistantSettings, LanguageModelCompletionProvider, ToggleModelSelector,
+};
 use fs::Fs;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
@@ -23,7 +25,7 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for model in CompletionProvider::global(cx).available_models() {
+                    for model in LanguageModelCompletionProvider::global(cx).available_models() {
                         menu = menu.custom_entry(
                             {
                                 let model = model.clone();
@@ -61,7 +63,9 @@ impl RenderOnce for ModelSelector {
                                     .whitespace_nowrap()
                                     .child(
                                         Label::new(
-                                            CompletionProvider::global(cx).model().display_name(),
+                                            LanguageModelCompletionProvider::global(cx)
+                                                .model()
+                                                .display_name(),
                                         )
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),

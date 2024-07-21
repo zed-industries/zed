@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count,
     prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    CompletionProvider,
+    LanguageModelCompletionProvider,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -215,7 +215,7 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::global(cx).model();
 
         let shell = std::env::var("SHELL").ok();
         let working_directory = assist
@@ -559,7 +559,9 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models() {
+                                    for model in LanguageModelCompletionProvider::global(cx)
+                                        .available_models()
+                                    {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -595,7 +597,7 @@ impl Render for PromptEditor {
                                         Tooltip::with_meta(
                                             format!(
                                                 "Using {}",
-                                                CompletionProvider::global(cx)
+                                                LanguageModelCompletionProvider::global(cx)
                                                     .model()
                                                     .display_name()
                                             ),
@@ -748,7 +750,7 @@ impl PromptEditor {
                 })??;
 
             let token_count = cx
-                .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| LanguageModelCompletionProvider::global(cx).count_tokens(request, cx))?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -878,7 +880,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::global(cx).model();
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1024,7 +1026,7 @@ impl Codegen {
 
         let telemetry = self.telemetry.clone();
         let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).stream_completion(prompt, cx);
+        let response = LanguageModelCompletionProvider::global(cx).stream_completion(prompt, cx);
 
         self.generation = cx.spawn(|this, mut cx| async move {
             let response = response.await;

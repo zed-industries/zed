@@ -148,13 +148,23 @@ impl CloudModel {
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
+}
 
-    pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
-        match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => {
-                request.preprocess_anthropic()
-            }
-            _ => {}
+impl From<&str> for CloudModel {
+    fn from(value: &str) -> Self {
+        match value {
+            "gpt-3.5-turbo" => Self::Gpt3Point5Turbo,
+            "gpt-4" => Self::Gpt4,
+            "gpt-4-turbo-preview" => Self::Gpt4Turbo,
+            "gpt-4o" => Self::Gpt4Omni,
+            "gpt-4o-mini" => Self::Gpt4OmniMini,
+            "claude-3-5-sonnet" => Self::Claude3_5Sonnet,
+            "claude-3-opus" => Self::Claude3Opus,
+            "claude-3-sonnet" => Self::Claude3Sonnet,
+            "claude-3-haiku" => Self::Claude3Haiku,
+            "gemini-1.5-pro" => Self::Gemini15Pro,
+            "gemini-1.5-flash" => Self::Gemini15Flash,
+            _ => Self::Custom(value.to_string()),
         }
     }
 }

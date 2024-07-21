@@ -1,6 +1,6 @@
 use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
+    LanguageModelCompletionProvider,
 };
 use anyhow::{anyhow, Result};
 use assets::Assets;
@@ -636,7 +636,7 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let provider = CompletionProvider::global(cx);
+        let provider = LanguageModelCompletionProvider::global(cx);
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated() {
             InlineAssistant::update_global(cx, |assistant, cx| {
@@ -736,7 +736,7 @@ impl PromptLibrary {
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
                         .update(|cx| {
-                            let provider = CompletionProvider::global(cx);
+                            let provider = LanguageModelCompletionProvider::global(cx);
                             let model = provider.model();
                             provider.count_tokens(
                                 LanguageModelRequest {
@@ -806,7 +806,7 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let current_model = CompletionProvider::global(cx).model();
+                let current_model = LanguageModelCompletionProvider::global(cx).model();
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(

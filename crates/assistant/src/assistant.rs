@@ -15,7 +15,7 @@ use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-use completion::CompletionProvider;
+use completion::LanguageModelCompletionProvider;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
@@ -209,12 +209,12 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
 fn init_completion_provider(client: Arc<Client>, cx: &mut AppContext) {
     let provider = assistant_settings::create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(CompletionProvider::new(provider, Some(client)));
+    cx.set_global(LanguageModelCompletionProvider::new(provider, Some(client)));
 
     let mut settings_version = 0;
     cx.observe_global::<SettingsStore>(move |cx| {
         settings_version += 1;
-        cx.update_global::<CompletionProvider, _>(|provider, cx| {
+        cx.update_global::<LanguageModelCompletionProvider, _>(|provider, cx| {
             assistant_settings::update_completion_provider_settings(provider, settings_version, cx);
         })
     })

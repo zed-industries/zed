@@ -6040,11 +6040,18 @@ name = "language_model"
 version = "0.1.0"
 dependencies = [
  "anthropic",
+ "anyhow",
+ "client",
+ "collections",
  "ctor",
  "editor",
  "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
  "language",
  "log",
+ "menu",
  "ollama",
  "open_ai",
  "project",
@@ -6052,9 +6059,14 @@ dependencies = [
  "rand 0.8.5",
  "schemars",
  "serde",
+ "settings",
  "strum",
  "text",
+ "theme",
+ "tiktoken-rs",
+ "ui",
  "unindent",
+ "util",
 ]
 
 [[package]]
