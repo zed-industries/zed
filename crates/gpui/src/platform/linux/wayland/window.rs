@@ -19,7 +19,7 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
+use crate::platform::blade::{self, BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
@@ -85,7 +85,7 @@ pub struct WaylandWindowState {
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
     globals: Globals,
-    renderer: BladeRenderer,
+    renderer: Box<dyn BladeRenderer>,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
@@ -134,19 +134,6 @@ impl WaylandWindowState {
                 .display_ptr()
                 .cast::<c_void>(),
         };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
         let config = BladeSurfaceConfig {
             size: gpu::Extent {
                 width: options.bounds.size.width.0 as u32,
@@ -155,6 +142,8 @@ impl WaylandWindowState {
             },
             transparent: true,
         };
+
+        let renderer = blade::new_renderer(&raw, config)?;
 
         Ok(Self {
             xdg_surface,
@@ -168,7 +157,7 @@ impl WaylandWindowState {
             globals,
             outputs: HashMap::default(),
             display: None,
-            renderer: BladeRenderer::new(gpu, config),
+            renderer,
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,

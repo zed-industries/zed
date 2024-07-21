@@ -19,7 +19,7 @@ test-support = [
     "http/test-support",
 ]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
+macos-blade = ["blade-graphics", "blade-util", "bytemuck"]
 
 [lib]
 path = "src/gpui.rs"
@@ -29,8 +29,7 @@ doctest = false
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
-blade-graphics = { workspace = true, optional = true }
-blade-macros = { workspace = true, optional = true }
+blade-graphics = { workspace = true, features = ["derive", "gles"], optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 collections.workspace = true
@@ -104,7 +103,7 @@ objc = "0.2"
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 flume = "0.11"
 blade-graphics.workspace = true
-blade-macros.workspace = true
+blade-graphics.features = ["derive", "gles"]
 blade-util.workspace = true
 bytemuck = "1"
 cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }

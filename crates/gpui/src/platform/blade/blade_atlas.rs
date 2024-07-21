@@ -1,6 +1,6 @@
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Point, Size,
+    Size,
 };
 use anyhow::Result;
 use blade_graphics as gpu;
@@ -17,20 +17,17 @@ pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
 struct PendingUpload {
     id: AtlasTextureId,
     bounds: Bounds<DevicePixels>,
-    data: gpu::BufferPiece,
+    data: super::hal::BufferPiece,
 }
 
-struct BladeAtlasState {
-    gpu: Arc<gpu::Context>,
-    upload_belt: BufferBelt,
+pub(crate) struct BladeAtlasState {
+    gpu: Arc<super::hal::Context>,
+    upload_belt: BufferBelt<super::hal::Context>,
     storage: BladeAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
 }
-
-#[cfg(gles)]
-unsafe impl Send for BladeAtlasState {}
 
 impl BladeAtlasState {
     fn destroy(&mut self) {
@@ -41,11 +38,11 @@ impl BladeAtlasState {
 
 pub struct BladeTextureInfo {
     pub size: gpu::Extent,
-    pub raw_view: gpu::TextureView,
+    pub raw_view: super::hal::TextureView,
 }
 
 impl BladeAtlas {
-    pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
+    pub(crate) fn new(gpu: &Arc<super::hal::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
             upload_belt: BufferBelt::new(BufferBeltDescriptor {
@@ -77,7 +74,7 @@ impl BladeAtlas {
         &self,
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
-        gpu_encoder: &mut gpu::CommandEncoder,
+        gpu_encoder: &mut super::hal::CommandEncoder,
     ) -> AtlasTile {
         let mut lock = self.0.lock();
         let tile = lock.allocate(size, texture_kind);
@@ -85,12 +82,12 @@ impl BladeAtlas {
         tile
     }
 
-    pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
+    pub fn before_frame(&self, gpu_encoder: &mut super::hal::CommandEncoder) {
         let mut lock = self.0.lock();
         lock.flush(gpu_encoder);
     }
 
-    pub fn after_frame(&self, sync_point: &gpu::SyncPoint) {
+    pub fn after_frame(&self, sync_point: &super::hal::SyncPoint) {
         let mut lock = self.0.lock();
         lock.upload_belt.flush(sync_point);
     }
@@ -218,14 +215,14 @@ impl BladeAtlasState {
         self.uploads.push(PendingUpload { id, bounds, data });
     }
 
-    fn flush_initializations(&mut self, encoder: &mut gpu::CommandEncoder) {
+    fn flush_initializations(&mut self, encoder: &mut super::hal::CommandEncoder) {
         for id in self.initializations.drain(..) {
             let texture = &self.storage[id];
             encoder.init_texture(texture.raw);
         }
     }
 
-    fn flush(&mut self, encoder: &mut gpu::CommandEncoder) {
+    fn flush(&mut self, encoder: &mut super::hal::CommandEncoder) {
         self.flush_initializations(encoder);
 
         let mut transfers = encoder.transfer();
@@ -234,7 +231,7 @@ impl BladeAtlasState {
             transfers.copy_buffer_to_texture(
                 upload.data,
                 upload.bounds.size.width.to_bytes(texture.bytes_per_pixel()),
-                gpu::TexturePiece {
+                super::hal::TexturePiece {
                     texture: texture.raw,
                     mip_level: 0,
                     array_layer: 0,
@@ -295,7 +292,7 @@ impl ops::Index<AtlasTextureId> for BladeAtlasStorage {
 }
 
 impl BladeAtlasStorage {
-    fn destroy(&mut self, gpu: &gpu::Context) {
+    fn destroy(&mut self, gpu: &super::hal::Context) {
         for mut texture in self.monochrome_textures.drain(..) {
             texture.destroy(gpu);
         }
@@ -311,8 +308,8 @@ impl BladeAtlasStorage {
 struct BladeAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
-    raw: gpu::Texture,
-    raw_view: gpu::TextureView,
+    raw: super::hal::Texture,
+    raw_view: super::hal::TextureView,
     format: gpu::TextureFormat,
 }
 
@@ -335,45 +332,12 @@ impl BladeAtlasTexture {
         Some(tile)
     }
 
-    fn destroy(&mut self, gpu: &gpu::Context) {
+    fn destroy(&mut self, gpu: &super::hal::Context) {
         gpu.destroy_texture(self.raw);
         gpu.destroy_texture_view(self.raw_view);
     }
 
     fn bytes_per_pixel(&self) -> u8 {
         self.format.block_info().size
-    }
-}
-
-impl From<Size<DevicePixels>> for etagere::Size {
-    fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(size.width.into(), size.height.into())
-    }
-}
-
-impl From<etagere::Point> for Point<DevicePixels> {
-    fn from(value: etagere::Point) -> Self {
-        Point {
-            x: DevicePixels::from(value.x),
-            y: DevicePixels::from(value.y),
-        }
-    }
-}
-
-impl From<etagere::Size> for Size<DevicePixels> {
-    fn from(size: etagere::Size) -> Self {
-        Size {
-            width: DevicePixels::from(size.width),
-            height: DevicePixels::from(size.height),
-        }
-    }
-}
-
-impl From<etagere::Rectangle> for Bounds<DevicePixels> {
-    fn from(rectangle: etagere::Rectangle) -> Self {
-        Bounds {
-            origin: rectangle.min.into(),
-            size: rectangle.size().into(),
-        }
     }
 }

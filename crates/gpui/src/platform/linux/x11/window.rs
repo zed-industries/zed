@@ -1,7 +1,7 @@
 use anyhow::Context;
 
 use crate::{
-    platform::blade::{BladeRenderer, BladeSurfaceConfig},
+    platform::blade::{self, BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
@@ -230,7 +230,7 @@ pub struct X11WindowState {
     _raw: RawWindow,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
-    renderer: BladeRenderer,
+    renderer: Box<dyn BladeRenderer>,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
@@ -470,19 +470,6 @@ impl X11WindowState {
             window_id: x_window,
             visual_id: visual.id,
         };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
 
         let config = BladeSurfaceConfig {
             // Note: this has to be done after the GPU init, or otherwise
@@ -496,6 +483,8 @@ impl X11WindowState {
         };
         xcb_connection.map_window(x_window).unwrap();
 
+        let renderer = blade::new_renderer(&raw, config)?;
+
         Ok(Self {
             client,
             executor,
@@ -506,7 +495,7 @@ impl X11WindowState {
             x_root_window: visual_set.root,
             bounds: bounds.to_pixels(scale_factor),
             scale_factor,
-            renderer: BladeRenderer::new(gpu, config),
+            renderer,
             atoms: *atoms,
             input_handler: None,
             active: false,

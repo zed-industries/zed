@@ -1,16 +1,18 @@
 // Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
+use super::super::BladeSurfaceConfig;
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
     AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Underline,
+    PathId, PathVertex, PlatformAtlas, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene,
+    Shadow, Size, Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use std::{ffi::c_void, ptr::NonNull};
 
@@ -112,61 +114,61 @@ struct SurfaceParams {
     content_mask: PodBounds,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderQuadsData {
     globals: GlobalParams,
-    b_quads: gpu::BufferPiece,
+    b_quads: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderShadowsData {
     globals: GlobalParams,
-    b_shadows: gpu::BufferPiece,
+    b_shadows: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderPathRasterizationData {
     globals: GlobalParams,
-    b_path_vertices: gpu::BufferPiece,
+    b_path_vertices: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderPathsData {
     globals: GlobalParams,
-    t_sprite: gpu::TextureView,
-    s_sprite: gpu::Sampler,
-    b_path_sprites: gpu::BufferPiece,
+    t_sprite: super::hal::TextureView,
+    s_sprite: super::hal::Sampler,
+    b_path_sprites: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderUnderlinesData {
     globals: GlobalParams,
-    b_underlines: gpu::BufferPiece,
+    b_underlines: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderMonoSpritesData {
     globals: GlobalParams,
-    t_sprite: gpu::TextureView,
-    s_sprite: gpu::Sampler,
-    b_mono_sprites: gpu::BufferPiece,
+    t_sprite: super::hal::TextureView,
+    s_sprite: super::hal::Sampler,
+    b_mono_sprites: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderPolySpritesData {
     globals: GlobalParams,
-    t_sprite: gpu::TextureView,
-    s_sprite: gpu::Sampler,
-    b_poly_sprites: gpu::BufferPiece,
+    t_sprite: super::hal::TextureView,
+    s_sprite: super::hal::Sampler,
+    b_poly_sprites: super::hal::BufferPiece,
 }
 
-#[derive(blade_macros::ShaderData)]
+#[derive(super::hal::ShaderData)]
 struct ShaderSurfacesData {
     globals: GlobalParams,
     surface_locals: SurfaceParams,
-    t_y: gpu::TextureView,
-    t_cb_cr: gpu::TextureView,
-    s_surface: gpu::Sampler,
+    t_y: super::hal::TextureView,
+    t_cb_cr: super::hal::TextureView,
+    s_surface: super::hal::Sampler,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -178,19 +180,19 @@ struct PathSprite {
 }
 
 struct BladePipelines {
-    quads: gpu::RenderPipeline,
-    shadows: gpu::RenderPipeline,
-    path_rasterization: gpu::RenderPipeline,
-    paths: gpu::RenderPipeline,
-    underlines: gpu::RenderPipeline,
-    mono_sprites: gpu::RenderPipeline,
-    poly_sprites: gpu::RenderPipeline,
-    surfaces: gpu::RenderPipeline,
+    quads: super::hal::RenderPipeline,
+    shadows: super::hal::RenderPipeline,
+    path_rasterization: super::hal::RenderPipeline,
+    paths: super::hal::RenderPipeline,
+    underlines: super::hal::RenderPipeline,
+    mono_sprites: super::hal::RenderPipeline,
+    poly_sprites: super::hal::RenderPipeline,
+    surfaces: super::hal::RenderPipeline,
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo) -> Self {
-        use gpu::ShaderData as _;
+    fn new(gpu: &super::hal::Context, surface_info: gpu::SurfaceInfo) -> Self {
+        use super::hal::ShaderData as _;
 
         log::info!(
             "Initializing Blade pipelines for surface {:?}",
@@ -337,28 +339,43 @@ impl BladePipelines {
     }
 }
 
-pub struct BladeSurfaceConfig {
-    pub size: gpu::Extent,
-    pub transparent: bool,
-}
-
 pub struct BladeRenderer {
-    gpu: Arc<gpu::Context>,
+    gpu: Arc<super::hal::Context>,
     surface_config: gpu::SurfaceConfig,
     alpha_mode: gpu::AlphaMode,
-    command_encoder: gpu::CommandEncoder,
-    last_sync_point: Option<gpu::SyncPoint>,
+    command_encoder: super::hal::CommandEncoder,
+    last_sync_point: Option<super::hal::SyncPoint>,
     pipelines: BladePipelines,
-    instance_belt: BufferBelt,
+    instance_belt: BufferBelt<super::hal::Context>,
     path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
-    atlas_sampler: gpu::Sampler,
+    atlas_sampler: super::hal::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
 }
 
 impl BladeRenderer {
-    pub fn new(gpu: Arc<gpu::Context>, config: BladeSurfaceConfig) -> Self {
+    pub fn new_from_window<W: HasWindowHandle + HasDisplayHandle>(
+        raw: &W,
+        config: BladeSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        let gpu = Arc::new(
+            unsafe {
+                super::hal::Context::init_windowed(
+                    raw,
+                    gpu::ContextDesc {
+                        validation: false,
+                        capture: false,
+                        overlay: false,
+                    },
+                )
+            }
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
+        );
+        Ok(Self::new(gpu, config))
+    }
+
+    pub fn new(gpu: Arc<super::hal::Context>, config: BladeSurfaceConfig) -> Self {
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
             usage: gpu::TextureUsage::TARGET,
@@ -417,50 +434,6 @@ impl BladeRenderer {
         }
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
-        let gpu_size = gpu::Extent {
-            width: size.width.0 as u32,
-            height: size.height.0 as u32,
-            depth: 1,
-        };
-
-        if gpu_size != self.surface_config.size {
-            self.wait_for_gpu();
-            self.surface_config.size = gpu_size;
-            self.gpu.resize(self.surface_config);
-        }
-    }
-
-    pub fn update_transparency(&mut self, transparent: bool) {
-        if transparent != self.surface_config.transparent {
-            self.wait_for_gpu();
-            self.surface_config.transparent = transparent;
-            let surface_info = self.gpu.resize(self.surface_config);
-            self.pipelines = BladePipelines::new(&self.gpu, surface_info);
-            self.alpha_mode = surface_info.alpha;
-        }
-    }
-
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub fn viewport_size(&self) -> gpu::Extent {
-        self.surface_config.size
-    }
-
-    pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
-        &self.atlas
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn layer(&self) -> metal::MetalLayer {
-        self.gpu.metal_layer().unwrap()
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn layer_ptr(&self) -> *mut metal::CAMetalLayer {
-        use metal::foreign_types::ForeignType as _;
-        self.gpu.metal_layer().unwrap().as_ptr()
-    }
-
     #[profiling::function]
     fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
         self.path_tiles.clear();
@@ -496,11 +469,11 @@ impl BladeRenderer {
             };
 
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-            let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
-                colors: &[gpu::RenderTarget {
+            let mut pass = self.command_encoder.render(super::hal::RenderTargetSet {
+                colors: &[super::hal::RenderTarget {
                     view: tex_info.raw_view,
                     init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                    finish_op: gpu::FinishOp::Store,
+                    finish_op: super::hal::FinishOp::Store,
                 }],
                 depth_stencil: None,
             });
@@ -516,15 +489,61 @@ impl BladeRenderer {
             encoder.draw(0, vertices.len() as u32, 0, 1);
         }
     }
+}
 
-    pub fn destroy(&mut self) {
+impl super::super::BladeRenderer for BladeRenderer {
+    fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        let gpu_size = gpu::Extent {
+            width: size.width.0 as u32,
+            height: size.height.0 as u32,
+            depth: 1,
+        };
+
+        if gpu_size != self.surface_config.size {
+            self.wait_for_gpu();
+            self.surface_config.size = gpu_size;
+            self.gpu.resize(self.surface_config);
+        }
+    }
+
+    fn update_transparency(&mut self, transparent: bool) {
+        if transparent != self.surface_config.transparent {
+            self.wait_for_gpu();
+            self.surface_config.transparent = transparent;
+            let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines = BladePipelines::new(&self.gpu, surface_info);
+            self.alpha_mode = surface_info.alpha;
+        }
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn viewport_size(&self) -> gpu::Extent {
+        self.surface_config.size
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.atlas.clone()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn layer(&self) -> metal::MetalLayer {
+        self.gpu.metal_layer().unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn layer_ptr(&self) -> *mut metal::CAMetalLayer {
+        use metal::foreign_types::ForeignType as _;
+        self.gpu.metal_layer().unwrap().as_ptr()
+    }
+
+    fn destroy(&mut self) {
         self.wait_for_gpu();
         self.atlas.destroy();
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -547,11 +566,11 @@ impl BladeRenderer {
             pad: 0,
         };
 
-        if let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
-            colors: &[gpu::RenderTarget {
+        if let mut pass = self.command_encoder.render(super::hal::RenderTargetSet {
+            colors: &[super::hal::RenderTarget {
                 view: frame.texture_view(),
                 init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                finish_op: gpu::FinishOp::Store,
+                finish_op: super::hal::FinishOp::Store,
             }],
             depth_stencil: None,
         }) {
