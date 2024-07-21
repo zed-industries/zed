@@ -20,7 +20,7 @@ use futures::{
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{proxy::create_proxy_info, HttpClient, HttpClientWithUrl};
+use http::{proxy::Proxy, HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
@@ -539,10 +539,10 @@ impl Client {
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
-        let proxy = create_proxy_info(ProxySettings::get_global(cx).proxy.clone());
+        let proxy = Proxy::init(&ProxySettings::get_global(cx).proxy);
         let proxy_clone = proxy.clone();
         cx.observe_global::<SettingsStore>(move |cx| {
-            proxy_clone.update_zed_settings(ProxySettings::get_global(cx).proxy.clone())
+            proxy_clone.update_zed_settings(&ProxySettings::get_global(cx).proxy)
         })
         .detach();
         let http = Arc::new(HttpClientWithUrl::new(

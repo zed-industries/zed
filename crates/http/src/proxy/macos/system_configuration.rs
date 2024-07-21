@@ -5,14 +5,20 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-
-use crate::proxy::macos::system_configuration_sys_extra::{
-    kSCDynamicStoreUseSessionKeys, SCDynamicStoreCallBack, SCDynamicStoreContext,
-    SCDynamicStoreCopyProxies, SCDynamicStoreCreateRunLoopSource, SCDynamicStoreCreateWithOptions,
-    SCDynamicStoreGetTypeID, SCDynamicStoreRef, SCDynamicStoreSetNotificationKeys,
-};
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+pub(crate) mod sys {
+    pub use core_foundation::{
+        array::CFArrayRef,
+        base::{CFAllocatorRef, CFIndex, CFTypeID},
+        dictionary::CFDictionaryRef,
+        runloop::CFRunLoopSourceRef,
+        string::CFStringRef,
+    };
+    include!(concat!(env!("OUT_DIR"), "/system_configuration_sys.rs"));
+}
 use core_foundation::{
-    array::{CFArray, CFArrayRef},
+    array::CFArray,
     base::{kCFAllocatorDefault, CFType, TCFType},
     boolean::CFBoolean,
     declare_TCFType,
@@ -22,6 +28,7 @@ use core_foundation::{
     string::CFString,
 };
 use std::{ffi::c_void, ptr};
+use sys::*;
 
 pub struct SCDynamicStoreCallBackContext<T> {
     /// The callback function that will be called when a watched value in the dynamic store is

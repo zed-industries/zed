@@ -29,17 +29,11 @@ mod macos {
             .allowlist_var("kSCPropNetProxiesHTTP.*")
             .allowlist_var("kSCPropNetProxiesSOCKS.*")
             .allowlist_var("kSCDynamicStoreUseSessionKeys")
-            .allowlist_type("SCDynamicStoreCallBack")
-            .allowlist_type("SCDynamicStoreContext")
-            .allowlist_function("SCDynamicStoreCallBack")
-            .allowlist_function("SCDynamicStoreContex")
             .allowlist_function("SCDynamicStoreCopyProxies")
             .allowlist_function("SCDynamicStoreCreateRunLoopSource")
             .allowlist_function("SCDynamicStoreCreateWithOptions")
             .allowlist_function("SCDynamicStoreGetTypeID")
-            .allowlist_function("SCDynamicStoreRef")
             .allowlist_function("SCDynamicStoreSetNotificationKeys")
-            .allowlist_function("SCDynamicStoreSetDispatchQueue")
             .allowlist_function("SCDynamicStoreKeyCreateProxies")
             .blocklist_item("CF.*")
             .blocklist_item("__CF.*")
@@ -56,7 +50,7 @@ mod macos {
 
     fn sdk_path() -> String {
         let output = std::process::Command::new("xcrun")
-            .args("--sdk macosx --show-sdk-path".split(" "))
+            .args("--sdk macosx --show-sdk-path".split(' '))
             .output()
             .expect("failed to execute xcrun");
 

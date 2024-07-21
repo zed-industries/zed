@@ -10,26 +10,31 @@ pub use isahc::{
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
 use parking_lot::Mutex;
-use proxy::ProxyInfo;
+use proxy::Proxy;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{sync::Arc, time::Duration};
 pub use url::Url;
 
-/// An [`HttpClient`] that has a base URL.
+/// Client Builder receives proxy settings and return an http client.
+pub trait ClientBuilder {
+    fn build(&self, proxy: Option<Uri>) -> Arc<dyn HttpClient>;
+}
+
+/// An [`HttpClient`] that has a base URL and proxy settings.
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
-    client_builder: Arc<dyn Fn(Option<Uri>) -> Arc<dyn HttpClient> + Send + Sync>,
-    proxy: Arc<dyn ProxyInfo>,
+    client_builder: Arc<dyn ClientBuilder + Send + Sync>,
+    proxy: Proxy,
 }
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
-    pub fn new(base_url: impl Into<String>, proxy_info: Arc<dyn ProxyInfo>) -> Self {
+    pub fn new(base_url: impl Into<String>, proxy: Proxy) -> Self {
         Self {
             base_url: Mutex::new(base_url.into()),
-            client_builder: Arc::new(client),
-            proxy: proxy_info,
+            client_builder: Arc::new(IsahcClientBuilder),
+            proxy,
         }
     }
 
@@ -66,7 +71,7 @@ impl HttpClientWithUrl {
     }
 
     fn client(&self) -> Arc<dyn HttpClient> {
-        (self.client_builder)(self.proxy.proxy_uri())
+        self.client_builder.build(self.proxy.read_uri())
     }
 }
 
@@ -79,7 +84,7 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     }
 
     fn proxy(&self) -> Option<String> {
-        self.proxy.proxy_string()
+        self.proxy.read_string()
     }
 }
 
@@ -92,7 +97,7 @@ impl HttpClient for HttpClientWithUrl {
     }
 
     fn proxy(&self) -> Option<String> {
-        self.proxy.proxy_string()
+        self.proxy.read_string()
     }
 }
 
@@ -142,6 +147,14 @@ pub trait HttpClient: Send + Sync {
     fn proxy(&self) -> Option<String>;
 }
 
+pub struct IsahcClientBuilder;
+
+impl ClientBuilder for IsahcClientBuilder {
+    fn build(&self, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
+        client(proxy)
+    }
+}
+
 pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
     Arc::new(
         isahc::HttpClient::builder()
@@ -181,6 +194,23 @@ pub struct FakeHttpClient {
 }
 
 #[cfg(feature = "test-support")]
+pub struct FakeClientBuilder<F>(F);
+
+#[cfg(feature = "test-support")]
+impl<F, Fut> ClientBuilder for FakeClientBuilder<F>
+where
+    Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
+    F: Fn(Request<AsyncBody>) -> Fut + Clone + Send + Sync + 'static,
+{
+    fn build(&self, _: Option<Uri>) -> Arc<dyn HttpClient> {
+        let handler = self.0.clone();
+        Arc::new(FakeHttpClient {
+            handler: Box::new(move |req| Box::pin(handler(req))),
+        })
+    }
+}
+
+#[cfg(feature = "test-support")]
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
@@ -189,13 +219,8 @@ impl FakeHttpClient {
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),
-            client_builder: Arc::new(move |_| {
-                let handler = handler.clone();
-                Arc::new(Self {
-                    handler: Box::new(move |req| Box::pin(handler(req))),
-                })
-            }),
-            proxy: Arc::new(proxy::DefaultProxyInfo),
+            client_builder: Arc::new(FakeClientBuilder(handler)),
+            proxy: Default::default(),
         })
     }
 
