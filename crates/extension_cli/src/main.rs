@@ -13,6 +13,7 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
+use http::proxy::Proxy;
 use language::LanguageConfig;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
@@ -58,7 +59,7 @@ async fn main() -> Result<()> {
     let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
-    let builder = ExtensionBuilder::new(scratch_dir);
+    let builder = ExtensionBuilder::new(scratch_dir, http::client(Proxy::env_proxy()));
     builder
         .compile_extension(
             &extension_path,

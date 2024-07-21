@@ -268,7 +268,12 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
-            if let Some(proxy) = self.http.proxy() {
+            if let Some(proxy) = self.http.proxy().to_string() {
+                // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
+                // NodeRuntime without environment information can not parse `localhost`
+                // correctly.
+                // TODO: map to `[::1]` if we are using ipv6
+                let proxy = proxy.to_ascii_lowercase().replace("localhost", "127.0.0.1");
                 command.args(["--proxy", &proxy]);
             }
 

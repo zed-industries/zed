@@ -4013,6 +4013,7 @@ dependencies = [
  "env_logger",
  "extension",
  "fs",
+ "http 0.1.0",
  "language",
  "log",
  "rpc",

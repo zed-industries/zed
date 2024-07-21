@@ -1,7 +1,7 @@
 use client::Client;
 use futures::channel::oneshot;
 use gpui::App;
-use http::HttpClientWithUrl;
+use http::{proxy::Proxy, HttpClientWithUrl};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
@@ -28,7 +28,7 @@ fn main() {
         let clock = Arc::new(FakeSystemClock::default());
         let http = Arc::new(HttpClientWithUrl::new(
             "http://localhost:11434",
-            Default::default(),
+            Proxy::no_proxy(),
         ));
 
         let client = client::Client::new(clock, http.clone(), cx);

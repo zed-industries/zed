@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 /// Dynamically updated proxy settings.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct Proxy {
     /// currently active proxy uri.
     current_proxy: Arc<Mutex<Option<Uri>>>,
@@ -25,6 +25,8 @@ pub struct SysProxiesSettings {
 }
 
 impl Proxy {
+    /// Dynamic proxy object following system proxy settings
+    /// (currently available on macOS).
     pub fn init(zed_proxy_settings: &Option<String>) -> Self {
         let proxy = Proxy {
             current_proxy: Arc::new(Mutex::new(None)),
@@ -39,8 +41,24 @@ impl Proxy {
         proxy
     }
 
+    /// Static proxy object with env proxy.
+    pub fn env_proxy() -> Self {
+        let proxy = Proxy::no_proxy();
+        *proxy.current_proxy.lock() = get_env_proxy();
+        proxy
+    }
+
+    /// Static proxy object with no proxy.
+    pub fn no_proxy() -> Self {
+        Self {
+            current_proxy: Default::default(),
+            zed_proxy_settings: Default::default(),
+            sys_proxy_settings: Default::default(),
+        }
+    }
+
     /// read: as string
-    pub fn read_string(&self) -> Option<String> {
+    pub fn to_string(&self) -> Option<String> {
         self.current_proxy.lock().as_ref().map(|proxy| {
             // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
             // NodeRuntime without environment information can not parse `localhost`
@@ -54,7 +72,7 @@ impl Proxy {
     }
 
     /// read: as Uri
-    pub fn read_uri(&self) -> Option<Uri> {
+    pub fn to_uri(&self) -> Option<Uri> {
         self.current_proxy.lock().clone()
     }
 
@@ -129,16 +147,6 @@ fn get_current_proxy(
     zed_proxy_settings: &Option<String>,
     sys_proxy_settings: &Option<String>,
 ) -> Option<Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<Uri>().ok();
-                }
-            )+
-        };
-    }
-
     const USE_SYSTEM_PROXY: &str = "system";
 
     zed_proxy_settings
@@ -158,15 +166,26 @@ fn get_current_proxy(
                 })
             }
         })
-        .or_else(|| {
-            try_env!(
-                "ALL_PROXY",
-                "all_proxy",
-                "HTTPS_PROXY",
-                "https_proxy",
-                "HTTP_PROXY",
-                "http_proxy"
-            );
-            None
-        })
+        .or_else(|| get_env_proxy())
+}
+
+pub fn get_env_proxy() -> Option<Uri> {
+    macro_rules! try_env {
+        ($($env:literal),+) => {
+            $(
+                if let Ok(env) = std::env::var($env) {
+                    return env.parse::<Uri>().ok();
+                }
+            )+
+        };
+    }
+    try_env!(
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy"
+    );
+    None
 }
