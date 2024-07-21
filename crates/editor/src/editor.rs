@@ -442,7 +442,7 @@ struct RunnableTasks {
     context_range: Range<BufferOffset>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
@@ -780,6 +780,7 @@ struct AutocloseRegion {
 struct SnippetState {
     ranges: Vec<Vec<Range<Anchor>>>,
     active_index: usize,
+    choices: Vec<Option<Vec<String>>>,
 }
 
 #[doc(hidden)]
@@ -797,6 +798,7 @@ struct RegisteredInlineCompletionProvider {
     _subscription: Subscription,
 }
 
+#[derive(Debug)]
 enum ContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
@@ -897,7 +899,7 @@ enum ContextMenuOrigin {
     GutterIndicator(DisplayRow),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
@@ -907,10 +909,99 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
+    selected_completion_documentation_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
 }
 
 impl CompletionsMenu {
+    fn new(
+        id: CompletionId,
+        initial_position: Anchor,
+        buffer: Model<Buffer>,
+        completions: Box<[Completion]>,
+    ) -> Self {
+        let match_candidates = completions
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| {
+                StringMatchCandidate::new(id, completion.label.text.clone().into())
+            })
+            .collect();
+
+        Self {
+            id,
+            initial_position,
+            buffer,
+            completions: Arc::new(RwLock::new(completions)),
+            match_candidates,
+            matches: Vec::new().into(),
+            selected_item: 0,
+            scroll_handle: UniformListScrollHandle::new(),
+            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
+                DebouncedDelay::new(),
+            ))),
+        }
+    }
+
+    fn new_snippet_choices(
+        id: CompletionId,
+        choices: &Vec<String>,
+        selection: Range<Anchor>,
+        buffer: Model<Buffer>,
+    ) -> Self {
+        let completions = choices
+            .iter()
+            .map(|choice| Completion {
+                old_range: selection.start.text_anchor..selection.end.text_anchor,
+                new_text: choice.to_string(),
+                label: CodeLabel {
+                    text: choice.to_string(),
+                    runs: Default::default(),
+                    filter_range: Default::default(),
+                },
+                server_id: LanguageServerId(usize::MAX),
+                documentation: None,
+                lsp_completion: Default::default(),
+                confirm: None,
+                show_new_completions_on_confirm: false,
+            })
+            .collect();
+
+        let match_candidates = choices
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.to_string()))
+            .collect();
+        let matches = choices
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| StringMatch {
+                candidate_id: id,
+                score: 1.,
+                positions: vec![],
+                string: completion.clone(),
+            })
+            .collect();
+        Self {
+            id,
+            initial_position: selection.start,
+            buffer,
+            completions: Arc::new(RwLock::new(completions)),
+            match_candidates,
+            matches,
+            selected_item: 0,
+            scroll_handle: UniformListScrollHandle::new(),
+            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
+                DebouncedDelay::new(),
+            ))),
+        }
+    }
+
+    fn suppress_documentation_resolution(mut self) -> Self {
+        self.selected_completion_documentation_resolve_debounce
+            .take();
+        self
+    }
+
     fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
         self.scroll_handle.scroll_to_item(self.selected_item);
@@ -991,7 +1082,12 @@ impl CompletionsMenu {
         let Some(project) = project else {
             return;
         };
-
+        let Some(documentation_resolve) = self
+            .selected_completion_documentation_resolve_debounce
+            .as_ref()
+        else {
+            return;
+        };
         let resolve_task = project.update(cx, |project, cx| {
             project.resolve_completions(
                 self.buffer.clone(),
@@ -1005,15 +1101,13 @@ impl CompletionsMenu {
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
         let delay = Duration::from_millis(delay_ms);
 
-        self.selected_completion_documentation_resolve_debounce
-            .lock()
-            .fire_new(delay, cx, |_, cx| {
-                cx.spawn(move |this, mut cx| async move {
-                    if let Some(true) = resolve_task.await.log_err() {
-                        this.update(&mut cx, |_, cx| cx.notify()).ok();
-                    }
-                })
-            });
+        documentation_resolve.lock().fire_new(delay, cx, |_, cx| {
+            cx.spawn(move |this, mut cx| async move {
+                if let Some(true) = resolve_task.await.log_err() {
+                    this.update(&mut cx, |_, cx| cx.notify()).ok();
+                }
+            })
+        });
     }
 
     fn visible(&self) -> bool {
@@ -1289,7 +1383,7 @@ impl CompletionsMenu {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CodeActionContents {
     tasks: Option<Arc<ResolvedTasks>>,
     actions: Option<Arc<[CodeAction]>>,
@@ -1384,6 +1478,7 @@ impl CodeActionsItem {
     }
 }
 
+#[derive(Debug)]
 struct CodeActionsMenu {
     actions: CodeActionContents,
     buffer: Model<Buffer>,
@@ -4113,29 +4208,8 @@ impl Editor {
                 })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
-                    let mut menu = CompletionsMenu {
-                        id,
-                        initial_position: position,
-                        match_candidates: completions
-                            .iter()
-                            .enumerate()
-                            .map(|(id, completion)| {
-                                StringMatchCandidate::new(
-                                    id,
-                                    completion.label.text[completion.label.filter_range.clone()]
-                                        .into(),
-                                )
-                            })
-                            .collect(),
-                        buffer: buffer.clone(),
-                        completions: Arc::new(RwLock::new(completions.into())),
-                        matches: Vec::new().into(),
-                        selected_item: 0,
-                        scroll_handle: UniformListScrollHandle::new(),
-                        selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
-                            DebouncedDelay::new(),
-                        )),
-                    };
+                    let mut menu =
+                        CompletionsMenu::new(id, position, buffer.clone(), completions.into());
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
@@ -4321,7 +4395,12 @@ impl Editor {
         self.transact(cx, |this, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = text.to_string();
-                for tabstop in snippet.tabstops.iter_mut().flatten() {
+                for tabstop in snippet
+                    .tabstops
+                    .iter_mut()
+                    .map(|tabstop| tabstop.ranges.iter_mut())
+                    .flatten()
+                {
                     tabstop.start -= common_prefix_len as isize;
                     tabstop.end -= common_prefix_len as isize;
                 }
@@ -5193,6 +5272,31 @@ impl Editor {
         context_menu
     }
 
+    fn show_snippet_choices(
+        &mut self,
+        choices: &Vec<String>,
+        selection: Range<Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if selection.start.buffer_id.is_none() {
+            return;
+        }
+        let buffer_id = selection.start.buffer_id.unwrap();
+        let buffer = self.buffer().read(cx).buffer(buffer_id);
+
+        if let Some(buffer) = buffer {
+            *self.context_menu.write() = Some(ContextMenu::Completions(
+                CompletionsMenu::new_snippet_choices(
+                    post_inc(&mut self.next_completion_id),
+                    choices,
+                    selection,
+                    buffer,
+                )
+                .suppress_documentation_resolution(),
+            ));
+        }
+    }
+
     pub fn insert_snippet(
         &mut self,
         insertion_ranges: &[Range<usize>],
@@ -5202,6 +5306,7 @@ impl Editor {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
+            choices: Option<Vec<String>>,
         }
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
@@ -5221,10 +5326,11 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
-                    let is_end_tabstop = tabstop.first().map_or(false, |tabstop| {
+                    let is_end_tabstop = tabstop.ranges.first().map_or(false, |tabstop| {
                         tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
                     });
                     let mut tabstop_ranges = tabstop
+                        .ranges
                         .iter()
                         .flat_map(|tabstop_range| {
                             let mut delta = 0_isize;
@@ -5246,6 +5352,7 @@ impl Editor {
                     Tabstop {
                         is_end_tabstop,
                         ranges: tabstop_ranges,
+                        choices: tabstop.choices.clone(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -5255,16 +5362,29 @@ impl Editor {
                 s.select_ranges(tabstop.ranges.iter().cloned());
             });
 
+            if let Some(choices) = &tabstop.choices {
+                if let Some(selection) = tabstop.ranges.first() {
+                    self.show_snippet_choices(choices, selection.clone(), cx)
+                }
+            }
+
             // If we're already at the last tabstop and it's at the end of the snippet,
             // we're done, we don't need to keep the state around.
             if !tabstop.is_end_tabstop {
+                let choices = tabstops
+                    .iter()
+                    .map(|tabstop| tabstop.choices.clone())
+                    .collect();
+
                 let ranges = tabstops
                     .into_iter()
                     .map(|tabstop| tabstop.ranges)
                     .collect::<Vec<_>>();
+
                 self.snippet_stack.push(SnippetState {
                     active_index: 0,
                     ranges,
+                    choices,
                 });
             }
 
@@ -5339,6 +5459,14 @@ impl Editor {
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_anchor_ranges(current_ranges.iter().cloned())
                 });
+
+                // TODO: Finishing implementing the below lines
+                if let Some(choices) = &snippet.choices[snippet.active_index] {
+                    if let Some(selection) = current_ranges.first() {
+                        self.show_snippet_choices(&choices, selection.clone(), cx);
+                    }
+                }
+
                 // If snippet state is not at the last tabstop, push it back on the stack
                 if snippet.active_index + 1 < snippet.ranges.len() {
                     self.snippet_stack.push(snippet);
