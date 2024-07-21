@@ -19,6 +19,8 @@ env_logger.workspace = true
 fs.workspace = true
 http.workspace = true
 extension = { workspace = true, features = ["no-webrtc"] }
+fs.workspace = true
+http.workspace = true
 language.workspace = true
 log.workspace = true
 rpc.workspace = true
