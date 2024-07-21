@@ -28,7 +28,7 @@ lazy_static! {
     };
 }
 
-fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Option<char> {
+fn lookup_digraph(a: char, b: char, cx: &AppContext) -> char {
     let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
     let input = [a, b].into_iter().collect::<String>();
     let reversed = [b, a].into_iter().collect::<String>();
@@ -39,26 +39,26 @@ fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Option<char> {
         .or_else(|| custom_digraphs.get(&reversed))
         .or_else(|| DEFAULT_DIGRAPHS_MAP.get(&reversed))
         .copied()
+        .unwrap_or(b)
 }
 
 pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
+    let mapped_char = lookup_digraph(first_char, second_char, &cx);
+    let text: Arc<str> = mapped_char.to_string().into();
+
     Vim::update(cx, |vim, cx| vim.pop_operator(cx));
 
-    if let Some(mapped_char) = lookup_digraph(first_char, second_char, &cx) {
-        let text: Arc<str> = mapped_char.to_string().into();
-
-        match Vim::read(cx).active_operator() {
-            Some(Operator::Replace) => match Vim::read(cx).state().mode {
-                Mode::Normal => normal_replace(text, cx),
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
-                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
-            },
-            _ => match Vim::read(cx).state().mode {
-                Mode::Insert => multi_insert(text, cx),
-                Mode::Replace => multi_replace(text, cx),
-                _ => {}
-            },
-        }
+    match Vim::read(cx).active_operator() {
+        Some(Operator::Replace) => match Vim::read(cx).state().mode {
+            Mode::Normal => normal_replace(text, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
+            _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+        },
+        _ => match Vim::read(cx).state().mode {
+            Mode::Insert => multi_insert(text, cx),
+            Mode::Replace => multi_replace(text, cx),
+            _ => {}
+        },
     }
 }
 
