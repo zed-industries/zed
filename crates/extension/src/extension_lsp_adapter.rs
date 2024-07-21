@@ -92,7 +92,15 @@ impl LspAdapter for ExtensionLspAdapter {
                 }
             }
 
-            Ok(LanguageServerBinary {
+            #[cfg(not(target_os = "windows"))]
+            return Ok(LanguageServerBinary {
+                path,
+                arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
+                env: Some(command.env.into_iter().collect()),
+            });
+
+            #[cfg(target_os = "windows")]
+            return Ok(LanguageServerBinary {
                 path,
                 arguments: command
                     .args
@@ -106,7 +114,7 @@ impl LspAdapter for ExtensionLspAdapter {
                     })
                     .collect(),
                 env: Some(command.env.into_iter().collect()),
-            })
+            });
         }
         .boxed_local()
     }
