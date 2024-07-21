@@ -54,7 +54,7 @@ fn parse_snippet<'a>(
                 if let Some(c) = source.chars().next() {
                     if c == '$' || c == '\\' || c == '}' {
                         text.push(c);
-                        // all above escapable characters are 1 byte long:
+                        // All escapable characters are 1 byte long:
                         source = &source[1..];
                     } else {
                         text.push('\\');
