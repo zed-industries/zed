@@ -64,7 +64,7 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf, proxy: Option<String>) -> Self {
+    pub fn new(cache_dir: PathBuf, proxy: Option<&str>) -> Self {
         Self {
             cache_dir,
             http: http::client(proxy.and_then(|input| {
