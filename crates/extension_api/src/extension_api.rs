@@ -4,7 +4,9 @@
 pub mod settings;
 
 use core::fmt;
+use std::path::PathBuf;
 
+use serde::de::IntoDeserializer;
 use wit::*;
 
 pub use serde_json;
@@ -56,6 +58,17 @@ pub fn set_language_server_installation_status(
     status: &LanguageServerInstallationStatus,
 ) {
     wit::set_language_server_installation_status(&language_server_id.0, status)
+}
+
+pub fn current_dir() -> std::io::Result<PathBuf> {
+    let dir_string = std::env::current_dir()?.to_string_lossy().to_string();
+    println!("--> {}", dir_string);
+    if let Some(x) = dir_string.strip_prefix('/') {
+        println!("--> x: {}", x);
+        Ok(x.into())
+    } else {
+        Ok(dir_string.into())
+    }
 }
 
 /// A Zed extension.
