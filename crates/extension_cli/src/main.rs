@@ -31,6 +31,28 @@ struct Args {
     scratch_dir: PathBuf,
 }
 
+fn proxy_from_env() -> Option<String> {
+    macro_rules! try_env {
+        ($($env:literal),+) => {
+            $(
+                if let Ok(env) = std::env::var($env) {
+                    return Some(env);
+                }
+            )+
+        };
+    }
+
+    try_env!(
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy"
+    );
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -58,7 +80,9 @@ async fn main() -> Result<()> {
     let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
-    let builder = ExtensionBuilder::new(scratch_dir);
+
+    let proxy = proxy_from_env();
+    let builder = ExtensionBuilder::new(scratch_dir, proxy.as_deref());
     builder
         .compile_extension(
             &extension_path,
