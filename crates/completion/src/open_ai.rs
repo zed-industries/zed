@@ -241,6 +241,7 @@ pub fn count_open_ai_tokens(
                 | LanguageModel::Cloud(CloudModel::Claude3Opus)
                 | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
                 | LanguageModel::Cloud(CloudModel::Claude3Haiku)
+                | LanguageModel::Cloud(CloudModel::Custom { .. })
                 | LanguageModel::OpenAi(OpenAiModel::Custom { .. }) => {
                     // Tiktoken doesn't yet support these models, so we manually use the
                     // same tokenizer as GPT-4.
