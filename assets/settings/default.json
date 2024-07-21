@@ -931,7 +931,8 @@
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // Set to `system` to use the system proxy settings (currently available on macOS).
-  // By default, the settings is set to `null`, and Zed will try get proxy settings
+  //
+  // By default, the value is set to `null`, and Zed will try to get proxy settings
   // from environment variables.
   //
   // Examples:

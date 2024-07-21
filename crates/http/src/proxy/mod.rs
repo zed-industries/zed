@@ -8,15 +8,15 @@ use std::sync::Arc;
 /// Dynamically updated proxy settings.
 #[derive(Default, Clone)]
 pub struct Proxy {
-    /// currently active proxy settings
+    /// currently active proxy uri.
     current_proxy: Arc<Mutex<Option<Uri>>>,
-    /// zed proxy settings
+    /// zed proxy settings.
     zed_proxy_settings: Arc<Mutex<Option<String>>>,
-    /// system proxy settings
+    /// system proxy settings.
     sys_proxy_settings: Arc<Mutex<SysProxiesSettings>>,
 }
 
-/// Struct representing system proxy settings.
+/// System proxies settings.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct SysProxiesSettings {
     pub http: Option<String>,
@@ -32,6 +32,7 @@ impl Proxy {
             sys_proxy_settings: Arc::new(Mutex::new(SysProxiesSettings::default())),
         };
 
+        // Subscribe to system notification.
         #[cfg(target_os = "macos")]
         macos::init_proxy(&proxy);
 
@@ -57,7 +58,7 @@ impl Proxy {
         self.current_proxy.lock().clone()
     }
 
-    /// update: zed settings change
+    /// update: zed settings changed
     pub fn update_zed_settings(&self, zed_proxy_settings: &Option<String>) {
         {
             let mut zed_proxy_settings_lock = self.zed_proxy_settings.lock();
@@ -68,7 +69,7 @@ impl Proxy {
                 zed_proxy_settings_lock.clone_from(zed_proxy_settings);
             }
         }
-        let sys_proxy_settings = self.sys_proxy_settings.lock().as_string();
+        let sys_proxy_settings = self.sys_proxy_settings.lock().choose_one();
         let current_proxy = get_current_proxy(zed_proxy_settings, &sys_proxy_settings);
         log::debug!(
             "updated proxy settings to {:?} (on zed settings update)",
@@ -77,7 +78,7 @@ impl Proxy {
         *self.current_proxy.lock() = current_proxy;
     }
 
-    /// update: system proxy settings change
+    /// update: system proxy settings changed
     pub fn update_sys_settings(&self, sys_proxy_settings: &SysProxiesSettings) {
         {
             let mut sys_proxy_settings_lock = self.sys_proxy_settings.lock();
@@ -89,7 +90,8 @@ impl Proxy {
             }
         }
         let zed_proxy_settings = self.zed_proxy_settings.lock().clone();
-        let current_proxy = get_current_proxy(&zed_proxy_settings, &sys_proxy_settings.as_string());
+        let current_proxy =
+            get_current_proxy(&zed_proxy_settings, &sys_proxy_settings.choose_one());
         log::debug!(
             "updated proxy settings to {:?} (on sys settings update)",
             current_proxy
@@ -99,8 +101,10 @@ impl Proxy {
 }
 
 impl SysProxiesSettings {
-    pub fn as_string(&self) -> Option<String> {
-        // prioritize socks > https > http
+    /// Choose one available proxy if any.
+    /// Prioritize socks > https > http.
+    pub fn choose_one(&self) -> Option<String> {
+        //
         if let Some(socks) = &self.socks {
             Some(socks.as_str())
         } else if let Some(https) = &self.https {
@@ -114,8 +118,13 @@ impl SysProxiesSettings {
     }
 }
 
-/// If proxy settings is 'system', then use system proxy settings.
-/// If proxy settings is 'None', then use environment variables.
+/// Compute current proxy settings based on zed settings, system settings,
+/// and environemnt variable.
+///
+/// ## Compute Logic
+/// If zed proxy settings is `"system"`, then try to use system proxy settings.
+/// Otherise, try to use the url of zed proxy settings.
+/// If both are not available, try environment variables.
 fn get_current_proxy(
     zed_proxy_settings: &Option<String>,
     sys_proxy_settings: &Option<String>,
@@ -150,7 +159,6 @@ fn get_current_proxy(
             }
         })
         .or_else(|| {
-            log::debug!("trying env proxy settings");
             try_env!(
                 "ALL_PROXY",
                 "all_proxy",

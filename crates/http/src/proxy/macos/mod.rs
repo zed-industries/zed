@@ -13,25 +13,30 @@ use system_configuration::{
     sys::*, SCDynamicStore, SCDynamicStoreBuilder, SCDynamicStoreCallBackContext,
 };
 
-/// Start listening to system proxy update and call update_sys_settings
-/// for the first time.
+/// Subscribe to system proxy notifications and call
+/// `update_sys_settings` for the first time.
 pub fn init_proxy(proxy: &Proxy) {
     let info = proxy.clone();
     let dynamic_store = SCDynamicStoreBuilder::new("MonitorProxySettings")
         .callback_context(SCDynamicStoreCallBackContext {
             callout: |store, _, info: &mut Proxy| {
-                info.update_sys_settings(&get_proxy_settings(&store))
+                info.update_sys_settings(&proxies_settings(&store))
             },
             info,
         })
         .build();
-    proxy.update_sys_settings(&get_proxy_settings(&dynamic_store));
-    // safety: do not clone, but only move (Clone + Send = racing!).
-    unsafe impl Send for SCDynamicStore {}
+
+    // initial update.
+    proxy.update_sys_settings(&proxies_settings(&dynamic_store));
+
     dynamic_store.set_notification_keys(
-        &notification_keys(),
+        &CFArray::from_copyable(&[proxies_key()]),
         &CFArray::<CFStringRef>::from_copyable(&[]),
     );
+
+    unsafe impl Send for SCDynamicStore {
+        // safety: do not clone, but only move (Clone + Send = racing!).
+    }
     std::thread::spawn(move || unsafe {
         let run_loop_source = dynamic_store.create_run_loop_source();
         CFRunLoopAddSource(
@@ -43,8 +48,9 @@ pub fn init_proxy(proxy: &Proxy) {
     });
 }
 
-fn notification_keys() -> CFArray<CFStringRef> {
-    CFArray::from_copyable(&[unsafe { SCDynamicStoreKeyCreateProxies(kCFAllocatorDefault) }])
+/// key for proxies notification.
+fn proxies_key() -> CFStringRef {
+    unsafe { SCDynamicStoreKeyCreateProxies(kCFAllocatorDefault) }
 }
 
 /*
@@ -58,18 +64,18 @@ enum ProxyType {
     Socks5,
 }
 
-fn get_proxy_settings(store: &SCDynamicStore) -> SysProxiesSettings {
+fn proxies_settings(store: &SCDynamicStore) -> SysProxiesSettings {
     let Some(proxy_map) = store.get_proxies() else {
         return SysProxiesSettings::default();
     };
     SysProxiesSettings {
-        http: get_proxy_of_type(&proxy_map, ProxyType::Http),
-        https: get_proxy_of_type(&proxy_map, ProxyType::Https),
-        socks: get_proxy_of_type(&proxy_map, ProxyType::Socks5),
+        http: proxy_of_type(&proxy_map, ProxyType::Http),
+        https: proxy_of_type(&proxy_map, ProxyType::Https),
+        socks: proxy_of_type(&proxy_map, ProxyType::Socks5),
     }
 }
 
-fn get_proxy_of_type(
+fn proxy_of_type(
     proxy_map: &CFDictionary<CFString, CFType>,
     proxy_type: ProxyType,
 ) -> Option<String> {
