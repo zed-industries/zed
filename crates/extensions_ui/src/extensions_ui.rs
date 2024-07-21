@@ -14,9 +14,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
+    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -804,12 +804,8 @@ impl ExtensionsPage {
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(

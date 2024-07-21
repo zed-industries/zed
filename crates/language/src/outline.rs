@@ -1,8 +1,5 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    relative, AppContext, BackgroundExecutor, FontStyle, HighlightStyle, StyledText, TextStyle,
-    WhiteSpace,
-};
+use gpui::{relative, AppContext, BackgroundExecutor, HighlightStyle, StyledText, TextStyle};
 use settings::Settings;
 use std::ops::Range;
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
@@ -167,12 +164,8 @@ pub fn render_item<T>(
         font_features: settings.buffer_font.features.clone(),
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
-        font_style: FontStyle::Normal,
         line_height: relative(1.),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-        white_space: WhiteSpace::Normal,
+        ..Default::default()
     };
     let highlights = gpui::combine_highlights(
         custom_highlights,
