@@ -8,6 +8,7 @@ pub mod settings;
 use std::sync::Arc;
 
 use anyhow::Result;
+use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, SharedString, Task, WindowContext};
 
@@ -15,6 +16,11 @@ pub use model::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
+
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    settings::init(cx);
+    registry::init(client, cx);
+}
 
 #[derive(Clone)]
 pub struct ProvidedLanguageModel {

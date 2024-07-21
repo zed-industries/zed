@@ -313,6 +313,10 @@ impl Settings for AssistantSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
+            merge(
+                &mut settings.default_model,
+                value.default_model.map(Into::into),
+            );
         }
 
         Ok(settings)

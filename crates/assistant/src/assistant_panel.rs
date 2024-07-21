@@ -434,17 +434,17 @@ impl AssistantPanel {
             self.new_context(cx);
         }
 
-        let authentification_prompt = Self::authentification_prompt(cx);
+        let authentication_prompt = Self::authentication_prompt(cx);
         for context_editor in self.context_editors(cx) {
             context_editor.update(cx, |editor, cx| {
-                editor.set_authentification_prompt(authentification_prompt.clone(), cx);
+                editor.set_authentication_prompt(authentication_prompt.clone(), cx);
             });
         }
 
         cx.notify();
     }
 
-    fn authentification_prompt(cx: &mut WindowContext) -> Option<AnyView> {
+    fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
         if let Some(provider) = LanguageModelCompletionProvider::read_global(cx).active_provider() {
             if !provider.is_authenticated(cx) {
                 return Some(provider.authentication_prompt(cx));
@@ -993,7 +993,7 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
-    authentification_prompt: Option<AnyView>,
+    authentication_prompt: Option<AnyView>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1050,7 +1050,7 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let mut this = Self {
             context,
-            authentification_prompt: None,
+            authentication_prompt: None,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1070,12 +1070,12 @@ impl ContextEditor {
         this
     }
 
-    fn set_authentification_prompt(
+    fn set_authentication_prompt(
         &mut self,
-        authentification_prompt: Option<AnyView>,
+        authentication_prompt: Option<AnyView>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.authentification_prompt = authentification_prompt;
+        self.authentication_prompt = authentication_prompt;
         cx.notify();
     }
 
@@ -1105,7 +1105,7 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if self.authentification_prompt.is_some() {
+        if self.authentication_prompt.is_some() {
             return;
         }
 
@@ -2134,11 +2134,11 @@ impl Render for ContextEditor {
             .size_full()
             .v_flex()
             .child(
-                if let Some(authentification_prompt) = self.authentification_prompt.as_ref() {
+                if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
                     div()
                         .flex_grow()
                         .bg(cx.theme().colors().editor_background)
-                        .child(authentification_prompt.clone().into_any())
+                        .child(authentication_prompt.clone().into_any())
                 } else {
                     div()
                         .flex_grow()

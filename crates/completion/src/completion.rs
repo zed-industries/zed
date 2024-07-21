@@ -86,6 +86,18 @@ impl LanguageModelCompletionProvider {
     }
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+        dbg!("Setting active model");
+
+        if self
+            .active_model
+            .as_ref()
+            .map_or(false, |m| m.id() == model.id())
+        {
+            return;
+        }
+
+        dbg!("Setting active model");
+
         self.active_provider =
             LanguageModelRegistry::read_global(cx).provider(&model.provider_name());
         self.active_model = Some(model);
@@ -132,10 +144,7 @@ impl LanguageModelCompletionProvider {
         if let Some(language_model) = self.active_model() {
             let rate_limiter = self.request_limiter.clone();
             cx.spawn(|cx| async move {
-                let lock = cx
-                    .background_executor()
-                    .spawn(async move { rate_limiter.acquire_arc().await })
-                    .await;
+                let lock = rate_limiter.acquire_arc().await;
 
                 let Ok(response) = cx.update(|cx| language_model.stream_completion(request, &cx))
                 else {
