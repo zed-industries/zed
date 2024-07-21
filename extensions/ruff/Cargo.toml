@@ -1,5 +1,5 @@
 [package]
-name = "zed_erlang"
+name = "zed_ruff"
 version = "0.0.1"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "Apache-2.0"
 workspace = true
 
 [lib]
-path = "src/erlang.rs"
+path = "src/ruff.rs"
 crate-type = ["cdylib"]
 
 [dependencies]

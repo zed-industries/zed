@@ -606,6 +606,7 @@
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
+      "ctrl-a": "editor::SelectAll",
       "shift-ctrl-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",

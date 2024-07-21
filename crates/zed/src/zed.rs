@@ -5,7 +5,7 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
-mod password_prompt;
+mod ssh_connection_modal;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;

@@ -85,6 +85,7 @@ pub trait SshClientDelegate {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
@@ -99,16 +100,18 @@ impl SshSession {
     ) -> Result<Arc<Self>> {
         let client_state = SshClientState::new(user, host, port, delegate.clone(), cx).await?;
 
-        let platform = query_platform(&client_state).await?;
+        let platform = client_state.query_platform().await?;
         let (local_binary_path, version) = delegate.get_server_binary(platform, cx).await??;
         let remote_binary_path = delegate.remote_server_binary_path(cx)?;
-        ensure_server_binary(
-            &client_state,
-            &local_binary_path,
-            &remote_binary_path,
-            version,
-        )
-        .await?;
+        client_state
+            .ensure_server_binary(
+                &delegate,
+                &local_binary_path,
+                &remote_binary_path,
+                version,
+                cx,
+            )
+            .await?;
 
         let (spawn_process_tx, mut spawn_process_rx) = mpsc::unbounded::<SpawnRequest>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -413,7 +416,7 @@ impl SshClientState {
         host: String,
         port: u16,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         Err(anyhow!("ssh is not supported on this platform"))
     }
@@ -424,25 +427,29 @@ impl SshClientState {
         host: String,
         port: u16,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        use smol::fs::unix::PermissionsExt as _;
+        use futures::{io::BufReader, AsyncBufReadExt as _};
+        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
+
+        delegate.set_status(Some("connecting"), cx);
 
         let url = format!("{user}@{host}");
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
 
-        // Create a TCP listener to handle requests from the askpass program.
-        let listener = smol::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("failed to find open port");
-        let askpass_port = listener.local_addr().unwrap().port();
+        // Create a domain socket listener to handle requests from the askpass program.
+        let askpass_socket = temp_dir.path().join("askpass.sock");
+        let listener =
+            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+
         let askpass_task = cx.spawn(|mut cx| async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let mut buffer = Vec::new();
-                if stream.read_to_end(&mut buffer).await.is_err() {
+                let mut reader = BufReader::new(&mut stream);
+                if reader.read_until(b'\0', &mut buffer).await.is_err() {
                     buffer.clear();
                 }
                 let password_prompt = String::from_utf8_lossy(&buffer);
@@ -458,10 +465,12 @@ impl SshClientState {
             }
         });
 
-        // Create an askpass script that communicates back to this process using TCP.
+        // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n echo \"$@\" | nc 127.0.0.1 {askpass_port} 2> /dev/null",
-            shebang = "#!/bin/sh"
+            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+            askpass_socket = askpass_socket.display(),
+            print_args = "printf '%s\\0' \"$@\"",
+            shebang = "#!/bin/sh",
         );
         let askpass_script_path = temp_dir.path().join("askpass.sh");
         fs::write(&askpass_script_path, askpass_script).await?;
@@ -501,12 +510,85 @@ impl SshClientState {
         }
 
         Ok(Self {
-            _master_process: master_process,
-            port,
-            _temp_dir: temp_dir,
-            socket_path,
             url,
+            port,
+            socket_path,
+            _master_process: master_process,
+            _temp_dir: temp_dir,
         })
+    }
+
+    async fn ensure_server_binary(
+        &self,
+        delegate: &Arc<dyn SshClientDelegate>,
+        src_path: &Path,
+        dst_path: &Path,
+        version: SemanticVersion,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let mut dst_path_gz = dst_path.to_path_buf();
+        dst_path_gz.set_extension("gz");
+
+        if let Some(parent) = dst_path.parent() {
+            run_cmd(self.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+        }
+
+        let mut server_binary_exists = false;
+        if let Ok(installed_version) = run_cmd(self.ssh_command(&dst_path).arg("version")).await {
+            if installed_version.trim() == version.to_string() {
+                server_binary_exists = true;
+            }
+        }
+
+        if server_binary_exists {
+            log::info!("remote development server already present",);
+            return Ok(());
+        }
+
+        let src_stat = fs::metadata(src_path).await?;
+        let size = src_stat.len();
+        let server_mode = 0o755;
+
+        let t0 = Instant::now();
+        delegate.set_status(Some("uploading remote development server"), cx);
+        log::info!("uploading remote development server ({}kb)", size / 1024);
+        self.upload_file(src_path, &dst_path_gz)
+            .await
+            .context("failed to upload server binary")?;
+        log::info!("uploaded remote development server in {:?}", t0.elapsed());
+
+        delegate.set_status(Some("extracting remote development server"), cx);
+        run_cmd(self.ssh_command("gunzip").arg("--force").arg(&dst_path_gz)).await?;
+
+        delegate.set_status(Some("unzipping remote development server"), cx);
+        run_cmd(
+            self.ssh_command("chmod")
+                .arg(format!("{:o}", server_mode))
+                .arg(&dst_path),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn query_platform(&self) -> Result<SshPlatform> {
+        let os = run_cmd(self.ssh_command("uname").arg("-s")).await?;
+        let arch = run_cmd(self.ssh_command("uname").arg("-m")).await?;
+
+        let os = match os.trim() {
+            "Darwin" => "macos",
+            "Linux" => "linux",
+            _ => Err(anyhow!("unknown uname os {os:?}"))?,
+        };
+        let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
+            "aarch64"
+        } else if arch.starts_with("x86") || arch.starts_with("i686") {
+            "x86_64"
+        } else {
+            Err(anyhow!("unknown uname architecture {arch:?}"))?
+        };
+
+        Ok(SshPlatform { os, arch })
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
@@ -562,82 +644,4 @@ async fn run_cmd(command: &mut process::Command) -> Result<String> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
-}
-
-async fn query_platform(session: &SshClientState) -> Result<SshPlatform> {
-    let os = run_cmd(session.ssh_command("uname").arg("-s")).await?;
-    let arch = run_cmd(session.ssh_command("uname").arg("-m")).await?;
-
-    let os = match os.trim() {
-        "Darwin" => "macos",
-        "Linux" => "linux",
-        _ => Err(anyhow!("unknown uname os {os:?}"))?,
-    };
-    let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
-        "aarch64"
-    } else if arch.starts_with("x86") || arch.starts_with("i686") {
-        "x86_64"
-    } else {
-        Err(anyhow!("unknown uname architecture {arch:?}"))?
-    };
-
-    Ok(SshPlatform { os, arch })
-}
-
-async fn ensure_server_binary(
-    session: &SshClientState,
-    src_path: &Path,
-    dst_path: &Path,
-    version: SemanticVersion,
-) -> Result<()> {
-    let mut dst_path_gz = dst_path.to_path_buf();
-    dst_path_gz.set_extension("gz");
-
-    if let Some(parent) = dst_path.parent() {
-        run_cmd(session.ssh_command("mkdir").arg("-p").arg(parent)).await?;
-    }
-
-    let mut server_binary_exists = false;
-    if let Ok(installed_version) = run_cmd(session.ssh_command(&dst_path).arg("version")).await {
-        if installed_version.trim() == version.to_string() {
-            server_binary_exists = true;
-        }
-    }
-
-    if server_binary_exists {
-        log::info!("remote development server already present",);
-        return Ok(());
-    }
-
-    let src_stat = fs::metadata(src_path).await?;
-    let size = src_stat.len();
-    let server_mode = 0o755;
-
-    let t0 = Instant::now();
-    log::info!("uploading remote development server ({}kb)", size / 1024);
-    session
-        .upload_file(src_path, &dst_path_gz)
-        .await
-        .context("failed to upload server binary")?;
-    log::info!("uploaded remote development server in {:?}", t0.elapsed());
-
-    log::info!("extracting remote development server");
-    run_cmd(
-        session
-            .ssh_command("gunzip")
-            .arg("--force")
-            .arg(&dst_path_gz),
-    )
-    .await?;
-
-    log::info!("unzipping remote development server");
-    run_cmd(
-        session
-            .ssh_command("chmod")
-            .arg(format!("{:o}", server_mode))
-            .arg(&dst_path),
-    )
-    .await?;
-
-    Ok(())
 }

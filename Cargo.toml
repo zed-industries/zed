@@ -141,6 +141,7 @@ members = [
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
+    "extensions/ruff",
     "extensions/ruby",
     "extensions/snippets",
     "extensions/svelte",
