@@ -5,6 +5,7 @@ pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context as _, Result};
+use async_compat::CompatExt as _;
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
@@ -1175,6 +1176,7 @@ impl Client {
             );
 
         let http = self.http.clone();
+        let proxy = self.http.proxy();
         let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
             let mut rpc_url = rpc_url.await?;
@@ -1182,7 +1184,31 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            let socks_proxy = 'get_socks: {
+                let Some(proxy_uri) = proxy.to_uri() else {
+                    break 'get_socks None;
+                };
+                let Some(schema) = proxy_uri.scheme_str() else {
+                    break 'get_socks None;
+                };
+                if schema.starts_with("socks") {
+                    Some(proxy_uri)
+                } else {
+                    None
+                }
+            };
+            let stream = match socks_proxy {
+                Some(socks_proxy) => {
+                    let stream = smol::net::TcpStream::connect(socks_proxy.to_string()).await?;
+                    let mut stream = stream.compat();
+                    async_socks5::connect(&mut stream, rpc_host, None)
+                        .await
+                        .map_err(|err| anyhow!("error connecting to socks {}", err))?;
+                    stream
+                }
+                None => smol::net::TcpStream::connect(rpc_host).await?.compat(),
+            }
+            .compat();
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 

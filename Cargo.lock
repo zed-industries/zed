@@ -516,9 +516,9 @@ dependencies = [
 
 [[package]]
 name = "async-compat"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b48b4ff0c2026db683dea961cd8ea874737f56cffca86fa84415eaddc51c00d"
+checksum = "7bab94bde396a3f7b4962e396fdad640e241ed797d4d8d77fc8c237d14c58fc0"
 dependencies = [
  "futures-core",
  "futures-io",
@@ -792,6 +792,16 @@ dependencies = [
  "signal-hook-registry",
  "slab",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "async-socks5"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8da2537846e16b96d2972ee52a3b355663872a1a687ce6d57a3b6f6b6a181c89"
+dependencies = [
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -2368,8 +2378,10 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compat",
  "async-native-tls 0.5.0",
  "async-recursion 0.3.2",
+ "async-socks5",
  "async-tungstenite",
  "chrono",
  "clock",
