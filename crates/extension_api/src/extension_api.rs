@@ -60,14 +60,20 @@ pub fn set_language_server_installation_status(
     wit::set_language_server_installation_status(&language_server_id.0, status)
 }
 
+/// Properly retrieve the current dir
 pub fn current_dir() -> std::io::Result<PathBuf> {
-    let dir_string = std::env::current_dir()?.to_string_lossy().to_string();
-    println!("--> {}", dir_string);
-    if let Some(x) = dir_string.strip_prefix('/') {
-        println!("--> x: {}", x);
-        Ok(x.into())
-    } else {
-        Ok(dir_string.into())
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::current_dir()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let dir_string = std::env::current_dir()?.to_string_lossy().to_string();
+        if let Some(result) = dir_string.strip_prefix('/') {
+            Ok(result.into())
+        } else {
+            Ok(dir_string.into())
+        }
     }
 }
 
