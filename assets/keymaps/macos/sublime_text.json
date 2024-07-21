@@ -12,8 +12,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": "editor::MoveLineUp",
+      "ctrl-shift-down": "editor::MoveLineDown",
       "cmd-shift-space": "editor::SelectAll",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "cmd-shift-l": "editor::SplitSelectionIntoLines",
