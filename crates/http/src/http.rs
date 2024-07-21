@@ -1,6 +1,7 @@
 pub mod github;
 
 pub use anyhow::{anyhow, Result};
+use derive_more::Deref;
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
@@ -16,61 +17,119 @@ use std::{
 };
 pub use url::Url;
 
-fn get_proxy(proxy: Option<String>) -> Option<isahc::http::Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<isahc::http::Uri>().ok();
-                }
-            )+
-        };
+pub trait HttpClient: Send + Sync {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>;
+
+    fn get<'a>(
+        &'a self,
+        uri: &str,
+        body: AsyncBody,
+        follow_redirects: bool,
+    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
+        let request = isahc::Request::builder()
+            .redirect_policy(if follow_redirects {
+                RedirectPolicy::Follow
+            } else {
+                RedirectPolicy::None
+            })
+            .method(Method::GET)
+            .uri(uri)
+            .body(body);
+        match request {
+            Ok(request) => self.send(request),
+            Err(error) => async move { Err(error.into()) }.boxed(),
+        }
     }
 
-    proxy
-        .and_then(|input| {
-            input
-                .parse::<isahc::http::Uri>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                .ok()
-        })
-        .or_else(|| {
-            try_env!(
-                "ALL_PROXY",
-                "all_proxy",
-                "HTTPS_PROXY",
-                "https_proxy",
-                "HTTP_PROXY",
-                "http_proxy"
-            );
-            None
-        })
+    fn post_json<'a>(
+        &'a self,
+        uri: &str,
+        body: AsyncBody,
+    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
+        let request = isahc::Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("Content-Type", "application/json")
+            .body(body);
+        match request {
+            Ok(request) => self.send(request),
+            Err(error) => async move { Err(error.into()) }.boxed(),
+        }
+    }
+
+    fn proxy(&self) -> Option<&Uri>;
+}
+
+/// An [`HttpClient`] that may have a proxy.
+#[derive(Deref)]
+pub struct HttpClientWithProxy {
+    #[deref]
+    client: Arc<dyn HttpClient>,
+    proxy: Option<Uri>,
+}
+
+impl HttpClientWithProxy {
+    /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
+    pub fn new(proxy_url: Option<String>) -> Self {
+        let proxy_url = proxy_url
+            .and_then(|input| {
+                input
+                    .parse::<Uri>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env);
+
+        Self {
+            client: client(proxy_url.clone()),
+            proxy: proxy_url,
+        }
+    }
+}
+
+impl HttpClient for HttpClientWithProxy {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        self.client.send(req)
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        self.proxy.as_ref()
+    }
+}
+
+impl HttpClient for Arc<HttpClientWithProxy> {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        self.client.send(req)
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        self.proxy.as_ref()
+    }
 }
 
 /// An [`HttpClient`] that has a base URL.
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
-    client: Arc<dyn HttpClient>,
-    proxy: Option<String>,
+    client: HttpClientWithProxy,
 }
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
-    pub fn new(base_url: impl Into<String>, unparsed_proxy: Option<String>) -> Self {
-        let parsed_proxy = get_proxy(unparsed_proxy);
-        let proxy_string = parsed_proxy.as_ref().map(|p| {
-            // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
-            // NodeRuntime without environment information can not parse `localhost`
-            // correctly.
-            // TODO: map to `[::1]` if we are using ipv6
-            p.to_string()
-                .to_ascii_lowercase()
-                .replace("localhost", "127.0.0.1")
-        });
+    pub fn new(base_url: impl Into<String>, proxy_url: Option<String>) -> Self {
+        let client = HttpClientWithProxy::new(proxy_url);
+
         Self {
             base_url: Mutex::new(base_url.into()),
-            client: client(parsed_proxy),
-            proxy: proxy_string,
+            client,
         }
     }
 
@@ -122,8 +181,8 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&str> {
-        self.proxy.as_deref()
+    fn proxy(&self) -> Option<&Uri> {
+        self.client.proxy.as_ref()
     }
 }
 
@@ -135,66 +194,42 @@ impl HttpClient for HttpClientWithUrl {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&str> {
-        self.proxy.as_deref()
+    fn proxy(&self) -> Option<&Uri> {
+        self.client.proxy.as_ref()
     }
 }
 
-pub trait HttpClient: Send + Sync {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>;
-
-    fn get<'a>(
-        &'a self,
-        uri: &str,
-        body: AsyncBody,
-        follow_redirects: bool,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
-        let request = isahc::Request::builder()
-            .redirect_policy(if follow_redirects {
-                RedirectPolicy::Follow
-            } else {
-                RedirectPolicy::None
-            })
-            .method(Method::GET)
-            .uri(uri)
-            .body(body);
-        match request {
-            Ok(request) => self.send(request),
-            Err(error) => async move { Err(error.into()) }.boxed(),
-        }
-    }
-
-    fn post_json<'a>(
-        &'a self,
-        uri: &str,
-        body: AsyncBody,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
-        let request = isahc::Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header("Content-Type", "application/json")
-            .body(body);
-        match request {
-            Ok(request) => self.send(request),
-            Err(error) => async move { Err(error.into()) }.boxed(),
-        }
-    }
-
-    fn proxy(&self) -> Option<&str>;
+pub fn client(proxy: Option<Uri>) -> Arc<dyn HttpClient> {
+    Arc::new(HttpClientWithProxy {
+        client: Arc::new(
+            isahc::HttpClient::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .low_speed_timeout(100, Duration::from_secs(5))
+                .proxy(proxy.clone())
+                .build()
+                .unwrap(),
+        ),
+        proxy,
+    })
 }
 
-pub fn client(proxy: Option<isahc::http::Uri>) -> Arc<dyn HttpClient> {
-    Arc::new(
-        isahc::HttpClient::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .low_speed_timeout(100, Duration::from_secs(5))
-            .proxy(proxy)
-            .build()
-            .unwrap(),
-    )
+fn read_proxy_from_env() -> Option<Uri> {
+    const ENV_VARS: &[&str] = &[
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ];
+
+    for var in ENV_VARS {
+        if let Ok(env) = std::env::var(var) {
+            return env.parse::<Uri>().ok();
+        }
+    }
+
+    None
 }
 
 impl HttpClient for isahc::HttpClient {
@@ -206,7 +241,7 @@ impl HttpClient for isahc::HttpClient {
         Box::pin(async move { client.send_async(req).await })
     }
 
-    fn proxy(&self) -> Option<&str> {
+    fn proxy(&self) -> Option<&Uri> {
         None
     }
 }
@@ -233,10 +268,12 @@ impl FakeHttpClient {
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),
-            client: Arc::new(Self {
-                handler: Box::new(move |req| Box::pin(handler(req))),
-            }),
-            proxy: None,
+            client: HttpClientWithProxy {
+                client: Arc::new(Self {
+                    handler: Box::new(move |req| Box::pin(handler(req))),
+                }),
+                proxy: None,
+            },
         })
     }
 
@@ -276,7 +313,7 @@ impl HttpClient for FakeHttpClient {
         Box::pin(async move { future.await.map(Into::into) })
     }
 
-    fn proxy(&self) -> Option<&str> {
+    fn proxy(&self) -> Option<&Uri> {
         None
     }
 }

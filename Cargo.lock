@@ -4013,6 +4013,7 @@ dependencies = [
  "env_logger",
  "extension",
  "fs",
+ "http 0.1.0",
  "language",
  "log",
  "rpc",
@@ -5315,6 +5316,7 @@ name = "http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "isahc",
@@ -13908,7 +13910,7 @@ dependencies = [
 name = "zed_erlang"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
