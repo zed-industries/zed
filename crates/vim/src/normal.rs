@@ -9,6 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
+mod toggle_comments;
 pub(crate) mod yank;
 
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
     indent::{indent_motion, indent_object, IndentDirection},
+    toggle_comments::{toggle_comments_motion, toggle_comments_object},
     yank::{yank_motion, yank_object},
 };
 
@@ -237,6 +239,7 @@ pub fn normal_motion(
             Some(Operator::OppositeCase) => {
                 change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
             }
+            Some(Operator::ToggleComments) => toggle_comments_motion(vim, motion, times, cx),
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -273,6 +276,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                         target: Some(SurroundsType::Object(object)),
                     });
                 }
+                Some(Operator::ToggleComments) => toggle_comments_object(vim, object, around, cx),
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
