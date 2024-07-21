@@ -47,8 +47,8 @@ fn parse_snippet<'a>(
                 source = parse_tabstop(&source[1..], text, tabstops)?;
             }
             Some('\\') => {
-                // as specified in the LSP spec (grammar section),
-                // backslashes can escape some characters
+                // As specified in the LSP spec (`Grammar` section),
+                // backslashes can escape some characters:
                 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#snippet_syntax
                 source = &source[1..];
                 if let Some(c) = source.chars().next() {
