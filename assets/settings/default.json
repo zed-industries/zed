@@ -743,6 +743,9 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
+    "Erlang": {
+      "language_servers": ["erlang-ls", "!elp", "..."]
+    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
