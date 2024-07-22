@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
-use futures::{channel::oneshot, StreamExt as _};
+use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
@@ -19,7 +19,9 @@ use rpc::{
 use std::{io, path::Path, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
-use worktree::{File, PathChange, ProjectEntryId, RemoteWorktree, Worktree};
+use worktree::{
+    File, PathChange, ProjectEntryId, RemoteWorktree, UpdatedGitRepositoriesSet, Worktree,
+};
 
 /// A set of open buffers.
 pub struct BufferStore {
@@ -57,6 +59,9 @@ pub enum BufferStoreEvent {
         saved_version: clock::Global,
     },
     LocalBufferUpdated {
+        buffer: Model<Buffer>,
+    },
+    DiffBaseUpdated {
         buffer: Model<Buffer>,
     },
 }
@@ -157,13 +162,13 @@ impl BufferStore {
                         this.update_local_worktree_buffers(&worktree, changes, cx);
                     }
                 }
-                worktree::Event::UpdatedGitRepositories(_updated_repos) => {
+                worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
-                        // this.update_local_worktree_buffers_git_repos(
-                        //     worktree.clone(),
-                        //     updated_repos,
-                        //     cx,
-                        // )
+                        this.update_local_worktree_buffers_git_repos(
+                            worktree.clone(),
+                            updated_repos,
+                            cx,
+                        )
                     }
                 }
             }
@@ -185,6 +190,106 @@ impl BufferStore {
                 cx.emit(BufferStoreEvent::LocalBufferUpdated { buffer })
             }
         }
+    }
+
+    fn update_local_worktree_buffers_git_repos(
+        &mut self,
+        worktree_handle: Model<Worktree>,
+        changed_repos: &UpdatedGitRepositoriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        debug_assert!(worktree_handle.read(cx).is_local());
+
+        // Identify the loading buffers whose containing repository that has changed.
+        let future_buffers = self
+            .loading_buffers()
+            .filter_map(|(project_path, receiver)| {
+                if project_path.worktree_id != worktree_handle.read(cx).id() {
+                    return None;
+                }
+                let path = &project_path.path;
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
+                let path = path.clone();
+                Some(async move {
+                    Self::wait_for_loading_buffer(receiver)
+                        .await
+                        .ok()
+                        .map(|buffer| (buffer, path))
+                })
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        // Identify the current buffers whose containing repository has changed.
+        let current_buffers = self
+            .buffers()
+            .filter_map(|buffer| {
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                if file.worktree != worktree_handle {
+                    return None;
+                }
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| file.path.starts_with(work_dir))?;
+                Some((buffer, file.path.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        if future_buffers.len() + current_buffers.len() == 0 {
+            return;
+        }
+
+        cx.spawn(move |this, mut cx| async move {
+            // Wait for all of the buffers to load.
+            let future_buffers = future_buffers.collect::<Vec<_>>().await;
+
+            // Reload the diff base for every buffer whose containing git repository has changed.
+            let snapshot =
+                worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+            let diff_bases_by_buffer = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut diff_base_tasks = future_buffers
+                        .into_iter()
+                        .flatten()
+                        .chain(current_buffers)
+                        .filter_map(|(buffer, path)| {
+                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
+                            Some((buffer, path, repo_entry, local_repo_entry))
+                        })
+                        .map(|(buffer, path, repo, local_repo_entry)| {
+                            let snapshot = snapshot.clone();
+                            async move {
+                                let relative_path = repo.relativize(&snapshot, &path).ok()?;
+                                let base_text =
+                                    local_repo_entry.repo().load_index_text(&relative_path);
+                                Some((buffer, base_text))
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
+                    while let Some(diff_base) = diff_base_tasks.next().await {
+                        if let Some(diff_base) = diff_base {
+                            diff_bases.push(diff_base);
+                        }
+                    }
+                    diff_bases
+                })
+                .await;
+
+            this.update(&mut cx, |_, cx| {
+                // Assign the new diff bases on all of the buffers.
+                for (buffer, diff_base) in diff_bases_by_buffer {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_diff_base(diff_base.clone(), cx);
+                    });
+                    cx.emit(BufferStoreEvent::DiffBaseUpdated { buffer })
+                }
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn open_local_buffer_internal(

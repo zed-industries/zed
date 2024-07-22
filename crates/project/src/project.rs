@@ -843,6 +843,7 @@ impl Project {
             ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
             ssh_session.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
             ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_buffer_file);
+            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_diff_base);
             this.ssh_session = Some(ssh_session);
         });
         this
@@ -2431,6 +2432,20 @@ impl Project {
                             project_id,
                             buffer_id: buffer_id.into(),
                             file: Some(new_file.to_proto(cx)),
+                        })
+                        .log_err();
+                }
+            }
+            BufferStoreEvent::DiffBaseUpdated { buffer } => {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                let diff_base = buffer.diff_base();
+                if let Some(project_id) = self.remote_id() {
+                    self.client
+                        .send(proto::UpdateDiffBase {
+                            project_id,
+                            buffer_id: buffer_id.to_proto(),
+                            diff_base: diff_base.map(|b| b.to_string()),
                         })
                         .log_err();
                 }
@@ -7874,14 +7889,7 @@ impl Project {
                         .telemetry()
                         .report_discovered_project_events(worktree_id, changes);
                 }
-                worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    if is_local {
-                        this.update_local_worktree_buffers_git_repos(
-                            worktree.clone(),
-                            updated_repos,
-                            cx,
-                        )
-                    }
+                worktree::Event::UpdatedGitRepositories(_) => {
                     cx.emit(Event::WorktreeUpdatedGitRepositories);
                 }
             }
@@ -7954,138 +7962,6 @@ impl Project {
                 }
             }
         }
-    }
-
-    fn update_local_worktree_buffers_git_repos(
-        &mut self,
-        worktree_handle: Model<Worktree>,
-        changed_repos: &UpdatedGitRepositoriesSet,
-        cx: &mut ModelContext<Self>,
-    ) {
-        debug_assert!(worktree_handle.read(cx).is_local());
-
-        // Identify the loading buffers whose containing repository that has changed.
-        let future_buffers = self
-            .buffer_store
-            .read(cx)
-            .loading_buffers()
-            .filter_map(|(project_path, receiver)| {
-                if project_path.worktree_id != worktree_handle.read(cx).id() {
-                    return None;
-                }
-                let path = &project_path.path;
-                changed_repos
-                    .iter()
-                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                let path = path.clone();
-                let abs_path = worktree_handle.read(cx).absolutize(&path).ok()?;
-                Some(async move {
-                    BufferStore::wait_for_loading_buffer(receiver)
-                        .await
-                        .ok()
-                        .map(|buffer| (buffer, path, abs_path))
-                })
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        // Identify the current buffers whose containing repository has changed.
-        let current_buffers = self
-            .buffer_store
-            .read(cx)
-            .buffers()
-            .filter_map(|buffer| {
-                let file = File::from_dyn(buffer.read(cx).file())?;
-                if file.worktree != worktree_handle {
-                    return None;
-                }
-                let path = file.path();
-                changed_repos
-                    .iter()
-                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                Some((buffer, path.clone(), file.abs_path(cx)))
-            })
-            .collect::<Vec<_>>();
-
-        if future_buffers.len() + current_buffers.len() == 0 {
-            return;
-        }
-
-        let remote_id = self.remote_id();
-        let client = self.client.clone();
-        let fs = self.fs.clone();
-        cx.spawn(move |_, mut cx| async move {
-            // Wait for all of the buffers to load.
-            let future_buffers = future_buffers.collect::<Vec<_>>().await;
-
-            // Reload the diff base for every buffer whose containing git repository has changed.
-            let snapshot =
-                worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
-            let diff_bases_by_buffer = cx
-                .background_executor()
-                .spawn(async move {
-                    let mut diff_base_tasks = future_buffers
-                        .into_iter()
-                        .flatten()
-                        .chain(current_buffers)
-                        .filter_map(|(buffer, path, abs_path)| {
-                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
-                            Some((buffer, path, abs_path, repo_entry, local_repo_entry))
-                        })
-                        .map(|(buffer, path, abs_path, repo, local_repo_entry)| {
-                            let fs = fs.clone();
-                            let snapshot = snapshot.clone();
-                            async move {
-                                let abs_path_metadata = fs
-                                    .metadata(&abs_path)
-                                    .await
-                                    .with_context(|| {
-                                        format!("loading file and FS metadata for {path:?}")
-                                    })
-                                    .log_err()
-                                    .flatten()?;
-                                let base_text = if abs_path_metadata.is_dir
-                                    || abs_path_metadata.is_symlink
-                                {
-                                    None
-                                } else {
-                                    let relative_path = repo.relativize(&snapshot, &path).ok()?;
-                                    local_repo_entry.repo().load_index_text(&relative_path)
-                                };
-                                Some((buffer, base_text))
-                            }
-                        })
-                        .collect::<FuturesUnordered<_>>();
-
-                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
-                    while let Some(diff_base) = diff_base_tasks.next().await {
-                        if let Some(diff_base) = diff_base {
-                            diff_bases.push(diff_base);
-                        }
-                    }
-                    diff_bases
-                })
-                .await;
-
-            // Assign the new diff bases on all of the buffers.
-            for (buffer, diff_base) in diff_bases_by_buffer {
-                let buffer_id = buffer.update(&mut cx, |buffer, cx| {
-                    buffer.set_diff_base(diff_base.clone(), cx);
-                    buffer.remote_id().into()
-                })?;
-                if let Some(project_id) = remote_id {
-                    client
-                        .send(proto::UpdateDiffBase {
-                            project_id,
-                            buffer_id,
-                            diff_base,
-                        })
-                        .log_err();
-                }
-            }
-
-            anyhow::Ok(())
-        })
-        .detach();
     }
 
     fn update_local_worktree_settings(

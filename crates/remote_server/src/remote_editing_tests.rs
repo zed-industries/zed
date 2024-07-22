@@ -28,6 +28,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         "/code",
         json!({
             "project1": {
+                ".git": {},
                 "README.md": "# project 1",
                 "src": {
                     "lib.rs": "fn one() -> usize { 1 }"
@@ -39,6 +40,10 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         }),
     )
     .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 0 }".into())],
+    );
 
     server_cx.update(HeadlessProject::init);
     let _headless_project =
@@ -59,6 +64,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -76,6 +82,10 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         .unwrap();
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
+        assert_eq!(
+            buffer.diff_base().unwrap().to_string(),
+            "fn one() -> usize { 0 }"
+        );
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
@@ -105,6 +115,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -124,6 +135,18 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
         assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
+    });
+
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 200 }".into())],
+    );
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.diff_base().unwrap().to_string(),
+            "fn one() -> usize { 200 }"
+        );
     });
 }
 

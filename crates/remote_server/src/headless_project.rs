@@ -194,6 +194,18 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            BufferStoreEvent::DiffBaseUpdated { buffer } => {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                let diff_base = buffer.diff_base();
+                self.session
+                    .send(proto::UpdateDiffBase {
+                        project_id: 0,
+                        buffer_id: buffer_id.to_proto(),
+                        diff_base: diff_base.map(|b| b.to_string()),
+                    })
+                    .log_err();
+            }
             _ => {}
         }
     }
