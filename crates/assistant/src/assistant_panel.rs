@@ -112,7 +112,6 @@ pub struct AssistantPanel {
     subscriptions: Vec<Subscription>,
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
-    // TODO kb add a "refresh" button + follow the edit events to update the summary
     model_summary_editor: View<Editor>,
 }
 
@@ -302,6 +301,13 @@ impl AssistantPanel {
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
         let model_summary_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let context_editor_toolbar = cx.new_view(|_| {
+            ContextEditorToolbarItem::new(
+                workspace,
+                model_selector_menu_handle.clone(),
+                model_summary_editor.clone(),
+            )
+        });
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -347,16 +353,7 @@ impl AssistantPanel {
                     .into_any_element()
             });
             pane.toolbar().update(cx, |toolbar, cx| {
-                toolbar.add_item(
-                    cx.new_view(|_| {
-                        ContextEditorToolbarItem::new(
-                            workspace,
-                            model_selector_menu_handle.clone(),
-                            model_summary_editor.clone(),
-                        )
-                    }),
-                    cx,
-                );
+                toolbar.add_item(context_editor_toolbar.clone(), cx);
                 toolbar.add_item(cx.new_view(BufferSearchBar::new), cx)
             });
             pane
@@ -365,6 +362,8 @@ impl AssistantPanel {
         let subscriptions = vec![
             cx.observe(&pane, |_, _, cx| cx.notify()),
             cx.subscribe(&pane, Self::handle_pane_event),
+            cx.subscribe(&context_editor_toolbar, Self::handle_toolbar_event),
+            cx.subscribe(&model_summary_editor, Self::handle_summary_editor_event),
             cx.observe_global::<CompletionProvider>({
                 let mut prev_settings_version = CompletionProvider::global(cx).settings_version();
                 move |this, cx| {
@@ -440,12 +439,40 @@ impl AssistantPanel {
         };
 
         if update_model_summary {
-            match self.active_context_editor(cx) {
-                Some(editor) => self.update_model_summary(&editor, cx),
-                None => self
-                    .model_summary_editor
-                    .update(cx, |editor, cx| editor.set_text("", cx)),
+            if let Some(editor) = self.active_context_editor(cx) {
+                self.show_updated_summary(&editor, cx)
             }
+        }
+    }
+
+    fn handle_summary_editor_event(
+        &mut self,
+        model_summary_editor: View<Editor>,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(event, EditorEvent::Edited { .. }) {
+            if let Some(context_editor) = self.active_context_editor(cx) {
+                let new_summary = model_summary_editor.read(cx).text(cx);
+                context_editor.update(cx, |context_editor, _| {
+                    context_editor.set_title(new_summary)
+                });
+            }
+        }
+    }
+
+    fn handle_toolbar_event(
+        &mut self,
+        _: View<ContextEditorToolbarItem>,
+        _: &ContextEditorToolbarItemEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(context_editor) = self.active_context_editor(cx) {
+            context_editor.update(cx, |context_editor, cx| {
+                context_editor.context.update(cx, |context, cx| {
+                    context.summarize(true, cx);
+                })
+            })
         }
     }
 
@@ -464,7 +491,6 @@ impl AssistantPanel {
                             .context
                             .update(cx, |context, cx| context.completion_provider_changed(cx))
                     });
-                    self.update_model_summary(&editor, cx);
                 }
                 None => {
                     self.new_context(cx);
@@ -475,8 +501,6 @@ impl AssistantPanel {
         } else if self.authentication_prompt.is_none()
             || prev_settings_version != CompletionProvider::global(cx).settings_version()
         {
-            self.model_summary_editor
-                .update(cx, |editor, cx| editor.set_text("", cx));
             self.authentication_prompt =
                 Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
                     provider.authentication_prompt(cx)
@@ -669,20 +693,28 @@ impl AssistantPanel {
                 .push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
         }
 
-        self.update_model_summary(&context_editor, cx);
+        self.show_updated_summary(&context_editor, cx);
 
         cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
-    fn update_model_summary(
+    fn show_updated_summary(
         &self,
         context_editor: &View<ContextEditor>,
-        cx: &mut ViewContext<AssistantPanel>,
+        cx: &mut ViewContext<Self>,
     ) {
-        let new_title = context_editor.read(cx).title(cx).to_string();
-        self.model_summary_editor
-            .update(cx, |editor, cx| editor.set_text(new_title, cx));
+        let new_summary = context_editor
+            .read(cx)
+            .context
+            .read(cx)
+            .summary()
+            .map(|s| s.text.clone());
+        if let Some(new_summary) = new_summary {
+            self.model_summary_editor.update(cx, |summary_editor, cx| {
+                summary_editor.set_text(new_summary, cx)
+            });
+        }
     }
 
     fn handle_context_editor_event(
@@ -693,7 +725,7 @@ impl AssistantPanel {
     ) {
         match event {
             EditorEvent::TitleChanged => {
-                self.update_model_summary(&context_editor, cx);
+                self.show_updated_summary(&context_editor, cx);
                 cx.notify()
             }
             EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
@@ -2098,6 +2130,10 @@ impl ContextEditor {
         }
     }
 
+    fn set_title(&mut self, custom_title: String) {
+        self.custom_title = Some(custom_title);
+    }
+
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
         let button_text = match self.edit_step_for_cursor(cx) {
@@ -2549,9 +2585,17 @@ impl Render for ContextEditorToolbarItem {
         let left_side = h_flex()
             .gap_2()
             .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
-            // TODO kb click listener
-            .child(IconButton::new("regenerate-context", IconName::ArrowCircle))
-            .child(self.model_summary_editor.clone());
+            .when(self.active_context_editor.is_some(), |left_side| {
+                left_side
+                    .child(
+                        IconButton::new("regenerate-context", IconName::ArrowCircle)
+                            .tooltip(|cx| Tooltip::text("Regenerate context", cx))
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
+                            })),
+                    )
+                    .child(self.model_summary_editor.clone())
+            });
         let right_side = h_flex()
             .gap_2()
             .child(ModelSelector::new(
@@ -2592,6 +2636,11 @@ impl ToolbarItemView for ContextEditorToolbarItem {
 }
 
 impl EventEmitter<ToolbarItemEvent> for ContextEditorToolbarItem {}
+
+enum ContextEditorToolbarItemEvent {
+    RegenerateSummary,
+}
+impl EventEmitter<ContextEditorToolbarItemEvent> for ContextEditorToolbarItem {}
 
 pub struct ContextHistory {
     picker: View<Picker<SavedContextPickerDelegate>>,
