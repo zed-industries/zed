@@ -162,20 +162,13 @@ impl BufferStore {
 
     fn subscribe_to_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
-            let is_local = worktree.read(cx).is_local();
-            match event {
-                worktree::Event::UpdatedEntries(changes) => {
-                    if is_local {
-                        this.update_local_worktree_buffers(&worktree, changes, cx);
+            if worktree.read(cx).is_local() {
+                match event {
+                    worktree::Event::UpdatedEntries(changes) => {
+                        this.local_worktree_entries_changed(&worktree, changes, cx);
                     }
-                }
-                worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    if is_local {
-                        this.update_local_worktree_buffers_git_repos(
-                            worktree.clone(),
-                            updated_repos,
-                            cx,
-                        )
+                    worktree::Event::UpdatedGitRepositories(updated_repos) => {
+                        this.local_worktree_git_repos_changed(worktree.clone(), updated_repos, cx)
                     }
                 }
             }
@@ -183,7 +176,7 @@ impl BufferStore {
         .detach();
     }
 
-    fn update_local_worktree_buffers(
+    fn local_worktree_entries_changed(
         &mut self,
         worktree_handle: &Model<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
@@ -191,21 +184,11 @@ impl BufferStore {
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         for (path, entry_id, _) in changes {
-            let Some((buffer_id, buffer)) = self.get_or_remove_by_path(
-                *entry_id,
-                &ProjectPath {
-                    worktree_id: snapshot.id(),
-                    path: path.clone(),
-                },
-            ) else {
-                continue;
-            };
-
-            self.file_changed(buffer_id, buffer, worktree_handle, &snapshot, cx);
+            self.local_worktree_entry_changed(*entry_id, path, worktree_handle, &snapshot, cx);
         }
     }
 
-    fn update_local_worktree_buffers_git_repos(
+    fn local_worktree_git_repos_changed(
         &mut self,
         worktree_handle: Model<Worktree>,
         changed_repos: &UpdatedGitRepositoriesSet,
@@ -269,16 +252,12 @@ impl BufferStore {
                         .chain(current_buffers)
                         .filter_map(|(buffer, path)| {
                             let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
-                            Some((buffer, path, repo_entry, local_repo_entry))
-                        })
-                        .map(|(buffer, path, repo, local_repo_entry)| {
-                            let snapshot = snapshot.clone();
-                            async move {
-                                let relative_path = repo.relativize(&snapshot, &path).ok()?;
+                            let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
+                            Some(async move {
                                 let base_text =
                                     local_repo_entry.repo().load_index_text(&relative_path);
                                 Some((buffer, base_text))
-                            }
+                            })
                         })
                         .collect::<FuturesUnordered<_>>();
 
@@ -646,31 +625,6 @@ impl BufferStore {
             .or_else(|| self.loading_remote_buffers_by_id.get(&buffer_id).cloned())
     }
 
-    fn get_or_remove_by_path(
-        &mut self,
-        entry_id: ProjectEntryId,
-        project_path: &ProjectPath,
-    ) -> Option<(BufferId, Model<Buffer>)> {
-        let buffer_id = match self.local_buffer_ids_by_entry_id.get(&entry_id) {
-            Some(&buffer_id) => buffer_id,
-            None => match self.local_buffer_ids_by_path.get(project_path) {
-                Some(&buffer_id) => buffer_id,
-                None => {
-                    return None;
-                }
-            },
-        };
-        let buffer = if let Some(buffer) = self.get(buffer_id) {
-            buffer
-        } else {
-            self.opened_buffers.remove(&buffer_id);
-            self.local_buffer_ids_by_path.remove(project_path);
-            self.local_buffer_ids_by_entry_id.remove(&entry_id);
-            return None;
-        };
-        Some((buffer_id, buffer))
-    }
-
     pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
@@ -746,17 +700,34 @@ impl BufferStore {
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
     }
 
-    fn file_changed(
+    fn local_worktree_entry_changed(
         &mut self,
-        buffer_id: BufferId,
-        buffer: Model<Buffer>,
-        worktree_handle: &Model<worktree::Worktree>,
+        entry_id: ProjectEntryId,
+        path: &Arc<Path>,
+        worktree: &Model<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
+        let project_path = ProjectPath {
+            worktree_id: snapshot.id(),
+            path: path.clone(),
+        };
+        let buffer_id = match self.local_buffer_ids_by_entry_id.get(&entry_id) {
+            Some(&buffer_id) => buffer_id,
+            None => self.local_buffer_ids_by_path.get(&project_path).copied()?,
+        };
+        let buffer = if let Some(buffer) = self.get(buffer_id) {
+            buffer
+        } else {
+            self.opened_buffers.remove(&buffer_id);
+            self.local_buffer_ids_by_path.remove(&project_path);
+            self.local_buffer_ids_by_entry_id.remove(&entry_id);
+            return None;
+        };
+
         let (old_file, new_file) = buffer.update(cx, |buffer, cx| {
             let old_file = File::from_dyn(buffer.file())?;
-            if old_file.worktree != *worktree_handle {
+            if old_file.worktree != *worktree {
                 return None;
             }
 
@@ -769,7 +740,7 @@ impl BufferStore {
                     entry_id: Some(entry.id),
                     mtime: entry.mtime,
                     path: entry.path.clone(),
-                    worktree: worktree_handle.clone(),
+                    worktree: worktree.clone(),
                     is_deleted: false,
                     is_private: entry.is_private,
                 }
@@ -779,7 +750,7 @@ impl BufferStore {
                     entry_id: Some(entry.id),
                     mtime: entry.mtime,
                     path: entry.path.clone(),
-                    worktree: worktree_handle.clone(),
+                    worktree: worktree.clone(),
                     is_deleted: false,
                     is_private: entry.is_private,
                 }
@@ -789,7 +760,7 @@ impl BufferStore {
                     entry_id: old_file.entry_id,
                     path: old_file.path.clone(),
                     mtime: old_file.mtime,
-                    worktree: worktree_handle.clone(),
+                    worktree: worktree.clone(),
                     is_deleted: true,
                     is_private: old_file.is_private,
                 }
