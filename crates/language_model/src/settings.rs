@@ -82,7 +82,7 @@ impl settings::Settings for AllLanguageModelSettings {
             if let Some(low_speed_timeout_in_seconds) = value
                 .anthropic
                 .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds.clone())
+                .and_then(|s| s.low_speed_timeout_in_seconds)
             {
                 settings.anthropic.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
@@ -95,7 +95,7 @@ impl settings::Settings for AllLanguageModelSettings {
             if let Some(low_speed_timeout_in_seconds) = value
                 .ollama
                 .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds.clone())
+                .and_then(|s| s.low_speed_timeout_in_seconds)
             {
                 settings.ollama.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
@@ -108,7 +108,7 @@ impl settings::Settings for AllLanguageModelSettings {
             if let Some(low_speed_timeout_in_seconds) = value
                 .open_ai
                 .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds.clone())
+                .and_then(|s| s.low_speed_timeout_in_seconds)
             {
                 settings.open_ai.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
