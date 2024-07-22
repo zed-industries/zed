@@ -1,3 +1,4 @@
+use crate::components::KernelListItem;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
@@ -19,12 +20,13 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
+    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
+    ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, Tooltip};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 
 pub struct Session {
     editor: WeakView<Editor>,
@@ -561,52 +563,47 @@ impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut buttons = vec![];
-
-        buttons.push(
-            ButtonLike::new("shutdown")
-                .child(Label::new("Shutdown"))
-                .style(ButtonStyle::Subtle)
-                .on_click(cx.listener(move |session, _, cx| {
-                    session.shutdown(cx);
-                })),
-        );
-
-        let status_text = match &self.kernel {
-            Kernel::RunningKernel(kernel) => {
-                buttons.push(
-                    ButtonLike::new("interrupt")
-                        .child(Label::new("Interrupt"))
+        let (status_text, interrupt_button) = match &self.kernel {
+            Kernel::RunningKernel(kernel) => (
+                kernel
+                    .kernel_info
+                    .as_ref()
+                    .map(|info| info.language_info.name.clone()),
+                Some(
+                    Button::new("interrupt", "Interrupt")
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |session, _, cx| {
                             session.interrupt(cx);
                         })),
-                );
-                let mut name = self.kernel_specification.name.clone();
-
-                if let Some(info) = &kernel.kernel_info {
-                    name.push_str(" (");
-                    name.push_str(&info.language_info.name);
-                    name.push_str(")");
-                }
-                name
-            }
-            Kernel::StartingKernel(_) => format!("{} (Starting)", self.kernel_specification.name),
-            Kernel::ErroredLaunch(err) => {
-                format!("{} (Error: {})", self.kernel_specification.name, err)
-            }
-            Kernel::ShuttingDown => format!("{} (Shutting Down)", self.kernel_specification.name),
-            Kernel::Shutdown => format!("{} (Shutdown)", self.kernel_specification.name),
+                ),
+            ),
+            Kernel::StartingKernel(_) => (Some("Starting".into()), None),
+            Kernel::ErroredLaunch(err) => (Some(format!("Error: {err}")), None),
+            Kernel::ShuttingDown => (Some("Shutting Down".into()), None),
+            Kernel::Shutdown => (Some("Shutdown".into()), None),
         };
 
-        return v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(self.kernel.dot())
-                    .child(Label::new(status_text)),
+        KernelListItem::new(self.kernel_specification.clone())
+            .status_color(match &self.kernel {
+                Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                    ExecutionState::Idle => Color::Success,
+                    ExecutionState::Busy => Color::Modified,
+                },
+                Kernel::StartingKernel(_) => Color::Modified,
+                Kernel::ErroredLaunch(_) => Color::Error,
+                Kernel::ShuttingDown => Color::Modified,
+                Kernel::Shutdown => Color::Disabled,
+            })
+            .child(Label::new(self.kernel_specification.name.clone()))
+            .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
+            .button(
+                Button::new("shutdown", "Shutdown")
+                    .style(ButtonStyle::Subtle)
+                    .disabled(self.kernel.is_shutting_down())
+                    .on_click(cx.listener(move |session, _, cx| {
+                        session.shutdown(cx);
+                    })),
             )
-            .child(h_flex().gap_2().children(buttons));
+            .buttons(interrupt_button)
     }
 }
