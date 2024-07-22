@@ -80,7 +80,7 @@ impl EditorBlock {
                 position: code_range.end,
                 height: execution_view.num_lines(cx).saturating_add(1),
                 style: BlockStyle::Sticky,
-                render: Self::create_output_area_render(execution_view.clone(), on_close.clone()),
+                render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
             };
 
@@ -111,7 +111,7 @@ impl EditorBlock {
                     self.block_id,
                     (
                         Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                        Self::create_output_area_render(
+                        Self::create_output_area_renderer(
                             self.execution_view.clone(),
                             self.on_close.clone(),
                         ),
@@ -122,7 +122,7 @@ impl EditorBlock {
             .ok();
     }
 
-    fn create_output_area_render(
+    fn create_output_area_renderer(
         execution_view: View<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
