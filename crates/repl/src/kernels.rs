@@ -18,7 +18,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use ui::{Color, Indicator};
 
 #[derive(Debug, Clone)]
 pub struct KernelSpecification {
@@ -72,15 +71,6 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
     Ok(ports)
 }
 
-#[derive(Debug)]
-pub enum Kernel {
-    RunningKernel(RunningKernel),
-    StartingKernel(Shared<Task<()>>),
-    ErroredLaunch(String),
-    ShuttingDown,
-    Shutdown,
-}
-
 #[derive(Debug, Clone)]
 pub enum KernelStatus {
     Idle,
@@ -90,6 +80,7 @@ pub enum KernelStatus {
     ShuttingDown,
     Shutdown,
 }
+
 impl KernelStatus {
     pub fn is_connected(&self) -> bool {
         match self {
@@ -127,20 +118,16 @@ impl From<&Kernel> for KernelStatus {
     }
 }
 
-impl Kernel {
-    pub fn dot(&self) -> Indicator {
-        match self {
-            Kernel::RunningKernel(kernel) => match kernel.execution_state {
-                ExecutionState::Idle => Indicator::dot().color(Color::Success),
-                ExecutionState::Busy => Indicator::dot().color(Color::Modified),
-            },
-            Kernel::StartingKernel(_) => Indicator::dot().color(Color::Modified),
-            Kernel::ErroredLaunch(_) => Indicator::dot().color(Color::Error),
-            Kernel::ShuttingDown => Indicator::dot().color(Color::Modified),
-            Kernel::Shutdown => Indicator::dot().color(Color::Disabled),
-        }
-    }
+#[derive(Debug)]
+pub enum Kernel {
+    RunningKernel(RunningKernel),
+    StartingKernel(Shared<Task<()>>),
+    ErroredLaunch(String),
+    ShuttingDown,
+    Shutdown,
+}
 
+impl Kernel {
     pub fn status(&self) -> KernelStatus {
         self.into()
     }
@@ -160,6 +147,16 @@ impl Kernel {
                 running_kernel.kernel_info = Some(kernel_info.clone());
             }
             _ => {}
+        }
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        match self {
+            Kernel::ShuttingDown => true,
+            Kernel::RunningKernel(_)
+            | Kernel::StartingKernel(_)
+            | Kernel::ErroredLaunch(_)
+            | Kernel::Shutdown => false,
         }
     }
 }
