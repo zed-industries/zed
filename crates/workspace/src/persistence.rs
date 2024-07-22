@@ -564,7 +564,6 @@ impl WorkspaceDb {
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
-                        // println!("=======> saving workspace. local_paths: {:?}, local_paths_order: {:?}", local_paths, local_paths_order);
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
                         ))?((&local_paths, workspace.id))
@@ -690,6 +689,15 @@ impl WorkspaceDb {
     }
 
     query! {
+        fn session_workspace_locations(session_id: String) -> Result<Vec<LocalPaths>> {
+            SELECT local_paths
+            FROM workspaces
+            WHERE session_id = ?1 AND dev_server_project_id IS NULL
+            ORDER BY timestamp DESC
+        }
+    }
+
+    query! {
         fn dev_server_projects() -> Result<Vec<SerializedDevServerProject>> {
             SELECT id, path, dev_server_name
             FROM dev_server_projects
@@ -759,18 +767,6 @@ impl WorkspaceDb {
                 continue;
             }
 
-            // TODO: Comment this back in if to get local paths stuff to work
-            //
-            // if location.paths().is_empty() {
-            //     result.push((
-            //         id,
-            //         open,
-            //         SerializedWorkspaceLocation::Local(location, order),
-            //     ));
-            //     continue;
-            // }
-
-            // TODO: Remove the `.is_dir()` check to get worktree-less stuff to work
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
@@ -793,35 +789,28 @@ impl WorkspaceDb {
             .recent_workspaces_on_disk()
             .await?
             .into_iter()
-            .filter_map(|(_, _, location)| {
-                println!("last_workspace. location: {:?}", location);
-                match location {
-                    SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
-                    SerializedWorkspaceLocation::DevServer(_) => None,
-                }
+            .filter_map(|(_, _, location)| match location {
+                SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
+                SerializedWorkspaceLocation::DevServer(_) => None,
             })
             .next())
     }
 
-    pub async fn last_session_workspaces(&self, last_session_id: &str) -> Result<Vec<LocalPaths>> {
-        Ok(self
-            .recent_workspaces_on_disk()
-            .await?
-            .into_iter()
-            .filter_map(|(_, session_id, location)| {
-                if session_id
-                    .as_ref()
-                    .map_or(false, |session_id| session_id == last_session_id)
-                {
-                    match location {
-                        SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>())
+    pub async fn last_session_workspace_locations(
+        &self,
+        last_session_id: &str,
+    ) -> Result<Vec<LocalPaths>> {
+        let mut result = Vec::new();
+
+        for location in self.session_workspace_locations(last_session_id.to_owned())? {
+            if location.paths().iter().all(|path| path.exists())
+                && location.paths().iter().any(|path| path.is_dir())
+            {
+                result.push(location);
+            }
+        }
+
+        Ok(result)
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {

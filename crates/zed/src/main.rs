@@ -44,7 +44,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceStore};
+use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
@@ -672,9 +672,20 @@ async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    // let restore_behaviour = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
-    let restore_behaviour = workspace::RestoreOnStartupBehaviour::LastSession;
+    let mut restore_behaviour =
+        cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
+
+    // Fallback in case we've never saved a last_session_id
     let last_session_id = app_state.session.last_session_id();
+    if last_session_id.is_none()
+        && matches!(
+            restore_behaviour,
+            workspace::RestoreOnStartupBehaviour::LastSession
+        )
+    {
+        restore_behaviour = workspace::RestoreOnStartupBehaviour::LastWorkspace;
+    }
+
     let locations = match restore_behaviour {
         workspace::RestoreOnStartupBehaviour::LastWorkspace => {
             workspace::last_opened_workspace_paths()
@@ -682,9 +693,8 @@ async fn restore_or_create_workspace(
                 .map(|location| vec![location])
         }
         workspace::RestoreOnStartupBehaviour::LastSession => {
-            // TODO: Fallback to `LastWorkspace` behaviour in case we don't have a last_session_id
             if let Some(last_session_id) = last_session_id {
-                workspace::last_session_workspaces_paths(last_session_id)
+                workspace::last_session_workspace_locations(last_session_id)
                     .await
                     .filter(|locations| !locations.is_empty())
             } else {

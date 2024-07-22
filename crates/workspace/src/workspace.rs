@@ -4917,8 +4917,10 @@ pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
-pub async fn last_session_workspaces_paths(last_session_id: &str) -> Option<Vec<LocalPaths>> {
-    DB.last_session_workspaces(last_session_id).await.log_err()
+pub async fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
+    DB.last_session_workspace_locations(last_session_id)
+        .await
+        .log_err()
 }
 
 actions!(collab, [OpenChannelNotes]);
