@@ -48,27 +48,6 @@ pub struct OpenAiSettingsContent {
     available_models: Option<Vec<open_ai::Model>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(tag = "name", rename_all = "snake_case")]
-pub enum LanguageModelSettingsContent {
-    #[serde(rename = "open_ai")]
-    OpenAi {
-        api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
-        available_models: Option<Vec<open_ai::Model>>,
-    },
-    #[serde(rename = "anthropic")]
-    Anthropic {
-        api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
-    },
-    #[serde(rename = "ollama")]
-    Ollama {
-        api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
-    },
-}
-
 impl settings::Settings for AllLanguageModelSettings {
     const KEY: Option<&'static str> = Some("language_models");
 
