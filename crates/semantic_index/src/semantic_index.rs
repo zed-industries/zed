@@ -5,6 +5,7 @@ mod project_index_debug_view;
 use anyhow::{anyhow, Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap, HashSet};
+use completion::CompletionProvider;
 pub use embedding::*;
 use fs::Fs;
 use futures::{future::Shared, stream::StreamExt, FutureExt};
@@ -36,6 +37,7 @@ pub use project_index_debug_view::ProjectIndexDebugView;
 
 pub struct SemanticIndex {
     embedding_provider: Arc<dyn EmbeddingProvider>,
+    summary_provider: Arc<CompletionProvider>,
     db_connection: heed::Env,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
@@ -46,6 +48,7 @@ impl SemanticIndex {
     pub async fn new(
         db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
+        summary_provider: Arc<CompletionProvider>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         let db_connection = cx
@@ -65,6 +68,7 @@ impl SemanticIndex {
         Ok(SemanticIndex {
             db_connection,
             embedding_provider,
+            summary_provider,
             project_indices: HashMap::default(),
         })
     }
@@ -94,6 +98,7 @@ impl SemanticIndex {
                         project,
                         self.db_connection.clone(),
                         self.embedding_provider.clone(),
+                        self.summary_provider.clone(),
                         cx,
                     )
                 })
@@ -111,6 +116,7 @@ pub struct ProjectIndex {
     last_status: Status,
     status_tx: channel::Sender<()>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
+    summary_provider: Arc<CompletionProvider>,
     _maintain_status: Task<()>,
     _subscription: Subscription,
 }
@@ -130,7 +136,7 @@ impl ProjectIndex {
         project: Model<Project>,
         db_connection: heed::Env,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        summary_provider: Arc<dyn SummaryProvider>,
+        summary_provider: Arc<CompletionProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
@@ -145,6 +151,7 @@ impl ProjectIndex {
             status_tx,
             last_status: Status::Idle,
             embedding_provider,
+            summary_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
             _maintain_status: cx.spawn(|this, mut cx| async move {
                 while status_rx.next().await.is_some() {
@@ -215,6 +222,7 @@ impl ProjectIndex {
                     self.fs.clone(),
                     self.status_tx.clone(),
                     self.embedding_provider.clone(),
+                    self.summary_provider.clone(),
                     cx,
                 );
 
@@ -489,7 +497,7 @@ struct WorktreeIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    completion_provider: Arc<dyn CompletionProvider>,
+    summary_provider: Arc<CompletionProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
     _index_entries: Task<Result<()>>,
     _subscription: Subscription,
@@ -503,6 +511,7 @@ impl WorktreeIndex {
         fs: Arc<dyn Fs>,
         status_tx: channel::Sender<()>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
+        summary_provider: Arc<CompletionProvider>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
@@ -529,6 +538,7 @@ impl WorktreeIndex {
                     language_registry,
                     fs,
                     embedding_provider,
+                    summary_provider,
                     cx,
                 )
             })
@@ -544,6 +554,7 @@ impl WorktreeIndex {
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
+        summary_provider: Arc<CompletionProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (updated_entries_tx, updated_entries_rx) = channel::unbounded();
@@ -560,6 +571,7 @@ impl WorktreeIndex {
             language_registry,
             fs,
             embedding_provider,
+            summary_provider,
             entry_ids_being_indexed: Arc::new(IndexingEntrySet::new(status)),
             _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
             _subscription,

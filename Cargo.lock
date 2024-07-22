@@ -1701,6 +1701,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9ec96fe9a81b5e365f9db71fe00edc4fe4ca2cc7dcb7861f0603012a7caa210"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2763,6 +2776,12 @@ dependencies = [
  "once_cell",
  "tiny-keccak",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7144d30dcf0fafbce74250a3963025d8d52177934239851c917d29f1df280c2"
 
 [[package]]
 name = "convert_case"
@@ -10518,6 +10537,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "summaries"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "client",
+ "collections",
+ "completion",
+ "ctor",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "ollama",
+ "open_ai",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "strum",
+ "text",
+ "theme",
+ "tiktoken-rs",
+ "ui",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "supermaven"
 version = "0.1.0"
 dependencies = [
@@ -13753,6 +13809,7 @@ dependencies = [
  "audio",
  "auto_update",
  "backtrace",
+ "blake3",
  "breadcrumbs",
  "call",
  "channel",
