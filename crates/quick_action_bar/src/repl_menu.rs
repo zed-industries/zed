@@ -40,14 +40,7 @@ impl QuickActionBar {
         }
 
         let workspace = self.workspace.upgrade()?.read(cx);
-
-        let (editor, repl_panel) = if let (Some(editor), Some(repl_panel)) =
-            (self.active_editor(), workspace.panel::<RuntimePanel>(cx))
-        {
-            (editor, repl_panel)
-        } else {
-            return None;
-        };
+        let editor = self.active_editor()?;
 
         let has_nonempty_selection = {
             editor.update(cx, |this, cx| {
@@ -62,10 +55,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = repl_panel.update(cx, |repl_panel, cx| {
-            repl_panel.session(editor.downgrade(), cx)
-        });
-
+        let session = RuntimePanel::session(editor.downgrade(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -84,18 +74,15 @@ impl QuickActionBar {
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
-        let panel_clone = repl_panel.clone();
-        let editor_clone = editor.downgrade();
+        let editor = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
-                let panel_clone = panel_clone.clone();
-                let editor_clone = editor_clone.clone();
+                let editor = editor.clone();
                 let session = session.clone();
                 ContextMenu::build(cx, move |menu, cx| {
                     let menu_state = session_state(session, cx);
                     let status = menu_state.status;
-                    let editor_clone = editor_clone.clone();
-                    let panel_clone = panel_clone.clone();
+                    let editor = editor.clone();
 
                     menu.when_else(
                         status.is_connected(),
@@ -150,12 +137,10 @@ impl QuickActionBar {
                             .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.run(editor_clone.clone(), cx).log_err();
+                                editor.update(cx, |this, cx| {
+                                    RuntimePanel::run(editor.clone(), cx).log_err();
                                 });
                             }
                         },
@@ -169,12 +154,10 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.interrupt(editor_clone, cx);
+                                editor.update(cx, |this, cx| {
+                                    RuntimePanel::interrupt(editor.clone(), cx);
                                 });
                             }
                         },
@@ -188,12 +171,10 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.clear_outputs(editor_clone, cx);
+                                editor.update(cx, |this, cx| {
+                                    RuntimePanel::clear_outputs(editor.clone(), cx);
                                 });
                             }
                         },
@@ -216,12 +197,10 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.shutdown(editor_clone, cx);
+                                editor.update(cx, |this, cx| {
+                                    RuntimePanel::shutdown(editor.clone(), cx);
                                 });
                             }
                         },

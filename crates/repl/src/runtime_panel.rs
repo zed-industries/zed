@@ -17,14 +17,20 @@ use settings::Settings as _;
 use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
-use workspace::{
-    dock::{Panel, PanelEvent},
-    Workspace,
-};
+use workspace::item::ItemEvent;
+use workspace::WorkspaceId;
+use workspace::{item::Item, Workspace};
 
 actions!(
     repl,
-    [Run, ClearOutputs, Interrupt, Shutdown, RefreshKernelspecs]
+    [
+        Run,
+        ClearOutputs,
+        Sessions,
+        Interrupt,
+        Shutdown,
+        RefreshKernelspecs
+    ]
 );
 actions!(repl_panel, [ToggleFocus]);
 
@@ -38,8 +44,19 @@ pub enum SessionSupport {
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
-                workspace.toggle_panel_focus::<RuntimePanel>(cx);
+            workspace.register_action(|workspace, _: &Sessions, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<RuntimePanel>());
+
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, cx);
+                } else {
+                    let extensions_page = RuntimePanel::new(workspace, cx);
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
+                }
             });
 
             workspace.register_action(|_workspace, _: &RefreshKernelspecs, cx| {
@@ -64,18 +81,11 @@ pub fn init(cx: &mut AppContext) {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
-                    let Some(workspace) = editor.workspace() else {
-                        return;
-                    };
-                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
-                        return;
-                    };
+
                     let weak_editor = cx.view().downgrade();
-                    panel.update(cx, |_, cx| {
-                        cx.defer(|panel, cx| {
-                            panel.run(weak_editor, cx).log_err();
-                        });
-                    })
+                    cx.defer(|panel, cx| {
+                        RuntimePanel::run(weak_editor, cx).log_err();
+                    });
                 },
             ))
             .detach();
@@ -86,18 +96,11 @@ pub fn init(cx: &mut AppContext) {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
-                    let Some(workspace) = editor.workspace() else {
-                        return;
-                    };
-                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
-                        return;
-                    };
+
                     let weak_editor = cx.view().downgrade();
-                    panel.update(cx, |_, cx| {
-                        cx.defer(|panel, cx| {
-                            panel.clear_outputs(weak_editor, cx);
-                        });
-                    })
+                    cx.defer(|panel, cx| {
+                        RuntimePanel::clear_outputs(weak_editor, cx);
+                    });
                 },
             ))
             .detach();
@@ -108,18 +111,11 @@ pub fn init(cx: &mut AppContext) {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
-                    let Some(workspace) = editor.workspace() else {
-                        return;
-                    };
-                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
-                        return;
-                    };
+
                     let weak_editor = cx.view().downgrade();
-                    panel.update(cx, |_, cx| {
-                        cx.defer(|panel, cx| {
-                            panel.interrupt(weak_editor, cx);
-                        });
-                    })
+                    cx.defer(|panel, cx| {
+                        RuntimePanel::interrupt(weak_editor, cx);
+                    });
                 },
             ))
             .detach();
@@ -130,18 +126,11 @@ pub fn init(cx: &mut AppContext) {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
-                    let Some(workspace) = editor.workspace() else {
-                        return;
-                    };
-                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
-                        return;
-                    };
+
                     let weak_editor = cx.view().downgrade();
-                    panel.update(cx, |_, cx| {
-                        cx.defer(|panel, cx| {
-                            panel.shutdown(weak_editor, cx);
-                        });
-                    })
+                    cx.defer(|panel, cx| {
+                        RuntimePanel::shutdown(weak_editor, cx);
+                    });
                 },
             ))
             .detach();
@@ -157,6 +146,20 @@ pub struct RuntimePanel {
 }
 
 impl RuntimePanel {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
+            let focus_handle = cx.focus_handle();
+            let fs = workspace.app_state().fs.clone();
+
+            Self {
+                fs,
+                focus_handle,
+                width: None,
+                _subscriptions: Vec::new(),
+            }
+        })
+    }
+
     pub fn load(
         workspace: WeakView<Workspace>,
         cx: AsyncWindowContext,
@@ -204,7 +207,7 @@ impl RuntimePanel {
 
     fn snippet(
         editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
         let editor = editor.upgrade()?;
         let editor = editor.read(cx);
@@ -247,16 +250,15 @@ impl RuntimePanel {
         Some((selected_text, start_language.clone(), anchor_range))
     }
 
-    fn language(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Option<Arc<Language>> {
+    fn language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
         let editor = editor.upgrade()?;
         let selection = editor.read(cx).selections.newest::<usize>(cx);
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
         buffer.language_at(selection.head()).cloned()
     }
 
-    pub fn run(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Result<()> {
+    pub fn run(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) -> Result<()> {
         let store = ReplStore::global(cx);
-
         if !store.read(cx).is_enabled() {
             return Ok(());
         }
@@ -274,11 +276,11 @@ impl RuntimePanel {
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
+        let fs = store.read(cx).fs().clone();
         let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
             session
         } else {
-            let session =
-                cx.new_view(|cx| Session::new(editor, self.fs.clone(), kernel_specification, cx));
+            let session = cx.new_view(|cx| Session::new(editor, fs, kernel_specification, cx));
             cx.notify();
 
             let subscription = cx.subscribe(&session, {
@@ -308,11 +310,7 @@ impl RuntimePanel {
         anyhow::Ok(())
     }
 
-    pub fn session(
-        &mut self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> SessionSupport {
+    pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport {
         let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
 
@@ -336,7 +334,7 @@ impl RuntimePanel {
         }
     }
 
-    pub fn clear_outputs(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
         let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
         if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
@@ -347,7 +345,7 @@ impl RuntimePanel {
         }
     }
 
-    pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn interrupt(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
         let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
         if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
@@ -358,7 +356,7 @@ impl RuntimePanel {
         }
     }
 
-    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn shutdown(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
         let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
         if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
@@ -370,72 +368,39 @@ impl RuntimePanel {
     }
 }
 
-impl Panel for RuntimePanel {
-    fn persistent_name() -> &'static str {
-        "RuntimePanel"
-    }
-
-    fn position(&self, cx: &ui::WindowContext) -> workspace::dock::DockPosition {
-        match JupyterSettings::get_global(cx).dock {
-            JupyterDockPosition::Left => workspace::dock::DockPosition::Left,
-            JupyterDockPosition::Right => workspace::dock::DockPosition::Right,
-            JupyterDockPosition::Bottom => workspace::dock::DockPosition::Bottom,
-        }
-    }
-
-    fn position_is_valid(&self, _position: workspace::dock::DockPosition) -> bool {
-        true
-    }
-
-    fn set_position(
-        &mut self,
-        position: workspace::dock::DockPosition,
-        cx: &mut ViewContext<Self>,
-    ) {
-        settings::update_settings_file::<JupyterSettings>(self.fs.clone(), cx, move |settings| {
-            let dock = match position {
-                workspace::dock::DockPosition::Left => JupyterDockPosition::Left,
-                workspace::dock::DockPosition::Right => JupyterDockPosition::Right,
-                workspace::dock::DockPosition::Bottom => JupyterDockPosition::Bottom,
-            };
-            settings.set_dock(dock);
-        })
-    }
-
-    fn size(&self, cx: &ui::WindowContext) -> Pixels {
-        let settings = JupyterSettings::get_global(cx);
-
-        self.width.unwrap_or(settings.default_width)
-    }
-
-    fn set_size(&mut self, size: Option<ui::Pixels>, _cx: &mut ViewContext<Self>) {
-        self.width = size;
-    }
-
-    fn icon(&self, cx: &ui::WindowContext) -> Option<ui::IconName> {
-        let store = ReplStore::global(cx);
-
-        if !store.read(cx).is_enabled() {
-            return None;
-        }
-
-        Some(IconName::Code)
-    }
-
-    fn icon_tooltip(&self, _cx: &ui::WindowContext) -> Option<&'static str> {
-        Some("Runtime Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(ToggleFocus)
-    }
-}
-
-impl EventEmitter<PanelEvent> for RuntimePanel {}
+impl EventEmitter<ItemEvent> for RuntimePanel {}
 
 impl FocusableView for RuntimePanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Item for RuntimePanel {
+    type Event = ItemEvent;
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("REPL Sessions".into())
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("repl sessions")
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        _: &mut ViewContext<Self>,
+    ) -> Option<View<Self>> {
+        None
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+        f(*event)
     }
 }
 

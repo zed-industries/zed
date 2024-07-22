@@ -49,6 +49,10 @@ impl ReplStore {
         }
     }
 
+    pub fn fs(&self) -> &Arc<dyn Fs> {
+        &self.fs
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
