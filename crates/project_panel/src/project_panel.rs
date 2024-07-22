@@ -1311,21 +1311,43 @@ impl ProjectPanel {
 
             for clipboard_entry in clipboard_entries.items() {
                 if clipboard_entry.worktree_id != worktree_id {
-                    return None;
-                }
-                let new_path =
-                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
-                if clipboard_entries.is_cut() {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.rename_entry(clipboard_entry.entry_id, new_path, cx)
-                        })
-                        .detach_and_log_err(cx);
+                    let clipboard_worktree = self
+                        .project
+                        .read(cx)
+                        .worktree_for_id(clipboard_entry.worktree_id, cx)?;
+                    let clip_entry = clipboard_worktree
+                        .read(cx)
+                        .entry_for_id(clipboard_entry.entry_id)?;
+                    let path = clipboard_worktree
+                        .read(cx)
+                        .absolutize(&clip_entry.path)
+                        .ok()?;
+                    cx.spawn(|project_panel, mut cx| async move {
+                        project_panel
+                            .update(&mut cx, |project_panel, cx| {
+                                project_panel.drop_external_files(&vec![path], entry.id, cx);
+                            })
+                            .ok()
+                    })
+                    .detach();
                 } else {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clipboard_entry.entry_id, new_path, cx)
-                    });
-                    tasks.push(task);
+                    let new_path = self.create_paste_path(
+                        clipboard_entry,
+                        self.selected_entry_handle(cx)?,
+                        cx,
+                    )?;
+                    if clipboard_entries.is_cut() {
+                        self.project
+                            .update(cx, |project, cx| {
+                                project.rename_entry(clipboard_entry.entry_id, new_path, cx)
+                            })
+                            .detach_and_log_err(cx);
+                    } else {
+                        let task = self.project.update(cx, |project, cx| {
+                            project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                        });
+                        tasks.push(task);
+                    }
                 }
             }
 
