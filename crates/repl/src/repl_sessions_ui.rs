@@ -32,12 +32,12 @@ pub fn init(cx: &mut AppContext) {
                     .active_pane()
                     .read(cx)
                     .items()
-                    .find_map(|item| item.downcast::<RuntimePanel>());
+                    .find_map(|item| item.downcast::<ReplSessionsPage>());
 
                 if let Some(existing) = existing {
                     workspace.activate_item(&existing, true, true, cx);
                 } else {
-                    let extensions_page = RuntimePanel::new(cx);
+                    let extensions_page = ReplSessionsPage::new(cx);
                     workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             });
@@ -114,12 +114,12 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub struct RuntimePanel {
+pub struct ReplSessionsPage {
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
-impl RuntimePanel {
+impl ReplSessionsPage {
     pub fn new(cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -137,15 +137,15 @@ impl RuntimePanel {
     }
 }
 
-impl EventEmitter<ItemEvent> for RuntimePanel {}
+impl EventEmitter<ItemEvent> for ReplSessionsPage {}
 
-impl FocusableView for RuntimePanel {
+impl FocusableView for ReplSessionsPage {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Item for RuntimePanel {
+impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
@@ -173,7 +173,7 @@ impl Item for RuntimePanel {
     }
 }
 
-impl Render for RuntimePanel {
+impl Render for ReplSessionsPage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
