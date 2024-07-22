@@ -8,7 +8,6 @@ struct FeatureFlags {
 
 impl FeatureFlags {
     fn has_flag(&self, flag: &str) -> bool {
-        dbg!(&self.staff, &self.flags.iter().map(|f| f.as_str()));
         self.staff || self.flags.iter().any(|f| f.as_str() == flag)
     }
 }
