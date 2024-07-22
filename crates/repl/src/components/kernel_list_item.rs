@@ -4,14 +4,14 @@ use ui::{prelude::*, Indicator, ListItem};
 use crate::KernelSpecification;
 
 #[derive(IntoElement)]
-pub struct SessionEntry {
+pub struct KernelListItem {
     kernel_specification: KernelSpecification,
     status_color: Color,
     buttons: Vec<AnyElement>,
     children: Vec<AnyElement>,
 }
 
-impl SessionEntry {
+impl KernelListItem {
     pub fn new(kernel_specification: KernelSpecification) -> Self {
         Self {
             kernel_specification,
@@ -26,7 +26,6 @@ impl SessionEntry {
         self
     }
 
-    #[allow(unused)]
     pub fn button(mut self, button: impl IntoElement) -> Self {
         self.buttons.push(button.into_any_element());
         self
@@ -39,13 +38,13 @@ impl SessionEntry {
     }
 }
 
-impl ParentElement for SessionEntry {
+impl ParentElement for KernelListItem {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements);
     }
 }
 
-impl RenderOnce for SessionEntry {
+impl RenderOnce for KernelListItem {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         ListItem::new(SharedString::from(self.kernel_specification.name.clone()))
             .selectable(false)

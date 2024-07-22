@@ -9,7 +9,7 @@ use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
-use crate::components::SessionEntry;
+use crate::components::KernelListItem;
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
 
@@ -221,7 +221,7 @@ impl Render for ReplSessionsPage {
                 )
                 .child(Label::new("Kernels available").size(LabelSize::Large))
                 .children(kernel_specifications.into_iter().map(|spec| {
-                    SessionEntry::new(spec.clone()).child(
+                    KernelListItem::new(spec.clone()).child(
                         h_flex()
                             .gap_2()
                             .child(Label::new(spec.name))

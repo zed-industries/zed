@@ -1,4 +1,4 @@
-use crate::components::SessionEntry;
+use crate::components::KernelListItem;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
@@ -583,7 +583,7 @@ impl Render for Session {
             Kernel::Shutdown => (Some("Shutdown".into()), None),
         };
 
-        SessionEntry::new(self.kernel_specification.clone())
+        KernelListItem::new(self.kernel_specification.clone())
             .status_color(match &self.kernel {
                 Kernel::RunningKernel(kernel) => match kernel.execution_state {
                     ExecutionState::Idle => Color::Success,

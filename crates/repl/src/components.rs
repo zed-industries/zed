@@ -1,3 +1,3 @@
-mod session_entry;
+mod kernel_list_item;
 
-pub use session_entry::*;
+pub use kernel_list_item::*;
