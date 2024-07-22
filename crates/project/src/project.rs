@@ -1970,19 +1970,12 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let project_path = path.into();
-        let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
-            worktree
-        } else {
-            return Task::ready(Err(anyhow!("no such worktree")));
-        };
-
         if self.is_remote() && self.is_disconnected() {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(project_path, worktree, cx)
+            buffer_store.open_buffer(path.into(), cx)
         })
     }
 
@@ -2116,11 +2109,8 @@ impl Project {
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("worktree does not exist")));
-        };
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.save_buffer_as(buffer.clone(), path, worktree, cx)
+            buffer_store.save_buffer_as(buffer.clone(), path, cx)
         })
     }
 
@@ -8999,20 +8989,12 @@ impl Project {
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
-        let (buffer_store, worktree, project_id) = this.update(&mut cx, |this, cx| {
+        let (buffer_store, project_id) = this.update(&mut cx, |this, _| {
             let buffer_store = this.buffer_store.clone();
             let project_id = this.remote_id().context("not connected")?;
-            let worktree = if let Some(path) = &envelope.payload.new_path {
-                Some(
-                    this.worktree_for_id(WorktreeId::from_proto(path.worktree_id), cx)
-                        .context("worktree does not exist")?,
-                )
-            } else {
-                None
-            };
-            anyhow::Ok((buffer_store, worktree, project_id))
+            anyhow::Ok((buffer_store, project_id))
         })??;
-        BufferStore::handle_save_buffer(buffer_store, project_id, worktree, envelope, cx).await
+        BufferStore::handle_save_buffer(buffer_store, project_id, envelope, cx).await
     }
 
     async fn handle_reload_buffers(

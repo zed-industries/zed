@@ -2,7 +2,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectPath,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
 use gpui::{
@@ -103,13 +103,20 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
-        worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let existing_buffer = self.get_by_path(&project_path, cx);
         if let Some(existing_buffer) = existing_buffer {
             return Task::ready(Ok(existing_buffer));
         }
+
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
 
         let loading_watch = match self.loading_buffers_by_path.entry(project_path.clone()) {
             // If the given path is already being loaded, then wait for that existing
@@ -184,11 +191,17 @@ impl BufferStore {
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         for (path, entry_id, _) in changes {
-            if let Some(buffer) =
-                self.file_changed(path.clone(), *entry_id, worktree_handle, &snapshot, cx)
-            {
-                cx.emit(BufferStoreEvent::LocalBufferUpdated { buffer })
-            }
+            let Some((buffer_id, buffer)) = self.get_or_remove_by_path(
+                *entry_id,
+                &ProjectPath {
+                    worktree_id: snapshot.id(),
+                    path: path.clone(),
+                },
+            ) else {
+                continue;
+            };
+
+            self.file_changed(buffer_id, buffer, worktree_handle, &snapshot, cx);
         }
     }
 
@@ -430,9 +443,16 @@ impl BufferStore {
         &mut self,
         buffer: Model<Buffer>,
         path: ProjectPath,
-        worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(path.worktree_id, cx)
+        else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
         let old_file = File::from_dyn(buffer.read(cx).file())
             .cloned()
             .map(Arc::new);
@@ -726,23 +746,15 @@ impl BufferStore {
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
     }
 
-    pub fn file_changed(
+    fn file_changed(
         &mut self,
-        path: Arc<Path>,
-        entry_id: ProjectEntryId,
+        buffer_id: BufferId,
+        buffer: Model<Buffer>,
         worktree_handle: &Model<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Buffer>> {
-        let (buffer_id, buffer) = self.get_or_remove_by_path(
-            entry_id,
-            &ProjectPath {
-                worktree_id: snapshot.id(),
-                path,
-            },
-        )?;
-
-        let result = buffer.update(cx, |buffer, cx| {
+    ) -> Option<()> {
+        let (old_file, new_file) = buffer.update(cx, |buffer, cx| {
             let old_file = File::from_dyn(buffer.file())?;
             if old_file.worktree != *worktree_handle {
                 return None;
@@ -790,40 +802,39 @@ impl BufferStore {
             let old_file = Arc::new(old_file.clone());
             let new_file = Arc::new(new_file);
             buffer.file_updated(new_file.clone(), cx);
-            Some((cx.handle(), old_file, new_file))
-        });
+            Some((old_file, new_file))
+        })?;
 
-        if let Some((buffer, old_file, new_file)) = &result {
-            if new_file.path != old_file.path {
-                self.local_buffer_ids_by_path.remove(&ProjectPath {
-                    path: old_file.path.clone(),
-                    worktree_id: old_file.worktree_id(cx),
-                });
-                self.local_buffer_ids_by_path.insert(
-                    ProjectPath {
-                        worktree_id: new_file.worktree_id(cx),
-                        path: new_file.path.clone(),
-                    },
-                    buffer_id,
-                );
-                cx.emit(BufferStoreEvent::BufferChangedFilePath {
-                    buffer: buffer.clone(),
-                    old_file: Some(old_file.clone()),
-                });
+        if new_file.path != old_file.path {
+            self.local_buffer_ids_by_path.remove(&ProjectPath {
+                path: old_file.path.clone(),
+                worktree_id: old_file.worktree_id(cx),
+            });
+            self.local_buffer_ids_by_path.insert(
+                ProjectPath {
+                    worktree_id: new_file.worktree_id(cx),
+                    path: new_file.path.clone(),
+                },
+                buffer_id,
+            );
+            cx.emit(BufferStoreEvent::BufferChangedFilePath {
+                buffer: buffer.clone(),
+                old_file: Some(old_file.clone()),
+            });
+        }
+
+        if new_file.entry_id != old_file.entry_id {
+            if let Some(entry_id) = old_file.entry_id {
+                self.local_buffer_ids_by_entry_id.remove(&entry_id);
             }
-
-            if new_file.entry_id != old_file.entry_id {
-                if let Some(entry_id) = old_file.entry_id {
-                    self.local_buffer_ids_by_entry_id.remove(&entry_id);
-                }
-                if let Some(entry_id) = new_file.entry_id {
-                    self.local_buffer_ids_by_entry_id
-                        .insert(entry_id, buffer_id);
-                }
+            if let Some(entry_id) = new_file.entry_id {
+                self.local_buffer_ids_by_entry_id
+                    .insert(entry_id, buffer_id);
             }
         }
 
-        result.map(|(buffer, _, _)| buffer)
+        cx.emit(BufferStoreEvent::LocalBufferUpdated { buffer });
+        None
     }
 
     pub fn buffer_changed_file(
@@ -1027,7 +1038,6 @@ impl BufferStore {
     pub async fn handle_save_buffer(
         this: Model<Self>,
         project_id: u64,
-        worktree: Option<Model<Worktree>>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
@@ -1041,10 +1051,9 @@ impl BufferStore {
         let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
-            let worktree = worktree.context("no such worktree")?;
             let new_path = ProjectPath::from_proto(new_path);
             this.update(&mut cx, |this, cx| {
-                this.save_buffer_as(buffer.clone(), new_path, worktree, cx)
+                this.save_buffer_as(buffer.clone(), new_path, cx)
             })?
             .await?;
         } else {

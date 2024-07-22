@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use project::{
@@ -58,10 +58,6 @@ impl HeadlessProject {
         }
     }
 
-    fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
-        self.worktree_store.read(cx).worktree_for_id(id, cx)
-    }
-
     pub async fn handle_add_worktree(
         this: Model<Self>,
         message: TypedEnvelope<proto::AddWorktree>,
@@ -113,19 +109,8 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
-        let (buffer_store, worktree) = this.update(&mut cx, |this, cx| {
-            let buffer_store = this.buffer_store.clone();
-            let worktree = if let Some(path) = &envelope.payload.new_path {
-                Some(
-                    this.worktree_for_id(WorktreeId::from_proto(path.worktree_id), cx)
-                        .context("worktree does not exist")?,
-                )
-            } else {
-                None
-            };
-            anyhow::Ok((buffer_store, worktree))
-        })??;
-        BufferStore::handle_save_buffer(buffer_store, PROJECT_ID, worktree, envelope, cx).await
+        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_save_buffer(buffer_store, PROJECT_ID, envelope, cx).await
     }
 
     pub async fn handle_open_buffer_by_path(
@@ -135,9 +120,6 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let (buffer_store, buffer, session) = this.update(&mut cx, |this, cx| {
-            let worktree = this
-                .worktree_for_id(worktree_id, cx)
-                .context("no such worktree")?;
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(
@@ -145,7 +127,6 @@ impl HeadlessProject {
                         worktree_id,
                         path: PathBuf::from(message.payload.path).into(),
                     },
-                    worktree,
                     cx,
                 )
             });
