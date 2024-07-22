@@ -715,8 +715,8 @@
     "JSONC": [
       "**/.zed/**/*.json",
       "**/zed/**/*.json",
-      "tsconfig.json",
-      "**/Zed/**/*.json"
+      "**/Zed/**/*.json",
+      "tsconfig.json"
     ]
   },
   // The extensions that Zed should automatically install on startup.
