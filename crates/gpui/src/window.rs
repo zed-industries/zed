@@ -4,8 +4,8 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
@@ -945,10 +945,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(handle.id);
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
+        self.clear_pending_keystrokes();
         self.refresh();
     }
 
@@ -1418,14 +1415,6 @@ impl<'a> WindowContext<'a> {
 
         self.draw_roots();
         self.window.dirty_views.clear();
-
-        self.window
-            .next_frame
-            .dispatch_tree
-            .preserve_pending_keystrokes(
-                &mut self.window.rendered_frame.dispatch_tree,
-                self.window.focus,
-            );
         self.window.next_frame.window_active = self.window.active.get();
 
         // Register requested input handler with the platform window.
@@ -3282,13 +3271,12 @@ impl<'a> WindowContext<'a> {
             keystroke,
             &dispatch_path,
         );
-        dbg!(&match_result);
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay)
         }
 
-        if !match_result.next_input.is_empty() {
-            currently_pending.keystrokes = match_result.next_input;
+        if !match_result.pending.is_empty() {
+            currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.window.focus;
             currently_pending.timer = Some(self.spawn(|mut cx| async move {
                 cx.background_executor.timer(Duration::from_secs(1)).await;
@@ -3319,6 +3307,9 @@ impl<'a> WindowContext<'a> {
                 .log_err();
             }));
             self.window.pending_input = Some(currently_pending);
+            self.pending_input_changed();
+            self.propagate_event = false;
+            return;
         }
 
         self.pending_input_changed();
@@ -3411,10 +3402,11 @@ impl<'a> WindowContext<'a> {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .has_pending_keystrokes()
+        self.window.pending_input.is_some()
+    }
+
+    fn clear_pending_keystrokes(&mut self) {
+        self.window.pending_input.take();
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.

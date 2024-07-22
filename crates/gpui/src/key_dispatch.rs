@@ -51,7 +51,7 @@
 ///
 use crate::{
     Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, KeystrokeMatcher, ModifiersChangedEvent, WindowContext,
+    Keystroke, ModifiersChangedEvent, WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -73,7 +73,6 @@ pub(crate) struct DispatchTree {
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
-    keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -119,7 +118,7 @@ pub(crate) struct Replay {
 
 #[derive(Default, Debug)]
 pub(crate) struct MatchResult {
-    pub(crate) next_input: SmallVec<[Keystroke; 1]>,
+    pub(crate) pending: SmallVec<[Keystroke; 1]>,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
 }
@@ -142,7 +141,6 @@ impl DispatchTree {
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
-            keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -155,7 +153,6 @@ impl DispatchTree {
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
-        self.keystroke_matchers.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -323,33 +320,6 @@ impl DispatchTree {
         self.nodes.truncate(index);
     }
 
-    pub fn clear_pending_keystrokes(&mut self) {
-        self.keystroke_matchers.clear();
-    }
-
-    /// Preserve keystroke matchers from previous frames to support multi-stroke
-    /// bindings across multiple frames.
-    pub fn preserve_pending_keystrokes(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
-        if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
-            let dispatch_path = self.dispatch_path(node_id);
-
-            self.context_stack.clear();
-            for node_id in dispatch_path {
-                let node = self.node(node_id);
-                if let Some(context) = node.context.clone() {
-                    self.context_stack.push(context);
-                }
-
-                if let Some((context_stack, matcher)) = old_tree
-                    .keystroke_matchers
-                    .remove_entry(self.context_stack.as_slice())
-                {
-                    self.keystroke_matchers.insert(context_stack, matcher);
-                }
-            }
-        }
-    }
-
     pub fn on_key_event(&mut self, listener: KeyListener) {
         self.active_node().key_listeners.push(listener);
     }
@@ -449,7 +419,6 @@ impl DispatchTree {
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        dbg!(&input);
         let keymap = self.keymap.borrow();
 
         // We want the following behaviour:
@@ -477,7 +446,7 @@ impl DispatchTree {
         let mut first_pending = None;
 
         for (binding, pending) in possibilities {
-            for depth in (0..context_stack.len()).rev() {
+            for depth in (0..=context_stack.len()).rev() {
                 if keymap.binding_enabled(binding, &context_stack[0..depth]) {
                     if first_pending.is_none() {
                         first_pending = Some(pending);
@@ -508,11 +477,11 @@ impl DispatchTree {
     }
 
     /// dispatch_key processes the keystroke
-    /// input should be set to the value of `next_input` from the previous call to dispatch_key.
+    /// input should be set to the value of `pending` from the previous call to dispatch_key.
     /// In the common case, input will be empty, and the MatchResult will return just actions to do.
     /// If input is not empty, then either:
     /// - input + keystroke matches a set of bindings, which will be returned.
-    /// - input + keystroke is still a prefix, so only next_input will be returned.
+    /// - input + keystroke is still a prefix, so only pending
     /// - input + keystroke did not match anything. In that case, the caller will need to replay
     ///   what the original input should have done before handling any of the returned actions.
     pub fn dispatch_key(
@@ -521,13 +490,13 @@ impl DispatchTree {
         keystroke: Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> MatchResult {
+        println!("---------- {:?} {:?} ---------------", input, keystroke);
         input.push(keystroke.clone());
         let (bindings, pending) = self.match_input(&input, dispatch_path);
-        dbg!(&bindings, pending);
 
         if pending {
             return MatchResult {
-                next_input: input,
+                pending: input,
                 ..Default::default()
             };
         }
@@ -545,36 +514,28 @@ impl DispatchTree {
         }
 
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
-        let matched = false;
 
         // At this point we know that we have multiple keys in flight, and the
         // full set matches nothing.
         // Try matching with prefixes of the full set, and if that doesn't work,
         // replay the first input key, and recurse.
 
-        for end in (1..input.len()).rev() {
-            let (bindings, _) = self.match_input(&input[0..end], dispatch_path);
+        for last in (0..input.len()).rev() {
+            let (bindings, _) = self.match_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
-                    keystroke: input[end].clone(),
+                    keystroke: input.drain(0..=last).last().unwrap(),
                     bindings,
                 });
-                input.drain(0..end);
+                break;
             }
-        }
-
-        if !matched {
-            to_replay.push(Replay {
-                keystroke: input.remove(0),
-                ..Default::default()
-            })
-        }
-
-        if input.len() == 0 {
-            return MatchResult {
-                to_replay,
-                ..Default::default()
-            };
+            if last == 0 {
+                to_replay.push(Replay {
+                    keystroke: input.remove(0),
+                    ..Default::default()
+                });
+                break;
+            }
         }
 
         let mut result = self.dispatch_key(input, keystroke, dispatch_path);
@@ -591,29 +552,28 @@ impl DispatchTree {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> SmallVec<[Replay; 1]> {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
-        let matched = false;
 
         // At this point we know that we have multiple keys in flight, and the
         // full set matches nothing.
         // Try matching with prefixes of the full set, and if that doesn't work,
         // replay the first input key, and recurse.
 
-        for end in (1..input.len()).rev() {
-            let (bindings, _) = self.match_input(&input[0..end], dispatch_path);
+        for last in (0..input.len()).rev() {
+            let (bindings, _) = self.match_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
-                    keystroke: input[end].clone(),
+                    keystroke: input.drain(0..=last).last().unwrap(),
                     bindings,
                 });
-                input.drain(0..end);
+                break;
             }
-        }
-
-        if !matched {
-            to_replay.push(Replay {
-                keystroke: input.remove(0),
-                ..Default::default()
-            })
+            if last == 0 {
+                to_replay.push(Replay {
+                    keystroke: input.remove(0),
+                    ..Default::default()
+                });
+                break;
+            }
         }
 
         if input.len() > 0 {
@@ -621,12 +581,6 @@ impl DispatchTree {
         }
 
         to_replay
-    }
-
-    pub fn has_pending_keystrokes(&self) -> bool {
-        self.keystroke_matchers
-            .iter()
-            .any(|(_, matcher)| matcher.has_pending_keystrokes())
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

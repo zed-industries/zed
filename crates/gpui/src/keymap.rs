@@ -1,10 +1,8 @@
 mod binding;
 mod context;
-mod matcher;
 
 pub use binding::*;
 pub use context::*;
-pub(crate) use matcher::*;
 
 use crate::{Action, Keystroke, NoAction};
 use collections::{HashMap, HashSet};

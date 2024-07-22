@@ -1,4 +1,4 @@
-use crate::{Action, KeyBindingContextPredicate, KeyMatch, Keystroke};
+use crate::{Action, KeyBindingContextPredicate, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
@@ -48,7 +48,6 @@ impl KeyBinding {
     /// Check if the given keystrokes match this binding.
     pub fn match_keystrokes(&self, typed: &[Keystroke]) -> Option<bool> {
         if self.keystrokes.len() < typed.len() {
-            dbg!("too short");
             return None;
         }
 
