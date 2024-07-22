@@ -454,8 +454,11 @@ impl AssistantPanel {
         if matches!(event, EditorEvent::Edited { .. }) {
             if let Some(context_editor) = self.active_context_editor(cx) {
                 let new_summary = model_summary_editor.read(cx).text(cx);
-                context_editor.update(cx, |context_editor, _| {
-                    context_editor.set_title(new_summary)
+                context_editor.update(cx, |context_editor, cx| {
+                    context_editor.set_title(new_summary);
+                    context_editor.context.update(cx, |context, cx| {
+                        context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
+                    });
                 });
             }
         }
@@ -704,17 +707,19 @@ impl AssistantPanel {
         context_editor: &View<ContextEditor>,
         cx: &mut ViewContext<Self>,
     ) {
-        let new_summary = context_editor
-            .read(cx)
-            .context
-            .read(cx)
-            .summary()
-            .map(|s| s.text.clone());
-        if let Some(new_summary) = new_summary {
+        context_editor.update(cx, |context_editor, cx| {
+            let new_summary = context_editor
+                .context
+                .read(cx)
+                .summary()
+                .map(|s| s.text.clone())
+                .unwrap_or_else(|| context_editor.title(cx).to_string());
             self.model_summary_editor.update(cx, |summary_editor, cx| {
-                summary_editor.set_text(new_summary, cx)
+                if summary_editor.text(cx) != new_summary {
+                    summary_editor.set_text(new_summary, cx);
+                }
             });
-        }
+        });
     }
 
     fn handle_context_editor_event(
@@ -2584,6 +2589,8 @@ impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
             .gap_2()
+            // TODO does not grow to hold the entire text
+            .flex_1()
             .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
             .when(self.active_context_editor.is_some(), |left_side| {
                 left_side
