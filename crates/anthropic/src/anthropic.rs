@@ -33,7 +33,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Err(anyhow!("Invalid model id: {}", id))
+            Err(anyhow!("invalid model id"))
         }
     }
 
@@ -56,7 +56,12 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
-        200_000
+        match self {
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 200_000,
+        }
     }
 }
 
@@ -90,11 +95,19 @@ impl From<Role> for String {
 
 #[derive(Debug, Serialize)]
 pub struct Request {
+    #[serde(serialize_with = "serialize_request_model")]
     pub model: Model,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub system: String,
     pub max_tokens: u32,
+}
+
+fn serialize_request_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&model.id())
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

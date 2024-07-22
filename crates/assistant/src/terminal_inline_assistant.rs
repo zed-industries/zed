@@ -13,8 +13,8 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, FontWeight, Global, Model,
-    ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
+    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
 use language_model::{
@@ -29,7 +29,7 @@ use std::{
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -600,7 +600,7 @@ impl Render for PromptEditor {
                             })
                             .trigger(
                                 IconButton::new("context", IconName::Settings)
-                                    .size(ButtonSize::None)
+                                    .shape(IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip(move |cx| {
@@ -613,7 +613,7 @@ impl Render for PromptEditor {
                                                     .unwrap_or_default()
                                             ),
                                             None,
-                                            "Click to Change Model",
+                                            "Change Model",
                                             cx,
                                         )
                                     }),
@@ -960,7 +960,7 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
             ..Default::default()
         };

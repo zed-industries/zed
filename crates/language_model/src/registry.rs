@@ -28,7 +28,8 @@ fn register_language_model_providers(
     client: Arc<Client>,
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
-    registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
+    use feature_flags::FeatureFlagAppExt;
+
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),
         cx,
@@ -41,6 +42,23 @@ fn register_language_model_providers(
         OllamaLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
+
+    cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
+        let client = client.clone();
+        LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
+            if enabled {
+                registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
+            } else {
+                registry.unregister_provider(
+                    &LanguageModelProviderName::from(
+                        crate::provider::cloud::PROVIDER_NAME.to_string(),
+                    ),
+                    cx,
+                );
+            }
+        });
+    })
+    .detach();
 }
 
 struct GlobalLanguageModelRegistry(Model<LanguageModelRegistry>);
