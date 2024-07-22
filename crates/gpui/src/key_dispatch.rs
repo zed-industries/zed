@@ -117,7 +117,7 @@ pub(crate) struct Replay {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct MatchResult {
+pub(crate) struct DispatchResult {
     pub(crate) pending: SmallVec<[Keystroke; 1]>,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
@@ -402,164 +402,95 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                for i in 0..context_stack.len() {
-                    let context = &context_stack[0..=i];
-                    if keymap.binding_enabled(binding, context) {
-                        return true;
-                    }
-                }
-                false
+                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, &context_stack);
+                bindings
+                    .iter()
+                    .next()
+                    .is_some_and(|b| b.action.partial_eq(action))
             })
             .cloned()
             .collect()
     }
 
-    fn match_input(
+    fn bindings_for_input(
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let keymap = self.keymap.borrow();
+        let context_stack: SmallVec<[KeyContext; 4]> = dispatch_path
+            .iter()
+            .filter_map(|node_id| self.node(*node_id).context.clone())
+            .collect();
 
-        // We want the following behaviour:
-        // - If there are multiple bindings matching completely,
-        //   return them in order of depth in the context.
-        // - If there are some bindings that are pending,
-        //   they take priority over bindings defined earlier in the keymap.
-
-        let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
-        for node_id in dispatch_path {
-            let node = self.node(*node_id);
-
-            if let Some(context) = node.context.clone() {
-                context_stack.push(context);
-            }
-        }
-
-        let possibilities = keymap.bindings().rev().filter_map(|binding| {
-            binding
-                .match_keystrokes(input)
-                .map(|pending| (binding, pending))
-        });
-
-        let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
-        let mut first_pending = None;
-
-        for (binding, pending) in possibilities {
-            for depth in (0..=context_stack.len()).rev() {
-                if keymap.binding_enabled(binding, &context_stack[0..depth]) {
-                    if first_pending.is_none() {
-                        first_pending = Some(pending);
-                    }
-                    if !pending {
-                        bindings.push((binding.clone(), depth));
-                    }
-                }
-            }
-        }
-        bindings.sort_by(|a, b| a.1.cmp(&b.1).reverse());
-        let bindings = bindings.into_iter().map(|(binding, _)| binding).collect();
-
-        // Precedence:
-        // - if the user has defined a longer keystroke (e.g. ,=), we should say 'pending' for the builtin ','
-        // - if the user has defined a shorter keystroke (e.g. ctrl-w), we should say 'not pending' for the builtin `ctrl-w q`
-        // - hypoethetically, if they have defined *both*, then what?
-
-        // - ,: vim::Next
-        // - ,=: custom wev
-        // - ,: custom wev
-
-        // -ctrl-w q: vim::Close
-        // -ctrl-w: terminal::Close
-        // -ctrl-w q: vim::Close
-
-        return (bindings, first_pending.unwrap_or_default());
+        self.keymap
+            .borrow()
+            .bindings_for_input(&input, &context_stack)
     }
 
     /// dispatch_key processes the keystroke
     /// input should be set to the value of `pending` from the previous call to dispatch_key.
-    /// In the common case, input will be empty, and the MatchResult will return just actions to do.
-    /// If input is not empty, then either:
-    /// - input + keystroke matches a set of bindings, which will be returned.
-    /// - input + keystroke is still a prefix, so only pending
-    /// - input + keystroke did not match anything. In that case, the caller will need to replay
-    ///   what the original input should have done before handling any of the returned actions.
+    /// This returns three instructions to the input handler:
+    /// - bindings: any bindings to execute before processing this keystroke
+    /// - pending: the new set of pending keystrokes to store
+    /// - to_replay: any keystroke that had been pushed to pending, but are no-longer matched,
+    ///   these should be replayed first.
     pub fn dispatch_key(
         &mut self,
         mut input: SmallVec<[Keystroke; 1]>,
         keystroke: Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> MatchResult {
-        println!("---------- {:?} {:?} ---------------", input, keystroke);
+    ) -> DispatchResult {
         input.push(keystroke.clone());
-        let (bindings, pending) = self.match_input(&input, dispatch_path);
+        let (bindings, pending) = self.bindings_for_input(&input, dispatch_path);
 
         if pending {
-            return MatchResult {
+            return DispatchResult {
                 pending: input,
                 ..Default::default()
             };
-        }
-
-        if !bindings.is_empty() {
-            return MatchResult {
+        } else if !bindings.is_empty() {
+            return DispatchResult {
                 bindings,
                 ..Default::default()
             };
+        } else if input.len() == 1 {
+            return DispatchResult::default();
         }
-
         input.pop();
-        if input.len() == 0 {
-            return MatchResult::default();
-        }
 
-        let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
+        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
 
-        // At this point we know that we have multiple keys in flight, and the
-        // full set matches nothing.
-        // Try matching with prefixes of the full set, and if that doesn't work,
-        // replay the first input key, and recurse.
-
-        for last in (0..input.len()).rev() {
-            let (bindings, _) = self.match_input(&input[0..=last], dispatch_path);
-            if !bindings.is_empty() {
-                to_replay.push(Replay {
-                    keystroke: input.drain(0..=last).last().unwrap(),
-                    bindings,
-                });
-                break;
-            }
-            if last == 0 {
-                to_replay.push(Replay {
-                    keystroke: input.remove(0),
-                    ..Default::default()
-                });
-                break;
-            }
-        }
-
-        let mut result = self.dispatch_key(input, keystroke, dispatch_path);
+        let mut result = self.dispatch_key(suffix, keystroke, dispatch_path);
         to_replay.extend(result.to_replay);
         result.to_replay = to_replay;
         return result;
     }
 
-    /// flush converts any remaining pending input to replay events.
-    /// This is called when a user hits the timeout mid-way through typing a key.
-    pub fn flush(
+    /// If the user types a matching prefix of a binding and then waits for a timeout
+    /// flush_dispatch() converts any previously pending input to replay events.
+    pub fn flush_dispatch(
+        &mut self,
+        input: SmallVec<[Keystroke; 1]>,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[Replay; 1]> {
+        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
+
+        if suffix.len() > 0 {
+            to_replay.extend(self.flush_dispatch(suffix, dispatch_path))
+        }
+
+        to_replay
+    }
+
+    /// Converts the longest prefix of input to a replay event and returns the rest.
+    fn replay_prefix(
         &mut self,
         mut input: SmallVec<[Keystroke; 1]>,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> SmallVec<[Replay; 1]> {
+    ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
-
-        // At this point we know that we have multiple keys in flight, and the
-        // full set matches nothing.
-        // Try matching with prefixes of the full set, and if that doesn't work,
-        // replay the first input key, and recurse.
-
         for last in (0..input.len()).rev() {
-            let (bindings, _) = self.match_input(&input[0..=last], dispatch_path);
+            let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
                     keystroke: input.drain(0..=last).last().unwrap(),
@@ -567,20 +498,14 @@ impl DispatchTree {
                 });
                 break;
             }
-            if last == 0 {
-                to_replay.push(Replay {
-                    keystroke: input.remove(0),
-                    ..Default::default()
-                });
-                break;
-            }
         }
-
-        if input.len() > 0 {
-            to_replay.extend(self.flush(input, dispatch_path))
+        if to_replay.is_empty() {
+            to_replay.push(Replay {
+                keystroke: input.remove(0),
+                ..Default::default()
+            });
         }
-
-        to_replay
+        (input, to_replay)
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

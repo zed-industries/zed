@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use collections::HashMap;
 use command_palette::CommandPalette;
-use editor::{display_map::DisplayRow, DisplayPoint};
+use editor::{actions::DeleteLine, display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 pub use neovim_backed_test_context::*;
@@ -1392,4 +1392,24 @@ async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
     cx.set_shared_state("ˇ").await;
     cx.simulate_shared_keystrokes("i p i n e a p p l e").await;
     cx.shared_state().await.assert_eq("🍍ˇ");
+}
+
+#[gpui::test]
+async fn test_escape_while_waiting(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state("ˇhi").await;
+    cx.simulate_shared_keystrokes("\" + escape x").await;
+    cx.shared_state().await.assert_eq("ˇi");
+}
+
+#[gpui::test]
+async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new("ctrl-w", DeleteLine, None)]);
+    });
+    cx.neovim.exec("map <c-w> D").await;
+    cx.set_shared_state("ˇhi").await;
+    cx.simulate_shared_keystrokes("ctrl-w").await;
+    cx.shared_state().await.assert_eq("ˇ");
 }

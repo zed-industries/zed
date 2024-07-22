@@ -3253,19 +3253,6 @@ impl<'a> WindowContext<'a> {
             currently_pending = PendingInput::default();
         }
 
-        // base case:
-        //  d: returns [`delete`, '']
-        // j: returns [None, 'j']
-        // k: returns [`escape`, '']
-        // l: returns ['j`, `escape`, '']
-        // ctrl-s: returns ['j`, `save`, '']
-
-        // c: returns ['', None, 'c']
-        // a: returns ['', None, 'ca']
-        // c: returns ['ca', None, 'c']
-        // a: returns ['', None' ,'ca']
-        // t: returns ['', `dispatch`, '']
-
         let match_result = self.window.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
             keystroke,
@@ -3300,7 +3287,7 @@ impl<'a> WindowContext<'a> {
                         .window
                         .rendered_frame
                         .dispatch_tree
-                        .flush(currently_pending.keystrokes, &dispatch_path);
+                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
                     cx.replay_pending_input(to_replay)
                 })
@@ -3313,7 +3300,6 @@ impl<'a> WindowContext<'a> {
         }
 
         self.pending_input_changed();
-
         self.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
