@@ -41,9 +41,8 @@ pub fn init(
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("go", tree_sitter_go::language()),
-        // TODO kb
-        // ("gomod", tree_sitter_gomod::language()),
-        // ("gowork", tree_sitter_gowork::language()),
+        ("gomod", tree_sitter_go_mod::language()),
+        ("gowork", tree_sitter_gowork::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("jsonc", tree_sitter_json::language()),

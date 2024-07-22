@@ -3490,7 +3490,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_markdown::language()),
+            Some(tree_sitter_md::language()),
         ))
     }
 

@@ -1228,7 +1228,7 @@ fn markdown_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_markdown::language()),
+        Some(tree_sitter_md::language()),
     )
     .with_injection_query(
         r#"

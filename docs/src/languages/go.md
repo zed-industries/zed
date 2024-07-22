@@ -43,7 +43,7 @@ See https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md for more
 
 # Go Mod
 
-- Tree Sitter: [tree-sitter-gomod](https://github.com/camdencheek/tree-sitter-go-mod)
+- Tree Sitter: [tree-sitter-go-mod](https://github.com/camdencheek/tree-sitter-go-mod)
 - Language Server: N/A
 
 # Go Sum

@@ -405,21 +405,21 @@ tree-sitter-bash = "0.21"
 tree-sitter-c = "0.21"
 tree-sitter-cpp = "0.22"
 tree-sitter-css = "0.21"
-tree-sitter-elixir = "0.1.1"
+tree-sitter-elixir = "0.2"
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = "0.21"
-tree-sitter-gomod = "1.0"
-tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
+tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod"}
+tree-sitter-gowork = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-work", rev = "7e9d2de03e69dd8d9724b1feb7a9b7586c179f40" }
 rustc-demangle = "0.1.23"
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
-tree-sitter-html = "0.19.0"
+tree-sitter-heex = { git = "https://github.com/SomeoneToIgnore/tree-sitter-heex", rev = "ab587094681cc742613cd95fdbc68ba08cc6c5e7" }
+tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.21"
 tree-sitter-json = "0.21"
-tree-sitter-md = "0.2"
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "e3855e37f8f2c71aa7513c18a9c95fb7461b1b10" }
 protols-tree-sitter-proto = "0.2"
 tree-sitter-python = "0.21"
 tree-sitter-regex = "0.21"
-tree-sitter-ruby = "0.20.0"
+tree-sitter-ruby = "0.21"
 tree-sitter-rust = "0.21"
 tree-sitter-typescript = "0.21"
 tree-sitter-yaml = "0.6"
