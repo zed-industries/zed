@@ -1900,10 +1900,6 @@ impl Workspace {
         pane: Option<WeakView<Pane>>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
-        // println!(
-        //     "workspace: open_paths! abs_paths: {:?}, visible: {:?}",
-        //     abs_paths, visible
-        // );
         log::info!("open paths {abs_paths:?}");
 
         let fs = self.app_state.fs.clone();
@@ -3877,7 +3873,6 @@ impl Workspace {
     }
 
     fn serialize_workspace(&mut self, cx: &mut ViewContext<Self>) {
-        // println!("----------> serialize <---------------");
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
                 cx.background_executor()
@@ -4091,10 +4086,6 @@ impl Workspace {
         paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        // println!(
-        //     "load_workspace. serialized_workspace: {:?}",
-        //     serialized_workspace
-        // );
         cx.spawn(|workspace, mut cx| async move {
             let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
 
@@ -4442,15 +4433,6 @@ fn open_items(
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
-    // if let Some(w) = serialized_workspace.as_ref() {
-    //     // println!(
-    //     //     "open items! serialized_workspace: id={}, location={:?}",
-    //     //     w.id.0, w.location
-    //     // );
-    // } else {
-    //     println!("open items! serialized_workspace is NONE",);
-    // }
-
     let restored_items = serialized_workspace.map(|serialized_workspace| {
         Workspace::load_workspace(
             serialized_workspace,
@@ -5214,7 +5196,6 @@ pub fn open_paths(
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
-    // println!("--------- open paths ----------------");
     let abs_paths = abs_paths.to_vec();
     let mut existing = None;
     let mut best_match = None;
