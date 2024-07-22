@@ -235,9 +235,12 @@ impl EditorState {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::EasyMotion => false,
         }
     }
 
@@ -266,7 +269,7 @@ impl EditorState {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
-                Mode::EasyMotion => "easy_motion",
+            Mode::EasyMotion => "easy_motion",
         }
         .to_string();
 
