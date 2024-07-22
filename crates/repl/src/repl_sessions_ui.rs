@@ -3,12 +3,13 @@ use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     Subscription, View,
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem};
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
+use crate::components::SessionEntry;
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
 
@@ -190,8 +191,7 @@ impl Render for ReplSessionsPage {
         if kernel_specifications.is_empty() {
             let instructions = "To start interactively running code in your editor, you need to install and configure Jupyter kernels.";
 
-            return ReplSessionsContainer::new()
-                .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
+            return ReplSessionsContainer::new("No Jupyter Kernels Available")
                 .child(Label::new(instructions))
                 .child(
                     h_flex().w_full().p_4().justify_center().gap_2().child(
@@ -213,8 +213,7 @@ impl Render for ReplSessionsPage {
         if sessions.is_empty() {
             let instructions = "To run code in a Jupyter kernel, select some code and use the 'repl::Run' command.";
 
-            return ReplSessionsContainer::new()
-                .child(Label::new("No Jupyter Kernel Sessions").size(LabelSize::Large))
+            return ReplSessionsContainer::new("No Jupyter Kernel Sessions")
                 .child(
                     v_flex()
                         .child(Label::new(instructions))
@@ -222,31 +221,29 @@ impl Render for ReplSessionsPage {
                 )
                 .child(Label::new("Kernels available").size(LabelSize::Large))
                 .children(kernel_specifications.into_iter().map(|spec| {
-                    ListItem::new(SharedString::from(spec.name.clone()))
-                        .selectable(false)
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new(spec.name))
-                                .child(Label::new(spec.kernelspec.language).color(Color::Muted)),
-                        )
+                    SessionEntry::new(spec.clone()).child(
+                        h_flex()
+                            .gap_2()
+                            .child(Label::new(spec.name))
+                            .child(Label::new(spec.kernelspec.language).color(Color::Muted)),
+                    )
                 }));
         }
 
-        ReplSessionsContainer::new()
-            .child(Label::new("Jupyter Kernel Sessions").size(LabelSize::Large))
-            .children(sessions)
+        ReplSessionsContainer::new("Jupyter Kernel Sessions").children(sessions)
     }
 }
 
 #[derive(IntoElement)]
 struct ReplSessionsContainer {
+    title: SharedString,
     children: Vec<AnyElement>,
 }
 
 impl ReplSessionsContainer {
-    pub fn new() -> Self {
+    pub fn new(title: impl Into<SharedString>) -> Self {
         Self {
+            title: title.into(),
             children: Vec::new(),
         }
     }
@@ -260,6 +257,11 @@ impl ParentElement for ReplSessionsContainer {
 
 impl RenderOnce for ReplSessionsContainer {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        v_flex().p_4().gap_2().size_full().children(self.children)
+        v_flex()
+            .p_4()
+            .gap_2()
+            .size_full()
+            .child(Label::new(self.title).size(LabelSize::Large))
+            .children(self.children)
     }
 }

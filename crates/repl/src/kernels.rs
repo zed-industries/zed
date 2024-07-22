@@ -18,7 +18,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use ui::{Color, Indicator};
 
 #[derive(Debug, Clone)]
 pub struct KernelSpecification {
@@ -128,19 +127,6 @@ impl From<&Kernel> for KernelStatus {
 }
 
 impl Kernel {
-    pub fn dot(&self) -> Indicator {
-        match self {
-            Kernel::RunningKernel(kernel) => match kernel.execution_state {
-                ExecutionState::Idle => Indicator::dot().color(Color::Success),
-                ExecutionState::Busy => Indicator::dot().color(Color::Modified),
-            },
-            Kernel::StartingKernel(_) => Indicator::dot().color(Color::Modified),
-            Kernel::ErroredLaunch(_) => Indicator::dot().color(Color::Error),
-            Kernel::ShuttingDown => Indicator::dot().color(Color::Modified),
-            Kernel::Shutdown => Indicator::dot().color(Color::Disabled),
-        }
-    }
-
     pub fn status(&self) -> KernelStatus {
         self.into()
     }

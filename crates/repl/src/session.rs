@@ -1,3 +1,4 @@
+use crate::components::SessionEntry;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
@@ -19,14 +20,13 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
+    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
+    ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{
-    h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, ListItem, Tooltip,
-};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 
 pub struct Session {
     editor: WeakView<Editor>,
@@ -563,22 +563,16 @@ impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut buttons = vec![];
-
-        buttons.push(
-            ButtonLike::new("shutdown")
-                .child(Label::new("Shutdown"))
-                .style(ButtonStyle::Subtle)
-                .on_click(cx.listener(move |session, _, cx| {
-                    session.shutdown(cx);
-                })),
-        );
+        let mut buttons = vec![Button::new("shutdown", "Shutdown")
+            .style(ButtonStyle::Subtle)
+            .on_click(cx.listener(move |session, _, cx| {
+                session.shutdown(cx);
+            }))];
 
         let status_text = match &self.kernel {
             Kernel::RunningKernel(kernel) => {
                 buttons.push(
-                    ButtonLike::new("interrupt")
-                        .child(Label::new("Interrupt"))
+                    Button::new("interrupt", "Interrupt")
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |session, _, cx| {
                             session.interrupt(cx);
@@ -601,20 +595,18 @@ impl Render for Session {
             Kernel::Shutdown => format!("{} (Shutdown)", self.kernel_specification.name),
         };
 
-        ListItem::new(SharedString::from(self.kernel_specification.name.clone()))
-            .selectable(false)
-            .start_slot(self.kernel.dot())
+        SessionEntry::new(self.kernel_specification.clone())
+            .status_color(match &self.kernel {
+                Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                    ExecutionState::Idle => Color::Success,
+                    ExecutionState::Busy => Color::Modified,
+                },
+                Kernel::StartingKernel(_) => Color::Modified,
+                Kernel::ErroredLaunch(_) => Color::Error,
+                Kernel::ShuttingDown => Color::Modified,
+                Kernel::Shutdown => Color::Disabled,
+            })
             .child(Label::new(status_text))
-            .end_slot(h_flex().gap_2().children(buttons))
-
-        // v_flex()
-        //     .gap_1()
-        //     .child(
-        //         h_flex()
-        //             .gap_2()
-        //             .child(self.kernel.dot())
-        //             .child(Label::new(status_text)),
-        //     )
-        //     .child(h_flex().gap_2().children(buttons))
+            .buttons(buttons)
     }
 }
