@@ -90,7 +90,9 @@ impl Keymap {
     /// bindings are evaluated with the same precedence rules so you can disable a rule in
     /// a given context only.
     ///
-    /// In the case of multi-key bindings, the
+    /// In the case where a binding conflicts with a longer binding, precedence is resolved
+    /// only using the order in the keymap file. So binding `cmd-k` in the workspace will disable
+    /// built-in bindings for `cmd-k X` throughout the app.
     pub fn bindings_for_input(
         &self,
         input: &[Keystroke],
