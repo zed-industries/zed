@@ -48,6 +48,7 @@ pub fn init(
         ("json", tree_sitter_json::language()),
         ("jsonc", tree_sitter_json::language()),
         ("markdown", tree_sitter_md::language()),
+        ("markdown-inline", tree_sitter_md::inline_language()),
         ("proto", protols_tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
@@ -137,6 +138,7 @@ pub fn init(
         json_task_context()
     );
     language!("markdown");
+    language!("markdown-inline");
     language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
