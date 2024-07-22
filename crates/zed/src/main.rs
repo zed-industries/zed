@@ -310,15 +310,6 @@ fn main() {
 
     let session = app.background_executor().block(Session::new());
 
-    println!(
-        "--------------------------------------------------------------------------------------"
-    );
-    println!("-------- session_id: {}", session.id());
-    println!("-------- last_session_id: {:?}", session.last_session_id());
-    println!(
-        "--------------------------------------------------------------------------------------"
-    );
-
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     reliability::init_panic_hook(
         installation_id.clone(),
@@ -695,7 +686,6 @@ async fn restore_or_create_workspace(
         workspace::RestoreOnStartupBehaviour::LastSession => {
             if let Some(last_session_id) = last_session_id {
                 workspace::last_session_workspace_locations(last_session_id)
-                    .await
                     .filter(|locations| !locations.is_empty())
             } else {
                 None

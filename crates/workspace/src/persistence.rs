@@ -372,7 +372,6 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
-            session_id,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -382,7 +381,6 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
-            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -405,8 +403,7 @@ impl WorkspaceDb {
                     right_dock_zoom,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
-                    bottom_dock_zoom,
-                    session_id
+                    bottom_dock_zoom
                 FROM workspaces
                 WHERE local_paths = ?
             })
@@ -450,7 +447,7 @@ impl WorkspaceDb {
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
-            session_id,
+            session_id: None,
         })
     }
 
@@ -469,7 +466,6 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
-            session_id,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -479,7 +475,6 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
-            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -502,8 +497,7 @@ impl WorkspaceDb {
                     right_dock_zoom,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
-                    bottom_dock_zoom,
-                    session_id
+                    bottom_dock_zoom
                 FROM workspaces
                 WHERE dev_server_project_id = ?
             })
@@ -547,7 +541,7 @@ impl WorkspaceDb {
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
-            session_id,
+            session_id: None,
         })
     }
 
@@ -793,7 +787,7 @@ impl WorkspaceDb {
             .next())
     }
 
-    pub async fn last_session_workspace_locations(
+    pub fn last_session_workspace_locations(
         &self,
         last_session_id: &str,
     ) -> Result<Vec<LocalPaths>> {
@@ -1023,7 +1017,6 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use super::*;
     use db::open_test_db;
@@ -1328,29 +1321,47 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_serializing_workspaces_empty_paths() {
+    async fn test_session_workspace_locations() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_serializing_workspaces_empty_paths").await);
+        let db = WorkspaceDb(open_test_db("test_serializing_workspaces_session_id").await);
 
-        let empty_paths: Vec<PathBuf> = vec![];
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(&empty_paths),
-                LocalPathsOrder::new([]),
-            ),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp1"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
-            session_id: None,
+            session_id: Some("session-id-1".to_owned()),
         };
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp2"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("session-id-1".to_owned()),
+        };
+
+        let workspace_3 = SerializedWorkspace {
+            id: WorkspaceId(3),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp3"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("session-id-2".to_owned()),
+        };
+
+        let workspace_4 = SerializedWorkspace {
+            id: WorkspaceId(4),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp4"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1361,9 +1372,21 @@ mod tests {
 
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace(workspace_3.clone()).await;
+        db.save_workspace(workspace_4.clone()).await;
 
-        assert_eq!(db.workspace_for_roots(&empty_paths).unwrap(), workspace_1);
-        assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
+        let locations = db
+            .session_workspace_locations("session-id-1".to_owned())
+            .unwrap();
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0], LocalPaths::new(["/tmp1"]));
+        assert_eq!(locations[1], LocalPaths::new(["/tmp2"]));
+
+        let locations = db
+            .session_workspace_locations("session-id-2".to_owned())
+            .unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0], LocalPaths::new(["/tmp3"]));
     }
 
     use crate::persistence::model::SerializedWorkspace;

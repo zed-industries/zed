@@ -4917,9 +4917,8 @@ pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
-pub async fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
+pub fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
     DB.last_session_workspace_locations(last_session_id)
-        .await
         .log_err()
 }
 

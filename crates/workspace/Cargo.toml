@@ -71,5 +71,6 @@ env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http =  { workspace = true, features = ["test-support"] }
