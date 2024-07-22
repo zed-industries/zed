@@ -533,7 +533,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
-    active_inline_completion: Option<Inlay>,
+    active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
@@ -4953,7 +4953,7 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(completion) = self.take_active_inline_completion(cx) else {
+        let Some((completion, delete_range)) = self.take_active_inline_completion(cx) else {
             return;
         };
         if let Some(provider) = self.inline_completion_provider() {
@@ -4964,6 +4964,10 @@ impl Editor {
             utf16_range_to_replace: None,
             text: completion.text.to_string().into(),
         });
+
+        if let Some(range) = delete_range {
+            self.change_selections(None, cx, |s| s.select_ranges([range]))
+        }
         self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
         self.refresh_inline_completion(true, cx);
         cx.notify();
@@ -4975,7 +4979,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
-            if let Some(completion) = self.take_active_inline_completion(cx) {
+            if let Some((completion, delete_range)) = self.take_active_inline_completion(cx) {
                 let mut partial_completion = completion
                     .text
                     .chars()
@@ -4995,7 +4999,12 @@ impl Editor {
                     utf16_range_to_replace: None,
                     text: partial_completion.clone().into(),
                 });
+
+                if let Some(range) = delete_range {
+                    self.change_selections(None, cx, |s| s.select_ranges([range]))
+                }
                 self.insert_with_autoindent_mode(&partial_completion, None, cx);
+
                 self.refresh_inline_completion(true, cx);
                 cx.notify();
             }
@@ -5017,20 +5026,23 @@ impl Editor {
     pub fn has_active_inline_completion(&self, cx: &AppContext) -> bool {
         if let Some(completion) = self.active_inline_completion.as_ref() {
             let buffer = self.buffer.read(cx).read(cx);
-            completion.position.is_valid(&buffer)
+            completion.0.position.is_valid(&buffer)
         } else {
             false
         }
     }
 
-    fn take_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
+    fn take_active_inline_completion(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Inlay, Option<Range<Anchor>>)> {
         let completion = self.active_inline_completion.take()?;
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(vec![completion.id], Default::default(), cx);
+            map.splice_inlays(vec![completion.0.id], Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
-        if completion.position.is_valid(&buffer) {
+        if completion.0.position.is_valid(&buffer) {
             Some(completion)
         } else {
             None
@@ -5041,6 +5053,8 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
+        let excerpt_id = cursor.excerpt_id;
+
         if self.context_menu.read().is_none()
             && self.completion_tasks.is_empty()
             && selection.start == selection.end
@@ -5049,18 +5063,28 @@ impl Editor {
                 if let Some((buffer, cursor_buffer_position)) =
                     self.buffer.read(cx).text_anchor_for_position(cursor, cx)
                 {
-                    if let Some(text) =
+                    if let Some((text, text_anchor_range)) =
                         provider.active_completion_text(&buffer, cursor_buffer_position, cx)
                     {
                         let text = Rope::from(text);
                         let mut to_remove = Vec::new();
                         if let Some(completion) = self.active_inline_completion.take() {
-                            to_remove.push(completion.id);
+                            to_remove.push(completion.0.id);
                         }
 
                         let completion_inlay =
                             Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
-                        self.active_inline_completion = Some(completion_inlay.clone());
+
+                        let multibuffer_anchor_range = text_anchor_range.and_then(|range| {
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            Some(
+                                snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?,
+                            )
+                        });
+                        self.active_inline_completion =
+                            Some((completion_inlay.clone(), multibuffer_anchor_range));
+
                         self.display_map.update(cx, move |map, cx| {
                             map.splice_inlays(to_remove, vec![completion_inlay], cx)
                         });
