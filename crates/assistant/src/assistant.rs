@@ -18,9 +18,11 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
+use context_servers::{self};
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
+use gpui::Context as _;
 use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
@@ -33,9 +35,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command, workflow_command,
+    active_command, context_server_command, default_command, diagnostics_command, docs_command,
+    fetch_command, file_command, now_command, project_command, prompt_command, search_command,
+    symbols_command, tabs_command, term_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -201,6 +203,8 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<Pr
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_panel::init(cx);
+    context_servers::init(cx);
+    context_server_command::ContextServerRegistry::register(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some((fs.clone(), cx)))
         .log_err()
@@ -237,7 +241,65 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<Pr
     })
     .detach();
 
+    register_context_server_handlers(cx);
+
     prompt_builder
+}
+
+fn register_context_server_handlers(cx: &mut AppContext) {
+    cx.subscribe(
+        &context_servers::manager::ContextServerManager::global(cx),
+        |manager, event, cx| match event {
+            context_servers::manager::Event::ServerStarted { server_id } => {
+                cx.update_model(
+                    &manager,
+                    |manager: &mut context_servers::manager::ContextServerManager, cx| {
+                        let slash_command_registry = SlashCommandRegistry::global(cx);
+                        let cs_registry = context_server_command::ContextServerRegistry::global(cx);
+                        if let Some(server) = manager.get_server(server_id) {
+                            cx.spawn(|_, _| async move {
+                                if let Some(protocol) = server.client.read().as_ref() {
+                                    if let Ok(prompts) = protocol.list_prompts().await {
+                                        for prompt in prompts
+                                            .into_iter()
+                                            .filter(context_server_command::acceptable_prompt)
+                                        {
+                                            log::info!(
+                                                "registering context server command: {:?}",
+                                                prompt.name
+                                            );
+                                            cs_registry.register_command(
+                                                server.id.clone(),
+                                                prompt.name.clone(),
+                                            );
+                                            slash_command_registry.register_command(
+                                            context_server_command::ContextServerSlashCommand::new(
+                                                &server, prompt,
+                                            ),
+                                            true,
+                                        );
+                                        }
+                                    }
+                                }
+                            })
+                            .detach();
+                        }
+                    },
+                );
+            }
+            context_servers::manager::Event::ServerStopped { server_id } => {
+                let slash_command_registry = SlashCommandRegistry::global(cx);
+                let cs_registry = context_server_command::ContextServerRegistry::global(cx);
+                if let Some(commands) = cs_registry.get_commands(server_id) {
+                    for command_name in commands {
+                        slash_command_registry.deregister_command(&command_name);
+                        cs_registry.deregister_command(&server_id, &command_name);
+                    }
+                }
+            }
+        },
+    )
+    .detach();
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {

@@ -20,6 +20,7 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
+    "crates/context_servers",
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
@@ -190,6 +191,7 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+context_servers = { path = "crates/context_servers" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
