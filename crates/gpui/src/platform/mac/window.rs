@@ -1,10 +1,11 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
     platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, GestureEvent, KeyDownEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    NavigationDirection, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow,
+    Point, PromptLevel, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -305,6 +306,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
+    decl.add_method(
+        sel!(swipeWithEvent:),
+        handle_gesture_swipe_events as extern "C" fn(&Object, Sel, id),
+    );
 
     decl.register()
 }
@@ -327,6 +332,7 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    gesture_swipe_callback: Option<Box<dyn FnMut(NavigationDirection)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -607,6 +613,7 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                gesture_swipe_callback: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1065,6 +1072,9 @@ impl PlatformWindow for MacWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
+    fn on_gesture_swipe(&self, callback: Box<dyn FnMut(NavigationDirection)>) {
+        self.0.as_ref().lock().gesture_swipe_callback = Some(callback);
+    }
 
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
@@ -1301,7 +1311,21 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         NO
     }
 }
+extern "C" fn handle_gesture_swipe_events(this: &Object, _: Sel, native_event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    let event = unsafe { PlatformInput::from_native(native_event, None) };
 
+    let Some(PlatformInput::Gesture(GestureEvent::Swipe(direction))) = event else {
+        return;
+    };
+    let Some(mut callback) = lock.gesture_swipe_callback.take() else {
+        return;
+    };
+    drop(lock);
+    callback(direction);
+    window_state.lock().gesture_swipe_callback = Some(callback);
+}
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);

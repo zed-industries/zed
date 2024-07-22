@@ -32,11 +32,11 @@ use futures::{
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
+    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId,
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowOptions,
+    ManagedView, Model, ModelContext, MouseButton, NavigationDirection, PathPromptOptions, Point,
+    PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -68,7 +68,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
     any::TypeId,
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     cell::RefCell,
     cmp,
     collections::hash_map::DefaultHasher,
@@ -921,7 +921,17 @@ impl Workspace {
             Self::serialize_items(&this, serializable_items_rx, &mut cx).await
         });
 
+        let observer_for_gesture_swipe = cx.observe_gesture_swipe(|this, direction, cx| {
+            this.update(cx, |workspace, mut cxx| async {
+                workspace
+                    .go_back(workspace.active_pane().downgrade(), cxx)
+                    .await;
+            })
+            .unwrap();
+            println!("direction: {:?}", direction);
+        });
         let subscriptions = vec![
+            observer_for_gesture_swipe,
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |this, cx| {
                 if this.bounds_save_task_queued.is_some() {
@@ -974,6 +984,7 @@ impl Workspace {
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
+
                     store.workspaces.remove(&window);
                 })
             }),

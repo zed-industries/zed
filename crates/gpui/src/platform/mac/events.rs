@@ -1,6 +1,6 @@
 use crate::{
-    platform::mac::NSStringExt, point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    platform::mac::NSStringExt, point, px, GestureEvent, KeyDownEvent, KeyUpEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
     TouchPhase,
 };
@@ -243,6 +243,14 @@ impl PlatformInput {
                     modifiers: read_modifiers(native_event),
                 })
             }),
+            NSEventType::NSEventTypeSwipe => if native_event.deltaX() == 1.0 {
+                Some(NavigationDirection::Back)
+            } else if native_event.deltaX() == -1.0 {
+                Some(NavigationDirection::Forward)
+            } else {
+                None
+            }
+            .map(|direction| Self::Gesture(GestureEvent::Swipe(direction))),
             _ => None,
         }
     }
