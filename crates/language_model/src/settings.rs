@@ -6,8 +6,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-use crate::provider::{
-    anthropic::AnthropicSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+use crate::{
+    provider::{
+        anthropic::AnthropicSettings, cloud::ZedDotDevSettings, ollama::OllamaSettings,
+        open_ai::OpenAiSettings,
+    },
+    CloudModel,
 };
 
 /// Initializes the language model settings.
@@ -20,6 +24,7 @@ pub struct AllLanguageModelSettings {
     pub open_ai: OpenAiSettings,
     pub anthropic: AnthropicSettings,
     pub ollama: OllamaSettings,
+    pub zed_dot_dev: ZedDotDevSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -27,6 +32,8 @@ pub struct AllLanguageModelSettingsContent {
     anthropic: Option<AnthropicSettingsContent>,
     ollama: Option<OllamaSettingsContent>,
     open_ai: Option<OpenAiSettingsContent>,
+    #[serde(rename = "zed.dev")]
+    zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -46,6 +53,11 @@ pub struct OpenAiSettingsContent {
     api_url: Option<String>,
     low_speed_timeout_in_seconds: Option<u64>,
     available_models: Option<Vec<open_ai::Model>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ZedDotDevSettingsContent {
+    available_models: Option<Vec<CloudModel>>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {
@@ -105,6 +117,14 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.open_ai.available_models,
                 value
                     .open_ai
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
+
+            merge(
+                &mut settings.zed_dot_dev.available_models,
+                value
+                    .zed_dot_dev
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );

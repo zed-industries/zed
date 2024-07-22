@@ -1,7 +1,8 @@
 use super::open_ai::count_open_ai_tokens;
 use crate::{
-    CloudModel, LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, ProvidedLanguageModel,
+    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
+    LanguageModelName, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProvidedLanguageModel,
 };
 use anyhow::{anyhow, Result};
 use client::Client;
@@ -10,16 +11,22 @@ use futures::{
     stream::BoxStream,
     FutureExt, StreamExt, TryFutureExt,
 };
-use gpui::{AnyView, AppContext, AsyncAppContext, Render, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use ui::{prelude::*, IntoElement, ViewContext};
+use ui::prelude::*;
 
 use crate::LanguageModelProvider;
 
 use super::anthropic::{count_anthropic_tokens, preprocess_anthropic_request};
 
 const PROVIDER_NAME: &str = "zed.dev";
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct ZedDotDevSettings {
+    pub available_models: Vec<CloudModel>,
+}
 
 pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
@@ -30,6 +37,8 @@ pub struct CloudLanguageModelProvider {
 struct State {
     client: Arc<Client>,
     status: client::Status,
+    settings: ZedDotDevSettings,
+    _subscription: Subscription,
 }
 
 impl State {
@@ -44,9 +53,14 @@ impl CloudLanguageModelProvider {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let state = cx.new_model(|_| State {
+        let state = cx.new_model(|cx| State {
             client: client.clone(),
             status,
+            settings: ZedDotDevSettings::default(),
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                this.settings = AllLanguageModelSettings::get_global(cx).zed_dot_dev.clone();
+                cx.notify();
+            }),
         });
 
         let state_ref = state.downgrade();
@@ -84,9 +98,20 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+        let available_models = &self.state.read(cx).settings.available_models;
+        if !available_models.is_empty() {
+            return available_models
+                .iter()
+                .map(|model| ProvidedLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    name: LanguageModelName::from(model.display_name().to_string()),
+                })
+                .collect();
+        }
+
         CloudModel::iter()
-            .filter(|model| !matches!(model, CloudModel::Custom(_)))
+            .filter(|model| !matches!(model, CloudModel::Custom { .. }))
             .map(|model| ProvidedLanguageModel {
                 id: LanguageModelId::from(model.id().to_string()),
                 name: LanguageModelName::from(model.display_name().to_string()),
@@ -113,8 +138,20 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn model(&self, id: LanguageModelId, _cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        let model = CloudModel::from(id.0.as_ref());
+    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
+        let model = match CloudModel::from_id(&id.0) {
+            Ok(model) => model,
+            Err(_) => self
+                .state
+                .read(cx)
+                .settings
+                .available_models
+                .iter()
+                .find(|model| model.id() == id.0.as_ref())
+                .cloned()
+                .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?,
+        };
+
         Ok(Arc::new(CloudLanguageModel {
             id,
             model,
@@ -155,8 +192,7 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model = CloudModel::from(self.id.0.as_ref());
-        match model {
+        match &self.model {
             CloudModel::Gpt3Point5Turbo => {
                 count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
             }
@@ -170,9 +206,9 @@ impl LanguageModel for CloudLanguageModel {
             | CloudModel::Claude3Opus
             | CloudModel::Claude3Sonnet
             | CloudModel::Claude3Haiku => count_anthropic_tokens(request, cx),
-            CloudModel::Custom(model) => {
+            CloudModel::Custom { name, .. } => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model,
+                    model: name.clone(),
                     messages: request
                         .messages
                         .iter()
@@ -195,11 +231,14 @@ impl LanguageModel for CloudLanguageModel {
         mut request: LanguageModelRequest,
         _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        match self.model {
+        match &self.model {
             CloudModel::Claude3Opus
             | CloudModel::Claude3Sonnet
             | CloudModel::Claude3Haiku
             | CloudModel::Claude3_5Sonnet => preprocess_anthropic_request(&mut request),
+            CloudModel::Custom { name, .. } if name.starts_with("anthropic/") => {
+                preprocess_anthropic_request(&mut request)
+            }
             _ => {}
         }
 

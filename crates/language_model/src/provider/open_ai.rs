@@ -143,7 +143,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 .settings
                 .available_models
                 .iter()
-                .find(|model| model.display_name() == id.0.as_ref())
+                .find(|model| model.id() == id.0.as_ref())
                 .cloned()
                 .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?,
         };
