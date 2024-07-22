@@ -1,3 +1,4 @@
+use crate::restorable_workspace_locations;
 use crate::{
     handle_open_request, init_headless, init_ui, zed::ssh_connection_modal::SshConnectionModal,
 };
@@ -528,133 +529,22 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
-                let paths = if paths.is_empty() {
-                    if open_new_workspace == Some(true) {
-                        vec![]
-                    } else {
-                        workspace::last_opened_workspace_paths()
-                            .await
-                            .map(|location| {
-                                location
-                                    .paths()
-                                    .iter()
-                                    .map(|path| PathLikeWithPosition {
-                                        path_like: path.clone(),
-                                        row: None,
-                                        column: None,
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default()
-                    }
-                } else {
-                    paths
-                        .into_iter()
-                        .map(|path_with_position_string| {
-                            PathLikeWithPosition::parse_str(
-                                &path_with_position_string,
-                                |_, path_str| {
-                                    Ok::<_, std::convert::Infallible>(
-                                        Path::new(path_str).to_path_buf(),
-                                    )
-                                },
-                            )
-                            .expect("Infallible")
-                        })
-                        .collect()
-                };
+                let open_workspace_result = open_workspaces(
+                    paths,
+                    open_new_workspace,
+                    &responses,
+                    wait,
+                    app_state.clone(),
+                    &mut cx,
+                )
+                .await;
 
-                let mut errored = false;
-
-                if !paths.is_empty() {
-                    match open_paths_with_positions(
-                        &paths,
-                        app_state,
-                        workspace::OpenOptions {
-                            open_new_workspace,
-                            ..Default::default()
-                        },
-                        &mut cx,
-                    )
-                    .await
-                    {
-                        Ok((workspace, items)) => {
-                            let mut item_release_futures = Vec::new();
-
-                            for (item, path) in items.into_iter().zip(&paths) {
-                                match item {
-                                    Some(Ok(item)) => {
-                                        cx.update(|cx| {
-                                            let released = oneshot::channel();
-                                            item.on_release(
-                                                cx,
-                                                Box::new(move |_| {
-                                                    let _ = released.0.send(());
-                                                }),
-                                            )
-                                            .detach();
-                                            item_release_futures.push(released.1);
-                                        })
-                                        .log_err();
-                                    }
-                                    Some(Err(err)) => {
-                                        responses
-                                            .send(CliResponse::Stderr {
-                                                message: format!("error opening {path:?}: {err}"),
-                                            })
-                                            .log_err();
-                                        errored = true;
-                                    }
-                                    None => {}
-                                }
-                            }
-
-                            if wait {
-                                let background = cx.background_executor().clone();
-                                let wait = async move {
-                                    if paths.is_empty() {
-                                        let (done_tx, done_rx) = oneshot::channel();
-                                        let _subscription = workspace.update(&mut cx, |_, cx| {
-                                            cx.on_release(move |_, _, _| {
-                                                let _ = done_tx.send(());
-                                            })
-                                        });
-                                        let _ = done_rx.await;
-                                    } else {
-                                        let _ = futures::future::try_join_all(item_release_futures)
-                                            .await;
-                                    };
-                                }
-                                .fuse();
-                                futures::pin_mut!(wait);
-
-                                loop {
-                                    // Repeatedly check if CLI is still open to avoid wasting resources
-                                    // waiting for files or workspaces to close.
-                                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                                    futures::select_biased! {
-                                        _ = wait => break,
-                                        _ = timer => {
-                                            if responses.send(CliResponse::Ping).is_err() {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            errored = true;
-                            responses
-                                .send(CliResponse::Stderr {
-                                    message: format!("error opening {paths:?}: {error}"),
-                                })
-                                .log_err();
-                        }
-                    }
+                let errored = if let Some(errored) = open_workspace_result {
+                    errored
                 } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
                     cx.update(|cx| show_welcome_view(app_state, cx).detach())
                         .log_err();
+                    false
                 } else {
                     cx.update(|cx| {
                         workspace::open_new(app_state, cx, |workspace, cx| {
@@ -663,7 +553,8 @@ pub async fn handle_cli_connection(
                         .detach();
                     })
                     .log_err();
-                }
+                    false
+                };
 
                 responses
                     .send(CliResponse::Exit {
@@ -673,4 +564,166 @@ pub async fn handle_cli_connection(
             }
         }
     }
+}
+
+async fn open_workspaces(
+    paths: Vec<String>,
+    open_new_workspace: Option<bool>,
+    responses: &IpcSender<CliResponse>,
+    wait: bool,
+    app_state: Arc<AppState>,
+    mut cx: &mut AsyncAppContext,
+) -> Option<bool> {
+    let workspaces = if paths.is_empty() {
+        if open_new_workspace == Some(true) {
+            None
+        } else {
+            let locations = restorable_workspace_locations(&mut cx, &app_state).await;
+            locations.map(|locations| {
+                locations
+                    .into_iter()
+                    .map(|location| {
+                        location
+                            .paths()
+                            .iter()
+                            .map(|path| PathLikeWithPosition {
+                                path_like: path.clone(),
+                                row: None,
+                                column: None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+        }
+    } else {
+        let workspace_location = paths
+            .into_iter()
+            .map(|path_with_position_string| {
+                PathLikeWithPosition::parse_str(&path_with_position_string, |_, path_str| {
+                    Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
+                })
+                .expect("Infallible")
+            })
+            .collect();
+        Some(vec![workspace_location])
+    };
+
+    if let Some(workspace_paths) = workspaces {
+        for workspace_paths in workspace_paths {
+            let errored = open_workspace(
+                workspace_paths,
+                open_new_workspace,
+                wait,
+                responses,
+                &app_state,
+                &mut cx,
+            )
+            .await;
+            if errored {
+                return Some(true);
+            }
+        }
+        Some(false)
+    } else {
+        None
+    }
+}
+
+async fn open_workspace(
+    workspace_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    open_new_workspace: Option<bool>,
+    wait: bool,
+    responses: &IpcSender<CliResponse>,
+    app_state: &Arc<AppState>,
+    cx: &mut AsyncAppContext,
+) -> bool {
+    let mut errored = false;
+
+    match open_paths_with_positions(
+        &workspace_paths,
+        app_state.clone(),
+        workspace::OpenOptions {
+            open_new_workspace,
+            ..Default::default()
+        },
+        cx,
+    )
+    .await
+    {
+        Ok((workspace, items)) => {
+            let mut item_release_futures = Vec::new();
+
+            for (item, path) in items.into_iter().zip(&workspace_paths) {
+                match item {
+                    Some(Ok(item)) => {
+                        cx.update(|cx| {
+                            let released = oneshot::channel();
+                            item.on_release(
+                                cx,
+                                Box::new(move |_| {
+                                    let _ = released.0.send(());
+                                }),
+                            )
+                            .detach();
+                            item_release_futures.push(released.1);
+                        })
+                        .log_err();
+                    }
+                    Some(Err(err)) => {
+                        responses
+                            .send(CliResponse::Stderr {
+                                message: format!("error opening {path:?}: {err}"),
+                            })
+                            .log_err();
+                        errored = true;
+                    }
+                    None => {}
+                }
+            }
+
+            if wait {
+                let background = cx.background_executor().clone();
+                let wait = async move {
+                    if workspace_paths.is_empty() {
+                        let (done_tx, done_rx) = oneshot::channel();
+                        let _subscription = workspace.update(cx, |_, cx| {
+                            cx.on_release(move |_, _, _| {
+                                let _ = done_tx.send(());
+                            })
+                        });
+                        let _ = done_rx.await;
+                    } else {
+                        let _ = futures::future::try_join_all(item_release_futures).await;
+                    };
+                }
+                .fuse();
+
+                futures::pin_mut!(wait);
+
+                loop {
+                    // Repeatedly check if CLI is still open to avoid wasting resources
+                    // waiting for files or workspaces to close.
+                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                    futures::select_biased! {
+                        _ = wait => break,
+                        _ = timer => {
+                            if responses.send(CliResponse::Ping).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            errored = true;
+            responses
+                .send(CliResponse::Stderr {
+                    message: format!("error opening {workspace_paths:?}: {error}"),
+                })
+                .log_err();
+        }
+    }
+    errored
 }
