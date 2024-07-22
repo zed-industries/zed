@@ -29,6 +29,3 @@ parking_lot.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 system-configuration = "0.6.0"
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.65.1"
