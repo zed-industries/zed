@@ -67,8 +67,8 @@ impl zed::Extension for PurescriptExtension {
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(config)?;
-        let command = zed_extension_api::CommandType::Other(zed::node_binary_path()?);
-        let env = zed_extension_api::CommandEnv::None;
+        let command = zed::node_binary_path()?;
+        let env = Vec::new();
         Ok(zed::Command {
             command,
             args: vec![
