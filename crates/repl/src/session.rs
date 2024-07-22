@@ -563,36 +563,24 @@ impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut buttons = vec![Button::new("shutdown", "Shutdown")
-            .style(ButtonStyle::Subtle)
-            .on_click(cx.listener(move |session, _, cx| {
-                session.shutdown(cx);
-            }))];
-
-        let status_text = match &self.kernel {
-            Kernel::RunningKernel(kernel) => {
-                buttons.push(
+        let (status_text, interrupt_button) = match &self.kernel {
+            Kernel::RunningKernel(kernel) => (
+                kernel
+                    .kernel_info
+                    .as_ref()
+                    .map(|info| info.language_info.name.clone()),
+                Some(
                     Button::new("interrupt", "Interrupt")
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |session, _, cx| {
                             session.interrupt(cx);
                         })),
-                );
-                let mut name = self.kernel_specification.name.clone();
-
-                if let Some(info) = &kernel.kernel_info {
-                    name.push_str(" (");
-                    name.push_str(&info.language_info.name);
-                    name.push_str(")");
-                }
-                name
-            }
-            Kernel::StartingKernel(_) => format!("{} (Starting)", self.kernel_specification.name),
-            Kernel::ErroredLaunch(err) => {
-                format!("{} (Error: {})", self.kernel_specification.name, err)
-            }
-            Kernel::ShuttingDown => format!("{} (Shutting Down)", self.kernel_specification.name),
-            Kernel::Shutdown => format!("{} (Shutdown)", self.kernel_specification.name),
+                ),
+            ),
+            Kernel::StartingKernel(_) => (Some("Starting".into()), None),
+            Kernel::ErroredLaunch(err) => (Some(format!("Error: {err}")), None),
+            Kernel::ShuttingDown => (Some("Shutting Down".into()), None),
+            Kernel::Shutdown => (Some("Shutdown".into()), None),
         };
 
         SessionEntry::new(self.kernel_specification.clone())
@@ -606,7 +594,16 @@ impl Render for Session {
                 Kernel::ShuttingDown => Color::Modified,
                 Kernel::Shutdown => Color::Disabled,
             })
-            .child(Label::new(status_text))
-            .buttons(buttons)
+            .child(Label::new(self.kernel_specification.name.clone()))
+            .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
+            .button(
+                Button::new("shutdown", "Shutdown")
+                    .style(ButtonStyle::Subtle)
+                    .disabled(self.kernel.is_shutting_down())
+                    .on_click(cx.listener(move |session, _, cx| {
+                        session.shutdown(cx);
+                    })),
+            )
+            .buttons(interrupt_button)
     }
 }

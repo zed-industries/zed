@@ -71,15 +71,6 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
     Ok(ports)
 }
 
-#[derive(Debug)]
-pub enum Kernel {
-    RunningKernel(RunningKernel),
-    StartingKernel(Shared<Task<()>>),
-    ErroredLaunch(String),
-    ShuttingDown,
-    Shutdown,
-}
-
 #[derive(Debug, Clone)]
 pub enum KernelStatus {
     Idle,
@@ -89,6 +80,7 @@ pub enum KernelStatus {
     ShuttingDown,
     Shutdown,
 }
+
 impl KernelStatus {
     pub fn is_connected(&self) -> bool {
         match self {
@@ -126,6 +118,15 @@ impl From<&Kernel> for KernelStatus {
     }
 }
 
+#[derive(Debug)]
+pub enum Kernel {
+    RunningKernel(RunningKernel),
+    StartingKernel(Shared<Task<()>>),
+    ErroredLaunch(String),
+    ShuttingDown,
+    Shutdown,
+}
+
 impl Kernel {
     pub fn status(&self) -> KernelStatus {
         self.into()
@@ -146,6 +147,16 @@ impl Kernel {
                 running_kernel.kernel_info = Some(kernel_info.clone());
             }
             _ => {}
+        }
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        match self {
+            Kernel::ShuttingDown => true,
+            Kernel::RunningKernel(_)
+            | Kernel::StartingKernel(_)
+            | Kernel::ErroredLaunch(_)
+            | Kernel::Shutdown => false,
         }
     }
 }
