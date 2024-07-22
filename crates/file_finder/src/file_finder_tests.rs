@@ -1496,7 +1496,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     let project = Project::test(app_state.fs.clone(), ["/test/project_1".as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
     let worktree_1_id = project.update(cx, |project, cx| {
-        let worktree = project.worktrees().last().expect("worktree not found");
+        let worktree = project.worktrees(cx).last().expect("worktree not found");
         worktree.read(cx).id()
     });
 

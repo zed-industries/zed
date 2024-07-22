@@ -4173,7 +4173,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let worktree_id =
-            cx.update(|cx| project.read(cx).worktrees().next().unwrap().read(cx).id());
+            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace
@@ -4969,7 +4969,7 @@ mod tests {
     ) {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
@@ -4984,7 +4984,7 @@ mod tests {
     fn select_path(panel: &View<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
@@ -5006,7 +5006,7 @@ mod tests {
     ) -> Option<ProjectEntryId> {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     return worktree.entry_for_path(relative_path).map(|entry| entry.id);

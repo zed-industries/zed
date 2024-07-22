@@ -1067,8 +1067,8 @@ impl Workspace {
                     .collect::<Vec<_>>();
                 if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
-                        .update(&mut cx, |project, _| {
-                            project.set_worktrees_reordered(true);
+                        .update(&mut cx, |project, cx| {
+                            project.set_worktrees_reordered(true, cx);
                         })
                         .log_err();
                 }
@@ -1557,7 +1557,7 @@ impl Workspace {
     }
 
     pub fn worktrees<'a>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Model<Worktree>> {
-        self.project.read(cx).worktrees()
+        self.project.read(cx).worktrees(cx)
     }
 
     pub fn visible_worktrees<'a>(
@@ -1841,7 +1841,7 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let window = cx.window_handle().downcast::<Self>();
         let is_remote = self.project.read(cx).is_remote();
-        let has_worktree = self.project.read(cx).worktrees().next().is_some();
+        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
         let window_to_replace = if replace_current_window {
@@ -5653,7 +5653,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
         let item1 = cx.new_view(|cx| {
@@ -6777,7 +6777,7 @@ mod tests {
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let worktree_id = project.update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
@@ -6840,7 +6840,7 @@ mod tests {
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let worktree_id = project.update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
