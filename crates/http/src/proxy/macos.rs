@@ -1,17 +1,22 @@
-mod system_configuration;
-
 use super::{Proxy, SysProxiesSettings};
 use core_foundation::{
     array::CFArray,
-    base::{kCFAllocatorDefault, CFType, TCFType},
+    base::{CFType, TCFType},
     dictionary::CFDictionary,
     number::CFNumber,
     runloop::{kCFRunLoopDefaultMode, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRun},
-    string::CFString,
+    string::{CFString, CFStringRef},
 };
 use system_configuration::{
-    sys::*, SCDynamicStore, SCDynamicStoreBuilder, SCDynamicStoreCallBackContext,
+    dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder, SCDynamicStoreCallBackContext},
+    sys::schema_definitions::{
+        kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
+        kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+        kSCPropNetProxiesSOCKSEnable, kSCPropNetProxiesSOCKSPort, kSCPropNetProxiesSOCKSProxy,
+    },
 };
+
+const PROXY_NOTIFICATION_KEY: &str = "State:/Network/Global/Proxies";
 
 /// Subscribe to system proxy notifications and call
 /// `update_sys_settings` for the first time.
@@ -29,16 +34,20 @@ pub fn init_proxy(proxy: &Proxy) {
     // initial update.
     proxy.update_sys_settings(&proxies_settings(&dynamic_store));
 
+    let proxy_key = CFString::from_static_string(PROXY_NOTIFICATION_KEY);
     dynamic_store.set_notification_keys(
-        &CFArray::from_copyable(&[proxies_key()]),
+        &CFArray::from_copyable(&[proxy_key.as_concrete_TypeRef()]),
         &CFArray::<CFStringRef>::from_copyable(&[]),
     );
 
-    unsafe impl Send for SCDynamicStore {
-        // safety: do not clone, but only move (Clone + Send = racing!).
-    }
+    // safety: do not clone SCDynamicStore to anywhere.
+    struct SCDynamicStoreSend(SCDynamicStore);
+    unsafe impl Send for SCDynamicStoreSend {}
+
+    let dynamic_store = SCDynamicStoreSend(dynamic_store);
     std::thread::spawn(move || unsafe {
-        let run_loop_source = dynamic_store.create_run_loop_source();
+        let dynamic_store = dynamic_store;
+        let run_loop_source = dynamic_store.0.create_run_loop_source();
         CFRunLoopAddSource(
             CFRunLoopGetCurrent(),
             run_loop_source.as_concrete_TypeRef(),
@@ -46,11 +55,6 @@ pub fn init_proxy(proxy: &Proxy) {
         );
         CFRunLoopRun();
     });
-}
-
-/// key for proxies notification.
-fn proxies_key() -> CFStringRef {
-    unsafe { SCDynamicStoreKeyCreateProxies(kCFAllocatorDefault) }
 }
 
 /*
