@@ -42,7 +42,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
     .await;
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 0 }".into())],
+        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
     );
 
     server_cx.update(HeadlessProject::init);
@@ -139,13 +139,13 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
 
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 200 }".into())],
+        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
         assert_eq!(
             buffer.diff_base().unwrap().to_string(),
-            "fn one() -> usize { 200 }"
+            "fn one() -> usize { 100 }"
         );
     });
 }
