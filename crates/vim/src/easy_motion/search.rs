@@ -93,7 +93,6 @@ pub fn row_starts(
         .collect_vec()
 }
 
-// TODO investigate interaction with inlay hints
 pub fn word_starts(
     word_type: WordType,
     direction: Direction,

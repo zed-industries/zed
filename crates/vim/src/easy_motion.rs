@@ -149,37 +149,40 @@ fn sync(init: bool, cx: &mut AppContext) {
         EasyMotion::update(cx, |easy, _cx| easy.keys = keys);
     } else {
         let keys = settings.keys.clone();
-        let mut subs = if init {
-            Vec::new()
-        } else {
+        let mut subs = Vec::new();
+        if !init {
             // if the application is already open then we need to add listeners to all the open editors
-            cx.windows()
-                .iter()
-                .flat_map(|window| {
-                    window
-                        .downcast::<Workspace>()
-                        .unwrap()
-                        .update(cx, |workspace, cx| {
-                            editor_views(workspace, cx)
-                                .into_iter()
-                                .flat_map(|editor| {
-                                    editor
-                                        .update(cx, |editor, cx| register_actions(editor, cx))
-                                        .into_iter()
-                                })
-                                .collect_vec()
-                        })
-                        .unwrap()
-                })
-                .collect_vec()
+            for window in cx.windows() {
+                let Some(workspace) = window.downcast::<Workspace>() else {
+                    continue;
+                };
+                workspace
+                    .update(cx, |workspace, cx| {
+                        for pane in workspace.panes() {
+                            let items = pane
+                                .read(cx)
+                                .items()
+                                .filter_map(|item| item.downcast::<Editor>())
+                                .collect_vec();
+                            for editor in items {
+                                editor.update(cx, |editor, cx| {
+                                    subs.append(&mut register_actions(editor, cx));
+                                });
+                            }
+                        }
+                    })
+                    .unwrap();
+            }
         };
-        subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
-            let mut hi = register_actions(editor, cx);
-            EasyMotion::update(cx, |easy, _cx| easy.subscriptions.append(&mut hi));
-        }));
+
+        let new_views_sub = cx.observe_new_views(|editor: &mut Editor, cx| {
+            let mut subs = register_actions(editor, cx);
+            EasyMotion::update(cx, |easy, _cx| easy.subscriptions.append(&mut subs));
+        });
+        subs.push(new_views_sub);
 
         let easy = cx.new_model(move |_| EasyMotion::new(keys, subs));
-        EasyMotion::set_global(easy.clone(), cx);
+        EasyMotion::set_global(easy, cx);
     }
 }
 
@@ -509,8 +512,6 @@ impl EasyMotion {
         editor.add_overlays_with_reserve::<Self>(overlays, len, cx);
     }
 
-    // TODO: overlays which are folded should probably not be selectable.
-    // Probably will need to add an "active" field to the overlay state struct.
     fn update_overlays(
         editor: &mut Editor,
         view: View<Editor>,
