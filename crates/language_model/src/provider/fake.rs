@@ -128,7 +128,7 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn max_token_count(&self) -> usize {
-        todo!()
+        1000000
     }
 
     fn count_tokens(
