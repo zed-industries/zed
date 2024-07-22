@@ -22,7 +22,6 @@ actions!(
         RefreshKernelspecs
     ]
 );
-actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
