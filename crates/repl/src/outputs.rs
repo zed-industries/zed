@@ -11,13 +11,13 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
-// Given these outputs are destined for the editor with the block decorations API, all of them must report
-// how many lines they will take up in the editor.
+/// Given these outputs are destined for the editor with the block decorations API, all of them must report
+/// how many lines they will take up in the editor.
 pub trait LineHeight: Sized {
     fn num_lines(&self, cx: &mut WindowContext) -> u8;
 }
 
-// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
+/// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
@@ -264,7 +264,7 @@ impl LineHeight for TableView {
     }
 }
 
-// Userspace error from the kernel
+/// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,

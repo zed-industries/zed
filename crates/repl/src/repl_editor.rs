@@ -19,9 +19,8 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         return Ok(());
     }
 
-    let (selected_text, language, anchor_range) = match snippet(editor.clone(), cx) {
-        Some(snippet) => snippet,
-        None => return Ok(()),
+    let Some((selected_text, language, anchor_range)) = snippet(editor.clone(), cx) else {
+        return Ok(());
     };
 
     let entity_id = editor.entity_id();
@@ -83,10 +82,8 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
         return SessionSupport::ActiveSession(session);
     };
 
-    let language = get_language(editor, cx);
-    let language = match language {
-        Some(language) => language,
-        None => return SessionSupport::Unsupported,
+    let Some(language) = get_language(editor, cx) else {
+        return SessionSupport::Unsupported;
     };
     let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
 
@@ -102,34 +99,39 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
 pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
-    if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
-        session.update(cx, |session, cx| {
-            session.clear_outputs(cx);
-            cx.notify();
-        });
-    }
+    let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
+        return;
+    };
+    session.update(cx, |session, cx| {
+        session.clear_outputs(cx);
+        cx.notify();
+    });
 }
 
 pub fn interrupt(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
-    if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
-        session.update(cx, |session, cx| {
-            session.interrupt(cx);
-            cx.notify();
-        });
-    }
+    let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.interrupt(cx);
+        cx.notify();
+    });
 }
 
 pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
-    if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
-        session.update(cx, |session, cx| {
-            session.shutdown(cx);
-            cx.notify();
-        });
-    }
+    let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.shutdown(cx);
+        cx.notify();
+    });
 }
 
 fn snippet(
