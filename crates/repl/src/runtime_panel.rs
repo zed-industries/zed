@@ -405,21 +405,14 @@ impl RuntimePanel {
                     Some(language) => language,
                     None => return SessionSupport::Unsupported,
                 };
-                // Check for kernelspec
                 let kernelspec = self.kernelspec(&language, cx);
 
                 match kernelspec {
                     Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
-                    None => {
-                        // If no kernelspec but language is one of typescript or python
-                        // then we return RequiresSetup
-                        match language.name().as_ref() {
-                            "TypeScript" | "Python" => {
-                                SessionSupport::RequiresSetup(language.name())
-                            }
-                            _ => SessionSupport::Unsupported,
-                        }
-                    }
+                    None => match language.name().as_ref() {
+                        "TypeScript" | "Python" => SessionSupport::RequiresSetup(language.name()),
+                        _ => SessionSupport::Unsupported,
+                    },
                 }
             }
         }
@@ -503,25 +496,25 @@ impl Render for RuntimePanel {
                 .p_4()
                 .size_full()
                 .gap_2()
-                        .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
-                        .child(
-                            Label::new("To start interactively running code in your editor, you need to install and configure Jupyter kernels.")
-                                .size(LabelSize::Default),
-                        )
-                        .child(
-                            h_flex().w_full().p_4().justify_center().gap_2().child(
-                                ButtonLike::new("install-kernels")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .child(Label::new("Install Kernels"))
-                                    .on_click(move |_, cx| {
-                                        cx.open_url(
-                                        "https://docs.jupyter.org/en/latest/install/kernels.html",
-                                    )
-                                    }),
-                            ),
-                        )
+                .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
+                .child(
+                    Label::new("To start interactively running code in your editor, you need to install and configure Jupyter kernels.")
+                        .size(LabelSize::Default),
+                )
+                .child(
+                    h_flex().w_full().p_4().justify_center().gap_2().child(
+                        ButtonLike::new("install-kernels")
+                            .style(ButtonStyle::Filled)
+                            .size(ButtonSize::Large)
+                            .layer(ElevationIndex::ModalSurface)
+                            .child(Label::new("Install Kernels"))
+                            .on_click(move |_, cx| {
+                                cx.open_url(
+                                    "https://docs.jupyter.org/en/latest/install/kernels.html",
+                                )
+                            }),
+                    ),
+                )
                 .into_any_element();
         }
 
