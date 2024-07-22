@@ -1,3 +1,5 @@
+//! REPL operations on an [`Editor`].
+
 use std::ops::Range;
 use std::sync::Arc;
 

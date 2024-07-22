@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
-    editor::SessionSupport, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
-    KernelStatus, Session,
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
+    SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -54,7 +54,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = repl::editor::session(editor.downgrade(), cx);
+        let session = repl::session(editor.downgrade(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -137,7 +137,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::editor::run(editor.clone(), cx).log_err();
+                                repl::run(editor.clone(), cx).log_err();
                             }
                         },
                     )
@@ -151,7 +151,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::editor::interrupt(editor.clone(), cx);
+                                repl::interrupt(editor.clone(), cx);
                             }
                         },
                     )
@@ -165,7 +165,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::editor::clear_outputs(editor.clone(), cx);
+                                repl::clear_outputs(editor.clone(), cx);
                             }
                         },
                     )
@@ -188,7 +188,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::editor::shutdown(editor.clone(), cx);
+                                repl::shutdown(editor.clone(), cx);
                             }
                         },
                     )

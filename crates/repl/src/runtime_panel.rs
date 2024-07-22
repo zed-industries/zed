@@ -67,7 +67,7 @@ pub fn init(cx: &mut AppContext) {
                         return;
                     }
 
-                    crate::editor::run(editor_handle.clone(), cx).log_err();
+                    crate::run(editor_handle.clone(), cx).log_err();
                 }
             })
             .detach();
@@ -80,7 +80,7 @@ pub fn init(cx: &mut AppContext) {
                         return;
                     }
 
-                    crate::editor::clear_outputs(editor_handle.clone(), cx);
+                    crate::clear_outputs(editor_handle.clone(), cx);
                 }
             })
             .detach();
@@ -93,7 +93,7 @@ pub fn init(cx: &mut AppContext) {
                         return;
                     }
 
-                    crate::editor::interrupt(editor_handle.clone(), cx);
+                    crate::interrupt(editor_handle.clone(), cx);
                 }
             })
             .detach();
@@ -106,7 +106,7 @@ pub fn init(cx: &mut AppContext) {
                         return;
                     }
 
-                    crate::editor::shutdown(editor_handle.clone(), cx);
+                    crate::shutdown(editor_handle.clone(), cx);
                 }
             })
             .detach();

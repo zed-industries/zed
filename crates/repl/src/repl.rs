@@ -4,10 +4,10 @@ use project::Fs;
 use settings::Settings as _;
 use std::{sync::Arc, time::Duration};
 
-pub mod editor;
 mod jupyter_settings;
 mod kernels;
 mod outputs;
+mod repl_editor;
 mod repl_store;
 mod runtime_panel;
 mod session;
@@ -15,6 +15,7 @@ mod stdio;
 
 pub use jupyter_settings::JupyterSettings;
 pub use kernels::{Kernel, KernelSpecification, KernelStatus};
+pub use repl_editor::*;
 pub use runtime_panel::RuntimePanel;
 pub use runtime_panel::{ClearOutputs, Interrupt, Run, Shutdown};
 pub use runtimelib::ExecutionState;
