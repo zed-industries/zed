@@ -67,7 +67,10 @@ pub trait Fs: Send + Sync {
         self.remove_file(path, options).await
     }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
-    async fn load(&self, path: &Path) -> Result<String>;
+    async fn load(&self, path: &Path) -> Result<String> {
+        Ok(String::from_utf8(self.load_bytes(path).await?)?)
+    }
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -92,8 +95,11 @@ pub trait Fs: Send + Sync {
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs;
+    fn as_fake(&self) -> &FakeFs {
+        panic!("called as_fake on a real fs");
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -317,6 +323,11 @@ impl Fs for RealFs {
         let path = path.to_path_buf();
         let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
         Ok(text)
+    }
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
+        let path = path.to_path_buf();
+        let bytes = smol::unblock(|| std::fs::read(path)).await?;
+        Ok(bytes)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
@@ -593,11 +604,6 @@ impl Fs for RealFs {
 
         temp_dir.close()?;
         case_sensitive
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
-        panic!("called `RealFs::as_fake`")
     }
 }
 
@@ -1431,6 +1437,10 @@ impl Fs for FakeFs {
     async fn load(&self, path: &Path) -> Result<String> {
         let content = self.load_internal(path).await?;
         Ok(String::from_utf8(content.clone())?)
+    }
+
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
+        self.load_internal(path).await
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {

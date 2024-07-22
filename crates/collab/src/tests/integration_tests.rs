@@ -1528,7 +1528,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a2, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir2", true, cx)
+            p.find_or_create_worktree("/root-1/dir2", true, cx)
         })
         .await
         .unwrap();
@@ -1601,7 +1601,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir3", true, cx)
+            p.find_or_create_worktree("/root-1/dir3", true, cx)
         })
         .await
         .unwrap();
@@ -1725,7 +1725,7 @@ async fn test_project_reconnect(
     // While client B is disconnected, add and remove worktrees from client A's project.
     let (worktree_a4, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir4", true, cx)
+            p.find_or_create_worktree("/root-1/dir4", true, cx)
         })
         .await
         .unwrap();
@@ -3327,7 +3327,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.read(cx).id().to_usize())
+                .local_settings(worktree_b.entity_id().as_u64() as _)
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
@@ -3346,7 +3346,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.read(cx).id().to_usize())
+                .local_settings(worktree_b.entity_id().as_u64() as _)
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{}"#.to_string()),
@@ -3375,7 +3375,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.read(cx).id().to_usize())
+                .local_settings(worktree_b.entity_id().as_u64() as _)
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
@@ -3407,7 +3407,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.read(cx).id().to_usize())
+                .local_settings(worktree_b.entity_id().as_u64() as _)
                 .collect::<Vec<_>>(),
             &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
@@ -4887,7 +4887,7 @@ async fn test_project_search(
     let (project_a, _) = client_a.build_local_project("/root/dir-1", cx_a).await;
     let (worktree_2, _) = project_a
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root/dir-2", true, cx)
+            p.find_or_create_worktree("/root/dir-2", true, cx)
         })
         .await
         .unwrap();

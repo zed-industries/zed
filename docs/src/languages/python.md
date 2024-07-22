@@ -11,6 +11,36 @@ The [pyright](https://github.com/microsoft/pyright) language server offers flexi
 
 For more information, see the Pyright [configuration documentation](https://microsoft.github.io/pyright/#/configuration).
 
+### Settings
+
+The [pyright](https://github.com/microsoft/pyright) language server also accepts specific LSP related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
+
+For example, in order to:
+
+- use strict type-checking level
+- diagnose all files in the workspace instead of the only open files default
+- provide the path to a specific python interpreter
+
+```json
+{
+  "lsp": {
+    "pyright": {
+      "settings": {
+        "python.analysis": {
+          "diagnosticMode": "workspace",
+          "typeCheckingMode": "strict"
+        },
+        "python": {
+          "pythonPath": ".venv/bin/python"
+        }
+      }
+    }
+  }
+}
+```
+
+For more information, see the Pyright [settings documentation](https://microsoft.github.io/pyright/#/settings).
+
 ### Virtual environments
 
 A python [virtual environment](https://docs.python.org/3/tutorial/venv.html) allows you to store all of a project's dependencies, including the Python interpreter and package manager, in a single directory that's isolated from any other Python projects on your computer.
@@ -48,23 +78,46 @@ venvPath = "."
 venv = ".venv"
 ```
 
-### Code formatting
+You can also configure this option directly in your `settings.json` file ([pyrights settings](#settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
 
-The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an \_external_code formatter in your settings. See the [configuration](../configuring-zed.md) documentation for more information.
+```json
+{
+  "lsp": {
+    "pyright": {
+      "settings": {
+        "python": {
+          "pythonPath": ".venv/bin/python"
+        }
+      }
+    }
+  }
+}
+```
 
-A common tool for formatting python code is [Black](https://black.readthedocs.io/en/stable/). If you have Black installed globally, you can use it to format Python files by adding the following to your `settings.json`:
+### Code formatting & Linting
+
+The Pyright language server does not provide code formatting or linting. If you want to detect lint errors and reformat your Python code upon saving, you'll need to set up.
+
+A common tool for formatting Python code is [Ruff](https://black.readthedocs.io/en/stable/). It is another tool written in Rust, an extremely fast Python linter and code formatter.
+
+It is available through the [Ruff extension](https://docs.astral.sh/ruff/). However, the code formatting through the extension is not yet available. You can set up the formatter to run on save by adding the following configuration to your `settings.json`, assuming that [`Ruff`](https://docs.astral.sh/ruff/) is installed in your Python environment.
 
 ```json
 {
   "languages": {
+    ..., // other languages
     "Python": {
-      "formatter": {
-         "external": {
-          "command": "black",
-          "arguments": ["-"]
+      "format_on_save": {
+        "external": {
+          "command": "python",
+          "arguments": [
+            "-m",
+            "ruff",
+            "format",
+            "-"
+          ]
         }
-      },
-      "format_on_save": "on"
+      }
     }
   }
 }

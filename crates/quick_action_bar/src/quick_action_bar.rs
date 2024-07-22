@@ -102,18 +102,21 @@ impl Render for QuickActionBar {
             inlay_hints_enabled,
             supports_inlay_hints,
             git_blame_inline_enabled,
+            auto_signature_help_enabled,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
             let supports_inlay_hints = editor.supports_inlay_hints(cx);
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+            let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
 
             (
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
                 git_blame_inline_enabled,
+                auto_signature_help_enabled,
             )
         };
 
@@ -139,14 +142,14 @@ impl Render for QuickActionBar {
             "toggle inline assistant",
             IconName::MagicWand,
             false,
-            Box::new(InlineAssist),
+            Box::new(InlineAssist::default()),
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
                 move |_, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
+                            AssistantPanel::inline_assist(workspace, &InlineAssist::default(), cx);
                         });
                     }
                 }
@@ -265,6 +268,23 @@ impl Render for QuickActionBar {
                                 },
                             );
 
+                            menu = menu.toggleable_entry(
+                                "Auto Signature Help",
+                                auto_signature_help_enabled,
+                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_auto_signature_help_menu(
+                                                &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            );
+
                             menu
                         });
                         cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
@@ -284,7 +304,7 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(search_button)
+                    .children(self.render_repl_menu(cx))
                     .when(
                         AssistantSettings::get_global(cx).enabled
                             && AssistantSettings::get_global(cx).button,
@@ -294,7 +314,11 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(self.render_repl_menu(cx))
+                    .children(search_button),
+            )
+            .child(
+                h_flex()
+                    .gap(Spacing::Medium.rems(cx))
                     .children(editor_selections_dropdown)
                     .child(editor_settings_dropdown),
             )

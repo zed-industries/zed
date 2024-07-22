@@ -1,23 +1,32 @@
 use crate::{
-    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageId, MessageStatus, Role,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider, MessageId,
+    MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
 };
-use client::{proto, telemetry::Telemetry};
+use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{
+    future::{self, Shared},
+    FutureExt, StreamExt,
+};
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
-use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
+use language::{
+    AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
+};
+use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequest, Role};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
+use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
+    cmp,
+    fmt::Debug,
     iter, mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -26,7 +35,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -265,7 +274,7 @@ impl ContextOperation {
 pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
-    EditSuggestionsChanged,
+    EditStepsChanged,
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -326,6 +335,331 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
+#[derive(Debug)]
+pub struct EditStep {
+    pub source_range: Range<language::Anchor>,
+    pub operations: Option<EditStepOperations>,
+}
+
+#[derive(Debug)]
+pub struct EditSuggestionGroup {
+    pub context_range: Range<language::Anchor>,
+    pub suggestions: Vec<EditSuggestion>,
+}
+
+#[derive(Debug)]
+pub struct EditSuggestion {
+    pub range: Range<language::Anchor>,
+    /// If None, assume this is a suggestion to delete the range rather than transform it.
+    pub description: Option<String>,
+    pub prepend_newline: bool,
+}
+
+impl EditStep {
+    pub fn edit_suggestions(
+        &self,
+        project: &Model<Project>,
+        cx: &AppContext,
+    ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
+        let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
+            return Task::ready(HashMap::default());
+        };
+
+        let suggestion_tasks: Vec<_> = operations
+            .iter()
+            .map(|operation| operation.edit_suggestion(project.clone(), cx))
+            .collect();
+
+        cx.spawn(|mut cx| async move {
+            let suggestions = future::join_all(suggestion_tasks)
+                .await
+                .into_iter()
+                .filter_map(|task| task.log_err())
+                .collect::<Vec<_>>();
+
+            let mut suggestions_by_buffer = HashMap::default();
+            for (buffer, suggestion) in suggestions {
+                suggestions_by_buffer
+                    .entry(buffer)
+                    .or_insert_with(Vec::new)
+                    .push(suggestion);
+            }
+
+            let mut suggestion_groups_by_buffer = HashMap::default();
+            for (buffer, mut suggestions) in suggestions_by_buffer {
+                let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
+                buffer
+                    .update(&mut cx, |buffer, _cx| {
+                        // Sort suggestions by their range
+                        suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
+                        // Dedup overlapping suggestions
+                        suggestions.dedup_by(|a, b| {
+                            let a_range = a.range.to_offset(buffer);
+                            let b_range = b.range.to_offset(buffer);
+                            if a_range.start <= b_range.end && b_range.start <= a_range.end {
+                                if b_range.start < a_range.start {
+                                    a.range.start = b.range.start;
+                                }
+                                if b_range.end > a_range.end {
+                                    a.range.end = b.range.end;
+                                }
+
+                                if let (Some(a_desc), Some(b_desc)) =
+                                    (a.description.as_mut(), b.description.as_mut())
+                                {
+                                    b_desc.push('\n');
+                                    b_desc.push_str(a_desc);
+                                } else if a.description.is_some() {
+                                    b.description = a.description.take();
+                                }
+
+                                true
+                            } else {
+                                false
+                            }
+                        });
+
+                        // Create context ranges for each suggestion
+                        for suggestion in suggestions {
+                            let context_range = {
+                                let suggestion_point_range = suggestion.range.to_point(buffer);
+                                let start_row = suggestion_point_range.start.row.saturating_sub(5);
+                                let end_row = cmp::min(
+                                    suggestion_point_range.end.row + 5,
+                                    buffer.max_point().row,
+                                );
+                                let start = buffer.anchor_before(Point::new(start_row, 0));
+                                let end = buffer
+                                    .anchor_after(Point::new(end_row, buffer.line_len(end_row)));
+                                start..end
+                            };
+
+                            if let Some(last_group) = suggestion_groups.last_mut() {
+                                if last_group
+                                    .context_range
+                                    .end
+                                    .cmp(&context_range.start, buffer)
+                                    .is_ge()
+                                {
+                                    // Merge with the previous group if context ranges overlap
+                                    last_group.context_range.end = context_range.end;
+                                    last_group.suggestions.push(suggestion);
+                                } else {
+                                    // Create a new group
+                                    suggestion_groups.push(EditSuggestionGroup {
+                                        context_range,
+                                        suggestions: vec![suggestion],
+                                    });
+                                }
+                            } else {
+                                // Create the first group
+                                suggestion_groups.push(EditSuggestionGroup {
+                                    context_range,
+                                    suggestions: vec![suggestion],
+                                });
+                            }
+                        }
+                    })
+                    .ok();
+                suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
+            }
+
+            suggestion_groups_by_buffer
+        })
+    }
+}
+
+pub enum EditStepOperations {
+    Pending(Task<Result<()>>),
+    Parsed {
+        operations: Vec<EditOperation>,
+        raw_output: String,
+    },
+}
+
+impl Debug for EditStepOperations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
+            EditStepOperations::Parsed {
+                operations,
+                raw_output,
+            } => f
+                .debug_struct("EditStepOperations::Parsed")
+                .field("operations", operations)
+                .field("raw_output", raw_output)
+                .finish(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditOperation {
+    pub path: String,
+    pub kind: EditOperationKind,
+}
+
+impl EditOperation {
+    fn edit_suggestion(
+        &self,
+        project: Model<Project>,
+        cx: &AppContext,
+    ) -> Task<Result<(Model<language::Buffer>, EditSuggestion)>> {
+        let path = self.path.clone();
+        let kind = self.kind.clone();
+        cx.spawn(move |mut cx| async move {
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    let project_path = project
+                        .project_path_for_full_path(Path::new(&path), cx)
+                        .with_context(|| format!("worktree not found for {:?}", path))?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
+            while *parse_status.borrow() != ParseStatus::Idle {
+                parse_status.changed().await?;
+            }
+
+            let prepend_newline = kind.prepend_newline();
+            let suggestion_range = if let Some(symbol) = kind.symbol() {
+                let outline = buffer
+                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
+                    .context("no outline for buffer")?;
+                let candidate = outline
+                    .path_candidates
+                    .iter()
+                    .find(|item| item.string == symbol)
+                    .context("symbol not found")?;
+                buffer.update(&mut cx, |buffer, _| {
+                    let outline_item = &outline.items[candidate.id];
+                    let symbol_range = outline_item.range.to_point(buffer);
+                    let body_range = outline_item
+                        .body_range
+                        .as_ref()
+                        .map(|range| range.to_point(buffer))
+                        .unwrap_or(symbol_range.clone());
+
+                    match kind {
+                        EditOperationKind::PrependChild { .. } => {
+                            let position = buffer.anchor_after(body_range.start);
+                            position..position
+                        }
+                        EditOperationKind::AppendChild { .. } => {
+                            let position = buffer.anchor_before(body_range.end);
+                            position..position
+                        }
+                        EditOperationKind::InsertSiblingBefore { .. } => {
+                            let position = buffer.anchor_before(symbol_range.start);
+                            position..position
+                        }
+                        EditOperationKind::InsertSiblingAfter { .. } => {
+                            let position = buffer.anchor_after(symbol_range.end);
+                            position..position
+                        }
+                        EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
+                            let start = Point::new(symbol_range.start.row, 0);
+                            let end = Point::new(
+                                symbol_range.end.row,
+                                buffer.line_len(symbol_range.end.row),
+                            );
+                            buffer.anchor_before(start)..buffer.anchor_after(end)
+                        }
+                        EditOperationKind::Create { .. } => unreachable!(),
+                    }
+                })?
+            } else {
+                match kind {
+                    EditOperationKind::PrependChild { .. } => {
+                        language::Anchor::MIN..language::Anchor::MIN
+                    }
+                    EditOperationKind::AppendChild { .. } | EditOperationKind::Create { .. } => {
+                        language::Anchor::MAX..language::Anchor::MAX
+                    }
+                    _ => unreachable!("All other operations should have a symbol"),
+                }
+            };
+
+            Ok((
+                buffer,
+                EditSuggestion {
+                    range: suggestion_range,
+                    description: kind.description().map(ToString::to_string),
+                    prepend_newline,
+                },
+            ))
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditOperationKind {
+    Update {
+        symbol: String,
+        description: String,
+    },
+    Create {
+        description: String,
+    },
+    InsertSiblingBefore {
+        symbol: String,
+        description: String,
+    },
+    InsertSiblingAfter {
+        symbol: String,
+        description: String,
+    },
+    PrependChild {
+        symbol: Option<String>,
+        description: String,
+    },
+    AppendChild {
+        symbol: Option<String>,
+        description: String,
+    },
+    Delete {
+        symbol: String,
+    },
+}
+
+impl EditOperationKind {
+    pub fn symbol(&self) -> Option<&str> {
+        match self {
+            Self::Update { symbol, .. } => Some(symbol),
+            Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
+            Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
+            Self::PrependChild { symbol, .. } => symbol.as_deref(),
+            Self::AppendChild { symbol, .. } => symbol.as_deref(),
+            Self::Delete { symbol } => Some(symbol),
+            Self::Create { .. } => None,
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Update { description, .. } => Some(description),
+            Self::Create { description } => Some(description),
+            Self::InsertSiblingBefore { description, .. } => Some(description),
+            Self::InsertSiblingAfter { description, .. } => Some(description),
+            Self::PrependChild { description, .. } => Some(description),
+            Self::AppendChild { description, .. } => Some(description),
+            Self::Delete { .. } => None,
+        }
+    }
+
+    pub fn prepend_newline(&self) -> bool {
+        match self {
+            Self::PrependChild { .. }
+            | Self::AppendChild { .. }
+            | Self::InsertSiblingAfter { .. }
+            | Self::InsertSiblingBefore { .. } => true,
+            _ => false,
+        }
+    }
+}
+
 pub struct Context {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -333,7 +667,6 @@ pub struct Context {
     pending_ops: Vec<ContextOperation>,
     operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
-    edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
@@ -346,12 +679,12 @@ pub struct Context {
     pending_completions: Vec<PendingCompletion>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
-    pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
+    edit_steps: Vec<EditStep>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -400,7 +733,6 @@ impl Context {
             operations: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
-            edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
@@ -411,13 +743,13 @@ impl Context {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
-            pending_edit_suggestion_parse: None,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
             telemetry,
             language_registry,
+            edit_steps: Vec::new(),
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -735,8 +1067,8 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_suggestions(&self) -> &[EditSuggestion] {
-        &self.edit_suggestions
+    pub fn edit_steps(&self) -> &[EditStep] {
+        &self.edit_steps
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -771,8 +1103,8 @@ impl Context {
             )),
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
-                self.reparse_edit_suggestions(cx);
                 self.reparse_slash_commands(cx);
+                self.prune_invalid_edit_steps(cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -880,63 +1212,243 @@ impl Context {
         }
     }
 
-    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
-            })
-            .ok();
-        }));
+    fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        let prev_len = self.edit_steps.len();
+        self.edit_steps.retain(|step| {
+            step.source_range.start.is_valid(buffer) && step.source_range.end.is_valid(buffer)
+        });
+        if self.edit_steps.len() != prev_len {
+            cx.emit(ContextEvent::EditStepsChanged);
+            cx.notify();
+        }
     }
 
-    fn reparse_edit_suggestions_in_range(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, _| {
-            let range_start = buffer.anchor_before(range.start);
-            let range_end = buffer.anchor_after(range.end);
-            let start_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .end
-                        .cmp(&range_start, buffer)
-                        .then(Ordering::Greater)
-                })
-                .unwrap_err();
-            let end_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .start
-                        .cmp(&range_end, buffer)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
+    fn parse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+        let mut new_edit_steps = Vec::new();
 
-            let mut new_edit_suggestions = Vec::new();
+        self.buffer.update(cx, |buffer, _cx| {
             let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
-                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
-                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
-                new_edit_suggestions.push(EditSuggestion {
-                    source_range: start_anchor..end_anchor,
-                    full_path: suggestion.path,
-                });
+            let mut in_step = false;
+            let mut step_start = 0;
+            let mut line_start_offset = message_lines.offset();
+
+            while let Some(line) = message_lines.next() {
+                if let Some(step_start_index) = line.find("<step>") {
+                    if !in_step {
+                        in_step = true;
+                        step_start = line_start_offset + step_start_index;
+                    }
+                }
+
+                if let Some(step_end_index) = line.find("</step>") {
+                    if in_step {
+                        let start_anchor = buffer.anchor_after(step_start);
+                        let end_anchor = buffer
+                            .anchor_before(line_start_offset + step_end_index + "</step>".len());
+                        let source_range = start_anchor..end_anchor;
+
+                        // Check if a step with the same range already exists
+                        let existing_step_index = self.edit_steps.binary_search_by(|probe| {
+                            probe.source_range.cmp(&source_range, buffer)
+                        });
+
+                        if let Err(ix) = existing_step_index {
+                            // Step doesn't exist, so add it
+                            new_edit_steps.push((
+                                ix,
+                                EditStep {
+                                    source_range,
+                                    operations: None,
+                                },
+                            ));
+                        }
+
+                        in_step = false;
+                    }
+                }
+
+                line_start_offset = message_lines.offset();
             }
-            self.edit_suggestions
-                .splice(start_ix..end_ix, new_edit_suggestions);
         });
-        cx.emit(ContextEvent::EditSuggestionsChanged);
+
+        // Insert new steps and generate their corresponding tasks
+        for (index, mut step) in new_edit_steps.into_iter().rev() {
+            let task = self.generate_edit_step_operations(&step, cx);
+            step.operations = Some(EditStepOperations::Pending(task));
+            self.edit_steps.insert(index, step);
+        }
+
+        cx.emit(ContextEvent::EditStepsChanged);
         cx.notify();
+    }
+
+    fn generate_edit_step_operations(
+        &self,
+        edit_step: &EditStep,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let mut request = self.to_completion_request(cx);
+        let edit_step_range = edit_step.source_range.clone();
+        let step_text = self
+            .buffer
+            .read(cx)
+            .text_for_range(edit_step_range.clone())
+            .collect::<String>();
+
+        cx.spawn(|this, mut cx| async move {
+            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
+
+            let mut prompt = prompt_store.operations_prompt();
+            prompt.push_str(&step_text);
+
+            request.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: prompt,
+            });
+
+            let raw_output = cx
+                .update(|cx| CompletionProvider::global(cx).complete(request, cx))?
+                .await?;
+
+            let operations = Self::parse_edit_operations(&raw_output);
+            this.update(&mut cx, |this, cx| {
+                let step_index = this
+                    .edit_steps
+                    .binary_search_by(|step| {
+                        step.source_range
+                            .cmp(&edit_step_range, this.buffer.read(cx))
+                    })
+                    .map_err(|_| anyhow!("edit step not found"))?;
+                if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
+                    edit_step.operations = Some(EditStepOperations::Parsed {
+                        operations,
+                        raw_output,
+                    });
+                    cx.emit(ContextEvent::EditStepsChanged);
+                }
+                anyhow::Ok(())
+            })?
+        })
+    }
+
+    fn parse_edit_operations(xml: &str) -> Vec<EditOperation> {
+        let Some(start_ix) = xml.find("<operations>") else {
+            return Vec::new();
+        };
+        let Some(end_ix) = xml[start_ix..].find("</operations>") else {
+            return Vec::new();
+        };
+        let end_ix = end_ix + start_ix + "</operations>".len();
+
+        let doc = roxmltree::Document::parse(&xml[start_ix..end_ix]).log_err();
+        doc.map_or(Vec::new(), |doc| {
+            doc.root_element()
+                .children()
+                .map(|node| {
+                    let tag_name = node.tag_name().name();
+                    let path = node
+                        .attribute("path")
+                        .with_context(|| {
+                            format!("invalid node {node:?}, missing attribute 'path'")
+                        })?
+                        .to_string();
+                    let kind = match tag_name {
+                        "update" => EditOperationKind::Update {
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "create" => EditOperationKind::Create {
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "prepend_child" => EditOperationKind::PrependChild {
+                            symbol: node.attribute("symbol").map(String::from),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "append_child" => EditOperationKind::AppendChild {
+                            symbol: node.attribute("symbol").map(String::from),
+                            description: node
+                                .attribute("description")
+                                .with_context(|| {
+                                    format!(
+                                        "invalid node {node:?}, missing attribute 'description'"
+                                    )
+                                })?
+                                .to_string(),
+                        },
+                        "delete" => EditOperationKind::Delete {
+                            symbol: node
+                                .attribute("symbol")
+                                .with_context(|| {
+                                    format!("invalid node {node:?}, missing attribute 'symbol'")
+                                })?
+                                .to_string(),
+                        },
+                        _ => return Err(anyhow!("invalid node {node:?}")),
+                    };
+                    anyhow::Ok(EditOperation { path, kind })
+                })
+                .filter_map(|op| op.log_err())
+                .collect()
+        })
     }
 
     pub fn pending_command_for_position(
@@ -1092,159 +1604,120 @@ impl Context {
         self.count_remaining_tokens(cx);
     }
 
-    pub fn assist(
-        &mut self,
-        selected_messages: HashSet<MessageId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<MessageAnchor> {
-        let mut user_messages = Vec::new();
+    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let last_message_id = self.message_anchors.iter().rev().find_map(|message| {
+            message
+                .start
+                .is_valid(self.buffer.read(cx))
+                .then_some(message.id)
+        })?;
 
-        let last_message_id = if let Some(last_message_id) =
-            self.message_anchors.iter().rev().find_map(|message| {
-                message
-                    .start
-                    .is_valid(self.buffer.read(cx))
-                    .then_some(message.id)
-            }) {
-            last_message_id
-        } else {
-            return Default::default();
-        };
-
-        let mut should_assist = false;
-        for selected_message_id in selected_messages {
-            let selected_message_role =
-                if let Some(metadata) = self.messages_metadata.get(&selected_message_id) {
-                    metadata.role
-                } else {
-                    continue;
-                };
-
-            if selected_message_role == Role::Assistant {
-                if let Some(user_message) = self.insert_message_after(
-                    selected_message_id,
-                    Role::User,
-                    MessageStatus::Done,
-                    cx,
-                ) {
-                    user_messages.push(user_message);
-                }
-            } else {
-                should_assist = true;
-            }
+        if !CompletionProvider::global(cx).is_authenticated() {
+            log::info!("completion provider has no credentials");
+            return None;
         }
 
-        if should_assist {
-            if !CompletionProvider::global(cx).is_authenticated() {
-                log::info!("completion provider has no credentials");
-                return Default::default();
-            }
+        let request = self.to_completion_request(cx);
+        let stream = CompletionProvider::global(cx).stream_completion(request, cx);
+        let assistant_message = self
+            .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
+            .unwrap();
 
-            let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request, cx);
-            let assistant_message = self
-                .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
-                .unwrap();
+        // Queue up the user's next reply.
+        let user_message = self
+            .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
+            .unwrap();
 
-            // Queue up the user's next reply.
-            let user_message = self
-                .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
-                .unwrap();
-            user_messages.push(user_message);
+        let task = cx.spawn({
+            |this, mut cx| async move {
+                let assistant_message_id = assistant_message.id;
+                let mut response_latency = None;
+                let stream_completion = async {
+                    let request_start = Instant::now();
+                    let mut chunks = stream.await?;
 
-            let task = cx.spawn({
-                |this, mut cx| async move {
-                    let assistant_message_id = assistant_message.id;
-                    let mut response_latency = None;
-                    let stream_completion = async {
-                        let request_start = Instant::now();
-                        let mut messages = stream.await.inner.await?;
-
-                        while let Some(message) = messages.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
-                            }
-                            let text = message?;
-
-                            this.update(&mut cx, |this, cx| {
-                                let message_ix = this
-                                    .message_anchors
-                                    .iter()
-                                    .position(|message| message.id == assistant_message_id)?;
-                                let message_range = this.buffer.update(cx, |buffer, cx| {
-                                    let message_start_offset =
-                                        this.message_anchors[message_ix].start.to_offset(buffer);
-                                    let message_old_end_offset = this.message_anchors
-                                        [message_ix + 1..]
-                                        .iter()
-                                        .find(|message| message.start.is_valid(buffer))
-                                        .map_or(buffer.len(), |message| {
-                                            message.start.to_offset(buffer).saturating_sub(1)
-                                        });
-                                    let message_new_end_offset =
-                                        message_old_end_offset + text.len();
-                                    buffer.edit(
-                                        [(message_old_end_offset..message_old_end_offset, text)],
-                                        None,
-                                        cx,
-                                    );
-                                    message_start_offset..message_new_end_offset
-                                });
-                                this.reparse_edit_suggestions_in_range(message_range, cx);
-                                cx.emit(ContextEvent::StreamedCompletion);
-
-                                Some(())
-                            })?;
-                            smol::future::yield_now().await;
+                    while let Some(chunk) = chunks.next().await {
+                        if response_latency.is_none() {
+                            response_latency = Some(request_start.elapsed());
                         }
+                        let chunk = chunk?;
 
                         this.update(&mut cx, |this, cx| {
-                            this.pending_completions
-                                .retain(|completion| completion.id != this.completion_count);
-                            this.summarize(cx);
+                            let message_ix = this
+                                .message_anchors
+                                .iter()
+                                .position(|message| message.id == assistant_message_id)?;
+                            let message_range = this.buffer.update(cx, |buffer, cx| {
+                                let message_start_offset =
+                                    this.message_anchors[message_ix].start.to_offset(buffer);
+                                let message_old_end_offset = this.message_anchors[message_ix + 1..]
+                                    .iter()
+                                    .find(|message| message.start.is_valid(buffer))
+                                    .map_or(buffer.len(), |message| {
+                                        message.start.to_offset(buffer).saturating_sub(1)
+                                    });
+                                let message_new_end_offset = message_old_end_offset + chunk.len();
+                                buffer.edit(
+                                    [(message_old_end_offset..message_old_end_offset, chunk)],
+                                    None,
+                                    cx,
+                                );
+                                message_start_offset..message_new_end_offset
+                            });
+                            this.parse_edit_steps_in_range(message_range, cx);
+                            cx.emit(ContextEvent::StreamedCompletion);
+
+                            Some(())
                         })?;
-
-                        anyhow::Ok(())
-                    };
-
-                    let result = stream_completion.await;
+                        smol::future::yield_now().await;
+                    }
 
                     this.update(&mut cx, |this, cx| {
-                        let error_message = result
-                            .err()
-                            .map(|error| error.to_string().trim().to_string());
+                        this.pending_completions
+                            .retain(|completion| completion.id != this.completion_count);
+                        this.summarize(cx);
+                    })?;
 
-                        this.update_metadata(assistant_message_id, cx, |metadata| {
-                            if let Some(error_message) = error_message.as_ref() {
-                                metadata.status =
-                                    MessageStatus::Error(SharedString::from(error_message.clone()));
-                            } else {
-                                metadata.status = MessageStatus::Done;
-                            }
-                        });
+                    anyhow::Ok(())
+                };
 
-                        if let Some(telemetry) = this.telemetry.as_ref() {
-                            let model = CompletionProvider::global(cx).model();
-                            telemetry.report_assistant_event(
-                                Some(this.id.0.clone()),
-                                AssistantKind::Panel,
-                                model.telemetry_id(),
-                                response_latency,
-                                error_message,
-                            );
+                let result = stream_completion.await;
+
+                this.update(&mut cx, |this, cx| {
+                    let error_message = result
+                        .err()
+                        .map(|error| error.to_string().trim().to_string());
+
+                    this.update_metadata(assistant_message_id, cx, |metadata| {
+                        if let Some(error_message) = error_message.as_ref() {
+                            metadata.status =
+                                MessageStatus::Error(SharedString::from(error_message.clone()));
+                        } else {
+                            metadata.status = MessageStatus::Done;
                         }
-                    })
-                    .ok();
-                }
-            });
+                    });
 
-            self.pending_completions.push(PendingCompletion {
-                id: post_inc(&mut self.completion_count),
-                _task: task,
-            });
-        }
+                    if let Some(telemetry) = this.telemetry.as_ref() {
+                        let model = CompletionProvider::global(cx).model();
+                        telemetry.report_assistant_event(
+                            Some(this.id.0.clone()),
+                            AssistantKind::Panel,
+                            model.telemetry_id(),
+                            response_latency,
+                            error_message,
+                        );
+                    }
+                })
+                .ok();
+            }
+        });
 
-        user_messages
+        self.pending_completions.push(PendingCompletion {
+            id: post_inc(&mut self.completion_count),
+            _task: task,
+        });
+
+        Some(user_message)
     }
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
@@ -1515,10 +1988,10 @@ impl Context {
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request, cx);
+            let stream = CompletionProvider::global(cx).stream_completion(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await.inner.await?;
+                    let mut messages = stream.await?;
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
@@ -1719,99 +2192,6 @@ impl ContextVersion {
             context_id: context_id.to_proto(),
             context_version: language::proto::serialize_version(&self.context),
             buffer_version: language::proto::serialize_version(&self.buffer),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum EditParsingState {
-    None,
-    InOldText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_start_offset: usize,
-    },
-    InNewText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_range: Range<usize>,
-        new_text_start_offset: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditSuggestion {
-    pub source_range: Range<language::Anchor>,
-    pub full_path: PathBuf,
-}
-
-pub struct ParsedEditSuggestion {
-    pub path: PathBuf,
-    pub outer_range: Range<usize>,
-    pub old_text_range: Range<usize>,
-    pub new_text_range: Range<usize>,
-}
-
-pub fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
-    let mut state = EditParsingState::None;
-    loop {
-        let offset = lines.offset();
-        let message_line = lines.next()?;
-        match state {
-            EditParsingState::None => {
-                if let Some(rest) = message_line.strip_prefix("```edit ") {
-                    let path = rest.trim();
-                    if !path.is_empty() {
-                        state = EditParsingState::InOldText {
-                            path: PathBuf::from(path),
-                            start_offset: offset,
-                            old_text_start_offset: lines.offset(),
-                        };
-                    }
-                }
-            }
-            EditParsingState::InOldText {
-                path,
-                start_offset,
-                old_text_start_offset,
-            } => {
-                if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range: old_text_start_offset..offset,
-                        new_text_start_offset: lines.offset(),
-                    };
-                } else {
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_offset,
-                        old_text_start_offset,
-                    };
-                }
-            }
-            EditParsingState::InNewText {
-                path,
-                start_offset,
-                old_text_range,
-                new_text_start_offset,
-            } => {
-                if message_line == "```" {
-                    return Some(ParsedEditSuggestion {
-                        path,
-                        outer_range: start_offset..offset + "```".len(),
-                        old_text_range,
-                        new_text_range: new_text_start_offset..offset,
-                    });
-                } else {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range,
-                        new_text_start_offset,
-                    };
-                }
-            }
         }
     }
 }
@@ -2097,22 +2477,23 @@ pub struct SavedContextMetadata {
 mod tests {
     use super::*;
     use crate::{
-        assistant_panel,
+        assistant_panel, prompt_library,
         slash_command::{active_command, file_command},
-        FakeCompletionProvider, MessageId,
+        MessageId,
     };
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
+    use completion::FakeCompletionProvider;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
+    use indoc::indoc;
     use language::LspAdapterDelegate;
     use parking_lot::Mutex;
     use project::Project;
     use rand::prelude::*;
-    use rope::Rope;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{cell::RefCell, env, path::Path, rc::Rc, sync::atomic::AtomicBool};
-    use text::network::Network;
+    use std::{cell::RefCell, env, rc::Rc, sync::atomic::AtomicBool};
+    use text::{network::Network, ToPoint};
     use ui::WindowContext;
     use unindent::Unindent;
     use util::{test::marked_text_ranges, RandomCharIter};
@@ -2551,72 +2932,151 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_next_edit_suggestion() {
-        let text = "
-            some output:
+    #[gpui::test]
+    async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+        cx.update(prompt_library::init);
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        let fake_provider = cx.update(FakeCompletionProvider::setup_test);
+        cx.update(assistant_panel::init);
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
-            ```edit src/foo.rs
-                let a = 1;
-                let b = 2;
-            ---
-                let w = 1;
-                let x = 2;
-                let y = 3;
-                let z = 4;
+        // Create a new context
+        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
+
+        // Simulate user input
+        let user_message = indoc! {r#"
+            Please refactor this code:
+
+            fn main() {
+                println!("Hello, World!");
+            }
+        "#};
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, user_message)], None, cx);
+        });
+
+        // Simulate LLM response with edit steps
+        let llm_response = indoc! {r#"
+            Sure, I can help you refactor that code. Here's a step-by-step process:
+
+            <step>
+            First, let's extract the greeting into a separate function:
+
+            ```rust
+            fn greet() {
+                println!("Hello, World!");
+            }
+
+            fn main() {
+                greet();
+            }
             ```
+            </step>
 
-            some more output:
+            <step>
+            Now, let's make the greeting customizable:
 
-            ```edit src/foo.rs
-                let c = 1;
-            ---
+            ```rust
+            fn greet(name: &str) {
+                println!("Hello, {}!", name);
+            }
+
+            fn main() {
+                greet("World");
+            }
             ```
+            </step>
 
-            and the conclusion.
-        "
-        .unindent();
+            These changes make the code more modular and flexible.
+        "#};
 
-        let rope = Rope::from(text.as_str());
-        let mut lines = rope.chunks().lines();
-        let mut suggestions = vec![];
-        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
-            suggestions.push((
-                suggestion.path.clone(),
-                text[suggestion.old_text_range].to_string(),
-                text[suggestion.new_text_range].to_string(),
-            ));
+        // Simulate the assist method to trigger the LLM response
+        context.update(cx, |context, cx| context.assist(cx));
+        cx.run_until_parked();
+
+        // Retrieve the assistant response message's start from the context
+        let response_start_row = context.read_with(cx, |context, cx| {
+            let buffer = context.buffer.read(cx);
+            context.message_anchors[1].start.to_point(buffer).row
+        });
+
+        // Simulate the LLM completion
+        fake_provider.send_last_completion_chunk(llm_response.to_string());
+        fake_provider.finish_last_completion();
+
+        // Wait for the completion to be processed
+        cx.run_until_parked();
+
+        // Verify that the edit steps were parsed correctly
+        context.read_with(cx, |context, cx| {
+            assert_eq!(
+                edit_steps(context, cx),
+                vec![
+                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 14, 7),
+                    Point::new(response_start_row + 16, 0)..Point::new(response_start_row + 28, 7),
+                ]
+            );
+        });
+
+        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
+            context
+                .edit_steps
+                .iter()
+                .map(|step| {
+                    let buffer = context.buffer.read(cx);
+                    step.source_range.to_point(buffer)
+                })
+                .collect()
         }
+    }
 
+    #[test]
+    fn test_parse_edit_operations() {
+        let operations = indoc! {r#"
+            Here are the operations to make all fields of the Canvas struct private:
+
+            <operations>
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub pixels" description="Remove pub keyword from pixels field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub size" description="Remove pub keyword from size field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub stride" description="Remove pub keyword from stride field" />
+                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub format" description="Remove pub keyword from format field" />
+            </operations>
+        "#};
+
+        let parsed_operations = Context::parse_edit_operations(operations);
         assert_eq!(
-            suggestions,
+            parsed_operations,
             vec![
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let a = 1;", //
-                        "    let b = 2;",
-                        "",
-                    ]
-                    .join("\n"),
-                    [
-                        "    let w = 1;",
-                        "    let x = 2;",
-                        "    let y = 3;",
-                        "    let z = 4;",
-                        "",
-                    ]
-                    .join("\n"),
-                ),
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let c = 1;", //
-                        "",
-                    ]
-                    .join("\n"),
-                    String::new(),
-                )
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub pixels".to_string(),
+                        description: "Remove pub keyword from pixels field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub size".to_string(),
+                        description: "Remove pub keyword from size field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub stride".to_string(),
+                        description: "Remove pub keyword from stride field".to_string(),
+                    },
+                },
+                EditOperation {
+                    path: "font-kit/src/canvas.rs".to_string(),
+                    kind: EditOperationKind::Update {
+                        symbol: "pub struct Canvas pub format".to_string(),
+                        description: "Remove pub keyword from format field".to_string(),
+                    },
+                },
             ]
         );
     }

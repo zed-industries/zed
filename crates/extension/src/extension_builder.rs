@@ -64,10 +64,10 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
-            http: http::client(None),
+            http: http_client,
         }
     }
 

@@ -27,6 +27,7 @@ serde_json.workspace = true
 settings.workspace = true
 supermaven_api.workspace = true
 smol.workspace = true
+text.workspace = true
 ui.workspace = true
 util.workspace = true
 

@@ -81,7 +81,8 @@ h6 code {
 
 h2,
 h3 {
-    margin-block-start: 2.5em;
+    margin-block-start: 2em;
+    margin-block-end: 0;
 }
 h4,
 h5 {
@@ -140,7 +141,7 @@ h6:target::before {
 
 .content {
     overflow-y: auto;
-    padding: 0 5px 50px 5px;
+    padding: 24px 4px 48px 4px;
 }
 .content main {
     margin-inline-start: auto;
@@ -150,6 +151,10 @@ h6:target::before {
 .content p {
     line-height: 1.625em;
 }
+.content div.video {
+    margin-top: 0.5rem;
+    margin-bottom: 3rem;
+}
 .content ol {
     line-height: 1.625em;
 }
@@ -157,10 +162,11 @@ h6:target::before {
     line-height: 1.625em;
 }
 .content a {
-    text-decoration: none;
+    text-decoration: underline;
+    text-decoration-color: hsl(219, 93%, 42%, 0.2);
 }
 .content a:hover {
-    text-decoration: underline;
+    text-decoration-color: hsl(219, 93%, 42%, 0.5);
 }
 .content img,
 .content video {
@@ -173,6 +179,11 @@ h6:target::before {
 .content .header:link,
 .content .header:visited:hover {
     text-decoration: none;
+}
+
+iframe {
+    margin-top: 1rem;
+    margin-bottom: 10rem;
 }
 
 table {
@@ -202,35 +213,65 @@ table tbody tr:nth-child(2n) {
 }
 
 blockquote {
-    margin: 20px 0;
-    padding: 0 20px;
+    margin: auto;
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
     color: var(--fg);
     background-color: var(--quote-bg);
-    border-block-start: 0.1em solid var(--quote-border);
-    border-block-end: 0.1em solid var(--quote-border);
+    border: 1px solid var(--quote-border);
 }
 
-.warning {
-    margin: 20px;
-    padding: 0 20px;
-    border-inline-start: 2px solid var(--warning-border);
+blockquote > p {
+    margin: 0;
+    padding-left: 2.6rem;
+    font-size: 1.4rem;
 }
 
-.warning:before {
+blockquote:before {
     position: absolute;
-    width: 3rem;
-    height: 3rem;
-    margin-inline-start: calc(-1.5rem - 21px);
     content: "ⓘ";
-    text-align: center;
-    background-color: var(--bg);
-    color: var(--warning-border);
+    margin: 0.3rem 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    font-size: 1.6rem;
     font-weight: bold;
-    font-size: 2rem;
+    color: var(--icons);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.625em;
 }
 
 blockquote .warning:before {
     background-color: var(--quote-bg);
+}
+
+.warning {
+    margin: auto;
+    padding: 1rem 1.25rem;
+    background-color: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+}
+
+.warning > p {
+    margin: 0;
+    padding-left: 2.6rem;
+    font-size: 1.4rem;
+}
+
+.warning:before {
+    position: absolute;
+    content: "ⓘ";
+    margin: 0.3rem 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    font-size: 1.6rem;
+    font-weight: bold;
+    color: var(--warning-icon);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.625em;
 }
 
 kbd {
@@ -280,11 +321,11 @@ kbd {
 }
 
 .chapter li.part-title {
-    font-size: 20px;
+    font-size: 18px;
     font-family: var(--title-font);
     color: var(--title-color);
-    margin: 5px 0px;
-    margin-top: 3rem;
+    margin: 5px 0;
+    margin-top: 2rem;
 }
 
 .result-no-output {

@@ -91,6 +91,7 @@ pub enum Motion {
         last_find: Box<Motion>,
     },
     NextLineStart,
+    PreviousLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
     GoToColumn,
@@ -235,6 +236,7 @@ actions!(
         EndOfDocument,
         Matching,
         NextLineStart,
+        PreviousLineStart,
         StartOfLineDownward,
         EndOfLineDownward,
         GoToColumn,
@@ -353,6 +355,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, &NextLineStart, cx: _| {
         motion(Motion::NextLineStart, cx)
     });
+    workspace.register_action(|_: &mut Workspace, &PreviousLineStart, cx: _| {
+        motion(Motion::PreviousLineStart, cx)
+    });
     workspace.register_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
         motion(Motion::StartOfLineDownward, cx)
     });
@@ -469,6 +474,7 @@ impl Motion {
             | EndOfDocument
             | CurrentLine
             | NextLineStart
+            | PreviousLineStart
             | StartOfLineDownward
             | StartOfParagraph
             | WindowTop
@@ -538,6 +544,7 @@ impl Motion {
             | WindowMiddle
             | WindowBottom
             | NextLineStart
+            | PreviousLineStart
             | ZedSearchResult { .. }
             | Jump { .. } => false,
         }
@@ -562,7 +569,8 @@ impl Motion {
             | PreviousWordEnd { .. }
             | NextSubwordEnd { .. }
             | PreviousSubwordEnd { .. }
-            | NextLineStart => true,
+            | NextLineStart
+            | PreviousLineStart => true,
             Left
             | Backspace
             | Right
@@ -764,6 +772,7 @@ impl Motion {
                 _ => return None,
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
+            PreviousLineStart => (previous_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
@@ -891,7 +900,7 @@ impl Motion {
                 }
 
                 if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
-                    *selection.end.column_mut() += 1;
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
             Some(selection.start..selection.end)
@@ -1653,6 +1662,11 @@ fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
+    first_non_whitespace(map, false, correct_line)
+}
+
+fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
+    let correct_line = start_of_relative_buffer_row(map, point, (times as isize) * -1);
     first_non_whitespace(map, false, correct_line)
 }
 

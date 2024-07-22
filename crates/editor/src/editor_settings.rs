@@ -25,7 +25,9 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
-    #[serde(default)]
+    pub search_wrap: bool,
+    pub auto_signature_help: bool,
+    pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
 }
 
@@ -66,13 +68,21 @@ pub enum DoubleClickInMultibuffer {
     Open,
 }
 
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
     ///
-    /// Default: `false`
+    /// Default: true
     pub enabled: bool,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct JupyterContent {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -228,9 +238,23 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+    /// Whether the editor search results will loop
+    ///
+    /// Default: true
+    pub search_wrap: Option<bool>,
+
+    /// Whether to automatically show a signature help pop-up or not.
+    ///
+    /// Default: false
+    pub auto_signature_help: Option<bool>,
+
+    /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
+    ///
+    /// Default: true
+    pub show_signature_help_after_edits: Option<bool>,
 
     /// Jupyter REPL settings.
-    pub jupyter: Option<Jupyter>,
+    pub jupyter: Option<JupyterContent>,
 }
 
 // Toolbar related settings
@@ -299,6 +323,12 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+}
+
+impl EditorSettings {
+    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).jupyter.enabled
+    }
 }
 
 impl Settings for EditorSettings {

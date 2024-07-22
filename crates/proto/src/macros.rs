@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! messages {
     ($(($name:ident, $priority:ident)),* $(,)?) => {
-        pub fn build_typed_envelope(sender_id: PeerId, received_at: Instant, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
+        pub fn build_typed_envelope(sender_id: PeerId, received_at: std::time::Instant, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
             match envelope.payload {
                 $(Some(envelope::Payload::$name(payload)) => {
                     Some(Box::new(TypedEnvelope {

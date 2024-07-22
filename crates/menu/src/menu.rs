@@ -19,6 +19,5 @@ actions!(
         SelectNext,
         SelectFirst,
         SelectLast,
-        UseSelectedQuery,
     ]
 );

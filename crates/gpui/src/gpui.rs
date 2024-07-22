@@ -291,6 +291,10 @@ pub trait BorrowAppContext {
     fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: Global;
+    /// Updates the global state of the given type, creating a default if it didn't exist before.
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global + Default;
 }
 
 impl<C> BorrowAppContext for C
@@ -309,6 +313,14 @@ where
         let result = f(&mut global, self);
         self.borrow_mut().end_global_lease(global);
         result
+    }
+
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global + Default,
+    {
+        self.borrow_mut().default_global::<G>();
+        self.update_global(f)
     }
 }
 

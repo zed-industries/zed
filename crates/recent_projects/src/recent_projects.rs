@@ -5,7 +5,6 @@ use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
-use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -93,7 +92,7 @@ impl RecentProjects {
         }
     }
 
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, open_recent.create_new_window, cx);
@@ -106,6 +105,20 @@ impl RecentProjects {
                     .update(cx, |picker, cx| picker.cycle_selection(cx))
             });
         });
+        if workspace
+            .project()
+            .read(cx)
+            .dev_server_project_id()
+            .is_some()
+        {
+            workspace.register_action(|workspace, _: &workspace::Open, cx| {
+                if workspace.active_modal::<Self>(cx).is_some() {
+                    cx.propagate();
+                } else {
+                    Self::open(workspace, true, cx);
+                }
+            });
+        }
     }
 
     pub fn open(
@@ -234,7 +247,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                         format!(
                             "{}{}",
-                            dev_server_project.dev_server_name, dev_server_project.path
+                            dev_server_project.dev_server_name,
+                            dev_server_project.paths.join("")
                         )
                     }
                 };
@@ -400,7 +414,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
-                    dev_server_project.dev_server_name, dev_server_project.path
+                    dev_server_project.dev_server_name,
+                    dev_server_project.paths.join(", ")
                 ))])
             }
         };
@@ -502,9 +517,6 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        if !cx.has_flag::<feature_flags::Remoting>() {
-            return None;
-        }
         Some(
             h_flex()
                 .border_t_1()
@@ -518,7 +530,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("New remote project…").color(Color::Muted))
+                        .child(Label::new("Open remote folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -691,16 +703,26 @@ mod tests {
     use std::path::PathBuf;
 
     use editor::Editor;
-    use gpui::{TestAppContext, WindowHandle};
-    use project::Project;
+    use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
+    use project::{project_settings::ProjectSettings, Project};
     use serde_json::json;
-    use workspace::{open_paths, AppState, LocalPaths};
+    use settings::SettingsStore;
+    use workspace::{open_paths, AppState};
 
     use super::*;
 
     #[gpui::test]
     async fn test_prompts_on_dirty_before_submit(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                    settings.session.restore_unsaved_buffers = false
+                });
+            });
+        });
+
         app_state
             .fs
             .as_fake()
@@ -760,7 +782,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        LocalPaths::new(vec!["/test/path/"]).into(),
+                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
                     )]);
                 });
             })

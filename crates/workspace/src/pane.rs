@@ -1477,6 +1477,7 @@ impl Pane {
                 }
             }
         }
+
         Ok(true)
     }
 
@@ -1588,6 +1589,7 @@ impl Pane {
             },
             cx,
         );
+        let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -1675,7 +1677,18 @@ impl Pane {
                             .detach_and_log_err(cx);
                     })),
             )
-            .child(label);
+            .child(
+                h_flex()
+                    .gap_1()
+                    .children(icon.map(|icon| {
+                        icon.size(IconSize::Small).color(if is_active {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                    }))
+                    .child(label),
+            );
 
         let single_entry_to_resolve = {
             let item_entries = self.items[ix].project_entry_ids(cx);

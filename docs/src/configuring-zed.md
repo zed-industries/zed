@@ -1,32 +1,26 @@
 # Configuring Zed
 
-## Folder-specific settings
+Zed is designed to be configured: we want to fit your workflow and preferences exactly. We provide default settings that are designed to be a comfortable starting point for as many people as possible, but we hope you will enjoy tweaking it to make it feel incredible.
 
-Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only at a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
+In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-The following global settings can be overridden with a folder-specific configuration:
+## Settings files
 
-- `inline_completions`
-- `enable_language_server`
-- `ensure_final_newline_on_save`
-- `format_on_save`
-- `formatter`
-- `hard_tabs`
-- `languages`
-- `preferred_line_length`
-- `remove_trailing_whitespace_on_save`
-- `soft_wrap`
-- `tab_size`
-- `show_inline_completions`
-- `show_whitespaces`
+Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux). By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-_See the Global settings section for details about these settings_
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
-## Global settings
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behaviour of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
-To get started with editing Zed's global settings, open `~/.config/zed/settings.json` via `⌘` + `,`, the command palette (`zed: open settings`), or the `Zed > Settings > Open Settings` application menu item.
+The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
-Here are all the currently available settings.
+## Default settings
+
+You can find the default settings for your current Zed by running `zed: Open Default Settings` from the command palette.
+
+Extensions that provide language servers may also provide default settings for those language servers.
+
+# Settings
 
 ## Active Pane Magnification
 
@@ -152,6 +146,16 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 `integer` values between `100` and `900`
 
+## Buffer Line Height
+
+- Description: The default line height for text in the editor.
+- Setting: `buffer_line_height`
+- Default: `"comfortable"`
+
+**Options**
+
+`"standard"`, `"comfortable"` or `{"custom": float}` (`1` is very compact, `2` very loose)
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -179,6 +183,22 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+
+## Direnv Integration
+
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Setting: `load_direnv`
+- Default:
+
+```json
+"load_direnv": "shell_hook"
+```
+
+**Options**
+There are two options to choose from:
+
+1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
+2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
 
 ## Inline Completions
 
@@ -409,6 +429,7 @@ List of `string` values
 ```json
 "tabs": {
   "close_position": "right",
+  "file_icons": false,
   "git_status": false
 },
 ```
@@ -436,6 +457,12 @@ List of `string` values
   "close_position": "left"
 }
 ```
+
+### File Icons
+
+- Description: Whether to show the file icon for a tab.
+- Setting: `file_icons`
+- Default: `false`
 
 ### Git Status
 
@@ -1454,7 +1481,7 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 "theme": {
-  "mode": "dark",
+  "mode": "system",
   "dark": "One Dark",
   "light": "One Light"
 },
@@ -1464,7 +1491,7 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 - Description: Specify theme mode.
 - Setting: `mode`
-- Default: `dark`
+- Default: `system`
 
 **Options**
 

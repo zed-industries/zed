@@ -125,7 +125,9 @@ where
 {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
+        vim.store_visual_marks(cx);
         let count = vim.take_count(cx).unwrap_or(1) as u32;
+
         vim.update_active_editor(cx, |vim, editor, cx| {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();

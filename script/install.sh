@@ -9,7 +9,7 @@ main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
-    temp="$(mktemp -d "/tmp/zed-XXXXX")"
+    temp="$(mktemp -d "/tmp/zed-XXXXXX")"
 
     if [ "$platform" = "Darwin" ]; then
         platform="macos"
@@ -58,6 +58,9 @@ main() {
             *zsh)
                 echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.zshrc"
                 echo "   source ~/.zshrc"
+                ;;
+            *fish)
+                echo "   fish_add_path -U $HOME/.local/bin"
                 ;;
             *)
                 echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"

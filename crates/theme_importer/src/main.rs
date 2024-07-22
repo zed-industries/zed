@@ -12,6 +12,7 @@ use indexmap::IndexMap;
 use log::LevelFilter;
 use schemars::schema_for;
 use serde::Deserialize;
+use simplelog::ColorChoice;
 use simplelog::{TermLogger, TerminalMode};
 use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
 
@@ -94,11 +95,6 @@ fn main() -> Result<()> {
 
     let log_config = {
         let mut config = simplelog::ConfigBuilder::new();
-        config
-            .set_level_color(log::Level::Trace, simplelog::Color::Cyan)
-            .set_level_color(log::Level::Info, simplelog::Color::Blue)
-            .set_level_color(log::Level::Warn, simplelog::Color::Yellow)
-            .set_level_color(log::Level::Error, simplelog::Color::Red);
 
         if !args.warn_on_missing {
             config.add_filter_ignore_str("theme_printer");
@@ -107,8 +103,13 @@ fn main() -> Result<()> {
         config.build()
     };
 
-    TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
-        .expect("could not initialize logger");
+    TermLogger::init(
+        LevelFilter::Trace,
+        log_config,
+        TerminalMode::Stderr,
+        ColorChoice::Auto,
+    )
+    .expect("could not initialize logger");
 
     if let Some(command) = args.command {
         match command {

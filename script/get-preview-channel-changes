@@ -59,6 +59,7 @@ async function main() {
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
     let releaseNotes = pullRequest.body || "";
+    let contributor = pullRequest.user.login || "";
     const captures = releaseNotesHeader.exec(releaseNotes);
     const notes = captures ? captures[1] : "MISSING";
     const skippableNoteRegex = /^\s*-?\s*n\/?a\s*/ims;
@@ -68,6 +69,7 @@ async function main() {
     }
     console.log("*", pullRequest.title);
     console.log("  PR URL:    ", webURL);
+    console.log("  Author:    ", contributor);
 
     // If the pull request contains a 'closes' line, print the closed issue.
     const fixesMatch = (pullRequest.body || "").match(FIXES_REGEX);

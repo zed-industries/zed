@@ -322,6 +322,12 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                     trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
                     ..Default::default()
                 }),
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -336,6 +342,12 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                     trigger_characters: Some(vec![":".to_string()]),
                     ..Default::default()
                 }),
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -975,7 +987,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/root/dir", true, cx)
+            project.find_or_create_worktree("/root/dir", true, cx)
         })
         .await
         .unwrap();
@@ -983,7 +995,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_local_worktree("/root/other.rs", false, cx)
+            project.find_or_create_worktree("/root/other.rs", false, cx)
         })
         .await
         .unwrap();
@@ -3056,15 +3068,8 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         });
     });
 
-    let remote = cx.update(|cx| {
-        Worktree::remote(
-            0,
-            1,
-            metadata,
-            Box::new(CollabRemoteWorktreeClient(project.read(cx).client())),
-            cx,
-        )
-    });
+    let remote =
+        cx.update(|cx| Worktree::remote(0, 1, metadata, project.read(cx).client().into(), cx));
 
     cx.executor().run_until_parked();
 
