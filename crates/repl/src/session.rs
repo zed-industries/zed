@@ -24,7 +24,9 @@ use runtimelib::{
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, Tooltip};
+use ui::{
+    h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, ListItem, Tooltip,
+};
 
 pub struct Session {
     editor: WeakView<Editor>,
@@ -599,14 +601,20 @@ impl Render for Session {
             Kernel::Shutdown => format!("{} (Shutdown)", self.kernel_specification.name),
         };
 
-        return v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(self.kernel.dot())
-                    .child(Label::new(status_text)),
-            )
-            .child(h_flex().gap_2().children(buttons));
+        ListItem::new(SharedString::from(self.kernel_specification.name.clone()))
+            .selectable(false)
+            .start_slot(self.kernel.dot())
+            .child(Label::new(status_text))
+            .end_slot(h_flex().gap_2().children(buttons))
+
+        // v_flex()
+        //     .gap_1()
+        //     .child(
+        //         h_flex()
+        //             .gap_2()
+        //             .child(self.kernel.dot())
+        //             .child(Label::new(status_text)),
+        //     )
+        //     .child(h_flex().gap_2().children(buttons))
     }
 }
