@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
-    let builder = ExtensionBuilder::new(scratch_dir, http::client(Proxy::env_proxy()));
+    let builder = ExtensionBuilder::new(http::client(Proxy::env_proxy()), scratch_dir);
     builder
         .compile_extension(
             &extension_path,

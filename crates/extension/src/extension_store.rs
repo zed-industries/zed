@@ -244,8 +244,8 @@ impl ExtensionStore {
             installed_dir,
             index_path,
             builder: Arc::new(ExtensionBuilder::new(
-                build_dir,
                 http::client(http_client.proxy()),
+                build_dir,
             )),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
