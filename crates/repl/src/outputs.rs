@@ -542,9 +542,9 @@ impl Render for ExecutionView {
                     ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                         .color(Color::Muted)
                         .into_any_element(),
-                    ExecutionStatus::Queued => {
-                        Label::new("Queued").color(Color::Muted).into_any_element()
-                    }
+                    ExecutionStatus::Queued => Label::new("Queued...")
+                        .color(Color::Muted)
+                        .into_any_element(),
                     ExecutionStatus::KernelErrored(error) => {
                         Label::new(format!("Kernel error: {}", error))
                             .color(Color::Error)
