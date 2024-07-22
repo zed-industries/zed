@@ -74,8 +74,8 @@ pub enum DoubleClickInMultibuffer {
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
     ///
-    /// Default: `false`
-    pub enabled: bool,
+    /// Default: `true`
+    pub enabled: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -316,6 +316,15 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+}
+
+impl EditorSettings {
+    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx)
+            .jupyter
+            .enabled
+            .unwrap_or(true)
+    }
 }
 
 impl Settings for EditorSettings {

@@ -16,7 +16,8 @@ impl JupyterSettings {
         // In order to avoid a circular dependency between `editor` and `repl` crates,
         // we put the `enable` flag on its settings.
         // This allows the editor to set up context for key bindings/actions.
-        EditorSettings::get_global(cx).jupyter.enabled
+
+        EditorSettings::jupyter_enabled(cx)
     }
 }
 
