@@ -96,6 +96,7 @@ impl LanguageModelCompletionProvider {
         cx: &mut ModelContext<Self>,
     ) {
         self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_name);
+        self.active_model = None;
         cx.notify();
     }
 

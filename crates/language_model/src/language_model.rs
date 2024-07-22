@@ -56,7 +56,7 @@ pub trait LanguageModel: Send + Sync {
 }
 
 pub trait LanguageModelProvider: 'static {
-    fn name(&self, cx: &AppContext) -> LanguageModelProviderName;
+    fn name(&self) -> LanguageModelProviderName;
     fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel>;
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;

@@ -96,7 +96,7 @@ impl LanguageModelRegistry {
         provider: T,
         cx: &mut ModelContext<Self>,
     ) {
-        let name = provider.name(cx);
+        let name = provider.name();
 
         if let Some(subscription) = provider.subscribe(cx) {
             subscription.detach();
@@ -130,7 +130,7 @@ impl LanguageModelRegistry {
                     .provided_models(cx)
                     .into_iter()
                     .map(|model| AvailableLanguageModel {
-                        provider: provider.name(cx),
+                        provider: provider.name(),
                         model,
                     })
             })
@@ -143,7 +143,7 @@ impl LanguageModelRegistry {
     ) -> Vec<(LanguageModelProviderName, Vec<ProvidedLanguageModel>)> {
         self.providers
             .values()
-            .map(|provider| (provider.name(cx), provider.provided_models(cx)))
+            .map(|provider| (provider.name(), provider.provided_models(cx)))
             .collect()
     }
 

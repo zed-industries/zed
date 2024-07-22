@@ -36,7 +36,7 @@ impl LanguageModelProviderState for FakeLanguageModelProvider {
 }
 
 impl LanguageModelProvider for FakeLanguageModelProvider {
-    fn name(&self, _: &AppContext) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         provider_name()
     }
 
@@ -134,7 +134,7 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName::from("Fake Language Model Provider".to_string())
+        provider_name()
     }
 
     fn telemetry_id(&self) -> String {

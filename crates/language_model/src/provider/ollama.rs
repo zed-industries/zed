@@ -117,7 +117,7 @@ impl LanguageModelProviderState for OllamaLanguageModelProvider {
 }
 
 impl LanguageModelProvider for OllamaLanguageModelProvider {
-    fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 

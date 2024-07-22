@@ -64,7 +64,7 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
 }
 
 impl LanguageModelProvider for OpenAiLanguageModelProvider {
-    fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 

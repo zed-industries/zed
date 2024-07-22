@@ -94,7 +94,7 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 }
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
-    fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 

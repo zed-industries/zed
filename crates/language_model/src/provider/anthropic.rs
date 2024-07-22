@@ -62,7 +62,7 @@ impl LanguageModelProviderState for AnthropicLanguageModelProvider {
 }
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
-    fn name(&self, _cx: &AppContext) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
