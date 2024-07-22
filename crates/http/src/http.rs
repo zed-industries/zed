@@ -4,7 +4,10 @@ pub mod proxy;
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
-use isahc::config::{Configurable, RedirectPolicy};
+use isahc::{
+    config::{Configurable, RedirectPolicy},
+    RequestExt,
+};
 pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
@@ -62,28 +65,23 @@ pub trait HttpClient: Send + Sync {
     fn proxy(&self) -> Proxy;
 }
 
-/// Client Builder receives proxy settings and return an http client.
-pub trait ClientBuilder {
-    fn build(&self, proxy: Option<Uri>) -> Arc<dyn HttpClient>;
-}
-
 /// An [`HttpClient`] that may have a proxy.
 pub struct HttpClientWithProxy {
-    client_builder: Arc<dyn ClientBuilder + Send + Sync>,
+    client: Arc<dyn HttpClient>,
     proxy: Proxy,
 }
 
 impl HttpClientWithProxy {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
     pub fn new(proxy: Proxy) -> Self {
-        Self {
-            client_builder: Arc::new(IsahcClientBuilder),
-            proxy,
-        }
-    }
-
-    fn client(&self) -> Arc<dyn HttpClient> {
-        self.client_builder.build(self.proxy.to_uri())
+        let client = Arc::new(
+            isahc::HttpClient::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .low_speed_timeout(100, Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        );
+        Self { client, proxy }
     }
 }
 
@@ -92,7 +90,15 @@ impl HttpClient for HttpClientWithProxy {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client().send(req)
+        // add proxy here
+        match req
+            .to_builder()
+            .proxy(self.proxy().to_uri())
+            .body(req.into_body())
+        {
+            Ok(request) => self.client.send(request),
+            Err(error) => async move { Err(error.into()) }.boxed(),
+        }
     }
 
     fn proxy(&self) -> Proxy {
@@ -105,7 +111,7 @@ impl HttpClient for Arc<HttpClientWithProxy> {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client().send(req)
+        self.client.send(req)
     }
 
     fn proxy(&self) -> Proxy {
@@ -113,7 +119,7 @@ impl HttpClient for Arc<HttpClientWithProxy> {
     }
 }
 
-/// An [`HttpClient`] that has a base URL and proxy settings.
+/// An [`HttpClient`] that has a base URL.
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
     client: HttpClientWithProxy,
@@ -188,21 +194,6 @@ impl HttpClient for HttpClientWithUrl {
     }
 }
 
-pub struct IsahcClientBuilder;
-
-impl ClientBuilder for IsahcClientBuilder {
-    fn build(&self, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
-        Arc::new(
-            isahc::HttpClient::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .low_speed_timeout(100, Duration::from_secs(5))
-                .proxy(proxy.clone())
-                .build()
-                .unwrap(),
-        )
-    }
-}
-
 pub fn client(proxy: Proxy) -> Arc<dyn HttpClient> {
     Arc::new(HttpClientWithProxy::new(proxy))
 }
@@ -235,33 +226,18 @@ pub struct FakeHttpClient {
 }
 
 #[cfg(feature = "test-support")]
-pub struct FakeClientBuilder<F>(F);
-
-#[cfg(feature = "test-support")]
-impl<F, Fut> ClientBuilder for FakeClientBuilder<F>
-where
-    Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
-    F: Fn(Request<AsyncBody>) -> Fut + Clone + Send + Sync + 'static,
-{
-    fn build(&self, _: Option<Uri>) -> Arc<dyn HttpClient> {
-        let handler = self.0.clone();
-        Arc::new(FakeHttpClient {
-            handler: Box::new(move |req| Box::pin(handler(req))),
-        })
-    }
-}
-
-#[cfg(feature = "test-support")]
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
         Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
-        F: Fn(Request<AsyncBody>) -> Fut + Clone + Send + Sync + 'static,
+        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),
             client: HttpClientWithProxy {
-                client_builder: Arc::new(FakeClientBuilder(handler)),
+                client: Arc::new(Self {
+                    handler: Box::new(move |req| Box::pin(handler(req))),
+                }),
                 proxy: Proxy::no_proxy(),
             },
         })
