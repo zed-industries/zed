@@ -25,8 +25,8 @@ mod windows;
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
     DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
-    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    LineLayout, NavigationDirection, Pixels, PlatformInput, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
@@ -344,6 +344,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    fn on_gesture_swipe(&self, _callback: Box<dyn FnMut(NavigationDirection)>);
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;

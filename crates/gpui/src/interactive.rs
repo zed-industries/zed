@@ -410,6 +410,14 @@ impl InputEvent for FileDropEvent {
 }
 impl MouseEvent for FileDropEvent {}
 
+/// Recognizing touch pad gesture, such as swipe.
+/// For now only swipe is supported.
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum GestureEvent {
+    /// A swipe gesture was performed.
+    Swipe(NavigationDirection),
+}
+
 /// An enum corresponding to all kinds of platform input events.
 #[derive(Clone, Debug)]
 pub enum PlatformInput {
@@ -431,6 +439,8 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
+    /// A gesture was performed.
+    Gesture(GestureEvent),
 }
 
 impl PlatformInput {
@@ -445,6 +455,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
+            PlatformInput::Gesture(event) => Some(event),
         }
     }
 
@@ -459,6 +470,13 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::FileDrop(_) => None,
+            PlatformInput::Gesture(_) => None,
+        }
+    }
+    pub(crate) fn gesture_event(&self) -> Option<&GestureEvent> {
+        match self {
+            PlatformInput::Gesture(event) => Some(event),
+            _ => None,
         }
     }
 }

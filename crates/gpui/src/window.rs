@@ -1,17 +1,17 @@
 use crate::{
-    hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    hash, point, prelude::*, px, size, transparent_black, Action, ActionData, AnyDrag, AnyElement,
+    AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds,
+    BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
-    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
+    FileDropEvent, Flatten, FontId, GestureEvent, Global, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch,
+    KeymatchResult, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
+    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
     VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
@@ -549,6 +549,11 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
     activation_observers: SubscriberSet<(), AnyObserver>,
+    gesture_swipe_observer: SubscriberSet<
+        (),
+        Box<dyn FnMut(&NavigationDirection, &mut WindowContext) -> bool + 'static>,
+    >,
+
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
@@ -750,6 +755,22 @@ impl Window {
                     .log_err();
             }
         }));
+
+        platform_window.on_gesture_swipe(Box::new({
+            println!("on_gesture_swipe");
+            let mut cx = cx.to_async();
+            move |direction| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        println!("on_gesture_swipe-inside update");
+                        cx.window
+                            .gesture_swipe_observer
+                            .clone()
+                            .retain(&(), |callback| callback(&direction, cx));
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_moved(Box::new({
             let mut cx = cx.to_async();
             move || {
@@ -841,6 +862,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            gesture_swipe_observer: SubscriberSet::new(),
             active,
             hovered,
             dirty,
@@ -3171,12 +3193,19 @@ impl<'a> WindowContext<'a> {
                 }
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+            PlatformInput::Gesture(GestureEvent::Swipe(_)) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event);
+        } else if let Some(GestureEvent::Swipe(direction)) = event.gesture_event() {
+            println!("INPUT DISPATCHER: {:?}", direction);
+            self.window
+                .gesture_swipe_observer
+                .clone()
+                .retain(&(), |callback| callback(direction, self));
         }
 
         DispatchEventResult {
@@ -3340,6 +3369,7 @@ impl<'a> WindowContext<'a> {
                     let Some(currently_pending) = cx.window.pending_input.take() else {
                         return;
                     };
+
                     cx.replay_pending_input(currently_pending);
                     cx.pending_input_changed();
                 })
@@ -4241,6 +4271,25 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let (subscription, activate) = self.window.bounds_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when user swipes on the window.
+    pub fn observe_gesture_swipe(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &NavigationDirection, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        println!("gesture_swipe_observe");
+        let view = self.view.downgrade();
+
+        let (subscription, activate) = self.window.gesture_swipe_observer.insert(
+            (),
+            Box::new(move |direction, cx| {
+                view.update(cx, |view, cx| callback(view, direction, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
