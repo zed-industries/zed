@@ -87,7 +87,6 @@
   "typename"
   "union"
   "using"
-  "virtual"
   "volatile"
   "while"
   (primitive_type)

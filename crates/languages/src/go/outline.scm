@@ -34,11 +34,5 @@
         (var_spec
             name: (identifier) @name) @item))
 
-(method_spec
-    name: (_) @name
-    parameters: (parameter_list
-      "(" @context
-      ")" @context)) @item
-
 (field_declaration
     name: (_) @name) @item

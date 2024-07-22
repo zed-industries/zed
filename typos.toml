@@ -34,5 +34,7 @@ extend-ignore-re = [
     # crates/collab/src/api/events.rs
     "rename = \"sesssion_id\"",
     "doas",
+    # ProtoLS
+    "protols"
 ]
 check-filename = true
