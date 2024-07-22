@@ -22,15 +22,15 @@ use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, ShutdownRequest,
 };
 use settings::Settings as _;
-use std::{env::temp_dir, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, IconButtonShape, Label, Tooltip};
 
 pub struct Session {
-    pub editor: WeakView<Editor>,
+    editor: WeakView<Editor>,
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    pub messaging_task: Task<()>,
+    messaging_task: Task<()>,
     pub kernel_specification: KernelSpecification,
     _buffer_subscription: Subscription,
 }
@@ -200,17 +200,6 @@ impl EditorBlock {
 }
 
 impl Session {
-    pub fn working_directory(editor: WeakView<Editor>, cx: &WindowContext) -> PathBuf {
-        if let Some(working_directory) = editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
-        {
-            working_directory
-        } else {
-            temp_dir()
-        }
-    }
-
     pub fn new(
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
@@ -218,11 +207,14 @@ impl Session {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-
+        let working_directory = editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).working_directory(cx))
+            .unwrap_or_else(temp_dir);
         let kernel = RunningKernel::new(
             kernel_specification.clone(),
             entity_id,
-            Self::working_directory(editor.clone(), cx),
+            working_directory,
             fs.clone(),
             cx,
         );
@@ -384,9 +376,7 @@ impl Session {
     }
 
     pub fn execute(&mut self, code: &str, anchor_range: Range<Anchor>, cx: &mut ViewContext<Self>) {
-        let editor = if let Some(editor) = self.editor.upgrade() {
-            editor
-        } else {
+        let Some(editor) = self.editor.upgrade() else {
             return;
         };
 
@@ -450,11 +440,9 @@ impl Session {
                 }
             });
 
-        let editor_block = if let Ok(editor_block) =
+        let Ok(editor_block) =
             EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)
-        {
-            editor_block
-        } else {
+        else {
             return;
         };
 
