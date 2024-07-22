@@ -455,10 +455,9 @@ impl AssistantPanel {
             if let Some(context_editor) = self.active_context_editor(cx) {
                 let new_summary = model_summary_editor.read(cx).text(cx);
                 context_editor.update(cx, |context_editor, cx| {
-                    context_editor.set_title(new_summary);
-                    context_editor.context.update(cx, |context, cx| {
-                        context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
-                    });
+                    context_editor
+                        .context
+                        .update(cx, |context, cx| context.custom_summary(new_summary, cx));
                 });
             }
         }
@@ -1070,7 +1069,6 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
-    custom_title: Option<String>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1140,7 +1138,6 @@ impl ContextEditor {
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
             active_edit_step: None,
-            custom_title: None,
             assistant_panel,
         };
         this.update_message_headers(cx);
@@ -1403,7 +1400,7 @@ impl ContextEditor {
             ContextEvent::SummaryChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
-                    context.save(None, self.fs.clone(), cx);
+                    context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
             ContextEvent::StreamedCompletion => {
@@ -2118,25 +2115,18 @@ impl ContextEditor {
     }
 
     fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
-        self.context
-            .update(cx, |context, cx| context.save(None, self.fs.clone(), cx));
+        self.context.update(cx, |context, cx| {
+            context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
+        });
     }
 
     fn title(&self, cx: &AppContext) -> Cow<str> {
-        match &self.custom_title {
-            Some(title) => Cow::Borrowed(title.as_str()),
-            None => self
-                .context
-                .read(cx)
-                .summary()
-                .map(|summary| summary.text.clone())
-                .map(Cow::Owned)
-                .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE)),
-        }
-    }
-
-    fn set_title(&mut self, custom_title: String) {
-        self.custom_title = Some(custom_title);
+        self.context
+            .read(cx)
+            .summary()
+            .map(|summary| summary.text.clone())
+            .map(Cow::Owned)
+            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
