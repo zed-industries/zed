@@ -16,7 +16,7 @@ mod stdio;
 pub use jupyter_settings::JupyterSettings;
 pub use kernels::{Kernel, KernelSpecification, KernelStatus};
 pub use repl_editor::*;
-pub use repl_sessions_ui::{ClearOutputs, Interrupt, ReplSessionsPage, Run, Shutdown};
+pub use repl_sessions_ui::{ClearOutputs, Interrupt, ReplSessionsPage, Run, Sessions, Shutdown};
 pub use runtimelib::ExecutionState;
 pub use session::Session;
 
