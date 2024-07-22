@@ -890,6 +890,15 @@
     //     }
     // }
   },
+  // Jupyter settings
+  "jupyter": {
+    "enabled": true
+    // Specify the language name as the key and the kernel name as the value.
+    // "kernel_selections": {
+    //    "python": "conda-base"
+    //    "typescript": "deno"
+    // }
+  },
   // Vim settings
   "vim": {
     "use_system_clipboard": "always",
