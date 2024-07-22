@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, RuntimePanel,
-    Session, SessionSupport,
+    editor::SessionSupport, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
+    KernelStatus, RuntimePanel, Session,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -55,7 +55,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = RuntimePanel::session(editor.downgrade(), cx);
+        let session = repl::editor::session(editor.downgrade(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -140,7 +140,7 @@ impl QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor.update(cx, |this, cx| {
-                                    RuntimePanel::run(editor.clone(), cx).log_err();
+                                    repl::editor::run(editor.clone(), cx).log_err();
                                 });
                             }
                         },
@@ -157,7 +157,7 @@ impl QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor.update(cx, |this, cx| {
-                                    RuntimePanel::interrupt(editor.clone(), cx);
+                                    repl::editor::interrupt(editor.clone(), cx);
                                 });
                             }
                         },
@@ -174,7 +174,7 @@ impl QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor.update(cx, |this, cx| {
-                                    RuntimePanel::clear_outputs(editor.clone(), cx);
+                                    repl::editor::clear_outputs(editor.clone(), cx);
                                 });
                             }
                         },
@@ -200,7 +200,7 @@ impl QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor.update(cx, |this, cx| {
-                                    RuntimePanel::shutdown(editor.clone(), cx);
+                                    repl::editor::shutdown(editor.clone(), cx);
                                 });
                             }
                         },

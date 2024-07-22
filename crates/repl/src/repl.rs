@@ -4,6 +4,7 @@ use project::Fs;
 use settings::Settings as _;
 use std::{sync::Arc, time::Duration};
 
+pub mod editor;
 mod jupyter_settings;
 mod kernels;
 mod outputs;
@@ -14,8 +15,8 @@ mod stdio;
 
 pub use jupyter_settings::JupyterSettings;
 pub use kernels::{Kernel, KernelSpecification, KernelStatus};
+pub use runtime_panel::RuntimePanel;
 pub use runtime_panel::{ClearOutputs, Interrupt, Run, Shutdown};
-pub use runtime_panel::{RuntimePanel, SessionSupport};
 pub use runtimelib::ExecutionState;
 pub use session::Session;
 
@@ -48,7 +49,7 @@ fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
-    editor::init_settings(cx);
+    ::editor::init_settings(cx);
     runtime_panel::init(cx);
     ReplStore::init(fs, cx);
 }
