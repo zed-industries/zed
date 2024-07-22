@@ -1953,7 +1953,7 @@ impl Editor {
             EditorMode::Full => "full",
         };
 
-        if EditorSettings::get_global(cx).jupyter.enabled {
+        if EditorSettings::jupyter_enabled(cx) {
             key_context.add("jupyter");
         }
 
