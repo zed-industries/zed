@@ -1,19 +1,19 @@
+use crate::repl_store::ReplStore;
 use crate::{
     jupyter_settings::{JupyterDockPosition, JupyterSettings},
-    kernels::{kernel_specifications, KernelSpecification},
+    kernels::KernelSpecification,
     session::{Session, SessionEvent},
 };
 use anyhow::{Context as _, Result};
-use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use gpui::{
-    actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
-    FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
+    actions, prelude::*, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusOutEvent,
+    FocusableView, Subscription, Task, View, WeakView,
 };
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 use project::Fs;
-use settings::{Settings as _, SettingsStore};
+use settings::Settings as _;
 use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
@@ -28,6 +28,13 @@ actions!(
 );
 actions!(repl_panel, [ToggleFocus]);
 
+pub enum SessionSupport {
+    ActiveSession(View<Session>),
+    Inactive(Box<KernelSpecification>),
+    RequiresSetup(Arc<str>),
+    Unsupported,
+}
+
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
@@ -35,12 +42,11 @@ pub fn init(cx: &mut AppContext) {
                 workspace.toggle_panel_focus::<RuntimePanel>(cx);
             });
 
-            workspace.register_action(|workspace, _: &RefreshKernelspecs, cx| {
-                if let Some(panel) = workspace.panel::<RuntimePanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.refresh_kernelspecs(cx).detach();
-                    });
-                }
+            workspace.register_action(|_workspace, _: &RefreshKernelspecs, cx| {
+                let store = ReplStore::global(cx);
+                store.update(cx, |store, cx| {
+                    store.refresh_kernelspecs(cx).detach();
+                });
             });
         },
     )
@@ -145,11 +151,8 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct RuntimePanel {
     fs: Arc<dyn Fs>,
-    enabled: bool,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
-    sessions: HashMap<EntityId, View<Session>>,
-    kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -168,37 +171,27 @@ impl RuntimePanel {
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
-                        cx.observe_global::<SettingsStore>(move |this, cx| {
-                            this.set_enabled(JupyterSettings::enabled(cx), cx);
-                        }),
                     ];
 
                     let runtime_panel = Self {
-                        fs: fs.clone(),
+                        fs,
                         width: None,
                         focus_handle,
-                        kernel_specifications: Vec::new(),
-                        sessions: Default::default(),
                         _subscriptions: subscriptions,
-                        enabled: JupyterSettings::enabled(cx),
                     };
 
                     runtime_panel
                 })
             })?;
 
-            view.update(&mut cx, |this, cx| this.refresh_kernelspecs(cx))?
-                .await?;
+            view.update(&mut cx, |_panel, cx| {
+                let store = ReplStore::global(cx);
+                store.update(cx, |store, cx| store.refresh_kernelspecs(cx))
+            })?
+            .await?;
 
             Ok(view)
         })
-    }
-
-    fn set_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
-        if self.enabled != enabled {
-            self.enabled = enabled;
-            cx.notify();
-        }
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
@@ -209,8 +202,7 @@ impl RuntimePanel {
         cx.notify();
     }
 
-    pub fn snippet(
-        &self,
+    fn snippet(
         editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
@@ -255,93 +247,59 @@ impl RuntimePanel {
         Some((selected_text, start_language.clone(), anchor_range))
     }
 
-    pub fn language(
-        &self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Arc<Language>> {
+    fn language(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Option<Arc<Language>> {
         let editor = editor.upgrade()?;
         let selection = editor.read(cx).selections.newest::<usize>(cx);
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
         buffer.language_at(selection.head()).cloned()
     }
 
-    pub fn refresh_kernelspecs(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
-        let kernel_specifications = kernel_specifications(self.fs.clone());
-        cx.spawn(|this, mut cx| async move {
-            let kernel_specifications = kernel_specifications.await?;
+    pub fn run(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Result<()> {
+        let store = ReplStore::global(cx);
 
-            this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_specifications;
-                cx.notify();
-            })
-        })
-    }
-
-    pub fn kernelspec(
-        &self,
-        language: &Language,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<KernelSpecification> {
-        let settings = JupyterSettings::get_global(cx);
-        let language_name = language.code_fence_block_name();
-        let selected_kernel = settings.kernel_selections.get(language_name.as_ref());
-
-        self.kernel_specifications
-            .iter()
-            .find(|runtime_specification| {
-                if let Some(selected) = selected_kernel {
-                    // Top priority is the selected kernel
-                    runtime_specification.name.to_lowercase() == selected.to_lowercase()
-                } else {
-                    // Otherwise, we'll try to find a kernel that matches the language
-                    runtime_specification.kernelspec.language.to_lowercase()
-                        == language_name.to_lowercase()
-                }
-            })
-            .cloned()
-    }
-
-    pub fn run(
-        &mut self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> anyhow::Result<()> {
-        if !self.enabled {
+        if !store.read(cx).is_enabled() {
             return Ok(());
         }
 
-        let (selected_text, language, anchor_range) = match self.snippet(editor.clone(), cx) {
+        let (selected_text, language, anchor_range) = match Self::snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
             None => return Ok(()),
         };
 
         let entity_id = editor.entity_id();
 
-        let kernel_specification = self
-            .kernelspec(&language, cx)
-            .with_context(|| format!("No kernel found for language: {}", language.name()))?;
+        let kernel_specification = store.update(cx, |store, cx| {
+            store
+                .kernelspec(&language, cx)
+                .with_context(|| format!("No kernel found for language: {}", language.name()))
+        })?;
 
-        let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            let view =
+        let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
+            session
+        } else {
+            let session =
                 cx.new_view(|cx| Session::new(editor, self.fs.clone(), kernel_specification, cx));
             cx.notify();
 
-            let subscription = cx.subscribe(
-                &view,
-                |panel: &mut RuntimePanel, _session: View<Session>, event: &SessionEvent, _cx| {
-                    match event {
-                        SessionEvent::Shutdown(shutdown_event) => {
-                            panel.sessions.remove(&shutdown_event.entity_id());
-                        }
+            let subscription = cx.subscribe(&session, {
+                let store = store.clone();
+                move |_this, _session, event, cx| match event {
+                    SessionEvent::Shutdown(shutdown_event) => {
+                        store.update(cx, |store, _cx| {
+                            store.remove_session(shutdown_event.entity_id());
+                        });
                     }
-                },
-            );
+                }
+            });
 
             subscription.detach();
 
-            view
-        });
+            store.update(cx, |store, _cx| {
+                store.insert_session(entity_id, session.clone());
+            });
+
+            session
+        };
 
         session.update(cx, |session, cx| {
             session.execute(&selected_text, anchor_range, cx);
@@ -350,9 +308,38 @@ impl RuntimePanel {
         anyhow::Ok(())
     }
 
-    pub fn clear_outputs(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn session(
+        &mut self,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> SessionSupport {
+        let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get_mut(&entity_id) {
+
+        if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
+            return SessionSupport::ActiveSession(session);
+        };
+
+        let language = Self::language(editor, cx);
+        let language = match language {
+            Some(language) => language,
+            None => return SessionSupport::Unsupported,
+        };
+        let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+
+        match kernelspec {
+            Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
+            None => match language.name().as_ref() {
+                "TypeScript" | "Python" => SessionSupport::RequiresSetup(language.name()),
+                _ => SessionSupport::Unsupported,
+            },
+        }
+    }
+
+    pub fn clear_outputs(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let store = ReplStore::global(cx);
+        let entity_id = editor.entity_id();
+        if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
             session.update(cx, |session, cx| {
                 session.clear_outputs(cx);
             });
@@ -361,8 +348,9 @@ impl RuntimePanel {
     }
 
     pub fn interrupt(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get_mut(&entity_id) {
+        if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
             session.update(cx, |session, cx| {
                 session.interrupt(cx);
             });
@@ -370,58 +358,14 @@ impl RuntimePanel {
         }
     }
 
-    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<RuntimePanel>) {
+    pub fn shutdown(&self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
+        let store = ReplStore::global(cx);
         let entity_id = editor.entity_id();
-        if let Some(session) = self.sessions.get(&entity_id) {
+        if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
             session.update(cx, |session, cx| {
                 session.shutdown(cx);
             });
             cx.notify();
-        }
-    }
-}
-
-pub enum SessionSupport {
-    ActiveSession(View<Session>),
-    Inactive(Box<KernelSpecification>),
-    RequiresSetup(Arc<str>),
-    Unsupported,
-}
-
-impl RuntimePanel {
-    pub fn session(
-        &mut self,
-        editor: WeakView<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> SessionSupport {
-        let entity_id = editor.entity_id();
-        let session = self.sessions.get(&entity_id).cloned();
-
-        match session {
-            Some(session) => SessionSupport::ActiveSession(session),
-            None => {
-                let language = self.language(editor, cx);
-                let language = match language {
-                    Some(language) => language,
-                    None => return SessionSupport::Unsupported,
-                };
-                // Check for kernelspec
-                let kernelspec = self.kernelspec(&language, cx);
-
-                match kernelspec {
-                    Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
-                    None => {
-                        // If no kernelspec but language is one of typescript or python
-                        // then we return RequiresSetup
-                        match language.name().as_ref() {
-                            "TypeScript" | "Python" => {
-                                SessionSupport::RequiresSetup(language.name())
-                            }
-                            _ => SessionSupport::Unsupported,
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -468,8 +412,10 @@ impl Panel for RuntimePanel {
         self.width = size;
     }
 
-    fn icon(&self, _cx: &ui::WindowContext) -> Option<ui::IconName> {
-        if !self.enabled {
+    fn icon(&self, cx: &ui::WindowContext) -> Option<ui::IconName> {
+        let store = ReplStore::global(cx);
+
+        if !store.read(cx).is_enabled() {
             return None;
         }
 
@@ -495,38 +441,47 @@ impl FocusableView for RuntimePanel {
 
 impl Render for RuntimePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let store = ReplStore::global(cx);
+
+        let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
+            (
+                store.kernel_specifications().cloned().collect::<Vec<_>>(),
+                store.sessions().cloned().collect::<Vec<_>>(),
+            )
+        });
+
         // When there are no kernel specifications, show a link to the Zed docs explaining how to
         // install kernels. It can be assumed they don't have a running kernel if we have no
         // specifications.
-        if self.kernel_specifications.is_empty() {
+        if kernel_specifications.is_empty() {
             return v_flex()
                 .p_4()
                 .size_full()
                 .gap_2()
-                        .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
-                        .child(
-                            Label::new("To start interactively running code in your editor, you need to install and configure Jupyter kernels.")
-                                .size(LabelSize::Default),
-                        )
-                        .child(
-                            h_flex().w_full().p_4().justify_center().gap_2().child(
-                                ButtonLike::new("install-kernels")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .child(Label::new("Install Kernels"))
-                                    .on_click(move |_, cx| {
-                                        cx.open_url(
-                                        "https://docs.jupyter.org/en/latest/install/kernels.html",
-                                    )
-                                    }),
-                            ),
-                        )
+                .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
+                .child(
+                    Label::new("To start interactively running code in your editor, you need to install and configure Jupyter kernels.")
+                        .size(LabelSize::Default),
+                )
+                .child(
+                    h_flex().w_full().p_4().justify_center().gap_2().child(
+                        ButtonLike::new("install-kernels")
+                            .style(ButtonStyle::Filled)
+                            .size(ButtonSize::Large)
+                            .layer(ElevationIndex::ModalSurface)
+                            .child(Label::new("Install Kernels"))
+                            .on_click(move |_, cx| {
+                                cx.open_url(
+                                    "https://docs.jupyter.org/en/latest/install/kernels.html",
+                                )
+                            }),
+                    ),
+                )
                 .into_any_element();
         }
 
         // When there are no sessions, show the command to run code in an editor
-        if self.sessions.is_empty() {
+        if sessions.is_empty() {
             return v_flex()
                 .p_4()
                 .size_full()
@@ -546,7 +501,7 @@ impl Render for RuntimePanel {
                 )
                 .child(Label::new("Kernels available").size(LabelSize::Large))
                 .children(
-                    self.kernel_specifications.iter().map(|spec| {
+                    kernel_specifications.into_iter().map(|spec| {
                         h_flex().gap_2().child(Label::new(spec.name.clone()))
                             .child(Label::new(spec.kernelspec.language.clone()).color(Color::Muted))
                     })
@@ -559,8 +514,8 @@ impl Render for RuntimePanel {
             .p_4()
             .child(Label::new("Jupyter Kernel Sessions").size(LabelSize::Large))
             .children(
-                self.sessions
-                    .values()
+                sessions
+                    .into_iter()
                     .map(|session| session.clone().into_any_element()),
             )
             .into_any_element()
