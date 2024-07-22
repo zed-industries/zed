@@ -138,7 +138,7 @@ that you can't live without. You can restore them to their defaults by copying t
   "context": "Editor && !menu",
   "bindings": {
     "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: increment
+    "ctrl-x": "editor::Cut",           // vim default: decrement
     "ctrl-v": "editor::Paste",         // vim default: visual block mode
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
