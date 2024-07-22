@@ -244,7 +244,7 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
-static ELLIPSIS: &str = "…";
+const ELLIPSIS: &str = "…";
 
 impl TextLayout {
     fn lock(&self) -> MutexGuard<Option<TextLayoutInner>> {
