@@ -5,21 +5,9 @@ use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use ui::Pixels;
-
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum JupyterDockPosition {
-    Left,
-    #[default]
-    Right,
-    Bottom,
-}
 
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
-    pub dock: JupyterDockPosition,
-    pub default_width: Pixels,
     pub kernel_selections: HashMap<String, String>,
 }
 
@@ -34,31 +22,15 @@ impl JupyterSettings {
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct JupyterSettingsContent {
-    /// Where to dock the Jupyter panel.
-    ///
-    /// Default: `right`
-    dock: Option<JupyterDockPosition>,
-    /// Default width in pixels when the jupyter panel is docked to the left or right.
-    ///
-    /// Default: 640
-    pub default_width: Option<f32>,
     /// Default kernels to select for each language.
     ///
     /// Default: `{}`
     pub kernel_selections: Option<HashMap<String, String>>,
 }
 
-impl JupyterSettingsContent {
-    pub fn set_dock(&mut self, dock: JupyterDockPosition) {
-        self.dock = Some(dock);
-    }
-}
-
 impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
-            dock: Some(JupyterDockPosition::Right),
-            default_width: Some(640.0),
             kernel_selections: Some(HashMap::new()),
         }
     }
@@ -79,14 +51,6 @@ impl Settings for JupyterSettings {
         let mut settings = JupyterSettings::default();
 
         for value in sources.defaults_and_customizations() {
-            if let Some(dock) = value.dock {
-                settings.dock = dock;
-            }
-
-            if let Some(default_width) = value.default_width {
-                settings.default_width = Pixels::from(default_width);
-            }
-
             if let Some(source) = &value.kernel_selections {
                 for (k, v) in source {
                     settings.kernel_selections.insert(k.clone(), v.clone());
@@ -114,14 +78,6 @@ mod tests {
         JupyterSettings::register(cx);
 
         assert_eq!(JupyterSettings::enabled(cx), false);
-        assert_eq!(
-            JupyterSettings::get_global(cx).dock,
-            JupyterDockPosition::Right
-        );
-        assert_eq!(
-            JupyterSettings::get_global(cx).default_width,
-            Pixels::from(640.0)
-        );
 
         // Setting a custom setting through user settings
         SettingsStore::update_global(cx, |store, cx| {
@@ -140,13 +96,5 @@ mod tests {
         });
 
         assert_eq!(JupyterSettings::enabled(cx), true);
-        assert_eq!(
-            JupyterSettings::get_global(cx).dock,
-            JupyterDockPosition::Left
-        );
-        assert_eq!(
-            JupyterSettings::get_global(cx).default_width,
-            Pixels::from(800.0)
-        );
     }
 }
