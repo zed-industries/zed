@@ -48,6 +48,7 @@ fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
+    editor::init_settings(cx);
     runtime_panel::init(cx);
     ReplStore::init(fs, cx);
 }
