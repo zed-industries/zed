@@ -58,7 +58,6 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use theme::ThemeSettings;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
@@ -1050,9 +1049,10 @@ pub struct ContextEditor {
     assistant_panel: WeakView<AssistantPanel>,
 }
 
-impl ContextEditor {
-    const MAX_TAB_TITLE_LEN: usize = 16;
+const DEFAULT_TAB_TITLE: &str = "New Context";
+const MAX_TAB_TITLE_LEN: usize = 16;
 
+impl ContextEditor {
     fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
@@ -2094,7 +2094,7 @@ impl ContextEditor {
                 .summary()
                 .map(|summary| summary.text.clone())
                 .map(Cow::Owned)
-                .unwrap_or_else(|| Cow::Borrowed("New Context")),
+                .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE)),
         }
     }
 
@@ -2194,7 +2194,7 @@ impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
     fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
-        Some(util::truncate_and_trailoff(&self.title(cx), Self::MAX_TAB_TITLE_LEN).into())
+        Some(util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into())
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
@@ -2546,21 +2546,26 @@ impl ContextEditorToolbarItem {
 
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        h_flex()
+        let left_side = h_flex()
             .gap_2()
-            .child(Label::new(">>>>>>"))
-            .child(
-                div()
-                    .min_w(rems(30.0))
-                    .child(self.model_summary_editor.clone()),
-            )
-            .child(Label::new("<<<<<<"))
+            .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
+            // TODO kb click listener
+            .child(IconButton::new("regenerate-context", IconName::ArrowCircle))
+            .child(self.model_summary_editor.clone());
+        let right_side = h_flex()
+            .gap_2()
             .child(ModelSelector::new(
                 self.model_selector_menu_handle.clone(),
                 self.fs.clone(),
             ))
             .children(self.render_remaining_tokens(cx))
-            .child(self.render_inject_context_menu(cx))
+            .child(self.render_inject_context_menu(cx));
+
+        h_flex()
+            .size_full()
+            .justify_between()
+            .child(left_side)
+            .child(right_side)
     }
 }
 
