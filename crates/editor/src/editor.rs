@@ -70,10 +70,10 @@ use gpui::{
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
     Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
     FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, ModelContext, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
+    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
+    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -3609,27 +3609,22 @@ impl Editor {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
-        self.insert_internal(cx, |buffer, selections, cx| {
-            buffer.edit(
-                selections.iter().map(|s| ((s.start..s.end), text)),
-                autoindent,
-                cx,
-            );
-        });
+        self.insert_with_autoindent_mode(text, autoindent, cx);
     }
 
-    fn insert_internal(
+    fn insert_with_autoindent_mode(
         &mut self,
+        text: &str,
+        autoindent_mode: Option<AutoindentMode>,
         cx: &mut ViewContext<Self>,
-        update: impl FnOnce(&mut MultiBuffer, Vec<Selection<Point>>, &mut ModelContext<MultiBuffer>),
     ) {
         if self.read_only(cx) {
             return;
         }
 
-        let old_selections = self.selections.all_adjusted(cx);
-
+        let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
+            let old_selections = this.selections.all_adjusted(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -3641,7 +3636,13 @@ impl Editor {
                         })
                         .collect::<Vec<_>>()
                 };
-                update(buffer, old_selections, cx);
+                buffer.edit(
+                    old_selections
+                        .iter()
+                        .map(|s| (s.start..s.end, text.clone())),
+                    autoindent_mode,
+                    cx,
+                );
                 anchors
             });
 
@@ -4964,20 +4965,10 @@ impl Editor {
             text: completion.text.to_string().into(),
         });
 
-        let text = &completion.text.to_string();
-
-        self.insert_internal(cx, |buffer, selections, cx| {
-            let snapshot = buffer.snapshot(cx);
-
-            buffer.edit(
-                selections.iter().map(|s| match delete_range.clone() {
-                    Some(range) => (range.to_point(&snapshot), text.clone()),
-                    None => ((s.start..s.end), text.clone()),
-                }),
-                None,
-                cx,
-            );
-        });
+        if let Some(range) = delete_range {
+            self.change_selections(None, cx, |s| s.select_ranges([range]))
+        }
+        self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
         self.refresh_inline_completion(true, cx);
         cx.notify();
     }
@@ -5009,18 +5000,10 @@ impl Editor {
                     text: partial_completion.clone().into(),
                 });
 
-                self.insert_internal(cx, |buffer, selections, cx| {
-                    let snapshot = buffer.snapshot(cx);
-
-                    buffer.edit(
-                        selections.iter().map(|s| match delete_range.clone() {
-                            Some(range) => (range.to_point(&snapshot), partial_completion.clone()),
-                            None => ((s.start..s.end), partial_completion.clone()),
-                        }),
-                        None,
-                        cx,
-                    );
-                });
+                if let Some(range) = delete_range {
+                    self.change_selections(None, cx, |s| s.select_ranges([range]))
+                }
+                self.insert_with_autoindent_mode(&partial_completion, None, cx);
 
                 self.refresh_inline_completion(true, cx);
                 cx.notify();
