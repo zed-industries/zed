@@ -1325,7 +1325,7 @@ impl ProjectPanel {
                     cx.spawn(|project_panel, mut cx| async move {
                         project_panel
                             .update(&mut cx, |project_panel, cx| {
-                                project_panel.drop_external_files(&vec![path], entry.id, cx);
+                                project_panel.drop_external_files(&[path], entry.id, cx);
                             })
                             .ok()
                     })
