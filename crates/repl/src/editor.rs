@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use editor::{Anchor, Editor, RangeToAnchorExt};
-use gpui::{prelude::*, AppContext, View, ViewContext, WeakView};
+use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
@@ -11,7 +11,7 @@ use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
-pub fn run(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) -> Result<()> {
+pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -34,21 +34,23 @@ pub fn run(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) -> Result<()>
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {
-        let session = cx.new_view(|cx| Session::new(editor, fs, kernel_specification, cx));
-        cx.notify();
+        let session = cx.new_view(|cx| Session::new(editor.clone(), fs, kernel_specification, cx));
 
-        let subscription = cx.subscribe(&session, {
-            let store = store.clone();
-            move |_this, _session, event, cx| match event {
-                SessionEvent::Shutdown(shutdown_event) => {
-                    store.update(cx, |store, _cx| {
-                        store.remove_session(shutdown_event.entity_id());
-                    });
+        editor.update(cx, |_editor, cx| {
+            cx.notify();
+
+            cx.subscribe(&session, {
+                let store = store.clone();
+                move |_this, _session, event, cx| match event {
+                    SessionEvent::Shutdown(shutdown_event) => {
+                        store.update(cx, |store, _cx| {
+                            store.remove_session(shutdown_event.entity_id());
+                        });
+                    }
                 }
-            }
-        });
-
-        subscription.detach();
+            })
+            .detach();
+        })?;
 
         store.update(cx, |store, _cx| {
             store.insert_session(entity_id, session.clone());
@@ -95,42 +97,42 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
     }
 }
 
-pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
+pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session.update(cx, |session, cx| {
             session.clear_outputs(cx);
+            cx.notify();
         });
-        cx.notify();
     }
 }
 
-pub fn interrupt(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
+pub fn interrupt(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session.update(cx, |session, cx| {
             session.interrupt(cx);
+            cx.notify();
         });
-        cx.notify();
     }
 }
 
-pub fn shutdown(editor: WeakView<Editor>, cx: &mut ViewContext<Editor>) {
+pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session.update(cx, |session, cx| {
             session.shutdown(cx);
+            cx.notify();
         });
-        cx.notify();
     }
 }
 
 fn snippet(
     editor: WeakView<Editor>,
-    cx: &mut ViewContext<Editor>,
+    cx: &mut WindowContext,
 ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
     let editor = editor.upgrade()?;
     let editor = editor.read(cx);

@@ -28,6 +28,10 @@ impl ReplStore {
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         let store = cx.new_model(move |cx| Self::new(fs, cx));
 
+        store
+            .update(cx, |store, cx| store.refresh_kernelspecs(cx))
+            .detach_and_log_err(cx);
+
         cx.set_global(GlobalReplStore(store))
     }
 

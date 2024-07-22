@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
     editor::SessionSupport, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
-    KernelStatus, RuntimePanel, Session,
+    KernelStatus, Session,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -39,7 +39,6 @@ impl QuickActionBar {
             return None;
         }
 
-        let workspace = self.workspace.upgrade()?.read(cx);
         let editor = self.active_editor()?;
 
         let has_nonempty_selection = {
@@ -126,7 +125,6 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
-                    // Run
                     .custom_entry(
                         move |_cx| {
                             Label::new(if has_nonempty_selection {
@@ -139,13 +137,10 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |this, cx| {
-                                    repl::editor::run(editor.clone(), cx).log_err();
-                                });
+                                repl::editor::run(editor.clone(), cx).log_err();
                             }
                         },
                     )
-                    // Interrupt
                     .custom_entry(
                         move |_cx| {
                             Label::new("Interrupt")
@@ -156,13 +151,10 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |this, cx| {
-                                    repl::editor::interrupt(editor.clone(), cx);
-                                });
+                                repl::editor::interrupt(editor.clone(), cx);
                             }
                         },
                     )
-                    // Clear Outputs
                     .custom_entry(
                         move |_cx| {
                             Label::new("Clear Outputs")
@@ -173,9 +165,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |this, cx| {
-                                    repl::editor::clear_outputs(editor.clone(), cx);
-                                });
+                                repl::editor::clear_outputs(editor.clone(), cx);
                             }
                         },
                     )
@@ -188,7 +178,6 @@ impl QuickActionBar {
                     )
                     // TODO: Add Restart action
                     // .action("Restart", Box::new(gpui::NoAction))
-                    // Shut down kernel
                     .custom_entry(
                         move |_cx| {
                             Label::new("Shut Down Kernel")
@@ -199,9 +188,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |this, cx| {
-                                    repl::editor::shutdown(editor.clone(), cx);
-                                });
+                                repl::editor::shutdown(editor.clone(), cx);
                             }
                         },
                     )

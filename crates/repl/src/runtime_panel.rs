@@ -1,25 +1,15 @@
-use crate::repl_store::ReplStore;
-use crate::{
-    jupyter_settings::{JupyterDockPosition, JupyterSettings},
-    kernels::KernelSpecification,
-    session::{Session, SessionEvent},
-};
-use anyhow::{Context as _, Result};
-use editor::{Anchor, Editor, RangeToAnchorExt};
+use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusOutEvent,
-    FocusableView, Subscription, Task, View, WeakView,
+    actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Subscription, View,
 };
-use language::{Language, Point};
-use multi_buffer::MultiBufferRow;
-use project::Fs;
-use settings::Settings as _;
-use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
+
+use crate::jupyter_settings::JupyterSettings;
+use crate::repl_store::ReplStore;
 
 actions!(
     repl,
@@ -47,7 +37,7 @@ pub fn init(cx: &mut AppContext) {
                 if let Some(existing) = existing {
                     workspace.activate_item(&existing, true, true, cx);
                 } else {
-                    let extensions_page = RuntimePanel::new(workspace, cx);
+                    let extensions_page = RuntimePanel::new(cx);
                     workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             });
@@ -63,139 +53,87 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 
     cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-        // Only allow editors that support vim mode and are singleton buffers
         if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
             return;
         }
 
+        let editor_handle = cx.view().downgrade();
+
         editor
-            .register_action(cx.listener(
-                move |editor: &mut Editor, _: &Run, cx: &mut ViewContext<Editor>| {
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &Run, cx| {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
 
-                    let weak_editor = cx.view().downgrade();
-                    cx.defer(|panel, cx| {
-                        crate::editor::run(weak_editor, cx).log_err();
-                    });
-                },
-            ))
+                    crate::editor::run(editor_handle.clone(), cx).log_err();
+                }
+            })
             .detach();
 
         editor
-            .register_action(cx.listener(
-                move |editor: &mut Editor, _: &ClearOutputs, cx: &mut ViewContext<Editor>| {
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &ClearOutputs, cx| {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
 
-                    let weak_editor = cx.view().downgrade();
-                    cx.defer(|panel, cx| {
-                        crate::editor::clear_outputs(weak_editor, cx);
-                    });
-                },
-            ))
+                    crate::editor::clear_outputs(editor_handle.clone(), cx);
+                }
+            })
             .detach();
 
         editor
-            .register_action(cx.listener(
-                move |editor: &mut Editor, _: &Interrupt, cx: &mut ViewContext<Editor>| {
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &Interrupt, cx| {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
 
-                    let weak_editor = cx.view().downgrade();
-                    cx.defer(|panel, cx| {
-                        crate::editor::interrupt(weak_editor, cx);
-                    });
-                },
-            ))
+                    crate::editor::interrupt(editor_handle.clone(), cx);
+                }
+            })
             .detach();
 
         editor
-            .register_action(cx.listener(
-                move |editor: &mut Editor, _: &Shutdown, cx: &mut ViewContext<Editor>| {
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &Shutdown, cx| {
                     if !JupyterSettings::enabled(cx) {
                         return;
                     }
 
-                    let weak_editor = cx.view().downgrade();
-                    cx.defer(|panel, cx| {
-                        crate::editor::shutdown(weak_editor, cx);
-                    });
-                },
-            ))
+                    crate::editor::shutdown(editor_handle.clone(), cx);
+                }
+            })
             .detach();
     })
     .detach();
 }
 
 pub struct RuntimePanel {
-    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
-    width: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl RuntimePanel {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+    pub fn new(cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
-            let fs = workspace.app_state().fs.clone();
+
+            let subscriptions = vec![
+                cx.on_focus_in(&focus_handle, |_this, cx| cx.notify()),
+                cx.on_focus_out(&focus_handle, |_this, _event, cx| cx.notify()),
+            ];
 
             Self {
-                fs,
                 focus_handle,
-                width: None,
-                _subscriptions: Vec::new(),
+                _subscriptions: subscriptions,
             }
         })
-    }
-
-    pub fn load(
-        workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let view = workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view::<Self>(|cx| {
-                    let focus_handle = cx.focus_handle();
-
-                    let fs = workspace.app_state().fs.clone();
-
-                    let subscriptions = vec![
-                        cx.on_focus_in(&focus_handle, Self::focus_in),
-                        cx.on_focus_out(&focus_handle, Self::focus_out),
-                    ];
-
-                    let runtime_panel = Self {
-                        fs,
-                        width: None,
-                        focus_handle,
-                        _subscriptions: subscriptions,
-                    };
-
-                    runtime_panel
-                })
-            })?;
-
-            view.update(&mut cx, |_panel, cx| {
-                let store = ReplStore::global(cx);
-                store.update(cx, |store, cx| store.refresh_kernelspecs(cx))
-            })?
-            .await?;
-
-            Ok(view)
-        })
-    }
-
-    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        cx.notify();
-    }
-
-    fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
-        cx.notify();
     }
 }
 
