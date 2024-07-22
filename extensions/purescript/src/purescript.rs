@@ -13,14 +13,14 @@ impl PurescriptExtension {
         fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
 
-    fn server_script_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
+    fn server_script_path(&mut self, config: &zed::LanguageServerId) -> Result<String> {
         let server_exists = self.server_exists();
         if self.did_find_server && server_exists {
             return Ok(SERVER_PATH.to_string());
         }
 
         zed::set_language_server_installation_status(
-            &config.name,
+            &config,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
@@ -29,7 +29,7 @@ impl PurescriptExtension {
             || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
         {
             zed::set_language_server_installation_status(
-                &config.name,
+                &config,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
             let result = zed::npm_install_package(PACKAGE_NAME, &version);
@@ -63,12 +63,14 @@ impl zed::Extension for PurescriptExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        config: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(config)?;
+        let command = zed_extension_api::CommandType::Other(zed::node_binary_path()?);
+        let env = zed_extension_api::CommandEnv::None;
         Ok(zed::Command {
-            command: zed::node_binary_path()?,
+            command,
             args: vec![
                 env::current_dir()
                     .unwrap()
@@ -77,22 +79,22 @@ impl zed::Extension for PurescriptExtension {
                     .to_string(),
                 "--stdio".to_string(),
             ],
-            env: Default::default(),
+            env,
         })
     }
 
     fn language_server_initialization_options(
         &mut self,
-        _config: zed::LanguageServerConfig,
+        _config: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let initialization_options = r#"{
             "purescript": {
                 "addSpagoSources": true
             }
         }"#;
 
-        Ok(Some(initialization_options.to_string()))
+        Ok(Some(initialization_options.into()))
     }
 }
 
