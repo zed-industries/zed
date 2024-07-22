@@ -668,7 +668,11 @@ mod tests {
                             "version": "1",
                             "provider": {
                                 "name": "zed.dev",
-                                "default_model": "custom"
+                                "default_model": {
+                                    "custom": {
+                                        "name": "custom-provider"
+                                    }
+                                }
                             }
                         }
                     }"#,
@@ -679,7 +683,10 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::ZedDotDev {
-                model: CloudModel::Custom("custom".into())
+                model: CloudModel::Custom {
+                    name: "custom-provider".into(),
+                    max_tokens: None
+                }
             }
         );
     }
