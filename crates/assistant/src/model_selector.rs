@@ -113,7 +113,7 @@ impl RenderOnce for ModelSelector {
                                             LanguageModelCompletionProvider::read_global(cx)
                                                 .active_model()
                                                 .map(|model| model.name().0)
-                                                .unwrap_or_default(),
+                                                .unwrap_or_else(|| "No model selected".into()),
                                         )
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),

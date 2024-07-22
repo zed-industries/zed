@@ -1483,7 +1483,7 @@ impl Render for PromptEditor {
                                                 LanguageModelCompletionProvider::read_global(cx)
                                                     .active_model()
                                                     .map(|model| model.name().0)
-                                                    .unwrap_or_default(),
+                                                    .unwrap_or_else(|| "No model selected".into()),
                                             ),
                                             None,
                                             "Change Model",
