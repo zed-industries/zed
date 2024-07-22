@@ -28,6 +28,7 @@ use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion};
+use session::Session;
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -43,7 +44,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
+use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
@@ -306,10 +307,24 @@ fn main() {
         .block(installation_id())
         .ok()
         .unzip();
-    let session_id = Uuid::new_v4().to_string();
+
+    let session = app.background_executor().block(Session::new());
+
+    println!(
+        "--------------------------------------------------------------------------------------"
+    );
+    println!("-------- session_id: {}", session.id());
+    println!("-------- last_session_id: {:?}", session.last_session_id());
+    println!(
+        "--------------------------------------------------------------------------------------"
+    );
 
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
-    reliability::init_panic_hook(installation_id.clone(), app_version, session_id.clone());
+    reliability::init_panic_hook(
+        installation_id.clone(),
+        app_version,
+        session.id().to_owned(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -421,7 +436,7 @@ fn main() {
         client::init(&client, cx);
         language::init(cx);
         let telemetry = client.telemetry();
-        telemetry.start(installation_id.clone(), session_id, cx);
+        telemetry.start(installation_id.clone(), session.id().to_owned(), cx);
         telemetry.report_app_event(
             match existing_installation_id_found {
                 Some(false) => "first open",
@@ -437,6 +452,7 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
+            session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -656,23 +672,39 @@ async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let restore_behaviour = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
-    let location = match restore_behaviour {
+    // let restore_behaviour = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
+    let restore_behaviour = workspace::RestoreOnStartupBehaviour::LastSession;
+    let last_session_id = app_state.session.last_session_id();
+    let locations = match restore_behaviour {
         workspace::RestoreOnStartupBehaviour::LastWorkspace => {
-            workspace::last_opened_workspace_paths().await
+            workspace::last_opened_workspace_paths()
+                .await
+                .map(|location| vec![location])
+        }
+        workspace::RestoreOnStartupBehaviour::LastSession => {
+            // TODO: Fallback to `LastWorkspace` behaviour in case we don't have a last_session_id
+            if let Some(last_session_id) = last_session_id {
+                workspace::last_session_workspaces_paths(last_session_id)
+                    .await
+                    .filter(|locations| !locations.is_empty())
+            } else {
+                None
+            }
         }
         _ => None,
     };
-    if let Some(location) = location {
-        cx.update(|cx| {
-            workspace::open_paths(
-                location.paths().as_ref(),
-                app_state,
-                workspace::OpenOptions::default(),
-                cx,
-            )
-        })?
-        .await?;
+    if let Some(locations) = locations {
+        for location in locations {
+            cx.update(|cx| {
+                workspace::open_paths(
+                    location.paths().as_ref(),
+                    app_state.clone(),
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+            })?
+            .await?;
+        }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {

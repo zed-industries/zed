@@ -75,7 +75,10 @@ impl RecentProjects {
                 .recent_workspaces_on_disk()
                 .await
                 .log_err()
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(workspace_id, _, locations)| (workspace_id, locations))
+                .collect::<Vec<_>>();
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
@@ -659,7 +662,10 @@ impl RecentProjectsDelegate {
                 let workspaces = WORKSPACE_DB
                     .recent_workspaces_on_disk()
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, _, locations)| (id, locations))
+                    .collect::<Vec<_>>();
                 this.update(&mut cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker.delegate.set_selected_index(ix - 1, cx);

@@ -170,6 +170,7 @@ define_connection! {
     //   display: Option<Uuid>, // Display id
     //   fullscreen: Option<bool>, // Is the window fullscreen?
     //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
+    //   session_id: Option<String>, // Session id
     // )
     //
     // pane_groups(
@@ -344,6 +345,9 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN local_paths_order BLOB;
     ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN session_id TEXT DEFAULT NULL;
+    ),
     ];
 }
 
@@ -368,6 +372,7 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
+            session_id,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -377,6 +382,7 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -399,7 +405,8 @@ impl WorkspaceDb {
                     right_dock_zoom,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
-                    bottom_dock_zoom
+                    bottom_dock_zoom,
+                    session_id
                 FROM workspaces
                 WHERE local_paths = ?
             })
@@ -443,6 +450,7 @@ impl WorkspaceDb {
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
+            session_id,
         })
     }
 
@@ -461,6 +469,7 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
+            session_id,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -470,6 +479,7 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -492,7 +502,8 @@ impl WorkspaceDb {
                     right_dock_zoom,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
-                    bottom_dock_zoom
+                    bottom_dock_zoom,
+                    session_id
                 FROM workspaces
                 WHERE dev_server_project_id = ?
             })
@@ -536,6 +547,7 @@ impl WorkspaceDb {
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
+            session_id,
         })
     }
 
@@ -552,6 +564,7 @@ impl WorkspaceDb {
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
+                        // println!("=======> saving workspace. local_paths: {:?}, local_paths_order: {:?}", local_paths, local_paths_order);
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
                         ))?((&local_paths, workspace.id))
@@ -572,9 +585,10 @@ impl WorkspaceDb {
                                 bottom_dock_visible,
                                 bottom_dock_active_panel,
                                 bottom_dock_zoom,
+                                session_id,
                                 timestamp
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
                             ON CONFLICT DO
                             UPDATE SET
                                 local_paths = ?2,
@@ -588,8 +602,9 @@ impl WorkspaceDb {
                                 bottom_dock_visible = ?10,
                                 bottom_dock_active_panel = ?11,
                                 bottom_dock_zoom = ?12,
+                                session_id = ?13,
                                 timestamp = CURRENT_TIMESTAMP
-                        ))?((workspace.id, &local_paths, &local_paths_order, workspace.docks))
+                        ))?((workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id))
                         .context("Updating workspace")?;
                     }
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
@@ -667,10 +682,9 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>)>> {
-            SELECT workspace_id, local_paths, local_paths_order, dev_server_project_id
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>, Option<String>)>> {
+            SELECT workspace_id, local_paths, local_paths_order, dev_server_project_id, session_id
             FROM workspaces
-            WHERE local_paths IS NOT NULL OR dev_server_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
@@ -727,28 +741,44 @@ impl WorkspaceDb {
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
+    ) -> Result<Vec<(WorkspaceId, Option<String>, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let dev_server_projects = self.dev_server_projects()?;
 
-        for (id, location, order, dev_server_project_id) in self.recent_workspaces()? {
+        for (id, location, order, dev_server_project_id, session_id) in self.recent_workspaces()? {
             if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
                 if let Some(dev_server_project) = dev_server_projects
                     .iter()
                     .find(|rp| rp.id == dev_server_project_id)
                 {
-                    result.push((id, dev_server_project.clone().into()));
+                    result.push((id, session_id, dev_server_project.clone().into()));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
                 }
                 continue;
             }
 
+            // TODO: Comment this back in if to get local paths stuff to work
+            //
+            // if location.paths().is_empty() {
+            //     result.push((
+            //         id,
+            //         open,
+            //         SerializedWorkspaceLocation::Local(location, order),
+            //     ));
+            //     continue;
+            // }
+
+            // TODO: Remove the `.is_dir()` check to get worktree-less stuff to work
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, SerializedWorkspaceLocation::Local(location, order)));
+                result.push((
+                    id,
+                    session_id,
+                    SerializedWorkspaceLocation::Local(location, order),
+                ));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -763,11 +793,35 @@ impl WorkspaceDb {
             .recent_workspaces_on_disk()
             .await?
             .into_iter()
-            .filter_map(|(_, location)| match location {
-                SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
-                SerializedWorkspaceLocation::DevServer(_) => None,
+            .filter_map(|(_, _, location)| {
+                println!("last_workspace. location: {:?}", location);
+                match location {
+                    SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
+                    SerializedWorkspaceLocation::DevServer(_) => None,
+                }
             })
             .next())
+    }
+
+    pub async fn last_session_workspaces(&self, last_session_id: &str) -> Result<Vec<LocalPaths>> {
+        Ok(self
+            .recent_workspaces_on_disk()
+            .await?
+            .into_iter()
+            .filter_map(|(_, session_id, location)| {
+                if session_id
+                    .as_ref()
+                    .map_or(false, |session_id| session_id == last_session_id)
+                {
+                    match location {
+                        SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>())
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
@@ -983,6 +1037,8 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use db::open_test_db;
     use gpui;
@@ -1065,6 +1121,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -1075,6 +1132,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1177,6 +1235,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -1209,6 +1268,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -1219,6 +1279,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1259,6 +1320,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -1279,6 +1341,45 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_serializing_workspaces_empty_paths() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_test_db("test_serializing_workspaces_empty_paths").await);
+
+        let empty_paths: Vec<PathBuf> = vec![];
+        let workspace_1 = SerializedWorkspace {
+            id: WorkspaceId(1),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(&empty_paths),
+                LocalPathsOrder::new([]),
+            ),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+        };
+
+        let workspace_2 = SerializedWorkspace {
+            id: WorkspaceId(2),
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+        };
+
+        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_2.clone()).await;
+
+        assert_eq!(db.workspace_for_roots(&empty_paths).unwrap(), workspace_1);
+        assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
+    }
+
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
 
@@ -1294,6 +1395,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            session_id: None,
         }
     }
 

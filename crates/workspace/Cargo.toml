@@ -20,6 +20,7 @@ test-support = [
     "http/test-support",
     "db/test-support",
     "project/test-support",
+    "session/test-support",
     "settings/test-support",
     "gpui/test-support",
     "fs/test-support",
@@ -53,6 +54,7 @@ task.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true

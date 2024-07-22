@@ -49,6 +49,8 @@ pub enum RestoreOnStartupBehaviour {
     /// Restore the workspace that was closed last.
     #[default]
     LastWorkspace,
+    /// Restore all workspaces that were open when quitting Zed.
+    LastSession,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
