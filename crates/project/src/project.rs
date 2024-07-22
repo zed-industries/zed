@@ -5073,9 +5073,9 @@ impl Project {
                                         }
                                     }
                                     SelectedFormatter::List(formatters) => {
-                                        for formatter in formatters.0.clone() {
+                                        for formatter in formatters.as_ref() {
                                             let diff = Self::perform_format(
-                                                &formatter,
+                                                formatter,
                                                 server_and_buffer,
                                                 project.clone(),
                                                 buffer,
@@ -5099,7 +5099,7 @@ impl Project {
                                 }
                             }
                             FormatOnSave::List(formatters) => {
-                                for formatter in formatters.0.clone() {
+                                for formatter in formatters.as_ref() {
                                     let diff = Self::perform_format(
                                         &formatter,
                                         server_and_buffer,
@@ -5165,10 +5165,10 @@ impl Project {
                                 }
                             }
                             SelectedFormatter::List(formatters) => {
-                                for formatter in formatters.0.clone() {
+                                for formatter in formatters.as_ref() {
                                     // format with formatter
                                     let diff = Self::perform_format(
-                                        &formatter,
+                                        formatter,
                                         server_and_buffer,
                                         project.clone(),
                                         buffer,

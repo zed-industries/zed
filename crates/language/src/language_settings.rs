@@ -3,6 +3,7 @@
 use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
+use core::slice;
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -10,7 +11,10 @@ use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{self, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
 use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
@@ -422,7 +426,7 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
@@ -432,10 +436,62 @@ pub enum SelectedFormatter {
     List(FormatterList),
 }
 
+impl<'de> Deserialize<'de> for SelectedFormatter {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = SelectedFormatter;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                todo!()
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "auto" {
+                    Ok(Self::Value::Auto)
+                } else {
+                    Err(E::custom(format!("Unknown variant: {}", v)))
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
+}
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct FormatterList(#[serde(deserialize_with = "multi_entry")] pub Vec<Formatter>);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case", transparent)]
+pub struct FormatterList(SingleOrVec<Formatter>);
+
+impl AsRef<[Formatter]> for FormatterList {
+    fn as_ref(&self) -> &[Formatter] {
+        match &self.0 {
+            SingleOrVec::Single(single) => slice::from_ref(&*single),
+            SingleOrVec::Vec(v) => &v,
+        }
+    }
+}
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
