@@ -1317,3 +1317,79 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes(": Q");
     cx.set_state("ˇHello world", Mode::Normal);
 }
+
+#[gpui::test]
+async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new(
+                "d o g",
+                workspace::SendKeystrokes("🐶".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "c a t",
+                workspace::SendKeystrokes("🐱".to_string()),
+                Some("vim_mode == insert"),
+            ),
+        ])
+    });
+    cx.neovim.exec("imap dog 🐶").await;
+    cx.neovim.exec("imap cat 🐱").await;
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o g").await;
+    cx.shared_state().await.assert_eq("🐶ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o d o g").await;
+    cx.shared_state().await.assert_eq("do🐶ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o c a t").await;
+    cx.shared_state().await.assert_eq("do🐱ˇ");
+}
+
+#[gpui::test]
+async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new(
+                "p i n",
+                workspace::SendKeystrokes("📌".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "p i n e",
+                workspace::SendKeystrokes("🌲".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "p i n e a p p l e",
+                workspace::SendKeystrokes("🍍".to_string()),
+                Some("vim_mode == insert"),
+            ),
+        ])
+    });
+    cx.neovim.exec("imap pin 📌").await;
+    cx.neovim.exec("imap pine 🌲").await;
+    cx.neovim.exec("imap pineapple 🍍").await;
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n").await;
+    cx.executor().advance_clock(Duration::from_millis(1000));
+    cx.run_until_parked();
+    cx.shared_state().await.assert_eq("📌ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n e").await;
+    cx.executor().advance_clock(Duration::from_millis(1000));
+    cx.run_until_parked();
+    cx.shared_state().await.assert_eq("🌲ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n e a p p l e").await;
+    cx.shared_state().await.assert_eq("🍍ˇ");
+}
