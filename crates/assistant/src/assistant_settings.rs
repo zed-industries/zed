@@ -175,7 +175,7 @@ impl AssistantSettingsContent {
                                 api_url,
                                 low_speed_timeout_in_seconds,
                                 ..
-                            }) => (api_url.clone(), low_speed_timeout_in_seconds.clone()),
+                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
                             _ => (None, None),
                         };
                         settings.provider = Some(AssistantProviderContentV1::Anthropic {
@@ -190,7 +190,7 @@ impl AssistantSettingsContent {
                                 api_url,
                                 low_speed_timeout_in_seconds,
                                 ..
-                            }) => (api_url.clone(), low_speed_timeout_in_seconds.clone()),
+                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
                             _ => (None, None),
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
@@ -209,7 +209,7 @@ impl AssistantSettingsContent {
                                     ..
                                 }) => (
                                     api_url.clone(),
-                                    low_speed_timeout_in_seconds.clone(),
+                                    *low_speed_timeout_in_seconds,
                                     available_models.clone(),
                                 ),
                                 _ => (None, None, None),
