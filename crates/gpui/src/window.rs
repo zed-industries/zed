@@ -4,14 +4,14 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
-    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
+    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
     VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
@@ -574,32 +574,8 @@ pub(crate) enum DrawPhase {
 #[derive(Default, Debug)]
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
-    bindings: SmallVec<[KeyBinding; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
-}
-
-impl PendingInput {
-    fn input(&self) -> String {
-        self.keystrokes
-            .iter()
-            .flat_map(|k| k.ime_key.clone())
-            .collect::<Vec<String>>()
-            .join("")
-    }
-
-    fn used_by_binding(&self, binding: &KeyBinding) -> bool {
-        if self.keystrokes.is_empty() {
-            return true;
-        }
-        let keystroke = &self.keystrokes[0];
-        for candidate in keystroke.match_candidates() {
-            if binding.match_keystrokes(&[candidate]) == KeyMatch::Pending {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 pub(crate) struct ElementStateBox {
@@ -969,10 +945,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(handle.id);
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
+        self.clear_pending_keystrokes();
         self.refresh();
     }
 
@@ -1072,17 +1045,6 @@ impl<'a> WindowContext<'a> {
                 );
                 true
             });
-    }
-
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
-        self.window
-            .next_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1453,14 +1415,6 @@ impl<'a> WindowContext<'a> {
 
         self.draw_roots();
         self.window.dirty_views.clear();
-
-        self.window
-            .next_frame
-            .dispatch_tree
-            .preserve_pending_keystrokes(
-                &mut self.window.rendered_frame.dispatch_tree,
-                self.window.focus,
-            );
         self.window.next_frame.window_active = self.window.active.get();
 
         // Register requested input handler with the platform window.
@@ -3253,8 +3207,6 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        let mut bindings: SmallVec<[KeyBinding; 1]> = SmallVec::new();
-        let mut pending = false;
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
@@ -3272,23 +3224,11 @@ impl<'a> WindowContext<'a> {
                         _ => None,
                     };
                     if let Some(key) = key {
-                        let key = Keystroke {
+                        keystroke = Some(Keystroke {
                             key: key.to_string(),
                             ime_key: None,
                             modifiers: Modifiers::default(),
-                        };
-                        let KeymatchResult {
-                            bindings: modifier_bindings,
-                            pending: pending_bindings,
-                        } = self
-                            .window
-                            .rendered_frame
-                            .dispatch_tree
-                            .dispatch_key(&key, &dispatch_path);
-
-                        keystroke = Some(key);
-                        bindings = modifier_bindings;
-                        pending = pending_bindings;
+                        });
                     }
                 }
             }
@@ -3300,73 +3240,68 @@ impl<'a> WindowContext<'a> {
             self.window.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.window.pending_modifier.saw_keystroke = true;
-            let KeymatchResult {
-                bindings: key_down_bindings,
-                pending: key_down_pending,
-            } = self
-                .window
-                .rendered_frame
-                .dispatch_tree
-                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
-
             keystroke = Some(key_down_event.keystroke.clone());
-
-            bindings = key_down_bindings;
-            pending = key_down_pending;
         }
 
-        if keystroke.is_none() {
+        let Some(keystroke) = keystroke else {
             self.finish_dispatch_key_event(event, dispatch_path);
             return;
+        };
+
+        let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+        if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
+            currently_pending = PendingInput::default();
         }
 
-        if pending {
-            let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
-            if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
-                currently_pending = PendingInput::default();
-            }
-            currently_pending.focus = self.window.focus;
-            if let Some(keystroke) = keystroke {
-                currently_pending.keystrokes.push(keystroke.clone());
-            }
-            for binding in bindings {
-                currently_pending.bindings.push(binding);
-            }
+        let match_result = self.window.rendered_frame.dispatch_tree.dispatch_key(
+            currently_pending.keystrokes,
+            keystroke,
+            &dispatch_path,
+        );
+        if !match_result.to_replay.is_empty() {
+            self.replay_pending_input(match_result.to_replay)
+        }
 
+        if !match_result.pending.is_empty() {
+            currently_pending.keystrokes = match_result.pending;
+            currently_pending.focus = self.window.focus;
             currently_pending.timer = Some(self.spawn(|mut cx| async move {
                 cx.background_executor.timer(Duration::from_secs(1)).await;
                 cx.update(move |cx| {
-                    cx.clear_pending_keystrokes();
-                    let Some(currently_pending) = cx.window.pending_input.take() else {
+                    let Some(currently_pending) = cx
+                        .window
+                        .pending_input
+                        .take()
+                        .filter(|pending| pending.focus == cx.window.focus)
+                    else {
                         return;
                     };
-                    cx.replay_pending_input(currently_pending);
-                    cx.pending_input_changed();
+
+                    let dispatch_path = cx
+                        .window
+                        .rendered_frame
+                        .dispatch_tree
+                        .dispatch_path(node_id);
+
+                    let to_replay = cx
+                        .window
+                        .rendered_frame
+                        .dispatch_tree
+                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+                    cx.replay_pending_input(to_replay)
                 })
                 .log_err();
             }));
-
             self.window.pending_input = Some(currently_pending);
             self.pending_input_changed();
-
             self.propagate_event = false;
             return;
-        } else if let Some(currently_pending) = self.window.pending_input.take() {
-            self.pending_input_changed();
-            if bindings
-                .iter()
-                .all(|binding| !currently_pending.used_by_binding(binding))
-            {
-                self.replay_pending_input(currently_pending)
-            }
         }
 
-        if !bindings.is_empty() {
-            self.clear_pending_keystrokes();
-        }
-
+        self.pending_input_changed();
         self.propagate_event = true;
-        for binding in bindings {
+        for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action));
@@ -3453,10 +3388,11 @@ impl<'a> WindowContext<'a> {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .has_pending_keystrokes()
+        self.window.pending_input.is_some()
+    }
+
+    fn clear_pending_keystrokes(&mut self) {
+        self.window.pending_input.take();
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -3467,7 +3403,7 @@ impl<'a> WindowContext<'a> {
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
-    fn replay_pending_input(&mut self, currently_pending: PendingInput) {
+    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>) {
         let node_id = self
             .window
             .focus
@@ -3479,42 +3415,36 @@ impl<'a> WindowContext<'a> {
             })
             .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
-        if self.window.focus != currently_pending.focus {
-            return;
-        }
-
-        let input = currently_pending.input();
-
-        self.propagate_event = true;
-        for binding in currently_pending.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref());
-            if !self.propagate_event {
-                return;
-            }
-        }
-
         let dispatch_path = self
             .window
             .rendered_frame
             .dispatch_tree
             .dispatch_path(node_id);
 
-        for keystroke in currently_pending.keystrokes {
+        'replay: for replay in replays {
             let event = KeyDownEvent {
-                keystroke,
+                keystroke: replay.keystroke.clone(),
                 is_held: false,
             };
 
+            self.propagate_event = true;
+            for binding in replay.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref());
+                if !self.propagate_event {
+                    self.dispatch_keystroke_observers(&event, Some(binding.action));
+                    continue 'replay;
+                }
+            }
+
             self.dispatch_key_down_up_event(&event, &dispatch_path);
             if !self.propagate_event {
-                return;
+                continue 'replay;
             }
-        }
-
-        if !input.is_empty() {
-            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, self);
-                self.window.platform_window.set_input_handler(input_handler)
+            if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
+                if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                    input_handler.dispatch_input(&input, self);
+                    self.window.platform_window.set_input_handler(input_handler)
+                }
             }
         }
     }
