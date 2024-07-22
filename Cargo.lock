@@ -248,7 +248,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "isahc",
  "schemars",
  "serde",
@@ -393,7 +393,7 @@ dependencies = [
  "gpui",
  "heed",
  "html_to_markdown 0.1.0",
- "http 0.1.0",
+ "http_client",
  "indexed_docs",
  "indoc",
  "language",
@@ -664,18 +664,6 @@ dependencies = [
 
 [[package]]
 name = "async-native-tls"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e9e7a929bd34c68a82d58a4de7f86fffdaf97fb2af850162a7bb19dd7269b33"
-dependencies = [
- "async-std",
- "native-tls",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "async-native-tls"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9343dc5acf07e79ff82d0c37899f079db3534d99f189a1837c8e549c99405bec"
@@ -877,17 +865,17 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.16.1"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5682ea0913e5c20780fe5785abacb85a411e7437bf52a1bedb93ddb3972cb8dd"
+checksum = "3609af4bbf701ddaf1f6bb4e6257dff4ff8932327d0e685d3f653724c258b1ac"
 dependencies = [
- "async-native-tls 0.3.3",
+ "async-native-tls",
  "async-std",
  "futures-io",
  "futures-util",
  "log",
  "pin-project-lite",
- "tungstenite 0.16.0",
+ "tungstenite 0.21.0",
 ]
 
 [[package]]
@@ -979,7 +967,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "isahc",
  "log",
  "markdown_preview",
@@ -1921,7 +1909,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "live_kit_client",
  "log",
@@ -2144,7 +2132,7 @@ dependencies = [
  "collections",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "log",
  "rand 0.8.5",
@@ -2368,7 +2356,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-native-tls 0.5.0",
+ "async-native-tls",
  "async-recursion 0.3.2",
  "async-tungstenite",
  "chrono",
@@ -2379,8 +2367,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
- "isahc",
+ "http_client",
  "lazy_static",
  "log",
  "once_cell",
@@ -2507,7 +2494,7 @@ dependencies = [
  "gpui",
  "headless",
  "hex",
- "http 0.1.0",
+ "http_client",
  "indoc",
  "language",
  "live_kit_client",
@@ -2578,7 +2565,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "lazy_static",
  "menu",
@@ -2687,7 +2674,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "language_model",
  "log",
@@ -2795,7 +2782,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "indoc",
  "language",
  "lsp",
@@ -3649,7 +3636,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "indoc",
  "itertools 0.11.0",
  "language",
@@ -3972,7 +3959,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "indexed_docs",
  "isahc",
  "language",
@@ -4013,7 +4000,7 @@ dependencies = [
  "env_logger",
  "extension",
  "fs",
- "http 0.1.0",
+ "http_client",
  "language",
  "log",
  "rpc",
@@ -4131,7 +4118,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "human_bytes",
  "isahc",
  "language",
@@ -4746,7 +4733,7 @@ dependencies = [
  "derive_more",
  "git2",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "lazy_static",
  "log",
  "parking_lot",
@@ -4786,7 +4773,7 @@ dependencies = [
  "futures 0.3.28",
  "git",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "isahc",
  "pretty_assertions",
  "regex",
@@ -4870,7 +4857,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "serde",
  "serde_json",
 ]
@@ -4940,7 +4927,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
- "http 0.1.0",
+ "http_client",
  "image",
  "itertools 0.11.0",
  "lazy_static",
@@ -5313,21 +5300,6 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "futures 0.3.28",
- "futures-lite 1.13.0",
- "isahc",
- "log",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
-name = "http"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd6effc99afb63425aff9b05836f029929e345a6148a14b7ecd5ab67af944482"
@@ -5364,6 +5336,22 @@ name = "http-range-header"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "add0ab9360ddbd88cfeb3bd9574a1d85cfdfa14db10b3e21d3700dbc4328758f"
+
+[[package]]
+name = "http_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures 0.3.28",
+ "futures-lite 1.13.0",
+ "http 1.0.0",
+ "isahc",
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
 
 [[package]]
 name = "httparse"
@@ -5568,7 +5556,7 @@ dependencies = [
  "gpui",
  "heed",
  "html_to_markdown 0.1.0",
- "http 0.1.0",
+ "http_client",
  "indexmap 1.9.3",
  "indoc",
  "parking_lot",
@@ -5997,7 +5985,7 @@ dependencies = [
  "git",
  "globset",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "indoc",
  "itertools 0.11.0",
  "lazy_static",
@@ -6110,7 +6098,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "lazy_static",
  "log",
@@ -6885,7 +6873,7 @@ dependencies = [
  "async-trait",
  "async_zip",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "log",
  "paths",
  "semver",
@@ -7234,7 +7222,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "isahc",
  "schemars",
  "serde",
@@ -7305,7 +7293,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "isahc",
  "schemars",
  "serde",
@@ -8125,7 +8113,7 @@ dependencies = [
  "git2",
  "globset",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "itertools 0.11.0",
  "language",
  "log",
@@ -8768,7 +8756,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "log",
  "node_runtime",
@@ -8813,7 +8801,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "image",
  "language",
  "log",
@@ -9578,7 +9566,7 @@ dependencies = [
  "futures-batch",
  "gpui",
  "heed",
- "http 0.1.0",
+ "http_client",
  "language",
  "languages",
  "log",
@@ -9745,19 +9733,6 @@ dependencies = [
  "tree-sitter-json",
  "unindent",
  "util",
-]
-
-[[package]]
-name = "sha-1"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99cd6713db3cf16b6c84e06321e049a9b9f699826e16096d23bbcc44d15d51a6"
-dependencies = [
- "block-buffer 0.9.0",
- "cfg-if",
- "cpufeatures",
- "digest 0.9.0",
- "opaque-debug",
 ]
 
 [[package]]
@@ -10528,7 +10503,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "language",
  "log",
  "postage",
@@ -10549,7 +10524,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.28",
- "http 0.1.0",
+ "http_client",
  "paths",
  "serde",
  "serde_json",
@@ -10947,7 +10922,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "lazy_static",
  "log",
  "parking_lot",
@@ -11219,7 +11194,7 @@ dependencies = [
  "extensions_ui",
  "feedback",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "notifications",
  "pretty_assertions",
  "project",
@@ -11796,26 +11771,6 @@ checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
 
 [[package]]
 name = "tungstenite"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ad3713a14ae247f22a728a0456a545df14acf3867f905adff84be99e23b3ad1"
-dependencies = [
- "base64 0.13.1",
- "byteorder",
- "bytes 1.5.0",
- "http 0.2.9",
- "httparse",
- "log",
- "native-tls",
- "rand 0.8.5",
- "sha-1",
- "thiserror",
- "url",
- "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e3dac10fd62eaf6617d3a904ae222845979aec67c615d1c842b4002c7666fb9"
@@ -11826,6 +11781,26 @@ dependencies = [
  "http 0.2.9",
  "httparse",
  "log",
+ "rand 0.8.5",
+ "sha1",
+ "thiserror",
+ "url",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ef1a641ea34f399a848dea702823bbecfb4c486f911735368f1f137cb8257e1"
+dependencies = [
+ "byteorder",
+ "bytes 1.5.0",
+ "data-encoding",
+ "http 1.0.0",
+ "httparse",
+ "log",
+ "native-tls",
  "rand 0.8.5",
  "sha1",
  "thiserror",
@@ -13455,7 +13430,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "itertools 0.11.0",
  "language",
  "lazy_static",
@@ -13491,7 +13466,7 @@ dependencies = [
  "git",
  "git2",
  "gpui",
- "http 0.1.0",
+ "http_client",
  "ignore",
  "language",
  "log",
@@ -13781,7 +13756,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "headless",
- "http 0.1.0",
+ "http_client",
  "image_viewer",
  "inline_completion_button",
  "install_cli",
