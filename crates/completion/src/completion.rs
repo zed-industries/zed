@@ -105,11 +105,9 @@ impl LanguageModelCompletionProvider {
     }
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
-        if self
-            .active_model
-            .as_ref()
-            .map_or(false, |m| m.id() == model.id())
-        {
+        if self.active_model.as_ref().map_or(false, |m| {
+            m.id() == model.id() && m.provider_name() == model.provider_name()
+        }) {
             return;
         }
 

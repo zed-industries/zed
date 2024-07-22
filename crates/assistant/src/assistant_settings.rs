@@ -158,14 +158,81 @@ impl AssistantSettingsContent {
     }
 
     pub fn set_model(&mut self, language_model: AvailableLanguageModel) {
-        let provider = language_model.provider.clone();
-        let name = language_model.model.name.clone();
-        let mut settings = self.upgrade();
-        settings.default_model = Some(AssistantDefaultModel {
-            model: name.0.to_string(),
-            provider: provider.0.to_string(),
-        });
-        *self = Self::Versioned(VersionedAssistantSettingsContent::V2(settings));
+        let model = language_model.model.id.0.to_string();
+        let provider = language_model.provider.0.to_string();
+
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V1(settings) => match provider.as_ref() {
+                    "zed.dev" => {
+                        settings.provider = Some(AssistantProviderContentV1::ZedDotDev {
+                            default_model: CloudModel::from_id(&model).ok(),
+                        });
+                    }
+                    "anthropic" => {
+                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
+                            Some(AssistantProviderContentV1::Anthropic {
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                                ..
+                            }) => (api_url.clone(), low_speed_timeout_in_seconds.clone()),
+                            _ => (None, None),
+                        };
+                        settings.provider = Some(AssistantProviderContentV1::Anthropic {
+                            default_model: AnthropicModel::from_id(&model).ok(),
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        });
+                    }
+                    "ollama" => {
+                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
+                            Some(AssistantProviderContentV1::Ollama {
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                                ..
+                            }) => (api_url.clone(), low_speed_timeout_in_seconds.clone()),
+                            _ => (None, None),
+                        };
+                        settings.provider = Some(AssistantProviderContentV1::Ollama {
+                            default_model: Some(ollama::Model::new(&model)),
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        });
+                    }
+                    "openai" => {
+                        let (api_url, low_speed_timeout_in_seconds, available_models) =
+                            match &settings.provider {
+                                Some(AssistantProviderContentV1::OpenAi {
+                                    api_url,
+                                    low_speed_timeout_in_seconds,
+                                    available_models,
+                                    ..
+                                }) => (
+                                    api_url.clone(),
+                                    low_speed_timeout_in_seconds.clone(),
+                                    available_models.clone(),
+                                ),
+                                _ => (None, None, None),
+                            };
+                        settings.provider = Some(AssistantProviderContentV1::OpenAi {
+                            default_model: open_ai::Model::from_id(&model).ok(),
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                        });
+                    }
+                    _ => {}
+                },
+                VersionedAssistantSettingsContent::V2(settings) => {
+                    settings.default_model = Some(AssistantDefaultModel { provider, model });
+                }
+            },
+            AssistantSettingsContent::Legacy(settings) => {
+                if let Ok(model) = open_ai::Model::from_id(&language_model.model.id.0) {
+                    settings.default_open_ai_model = Some(model);
+                }
+            }
+        }
     }
 }
 
