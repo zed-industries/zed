@@ -1,8 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::stdio::TerminalOutput;
 use anyhow::Result;
-use gpui::{img, AnyElement, FontWeight, ImageData, Render, TextRun, View};
+use gpui::{
+    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, TextRun,
+    Transformation, View,
+};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
@@ -510,8 +514,21 @@ impl Render for ExecutionView {
                     ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
                         .color(Color::Muted)
                         .into_any_element(),
-                    ExecutionStatus::Executing => Label::new("Executing...")
-                        .color(Color::Muted)
+                    ExecutionStatus::Executing => h_flex()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(3)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                ),
+                        )
+                        .child(Label::new("Executing...").color(Color::Muted))
                         .into_any_element(),
                     ExecutionStatus::Finished => Icon::new(IconName::Check)
                         .size(IconSize::Small)
@@ -525,9 +542,9 @@ impl Render for ExecutionView {
                     ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                         .color(Color::Muted)
                         .into_any_element(),
-                    ExecutionStatus::Queued => {
-                        Label::new("Queued").color(Color::Muted).into_any_element()
-                    }
+                    ExecutionStatus::Queued => Label::new("Queued...")
+                        .color(Color::Muted)
+                        .into_any_element(),
                     ExecutionStatus::KernelErrored(error) => {
                         Label::new(format!("Kernel error: {}", error))
                             .color(Color::Error)
