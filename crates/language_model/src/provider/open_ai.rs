@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, Subscription, Task, TextStyle, View, WhiteSpace};
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
+    WhiteSpace,
+};
 use http::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage};
 use settings::{Settings, SettingsStore};
@@ -222,14 +225,21 @@ impl LanguageModel for OpenAiLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = self.to_open_ai_request(request);
 
         let http_client = self.http_client.clone();
-        let api_key = self.state.read(cx).api_key.clone();
-        let api_url = self.state.read(cx).settings.api_url.clone();
-        let low_speed_timeout = self.state.read(cx).settings.low_speed_timeout;
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
+            (
+                state.api_key.clone(),
+                state.settings.api_url.clone(),
+                state.settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(

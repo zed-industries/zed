@@ -159,13 +159,7 @@ impl LanguageModelCompletionProvider {
             let rate_limiter = self.request_limiter.clone();
             cx.spawn(|cx| async move {
                 let lock = rate_limiter.acquire_arc().await;
-
-                let Ok(response) = cx.update(|cx| language_model.stream_completion(request, &cx))
-                else {
-                    return Err(anyhow!("App state dropped"));
-                };
-
-                let response = response.await?;
+                let response = language_model.stream_completion(request, &cx).await?;
                 Ok(LanguageModelCompletionResponse {
                     inner: response,
                     _lock: lock,
@@ -201,12 +195,12 @@ mod tests {
         LanguageModelCompletionProvider, LanguageModelRequest, MAX_CONCURRENT_COMPLETION_REQUESTS,
     };
 
-    use language_model::{provider::fake::FakeLanguageModelProvider, LanguageModelRegistry};
+    use language_model::LanguageModelRegistry;
 
     #[gpui::test]
     fn test_rate_limiting(cx: &mut AppContext) {
         SettingsStore::test(cx);
-        LanguageModelRegistry::test(cx);
+        let fake_provider = LanguageModelRegistry::test(cx);
 
         let model = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
@@ -223,7 +217,7 @@ mod tests {
             provider
         });
 
-        let fake_model = FakeLanguageModelProvider::test_model();
+        let fake_model = fake_provider.test_model();
 
         // Enqueue some requests
         for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {

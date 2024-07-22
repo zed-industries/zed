@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, ModelContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http::HttpClient;
 use ollama::{get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest};
 use settings::{Settings, SettingsStore};
@@ -257,14 +257,20 @@ impl LanguageModel for OllamaLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let state = self.state.read(cx);
-        let api_url = state.settings.api_url.clone();
-        let low_speed_timeout = state.settings.low_speed_timeout;
+        let Ok((api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
+            (
+                state.settings.api_url.clone(),
+                state.settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
         async move {
             let request =
                 stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);

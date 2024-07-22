@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, SharedString, Task, WindowContext};
+use gpui::{AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
 
 pub use model::*;
 pub use registry::*;
@@ -51,7 +51,7 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 }
 

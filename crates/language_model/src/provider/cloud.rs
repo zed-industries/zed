@@ -10,7 +10,7 @@ use futures::{
     stream::BoxStream,
     FutureExt, StreamExt, TryFutureExt,
 };
-use gpui::{AnyView, AppContext, Render, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Render, Task};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use ui::{prelude::*, IntoElement, ViewContext};
@@ -193,7 +193,7 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
-        _cx: &AppContext,
+        _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match self.model {
             CloudModel::Claude3Opus

@@ -8,7 +8,7 @@ use crate::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     ProvidedLanguageModel,
 };
-use gpui::{AnyView, AppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use http::Result;
 use ui::WindowContext;
 
@@ -25,7 +25,9 @@ pub fn provider_name() -> LanguageModelProviderName {
 }
 
 #[derive(Clone, Default)]
-pub struct FakeLanguageModelProvider {}
+pub struct FakeLanguageModelProvider {
+    current_completion_txs: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+}
 
 impl LanguageModelProviderState for FakeLanguageModelProvider {
     fn subscribe<T: 'static>(&self, _: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
@@ -63,16 +65,16 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
 
     fn model(&self, _: LanguageModelId, _: &AppContext) -> Result<Arc<dyn LanguageModel>> {
         Ok(Arc::new(FakeLanguageModel {
-            current_completion_txs: Arc::new(Mutex::new(HashMap::default())),
+            current_completion_txs: self.current_completion_txs.clone(),
         }))
     }
 }
 
 impl FakeLanguageModelProvider {
-    pub fn test_model() -> Arc<FakeLanguageModel> {
-        Arc::new(FakeLanguageModel {
-            current_completion_txs: Arc::new(Mutex::new(HashMap::default())),
-        })
+    pub fn test_model(&self) -> FakeLanguageModel {
+        FakeLanguageModel {
+            current_completion_txs: self.current_completion_txs.clone(),
+        }
     }
 }
 
@@ -154,7 +156,7 @@ impl LanguageModel for FakeLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _: &AppContext,
+        _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs

@@ -62,16 +62,15 @@ impl LanguageModelRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut AppContext) {
+    pub fn test(cx: &mut AppContext) -> crate::provider::fake::FakeLanguageModelProvider {
+        let fake_provider = crate::provider::fake::FakeLanguageModelProvider::default();
         let registry = cx.new_model(|cx| {
             let mut registry = Self::default();
-            registry.register_provider(
-                crate::provider::fake::FakeLanguageModelProvider::default(),
-                cx,
-            );
+            registry.register_provider(fake_provider.clone(), cx);
             registry
         });
         cx.set_global(GlobalLanguageModelRegistry(registry));
+        fake_provider
     }
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
