@@ -192,7 +192,8 @@ impl QuickActionBar {
                             }
                         },
                     )
-                    // .separator()
+                    .separator()
+                    .action("View Sessions", Box::new(repl::Sessions))
                     // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
