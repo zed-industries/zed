@@ -12,9 +12,16 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
 
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::try_init().ok();
+    }
+}
+
 #[gpui::test]
 async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    init_logger();
 
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -76,7 +83,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
     // The user saves the buffer. The new contents are written to the
     // remote filesystem.
     project
-        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
     assert_eq!(
@@ -104,6 +111,19 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
                 Path::new("src/main.rs"),
             ]
         );
+    });
+
+    // A file that is currently open in a buffer is renamed.
+    fs.rename(
+        "/code/project1/src/lib.rs".as_ref(),
+        "/code/project1/src/lib2.rs".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
     });
 }
 

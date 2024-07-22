@@ -1,4 +1,7 @@
-use crate::ProjectPath;
+use crate::{
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    ProjectPath,
+};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
 use futures::{channel::oneshot, StreamExt as _};
@@ -16,11 +19,13 @@ use rpc::{
 use std::{io, path::Path, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
-use worktree::{File, ProjectEntryId, RemoteWorktree, Worktree};
+use worktree::{File, PathChange, ProjectEntryId, RemoteWorktree, Worktree};
 
 /// A set of open buffers.
 pub struct BufferStore {
     retain_buffers: bool,
+    #[allow(unused)]
+    worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
@@ -51,6 +56,9 @@ pub enum BufferStoreEvent {
         has_changed_file: bool,
         saved_version: clock::Global,
     },
+    LocalBufferUpdated {
+        buffer: Model<Buffer>,
+    },
 }
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
@@ -62,9 +70,22 @@ impl BufferStore {
     /// and won't be released unless they are explicitly removed, or `retain_buffers`
     /// is set to `false` via `set_retain_buffers`. Otherwise, buffers are stored as
     /// weak handles.
-    pub fn new(retain_buffers: bool) -> Self {
+    pub fn new(
+        worktree_store: Model<WorktreeStore>,
+        retain_buffers: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        cx.subscribe(&worktree_store, |this, _, event, cx| match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                this.subscribe_to_worktree(worktree, cx);
+            }
+            _ => {}
+        })
+        .detach();
+
         Self {
             retain_buffers,
+            worktree_store,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
             loading_remote_buffers_by_id: Default::default(),
@@ -125,6 +146,45 @@ impl BufferStore {
                 .await
                 .map_err(|e| e.cloned())
         })
+    }
+
+    fn subscribe_to_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+        cx.subscribe(worktree, |this, worktree, event, cx| {
+            let is_local = worktree.read(cx).is_local();
+            match event {
+                worktree::Event::UpdatedEntries(changes) => {
+                    if is_local {
+                        this.update_local_worktree_buffers(&worktree, changes, cx);
+                    }
+                }
+                worktree::Event::UpdatedGitRepositories(_updated_repos) => {
+                    if is_local {
+                        // this.update_local_worktree_buffers_git_repos(
+                        //     worktree.clone(),
+                        //     updated_repos,
+                        //     cx,
+                        // )
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn update_local_worktree_buffers(
+        &mut self,
+        worktree_handle: &Model<Worktree>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = worktree_handle.read(cx).snapshot();
+        for (path, entry_id, _) in changes {
+            if let Some(buffer) =
+                self.file_changed(path.clone(), *entry_id, worktree_handle, &snapshot, cx)
+            {
+                cx.emit(BufferStoreEvent::LocalBufferUpdated { buffer })
+            }
+        }
     }
 
     fn open_local_buffer_internal(
@@ -568,7 +628,7 @@ impl BufferStore {
         worktree_handle: &Model<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut ModelContext<Self>,
-    ) -> Option<(Model<Buffer>, Arc<File>, Arc<File>)> {
+    ) -> Option<Model<Buffer>> {
         let (buffer_id, buffer) = self.get_or_remove_by_path(
             entry_id,
             &ProjectPath {
@@ -658,7 +718,7 @@ impl BufferStore {
             }
         }
 
-        result
+        result.map(|(buffer, _, _)| buffer)
     }
 
     pub fn buffer_changed_file(

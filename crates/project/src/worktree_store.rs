@@ -78,6 +78,8 @@ impl WorktreeStore {
             self.worktrees.insert(i, handle);
         }
 
+        cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
+
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |_, worktree, cx| {
             cx.emit(WorktreeStoreEvent::WorktreeRemoved(

@@ -764,7 +764,8 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let buffer_store = cx.new_model(|_| BufferStore::new(false));
+            let buffer_store =
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), false, cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
@@ -841,6 +842,7 @@ impl Project {
         this.update(cx, |this, cx| {
             ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
             ssh_session.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
+            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_buffer_file);
             this.ssh_session = Some(ssh_session);
         });
         this
@@ -926,7 +928,8 @@ impl Project {
 
             let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
 
-            let buffer_store = cx.new_model(|_| BufferStore::new(true));
+            let buffer_store =
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
@@ -2415,6 +2418,22 @@ impl Project {
 
                 self.detect_language_for_buffer(&buffer, cx);
                 self.register_buffer_with_language_servers(&buffer, cx);
+            }
+            BufferStoreEvent::LocalBufferUpdated { buffer } => {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                let Some(new_file) = buffer.file() else {
+                    return;
+                };
+                if let Some(project_id) = self.remote_id() {
+                    self.client
+                        .send(proto::UpdateBufferFile {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            file: Some(new_file.to_proto(cx)),
+                        })
+                        .log_err();
+                }
             }
             BufferStoreEvent::BufferSaved {
                 buffer: buffer_handle,
@@ -7840,7 +7859,6 @@ impl Project {
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     if is_local {
-                        this.update_local_worktree_buffers(&worktree, changes, cx);
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
                         this.update_local_worktree_settings(&worktree, changes, cx);
                         this.update_prettier_settings(&worktree, changes, cx);
@@ -7874,36 +7892,6 @@ impl Project {
             worktree_store.add(worktree, cx);
         });
         self.metadata_changed(cx);
-    }
-
-    fn update_local_worktree_buffers(
-        &mut self,
-        worktree_handle: &Model<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
-        cx: &mut ModelContext<Self>,
-    ) {
-        let snapshot = worktree_handle.read(cx).snapshot();
-        self.buffer_store.clone().update(cx, |buffer_store, cx| {
-            for (path, entry_id, _) in changes {
-                if let Some((buffer, _, new_file)) = buffer_store.file_changed(
-                    path.clone(),
-                    *entry_id,
-                    worktree_handle,
-                    &snapshot,
-                    cx,
-                ) {
-                    if let Some(project_id) = self.remote_id() {
-                        self.client
-                            .send(proto::UpdateBufferFile {
-                                project_id,
-                                buffer_id: buffer.read(cx).remote_id().into(),
-                                file: Some(new_file.to_proto(cx)),
-                            })
-                            .log_err();
-                    }
-                }
-            }
-        });
     }
 
     fn update_local_worktree_language_servers(

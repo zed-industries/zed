@@ -32,6 +32,7 @@ remote.workspace = true
 rpc.workspace = true
 settings.workspace = true
 smol.workspace = true
+util.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

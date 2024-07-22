@@ -1,7 +1,11 @@
 use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
-use project::{buffer_store::BufferStore, ProjectPath, WorktreeId, WorktreeSettings};
+use project::{
+    buffer_store::{BufferStore, BufferStoreEvent},
+    worktree_store::WorktreeStore,
+    ProjectPath, WorktreeId, WorktreeSettings,
+};
 use remote::SshSession;
 use rpc::{
     proto::{self, AnyProtoClient, PeerId},
@@ -12,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt as _;
 use worktree::Worktree;
 
 const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
@@ -20,7 +25,7 @@ const PROJECT_ID: u64 = 0;
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
     pub session: AnyProtoClient,
-    pub worktrees: Vec<Model<Worktree>>,
+    pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
     pub next_entry_id: Arc<AtomicUsize>,
 }
@@ -39,20 +44,22 @@ impl HeadlessProject {
         session.add_request_handler(this.clone(), Self::handle_update_buffer);
         session.add_request_handler(this.clone(), Self::handle_save_buffer);
 
+        let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
+        let buffer_store = cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
+
         HeadlessProject {
             session: session.into(),
             fs,
-            worktrees: Vec::new(),
-            buffer_store: cx.new_model(|_| BufferStore::new(true)),
+            worktree_store,
+            buffer_store,
             next_entry_id: Default::default(),
         }
     }
 
     fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
-        self.worktrees
-            .iter()
-            .find(|worktree| worktree.read(cx).id() == id)
-            .cloned()
+        self.worktree_store.read(cx).worktree_for_id(id, cx)
     }
 
     pub async fn handle_add_worktree(
@@ -74,7 +81,9 @@ impl HeadlessProject {
 
         this.update(&mut cx, |this, cx| {
             let session = this.session.clone();
-            this.worktrees.push(worktree.clone());
+            this.worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.add(&worktree, cx);
+            });
             worktree.update(cx, |worktree, cx| {
                 worktree.observe_updates(0, cx, move |update| {
                     session.send(update).ok();
@@ -162,5 +171,30 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub fn on_buffer_store_event(
+        &mut self,
+        _: Model<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::LocalBufferUpdated { buffer } => {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                let Some(new_file) = buffer.file() else {
+                    return;
+                };
+                self.session
+                    .send(proto::UpdateBufferFile {
+                        project_id: 0,
+                        buffer_id: buffer_id.into(),
+                        file: Some(new_file.to_proto(cx)),
+                    })
+                    .log_err();
+            }
+            _ => {}
+        }
     }
 }

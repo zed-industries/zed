@@ -8779,6 +8779,7 @@ dependencies = [
  "settings",
  "smol",
  "toml 0.8.10",
+ "util",
  "worktree",
 ]
 
