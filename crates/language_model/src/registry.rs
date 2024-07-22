@@ -61,6 +61,7 @@ impl LanguageModelRegistry {
         cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) {
         let registry = cx.new_model(|cx| {
             let mut registry = Self::default();
@@ -85,6 +86,23 @@ impl LanguageModelRegistry {
         }
 
         self.providers.insert(name, Arc::new(provider));
+        cx.notify();
+    }
+
+    pub fn unregister_provider(
+        &mut self,
+        name: &LanguageModelProviderName,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if self.providers.remove(name).is_some() {
+            cx.notify();
+        }
+    }
+
+    pub fn providers(
+        &self,
+    ) -> impl Iterator<Item = (&LanguageModelProviderName, &Arc<dyn LanguageModelProvider>)> {
+        self.providers.iter()
     }
 
     pub fn available_models(&self, cx: &AppContext) -> Vec<AvailableLanguageModel> {
@@ -129,5 +147,31 @@ impl LanguageModelRegistry {
         name: &LanguageModelProviderName,
     ) -> Option<Arc<dyn LanguageModelProvider>> {
         self.providers.get(name).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::fake::FakeLanguageModelProvider;
+
+    #[gpui::test]
+    fn test_register_providers(cx: &mut AppContext) {
+        let registry = cx.new_model(|_| LanguageModelRegistry::default());
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(FakeLanguageModelProvider::default(), cx);
+        });
+
+        let providers = registry.read(cx).providers().collect::<Vec<_>>();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].0, &crate::provider::fake::provider_name());
+
+        registry.update(cx, |registry, cx| {
+            registry.unregister_provider(&crate::provider::fake::provider_name(), cx);
+        });
+
+        let providers = registry.read(cx).providers().collect::<Vec<_>>();
+        assert!(providers.is_empty());
     }
 }

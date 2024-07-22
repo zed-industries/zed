@@ -2679,36 +2679,22 @@ dependencies = [
 name = "completion"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
- "client",
- "collections",
  "ctor",
  "editor",
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "http 0.1.0",
  "language",
  "language_model",
- "log",
- "menu",
- "ollama",
- "open_ai",
- "parking_lot",
  "project",
  "rand 0.8.5",
  "serde",
- "serde_json",
  "settings",
  "smol",
- "strum",
  "text",
- "theme",
- "tiktoken-rs",
  "ui",
  "unindent",
- "util",
 ]
 
 [[package]]

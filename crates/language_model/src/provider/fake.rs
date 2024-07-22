@@ -12,6 +12,18 @@ use gpui::{AnyView, AppContext, Task};
 use http::Result;
 use ui::WindowContext;
 
+pub fn language_model_id() -> LanguageModelId {
+    LanguageModelId::from("fake".to_string())
+}
+
+pub fn language_model_name() -> LanguageModelName {
+    LanguageModelName::from("Fake".to_string())
+}
+
+pub fn provider_name() -> LanguageModelProviderName {
+    LanguageModelProviderName::from("fake".to_string())
+}
+
 #[derive(Clone, Default)]
 pub struct FakeLanguageModelProvider {}
 
@@ -23,13 +35,13 @@ impl LanguageModelProviderState for FakeLanguageModelProvider {
 
 impl LanguageModelProvider for FakeLanguageModelProvider {
     fn name(&self, _: &AppContext) -> LanguageModelProviderName {
-        LanguageModelProviderName::from("Fake Language Model Provider".to_string())
+        provider_name()
     }
 
     fn provided_models(&self, _: &AppContext) -> Vec<ProvidedLanguageModel> {
         vec![ProvidedLanguageModel {
-            id: LanguageModelId::from("fake".to_string()),
-            name: LanguageModelName::from("Fake".to_string()),
+            id: language_model_id(),
+            name: language_model_name(),
         }]
     }
 
@@ -112,11 +124,11 @@ impl FakeLanguageModel {
 
 impl LanguageModel for FakeLanguageModel {
     fn id(&self) -> LanguageModelId {
-        LanguageModelId::from("fake".to_string())
+        language_model_id()
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from("Fake".to_string())
+        language_model_name()
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {

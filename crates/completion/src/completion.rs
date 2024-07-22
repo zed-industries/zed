@@ -55,6 +55,7 @@ impl LanguageModelCompletionProvider {
             .read(cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) {
         let provider = cx.new_model(|cx| {
             let mut this = Self::new(cx);
