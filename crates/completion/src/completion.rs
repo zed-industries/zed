@@ -55,6 +55,23 @@ impl LanguageModelCompletionProvider {
             .read(cx)
     }
 
+    pub fn test(cx: &mut AppContext) {
+        let provider = cx.new_model(|cx| {
+            let mut this = Self::new(cx);
+            let available_model = LanguageModelRegistry::read_global(cx)
+                .available_models(cx)
+                .first()
+                .unwrap()
+                .clone();
+            let model = LanguageModelRegistry::read_global(cx)
+                .model(&available_model, cx)
+                .unwrap();
+            this.set_active_model(model, cx);
+            this
+        });
+        cx.set_global(GlobalLanguageModelCompletionProvider(provider));
+    }
+
     pub fn new(cx: &mut ModelContext<Self>) -> Self {
         cx.observe(&LanguageModelRegistry::global(cx), |_, _, cx| {
             cx.notify();
@@ -86,8 +103,6 @@ impl LanguageModelCompletionProvider {
     }
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
-        dbg!("Setting active model");
-
         if self
             .active_model
             .as_ref()
@@ -95,8 +110,6 @@ impl LanguageModelCompletionProvider {
         {
             return;
         }
-
-        dbg!("Setting active model");
 
         self.active_provider =
             LanguageModelRegistry::read_global(cx).provider(&model.provider_name());
@@ -176,99 +189,105 @@ impl LanguageModelCompletionProvider {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::sync::Arc;
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+    use gpui::AppContext;
+    use settings::SettingsStore;
+    use ui::Context;
 
-//     use gpui::AppContext;
-//     use parking_lot::RwLock;
-//     use settings::SettingsStore;
-//     use smol::stream::StreamExt;
+    use crate::{
+        LanguageModelCompletionProvider, LanguageModelRequest, MAX_CONCURRENT_COMPLETION_REQUESTS,
+    };
 
-//     use crate::{
-//         FakeCompletionProvider, LanguageModelCompletionProvider, LanguageModelRequest,
-//         MAX_CONCURRENT_COMPLETION_REQUESTS,
-//     };
+    use language_model::{provider::fake::FakeLanguageModelProvider, LanguageModelRegistry};
 
-//     #[gpui::test]
-//     fn test_rate_limiting(cx: &mut AppContext) {
-//         SettingsStore::test(cx);
-//         let fake_provider = FakeCompletionProvider::setup_test(cx);
+    #[gpui::test]
+    fn test_rate_limiting(cx: &mut AppContext) {
+        SettingsStore::test(cx);
+        LanguageModelRegistry::test(cx);
 
-//         let provider = LanguageModelCompletionProvider::new(
-//             Arc::new(RwLock::new(fake_provider.clone())),
-//             None,
-//         );
+        let model = LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .first()
+            .cloned()
+            .unwrap();
+        let model = LanguageModelRegistry::read_global(cx)
+            .model(&model, cx)
+            .unwrap();
 
-//         // Enqueue some requests
-//         for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {
-//             let response = provider.stream_completion(
-//                 LanguageModelRequest {
-//                     temperature: i as f32 / 10.0,
-//                     ..Default::default()
-//                 },
-//                 cx,
-//             );
-//             cx.background_executor()
-//                 .spawn(async move {
-//                     let mut stream = response.await.unwrap();
-//                     while let Some(message) = stream.next().await {
-//                         message.unwrap();
-//                     }
-//                 })
-//                 .detach();
-//         }
-//         cx.background_executor().run_until_parked();
+        let provider = cx.new_model(|cx| {
+            let mut provider = LanguageModelCompletionProvider::new(cx);
+            provider.set_active_model(model.clone(), cx);
+            provider
+        });
 
-//         assert_eq!(
-//             fake_provider.completion_count(),
-//             MAX_CONCURRENT_COMPLETION_REQUESTS
-//         );
+        let fake_model = FakeLanguageModelProvider::test_model();
 
-//         // Get the first completion request that is in flight and mark it as completed.
-//         let completion = fake_provider
-//             .pending_completions()
-//             .into_iter()
-//             .next()
-//             .unwrap();
-//         fake_provider.finish_completion(&completion);
+        // Enqueue some requests
+        for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {
+            let response = provider.read(cx).stream_completion(
+                LanguageModelRequest {
+                    temperature: i as f32 / 10.0,
+                    ..Default::default()
+                },
+                cx,
+            );
+            cx.background_executor()
+                .spawn(async move {
+                    let mut stream = response.await.unwrap();
+                    while let Some(message) = stream.next().await {
+                        message.unwrap();
+                    }
+                })
+                .detach();
+        }
+        cx.background_executor().run_until_parked();
+        assert_eq!(
+            fake_model.completion_count(),
+            MAX_CONCURRENT_COMPLETION_REQUESTS
+        );
 
-//         // Ensure that the number of in-flight completion requests is reduced.
-//         assert_eq!(
-//             fake_provider.completion_count(),
-//             MAX_CONCURRENT_COMPLETION_REQUESTS - 1
-//         );
+        // Get the first completion request that is in flight and mark it as completed.
+        let completion = fake_model.pending_completions().into_iter().next().unwrap();
+        fake_model.finish_completion(&completion);
 
-//         cx.background_executor().run_until_parked();
+        // Ensure that the number of in-flight completion requests is reduced.
+        assert_eq!(
+            fake_model.completion_count(),
+            MAX_CONCURRENT_COMPLETION_REQUESTS - 1
+        );
 
-//         // Ensure that another completion request was allowed to acquire the lock.
-//         assert_eq!(
-//             fake_provider.completion_count(),
-//             MAX_CONCURRENT_COMPLETION_REQUESTS
-//         );
+        cx.background_executor().run_until_parked();
 
-//         // Mark all completion requests as finished that are in flight.
-//         for request in fake_provider.pending_completions() {
-//             fake_provider.finish_completion(&request);
-//         }
+        // Ensure that another completion request was allowed to acquire the lock.
+        assert_eq!(
+            fake_model.completion_count(),
+            MAX_CONCURRENT_COMPLETION_REQUESTS
+        );
 
-//         assert_eq!(fake_provider.completion_count(), 0);
+        // Mark all completion requests as finished that are in flight.
+        for request in fake_model.pending_completions() {
+            fake_model.finish_completion(&request);
+        }
 
-//         // Wait until the background tasks acquire the lock again.
-//         cx.background_executor().run_until_parked();
+        assert_eq!(fake_model.completion_count(), 0);
 
-//         assert_eq!(
-//             fake_provider.completion_count(),
-//             MAX_CONCURRENT_COMPLETION_REQUESTS - 1
-//         );
+        // Wait until the background tasks acquire the lock again.
+        cx.background_executor().run_until_parked();
 
-//         // Finish all remaining completion requests.
-//         for request in fake_provider.pending_completions() {
-//             fake_provider.finish_completion(&request);
-//         }
+        assert_eq!(
+            fake_model.completion_count(),
+            MAX_CONCURRENT_COMPLETION_REQUESTS - 1
+        );
 
-//         cx.background_executor().run_until_parked();
+        // Finish all remaining completion requests.
+        for request in fake_model.pending_completions() {
+            fake_model.finish_completion(&request);
+        }
 
-//         assert_eq!(fake_provider.completion_count(), 0);
-//     }
-// }
+        cx.background_executor().run_until_parked();
+
+        assert_eq!(fake_model.completion_count(), 0);
+    }
+}

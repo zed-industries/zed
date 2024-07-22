@@ -66,7 +66,7 @@ pub trait LanguageModelProvider: 'static {
 }
 
 pub trait LanguageModelProviderState: 'static {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription;
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription>;
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]

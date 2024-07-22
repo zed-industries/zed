@@ -72,10 +72,10 @@ impl CloudLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> gpui::Subscription {
-        cx.observe(&self.state, |_, _, cx| {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+        Some(cx.observe(&self.state, |_, _, cx| {
             cx.notify();
-        })
+        }))
     }
 }
 

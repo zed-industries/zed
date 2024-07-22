@@ -61,6 +61,18 @@ impl LanguageModelRegistry {
         cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
     }
 
+    pub fn test(cx: &mut AppContext) {
+        let registry = cx.new_model(|cx| {
+            let mut registry = Self::default();
+            registry.register_provider(
+                crate::provider::fake::FakeLanguageModelProvider::default(),
+                cx,
+            );
+            registry
+        });
+        cx.set_global(GlobalLanguageModelRegistry(registry));
+    }
+
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
         provider: T,
@@ -68,7 +80,9 @@ impl LanguageModelRegistry {
     ) {
         let name = provider.name(cx);
 
-        provider.subscribe(cx).detach();
+        if let Some(subscription) = provider.subscribe(cx) {
+            subscription.detach();
+        }
 
         self.providers.insert(name, Arc::new(provider));
     }
@@ -99,9 +113,9 @@ impl LanguageModelRegistry {
     }
 
     pub fn model(
-        &mut self,
+        &self,
         requested: &AvailableLanguageModel,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<Arc<dyn LanguageModel>> {
         let provider = self.providers.get(&requested.provider).ok_or_else(|| {
             anyhow::anyhow!("No provider found for name: {:?}", requested.provider)
