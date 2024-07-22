@@ -2948,10 +2948,10 @@ mod tests {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
 
-        cx.update(language_model::LanguageModelRegistry::test);
+        let fake_provider = cx.update(language_model::LanguageModelRegistry::test);
         cx.update(completion::LanguageModelCompletionProvider::test);
 
-        let fake_model = language_model::provider::fake::FakeLanguageModelProvider::test_model();
+        let fake_model = fake_provider.test_model();
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
