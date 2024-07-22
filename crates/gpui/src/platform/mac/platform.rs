@@ -24,6 +24,7 @@ use core_foundation::{
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
+    runloop::CFRunLoopRun,
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
@@ -139,6 +140,7 @@ pub(crate) struct MacPlatformState {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
     renderer_context: renderer::Context,
+    headless: bool,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -155,15 +157,16 @@ pub(crate) struct MacPlatformState {
 
 impl Default for MacPlatform {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
 impl MacPlatform {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(headless: bool) -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
         Self(Mutex::new(MacPlatformState {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            headless,
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
             renderer_context: renderer::Context::default(),
@@ -206,7 +209,7 @@ impl MacPlatform {
 
         for menu_config in menus {
             let menu = NSMenu::new(nil).autorelease();
-            menu.setTitle_(ns_string(menu_config.name));
+            menu.setTitle_(ns_string(&menu_config.name));
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
@@ -310,7 +313,7 @@ impl MacPlatform {
 
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
-                                ns_string(name),
+                                ns_string(&name),
                                 selector,
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
@@ -341,7 +344,7 @@ impl MacPlatform {
                 } else {
                     item = NSMenuItem::alloc(nil)
                         .initWithTitle_action_keyEquivalent_(
-                            ns_string(name),
+                            ns_string(&name),
                             selector,
                             ns_string(""),
                         )
@@ -361,7 +364,7 @@ impl MacPlatform {
                     submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                 }
                 item.setSubmenu_(submenu);
-                item.setTitle_(ns_string(name));
+                item.setTitle_(ns_string(&name));
                 item
             }
         }
@@ -394,7 +397,15 @@ impl Platform for MacPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        self.0.lock().finish_launching = Some(on_finish_launching);
+        let mut state = self.0.lock();
+        if state.headless {
+            drop(state);
+            on_finish_launching();
+            unsafe { CFRunLoopRun() };
+        } else {
+            state.finish_launching = Some(on_finish_launching);
+            drop(state);
+        }
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
@@ -1238,7 +1249,7 @@ mod tests {
     }
 
     fn build_platform() -> MacPlatform {
-        let platform = MacPlatform::new();
+        let platform = MacPlatform::new(false);
         platform.0.lock().pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
         platform
     }

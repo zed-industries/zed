@@ -1,11 +1,12 @@
 use crate::{
-    assistant_settings::CloudModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
-    LanguageModelCompletionProvider, LanguageModelRequest,
+    count_open_ai_tokens, CompletionProvider, LanguageModel, LanguageModelCompletionProvider,
+    LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, Task};
+use language_model::CloudModel;
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -52,16 +53,16 @@ impl CloudCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for CloudCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
-        let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
-            Some(custom_model)
+    fn available_models(&self) -> Vec<LanguageModel> {
+        let mut custom_model = if matches!(self.model, CloudModel::Custom { .. }) {
+            Some(self.model.clone())
         } else {
             None
         };
         CloudModel::iter()
             .filter_map(move |model| {
-                if let CloudModel::Custom(_) = model {
-                    Some(CloudModel::Custom(custom_model.take()?))
+                if let CloudModel::Custom { .. } = model {
+                    custom_model.take()
                 } else {
                     Some(model)
                 }
@@ -116,9 +117,9 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::Cloud(CloudModel::Custom(model)) => {
+            LanguageModel::Cloud(CloudModel::Custom { name, .. }) => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model,
+                    model: name,
                     messages: request
                         .messages
                         .iter()
@@ -135,7 +136,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
         }
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

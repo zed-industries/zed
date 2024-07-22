@@ -74,15 +74,18 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
-use rpc::ErrorCode;
+use remote::SshSession;
+use rpc::{proto::AddWorktree, ErrorCode};
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
-use smol::channel::{Receiver, Sender};
-use smol::lock::Semaphore;
+use smol::{
+    channel::{Receiver, Sender},
+    lock::Semaphore,
+};
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
@@ -196,6 +199,7 @@ pub struct Project {
     >,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
+    ssh_session: Option<Arc<SshSession>>,
     client_state: ProjectClientState,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
@@ -793,6 +797,7 @@ impl Project {
                 client,
                 user_store,
                 fs,
+                ssh_session: None,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostics: Default::default(),
@@ -823,6 +828,24 @@ impl Project {
                 search_history: Self::new_search_history(),
             }
         })
+    }
+
+    pub fn ssh(
+        ssh_session: Arc<SshSession>,
+        client: Arc<Client>,
+        node: Arc<dyn NodeRuntime>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        let this = Self::local(client, node, user_store, languages, fs, cx);
+        this.update(cx, |this, cx| {
+            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
+            ssh_session.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
+            this.ssh_session = Some(ssh_session);
+        });
+        this
     }
 
     pub async fn remote(
@@ -924,6 +947,7 @@ impl Project {
                 snippets,
                 yarn,
                 fs,
+                ssh_session: None,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostic_summaries: Default::default(),
@@ -1628,7 +1652,7 @@ impl Project {
                                                     this.client.send(
                                                         proto::UpdateDiagnosticSummary {
                                                             project_id,
-                                                            worktree_id: cx.entity_id().as_u64(),
+                                                            worktree_id: worktree.id().to_proto(),
                                                             summary: Some(
                                                                 summary.to_proto(server_id, path),
                                                             ),
@@ -2442,7 +2466,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.into(),
-                                file: Some(new_file.to_proto()),
+                                file: Some(new_file.to_proto(cx)),
                             })
                             .log_err();
                     }
@@ -2464,11 +2488,23 @@ impl Project {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
+        let buffer_id = buffer.read(cx).remote_id();
         match event {
             BufferEvent::Operation(operation) => {
+                let operation = language::proto::serialize_operation(operation);
+
+                if let Some(ssh) = &self.ssh_session {
+                    ssh.send(proto::UpdateBuffer {
+                        project_id: 0,
+                        buffer_id: buffer_id.to_proto(),
+                        operations: vec![operation.clone()],
+                    })
+                    .ok();
+                }
+
                 self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
-                    buffer_id: buffer.read(cx).remote_id(),
-                    operation: language::proto::serialize_operation(operation),
+                    buffer_id,
+                    operation,
                 })
                 .ok();
             }
@@ -2948,9 +2984,10 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
+        let (root_file, is_local) =
+            worktree.update(cx, |tree, cx| (tree.root_file(cx), tree.is_local()));
         let settings = language_settings(Some(&language), root_file.map(|f| f as _).as_ref(), cx);
-        if !settings.enable_language_server {
+        if !settings.enable_language_server || !is_local {
             return;
         }
 
@@ -7632,7 +7669,9 @@ impl Project {
     ) -> Task<Result<Model<Worktree>>> {
         let path: Arc<Path> = abs_path.as_ref().into();
         if !self.loading_worktrees.contains_key(&path) {
-            let task = if self.is_local() {
+            let task = if self.ssh_session.is_some() {
+                self.create_ssh_worktree(abs_path, visible, cx)
+            } else if self.is_local() {
                 self.create_local_worktree(abs_path, visible, cx)
             } else if self.dev_server_project_id.is_some() {
                 self.create_dev_server_worktree(abs_path, cx)
@@ -7648,6 +7687,39 @@ impl Project {
                 Err(err) => Err(anyhow!("{}", err)),
             };
             result
+        })
+    }
+
+    fn create_ssh_worktree(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        visible: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
+        let ssh = self.ssh_session.clone().unwrap();
+        let abs_path = abs_path.as_ref();
+        let root_name = abs_path.file_name().unwrap().to_string_lossy().to_string();
+        let path = abs_path.to_string_lossy().to_string();
+        cx.spawn(|this, mut cx| async move {
+            let response = ssh.request(AddWorktree { path: path.clone() }).await?;
+            let worktree = cx.update(|cx| {
+                Worktree::remote(
+                    0,
+                    0,
+                    proto::WorktreeMetadata {
+                        id: response.worktree_id,
+                        root_name,
+                        visible,
+                        abs_path: path,
+                    },
+                    ssh.clone().into(),
+                    cx,
+                )
+            })?;
+
+            this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx))?;
+
+            Ok(worktree)
         })
     }
 
@@ -7922,7 +7994,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer.read(cx).remote_id().into(),
-                                file: Some(new_file.to_proto()),
+                                file: Some(new_file.to_proto(cx)),
                             })
                             .log_err();
                     }
@@ -8400,6 +8472,37 @@ impl Project {
             workspace_root.to_path_buf()
         } else {
             workspace_root.join(project_path)
+        })
+    }
+
+    /// Attempts to find a `ProjectPath` corresponding to the given full path.
+    ///
+    /// This method iterates through all worktrees in the project, trying to match
+    /// the given full path against each worktree's root name. If a match is found,
+    /// it returns a `ProjectPath` containing the worktree ID and the relative path
+    /// within that worktree.
+    ///
+    /// # Arguments
+    ///
+    /// * `full_path` - A reference to a `Path` representing the full path to resolve.
+    /// * `cx` - A reference to the `AppContext`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
+    pub fn project_path_for_full_path(
+        &self,
+        full_path: &Path,
+        cx: &AppContext,
+    ) -> Option<ProjectPath> {
+        self.worktrees.iter().find_map(|worktree| {
+            let worktree = worktree.upgrade()?;
+            let worktree_root_name = worktree.read(cx).root_name();
+            let relative_path = full_path.strip_prefix(worktree_root_name).ok()?;
+            Some(ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path.into(),
+            })
         })
     }
 
@@ -9042,6 +9145,13 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
+            if let Some(ssh) = &this.ssh_session {
+                let mut payload = envelope.payload.clone();
+                payload.project_id = 0;
+                cx.background_executor()
+                    .spawn(ssh.request(payload))
+                    .detach_and_log_err(cx);
+            }
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.handle_update_buffer(envelope, this.is_remote(), cx)
             })
@@ -9200,7 +9310,7 @@ impl Project {
                             .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.into(),
-                                file: Some(file.to_proto()),
+                                file: Some(file.to_proto(cx)),
                             })
                             .log_err();
                     }

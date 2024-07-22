@@ -155,6 +155,7 @@ fn search_deploy(_: &mut Workspace, _: &buffer_search::Deploy, cx: &mut ViewCont
 fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewContext<Workspace>) {
     let mut motion = None;
     Vim::update(cx, |vim, cx| {
+        vim.store_visual_marks(cx);
         let pane = workspace.active_pane().clone();
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {

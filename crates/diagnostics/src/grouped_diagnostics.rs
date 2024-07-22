@@ -3,8 +3,8 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
-        TransformBlockId,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, CustomBlockId,
+        RenderBlock,
     },
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint,
@@ -71,7 +71,7 @@ struct PathState {
     path: ProjectPath,
     first_excerpt_id: Option<ExcerptId>,
     last_excerpt_id: Option<ExcerptId>,
-    diagnostics: Vec<(DiagnosticData, BlockId)>,
+    diagnostics: Vec<(DiagnosticData, CustomBlockId)>,
 }
 
 #[derive(Debug, Clone)]
@@ -250,13 +250,13 @@ impl GroupedDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<GroupedDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
             let diagnostics = cx.new_view(|cx| {
                 GroupedDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
     }
 
@@ -319,7 +319,7 @@ impl GroupedDiagnosticsEditor {
                 || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
-        // TODO kb change selections as in the old panel, to the next primary diagnostics
+        // TODO change selections as in the old panel, to the next primary diagnostics
         // TODO make [shift-]f8 to work, jump to the next block group
         let _was_empty = self.path_states.is_empty();
         let path_ix = match self.path_states.binary_search_by(|probe| {
@@ -657,10 +657,10 @@ fn compare_diagnostic_range_edges(
 struct PathUpdate {
     path_excerpts_borders: (Option<ExcerptId>, Option<ExcerptId>),
     latest_excerpt_id: ExcerptId,
-    new_diagnostics: Vec<(DiagnosticData, Option<BlockId>)>,
+    new_diagnostics: Vec<(DiagnosticData, Option<CustomBlockId>)>,
     diagnostics_by_row_label: BTreeMap<MultiBufferRow, (editor::Anchor, Vec<usize>)>,
-    blocks_to_remove: HashSet<BlockId>,
-    unchanged_blocks: HashMap<usize, BlockId>,
+    blocks_to_remove: HashSet<CustomBlockId>,
+    unchanged_blocks: HashMap<usize, CustomBlockId>,
     excerpts_with_new_diagnostics: HashSet<ExcerptId>,
     excerpts_to_remove: Vec<ExcerptId>,
     excerpt_expands: HashMap<(ExpandExcerptDirection, u32), Vec<ExcerptId>>,
@@ -749,7 +749,7 @@ impl PathUpdate {
         context: u32,
         multi_buffer_snapshot: MultiBufferSnapshot,
         buffer_snapshot: BufferSnapshot,
-        current_diagnostics: impl Iterator<Item = &'a (DiagnosticData, BlockId)> + 'a,
+        current_diagnostics: impl Iterator<Item = &'a (DiagnosticData, CustomBlockId)> + 'a,
     ) {
         let mut current_diagnostics = current_diagnostics.fuse().peekable();
         let mut excerpts_to_expand =
@@ -1234,7 +1234,10 @@ impl PathUpdate {
             .collect()
     }
 
-    fn new_blocks(mut self, new_block_ids: Vec<BlockId>) -> Vec<(DiagnosticData, BlockId)> {
+    fn new_blocks(
+        mut self,
+        new_block_ids: Vec<CustomBlockId>,
+    ) -> Vec<(DiagnosticData, CustomBlockId)> {
         let mut new_block_ids = new_block_ids.into_iter().fuse();
         for (_, (_, grouped_diagnostics)) in self.diagnostics_by_row_label {
             let mut created_block_id = None;
@@ -1285,8 +1288,8 @@ fn render_same_line_diagnostics(
     folded_block_height: u8,
 ) -> RenderBlock {
     Box::new(move |cx: &mut BlockContext| {
-        let block_id = match cx.transform_block_id {
-            TransformBlockId::Block(block_id) => block_id,
+        let block_id = match cx.block_id {
+            BlockId::Custom(block_id) => block_id,
             _ => {
                 debug_panic!("Expected a block id for the diagnostics block");
                 return div().into_any_element();
@@ -1320,7 +1323,7 @@ fn render_same_line_diagnostics(
             .child(v_flex().size_full().when_some_else(
                 toggle_expand_label,
                 |parent, label| {
-                    parent.child(Button::new(cx.transform_block_id, label).on_click({
+                    parent.child(Button::new(cx.block_id, label).on_click({
                         let diagnostics = Arc::clone(&diagnostics);
                         move |_, cx| {
                             let new_expanded = !expanded;

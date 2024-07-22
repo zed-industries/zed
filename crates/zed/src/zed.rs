@@ -5,6 +5,7 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
+mod ssh_connection_modal;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
@@ -670,7 +671,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             })
                         });
 
-                        workspace.add_item_to_active_pane(Box::new(editor), None, cx);
+                        workspace.add_item_to_active_pane(Box::new(editor), None, true, cx);
                     })
                     .log_err();
             })
@@ -889,7 +890,9 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))),
-                    None,cx,
+                    None,
+                    true,
+                    cx,
                 );
             }).log_err()?;
 
@@ -924,6 +927,7 @@ fn open_bundled_file(
                             Editor::for_multibuffer(buffer, Some(project.clone()), true, cx)
                         })),
                         None,
+                        true,
                         cx,
                     );
                 })

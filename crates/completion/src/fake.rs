@@ -23,7 +23,7 @@ impl FakeCompletionProvider {
         this
     }
 
-    pub fn running_completions(&self) -> Vec<LanguageModelRequest> {
+    pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
         self.current_completion_txs
             .lock()
             .keys()
@@ -35,7 +35,7 @@ impl FakeCompletionProvider {
         self.current_completion_txs.lock().len()
     }
 
-    pub fn send_completion(&self, request: &LanguageModelRequest, chunk: String) {
+    pub fn send_completion_chunk(&self, request: &LanguageModelRequest, chunk: String) {
         let json = serde_json::to_string(request).unwrap();
         self.current_completion_txs
             .lock()
@@ -45,15 +45,24 @@ impl FakeCompletionProvider {
             .unwrap();
     }
 
+    pub fn send_last_completion_chunk(&self, chunk: String) {
+        self.send_completion_chunk(self.pending_completions().last().unwrap(), chunk);
+    }
+
     pub fn finish_completion(&self, request: &LanguageModelRequest) {
         self.current_completion_txs
             .lock()
-            .remove(&serde_json::to_string(request).unwrap());
+            .remove(&serde_json::to_string(request).unwrap())
+            .unwrap();
+    }
+
+    pub fn finish_last_completion(&self) {
+        self.finish_completion(self.pending_completions().last().unwrap());
     }
 }
 
 impl LanguageModelCompletionProvider for FakeCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+    fn available_models(&self) -> Vec<LanguageModel> {
         vec![LanguageModel::default()]
     }
 
@@ -89,7 +98,7 @@ impl LanguageModelCompletionProvider for FakeCompletionProvider {
         futures::future::ready(Ok(0)).boxed()
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         _request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {

@@ -2038,7 +2038,7 @@ fn test_serialization(cx: &mut gpui::AppContext) {
     });
     assert_eq!(buffer1.read(cx).text(), "abcDF");
 
-    let state = buffer1.read(cx).to_proto();
+    let state = buffer1.read(cx).to_proto(cx);
     let ops = cx
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
@@ -2165,7 +2165,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
         let buffer = cx.new_model(|cx| {
-            let state = base_buffer.read(cx).to_proto();
+            let state = base_buffer.read(cx).to_proto(cx);
             let ops = cx
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
@@ -2272,7 +2272,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 mutation_count -= 1;
             }
             50..=59 if replica_ids.len() < max_peers => {
-                let old_buffer_state = buffer.read(cx).to_proto();
+                let old_buffer_state = buffer.read(cx).to_proto(cx);
                 let old_buffer_ops = cx
                     .background_executor()
                     .block(buffer.read(cx).serialize_ops(None, cx));
@@ -2615,7 +2615,8 @@ fn rust_lang() -> Language {
             "impl" @context
             trait: (_)? @name
             "for"? @context
-            type: (_) @name) @item
+            type: (_) @name
+            body: (_ "{" (_)* "}")) @item
         (function_item
             "fn" @context
             name: (_) @name) @item

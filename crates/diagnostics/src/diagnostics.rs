@@ -10,7 +10,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
+    display_map::{BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
@@ -85,7 +85,7 @@ struct DiagnosticGroupState {
     primary_diagnostic: DiagnosticEntry<language::Anchor>,
     primary_excerpt_ix: usize,
     excerpts: Vec<ExcerptId>,
-    blocks: HashSet<BlockId>,
+    blocks: HashSet<CustomBlockId>,
     block_count: usize,
 }
 
@@ -237,13 +237,13 @@ impl ProjectDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
             let diagnostics = cx.new_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
     }
 

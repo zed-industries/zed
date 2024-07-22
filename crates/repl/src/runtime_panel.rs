@@ -6,7 +6,6 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
-use futures::StreamExt as _;
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
     FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
@@ -23,7 +22,10 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ClearOutputs, Interrupt, Shutdown]);
+actions!(
+    repl,
+    [Run, ClearOutputs, Interrupt, Shutdown, RefreshKernelspecs]
+);
 actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
@@ -32,8 +34,112 @@ pub fn init(cx: &mut AppContext) {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<RuntimePanel>(cx);
             });
+
+            workspace.register_action(|workspace, _: &RefreshKernelspecs, cx| {
+                if let Some(panel) = workspace.panel::<RuntimePanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.refresh_kernelspecs(cx).detach();
+                    });
+                }
+            });
         },
     )
+    .detach();
+
+    cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+        // Only allow editors that support vim mode and are singleton buffers
+        if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
+            return;
+        }
+
+        editor
+            .register_action(cx.listener(
+                move |editor: &mut Editor, _: &Run, cx: &mut ViewContext<Editor>| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+                    let Some(workspace) = editor.workspace() else {
+                        return;
+                    };
+                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
+                        return;
+                    };
+                    let weak_editor = cx.view().downgrade();
+                    panel.update(cx, |_, cx| {
+                        cx.defer(|panel, cx| {
+                            panel.run(weak_editor, cx).log_err();
+                        });
+                    })
+                },
+            ))
+            .detach();
+
+        editor
+            .register_action(cx.listener(
+                move |editor: &mut Editor, _: &ClearOutputs, cx: &mut ViewContext<Editor>| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+                    let Some(workspace) = editor.workspace() else {
+                        return;
+                    };
+                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
+                        return;
+                    };
+                    let weak_editor = cx.view().downgrade();
+                    panel.update(cx, |_, cx| {
+                        cx.defer(|panel, cx| {
+                            panel.clear_outputs(weak_editor, cx);
+                        });
+                    })
+                },
+            ))
+            .detach();
+
+        editor
+            .register_action(cx.listener(
+                move |editor: &mut Editor, _: &Interrupt, cx: &mut ViewContext<Editor>| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+                    let Some(workspace) = editor.workspace() else {
+                        return;
+                    };
+                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
+                        return;
+                    };
+                    let weak_editor = cx.view().downgrade();
+                    panel.update(cx, |_, cx| {
+                        cx.defer(|panel, cx| {
+                            panel.interrupt(weak_editor, cx);
+                        });
+                    })
+                },
+            ))
+            .detach();
+
+        editor
+            .register_action(cx.listener(
+                move |editor: &mut Editor, _: &Shutdown, cx: &mut ViewContext<Editor>| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+                    let Some(workspace) = editor.workspace() else {
+                        return;
+                    };
+                    let Some(panel) = workspace.read(cx).panel::<RuntimePanel>(cx) else {
+                        return;
+                    };
+                    let weak_editor = cx.view().downgrade();
+                    panel.update(cx, |_, cx| {
+                        cx.defer(|panel, cx| {
+                            panel.shutdown(weak_editor, cx);
+                        });
+                    })
+                },
+            ))
+            .detach();
+    })
     .detach();
 }
 
@@ -45,14 +151,6 @@ pub struct RuntimePanel {
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
-    _editor_events_task: Task<()>,
-}
-
-pub enum ReplEvent {
-    Run(WeakView<Editor>),
-    ClearOutputs(WeakView<Editor>),
-    Interrupt(WeakView<Editor>),
-    Shutdown(WeakView<Editor>),
 }
 
 impl RuntimePanel {
@@ -67,109 +165,13 @@ impl RuntimePanel {
 
                     let fs = workspace.app_state().fs.clone();
 
-                    // Make a channel that we receive editor events on (for repl::Run, repl::ClearOutputs)
-                    // This allows us to inject actions on the editor from the repl panel without requiring the editor to
-                    // depend on the `repl` crate.
-                    let (repl_editor_event_tx, mut repl_editor_event_rx) =
-                        futures::channel::mpsc::unbounded::<ReplEvent>();
-
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
                         cx.observe_global::<SettingsStore>(move |this, cx| {
                             this.set_enabled(JupyterSettings::enabled(cx), cx);
                         }),
-                        cx.observe_new_views(
-                            move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-                                let editor_view = cx.view().downgrade();
-                                let run_event_tx = repl_editor_event_tx.clone();
-                                let clear_event_tx = repl_editor_event_tx.clone();
-                                editor
-                                    .register_action(move |_: &Run, cx: &mut WindowContext| {
-                                        if !JupyterSettings::enabled(cx) {
-                                            return;
-                                        }
-                                        run_event_tx
-                                            .unbounded_send(ReplEvent::Run(editor_view.clone()))
-                                            .ok();
-                                    })
-                                    .detach();
-
-                                let editor_view = cx.view().downgrade();
-                                editor
-                                    .register_action(
-                                        move |_: &ClearOutputs, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            clear_event_tx
-                                                .unbounded_send(ReplEvent::ClearOutputs(
-                                                    editor_view.clone(),
-                                                ))
-                                                .ok();
-                                        },
-                                    )
-                                    .detach();
-
-                                editor
-                                    .register_action({
-                                        let editor = cx.view().downgrade();
-                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
-
-                                        move |_: &Interrupt, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            repl_editor_event_tx
-                                                .unbounded_send(ReplEvent::Interrupt(
-                                                    editor.clone(),
-                                                ))
-                                                .ok();
-                                        }
-                                    })
-                                    .detach();
-
-                                editor
-                                    .register_action({
-                                        let editor = cx.view().downgrade();
-                                        let repl_editor_event_tx = repl_editor_event_tx.clone();
-
-                                        move |_: &Shutdown, cx: &mut WindowContext| {
-                                            if !JupyterSettings::enabled(cx) {
-                                                return;
-                                            }
-                                            repl_editor_event_tx
-                                                .unbounded_send(ReplEvent::Shutdown(editor.clone()))
-                                                .ok();
-                                        }
-                                    })
-                                    .detach();
-                            },
-                        ),
                     ];
-
-                    // Listen for events from the editor on the `repl_editor_event_rx` channel
-                    let _editor_events_task = cx.spawn(
-                        move |this: WeakView<RuntimePanel>, mut cx: AsyncWindowContext| async move {
-                            while let Some(event) = repl_editor_event_rx.next().await {
-                                this.update(&mut cx, |runtime_panel, cx| match event {
-                                    ReplEvent::Run(editor) => {
-                                        runtime_panel.run(editor, cx).log_err();
-                                    }
-                                    ReplEvent::ClearOutputs(editor) => {
-                                        runtime_panel.clear_outputs(editor, cx);
-                                    }
-                                    ReplEvent::Interrupt(editor) => {
-                                        runtime_panel.interrupt(editor, cx);
-                                    }
-                                    ReplEvent::Shutdown(editor) => {
-                                        runtime_panel.shutdown(editor, cx);
-                                    }
-                                })
-                                .ok();
-                            }
-                        },
-                    );
 
                     let runtime_panel = Self {
                         fs: fs.clone(),
@@ -179,7 +181,6 @@ impl RuntimePanel {
                         sessions: Default::default(),
                         _subscriptions: subscriptions,
                         enabled: JupyterSettings::enabled(cx),
-                        _editor_events_task,
                     };
 
                     runtime_panel
@@ -542,6 +543,13 @@ impl Render for RuntimePanel {
                                 binding.into_any_element()
                             )
                     )
+                )
+                .child(Label::new("Kernels available").size(LabelSize::Large))
+                .children(
+                    self.kernel_specifications.iter().map(|spec| {
+                        h_flex().gap_2().child(Label::new(spec.name.clone()))
+                            .child(Label::new(spec.kernelspec.language.clone()).color(Color::Muted))
+                    })
                 )
 
                 .into_any_element();

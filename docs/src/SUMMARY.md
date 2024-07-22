@@ -18,7 +18,7 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
-- [Assistant Panel](./assistant-panel.md)
+- [Language model integration](./language-model-integration.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)

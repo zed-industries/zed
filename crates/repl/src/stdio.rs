@@ -78,7 +78,14 @@ impl TerminalOutput {
             })
             .collect::<Vec<TextRun>>();
 
-        let text = StyledText::new(self.handler.buffer.trim_end().to_string()).with_runs(runs);
+        // Trim the last trailing newline for visual appeal
+        let trimmed = self
+            .handler
+            .buffer
+            .strip_suffix('\n')
+            .unwrap_or(&self.handler.buffer);
+
+        let text = StyledText::new(trimmed.to_string()).with_runs(runs);
         div()
             .font_family(buffer_font)
             .child(text)
@@ -88,7 +95,7 @@ impl TerminalOutput {
 
 impl LineHeight for TerminalOutput {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        self.handler.buffer.lines().count() as u8
+        self.handler.buffer.lines().count().max(1) as u8
     }
 }
 
@@ -212,7 +219,7 @@ impl Perform for TerminalHandler {
             }
             _ => {
                 // Format as hex
-                println!("[execute] byte={:02x}", byte);
+                // println!("[execute] byte={:02x}", byte);
             }
         }
     }

@@ -27,6 +27,7 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 futures.workspace = true

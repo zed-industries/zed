@@ -19,6 +19,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/completion",
     "crates/copilot",
     "crates/db",
     "crates/dev_server_projects",
@@ -50,6 +51,7 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/language",
+    "crates/language_model",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -79,6 +81,8 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/remote",
+    "crates/remote_server",
     "crates/repl",
     "crates/rich_text",
     "crates/rope",
@@ -137,6 +141,7 @@ members = [
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
+    "extensions/ruff",
     "extensions/ruby",
     "extensions/snippets",
     "extensions/svelte",
@@ -160,6 +165,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
+async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
@@ -173,6 +179,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+completion = { path = "crates/completion" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }
@@ -202,6 +209,7 @@ inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
+language_model = { path = "crates/language_model" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
@@ -231,6 +239,8 @@ proto = { path = "crates/proto" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
+remote = { path = "crates/remote" }
+remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
@@ -381,6 +391,7 @@ time = { version = "0.3", features = [
     "serde-well-known",
     "formatting",
 ] }
+tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"

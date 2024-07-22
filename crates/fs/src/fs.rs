@@ -95,8 +95,11 @@ pub trait Fs: Send + Sync {
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs;
+    fn as_fake(&self) -> &FakeFs {
+        panic!("called as_fake on a real fs");
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -601,11 +604,6 @@ impl Fs for RealFs {
 
         temp_dir.close()?;
         case_sensitive
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
-        panic!("called `RealFs::as_fake`")
     }
 }
 

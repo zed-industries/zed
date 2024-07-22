@@ -17,6 +17,7 @@ use crate::{
     LanguageScope, Outline, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
+use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
@@ -32,7 +33,7 @@ use smol::future::yield_now;
 use std::{
     any::Any,
     cell::Cell,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
     ffi::OsStr,
     fmt,
@@ -104,6 +105,7 @@ pub struct Buffer {
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
+    parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -117,6 +119,12 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ParseStatus {
+    Idle,
+    Parsing,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -364,7 +372,7 @@ pub trait File: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
-    fn to_proto(&self) -> rpc::proto::File;
+    fn to_proto(&self, cx: &AppContext) -> rpc::proto::File;
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
@@ -604,10 +612,10 @@ impl Buffer {
     }
 
     /// Serialize the buffer's state to a protobuf message.
-    pub fn to_proto(&self) -> proto::BufferState {
+    pub fn to_proto(&self, cx: &AppContext) -> proto::BufferState {
         proto::BufferState {
             id: self.remote_id().into(),
-            file: self.file.as_ref().map(|f| f.to_proto()),
+            file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
@@ -710,6 +718,7 @@ impl Buffer {
             parsing_in_background: false,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
+            parse_status: async_watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
@@ -1059,6 +1068,7 @@ impl Buffer {
             }
         });
 
+        self.parse_status.0.send(ParseStatus::Parsing).unwrap();
         match cx
             .background_executor()
             .block_with_timeout(self.sync_parse_timeout, parse_task)
@@ -1101,8 +1111,13 @@ impl Buffer {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
+        self.parse_status.0.send(ParseStatus::Idle).unwrap();
         cx.emit(Event::Reparsed);
         cx.notify();
+    }
+
+    pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
+        self.parse_status.1.clone()
     }
 
     /// Assign to the buffer a set of diagnostics created by a given language server.
@@ -2749,7 +2764,6 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        let mut stack = Vec::<Range<usize>>::new();
         let mut items = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
@@ -2767,6 +2781,9 @@ impl BufferSnapshot {
                 continue;
             }
 
+            let mut open_index = None;
+            let mut close_index = None;
+
             let mut buffer_ranges = Vec::new();
             for capture in mat.captures {
                 let node_is_name;
@@ -2778,6 +2795,12 @@ impl BufferSnapshot {
                 {
                     node_is_name = false;
                 } else {
+                    if Some(capture.index) == config.open_capture_ix {
+                        open_index = Some(capture.node.end_byte());
+                    } else if Some(capture.index) == config.close_capture_ix {
+                        close_index = Some(capture.node.start_byte());
+                    }
+
                     continue;
                 }
 
@@ -2850,22 +2873,45 @@ impl BufferSnapshot {
             }
 
             matches.advance();
-            while stack.last().map_or(false, |prev_range| {
-                prev_range.start > item_range.start || prev_range.end < item_range.end
-            }) {
-                stack.pop();
-            }
-            stack.push(item_range.clone());
 
             items.push(OutlineItem {
-                depth: stack.len() - 1,
-                range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
+                depth: 0, // We'll calculate the depth later
+                range: item_range,
                 text,
                 highlight_ranges,
                 name_ranges,
-            })
+                body_range: open_index.zip(close_index).map(|(start, end)| start..end),
+            });
         }
-        Some(items)
+
+        items.sort_by_key(|item| (item.range.start, Reverse(item.range.end)));
+
+        // Assign depths based on containment relationships and convert to anchors.
+        let mut item_ends_stack = Vec::<usize>::new();
+        let mut anchor_items = Vec::new();
+        for item in items {
+            while let Some(last_end) = item_ends_stack.last().copied() {
+                if last_end < item.range.end {
+                    item_ends_stack.pop();
+                } else {
+                    break;
+                }
+            }
+
+            anchor_items.push(OutlineItem {
+                depth: item_ends_stack.len(),
+                range: self.anchor_after(item.range.start)..self.anchor_before(item.range.end),
+                text: item.text,
+                highlight_ranges: item.highlight_ranges,
+                name_ranges: item.name_ranges,
+                body_range: item.body_range.map(|body_range| {
+                    self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
+                }),
+            });
+            item_ends_stack.push(item.range.end);
+        }
+
+        Some(anchor_items)
     }
 
     /// For each grammar in the language, runs the provided
@@ -3894,7 +3940,7 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn to_proto(&self) -> rpc::proto::File {
+    fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
         unimplemented!()
     }
 

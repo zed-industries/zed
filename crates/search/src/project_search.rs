@@ -13,10 +13,9 @@ use editor::{
 };
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement, IntoElement,
-    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WhiteSpace, WindowContext,
+    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
+    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
+    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -716,7 +715,7 @@ impl ProjectSearchView {
 
         let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
-        workspace.add_item_to_active_pane(Box::new(search.clone()), None, cx);
+        workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, cx);
         search.update(cx, |search, cx| {
             search
                 .included_files_editor
@@ -768,6 +767,7 @@ impl ProjectSearchView {
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
                     None,
+                    true,
                     cx,
                 );
             }
@@ -800,7 +800,7 @@ impl ProjectSearchView {
         });
 
         let search = if let Some(existing) = existing {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_item(&existing, true, true, cx);
             existing
         } else {
             let settings = cx
@@ -817,7 +817,7 @@ impl ProjectSearchView {
             let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             let view = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
 
-            workspace.add_item_to_active_pane(Box::new(view.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, cx);
             view
         };
 
@@ -1340,12 +1340,8 @@ impl ProjectSearchBar {
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(

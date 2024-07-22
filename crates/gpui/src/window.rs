@@ -464,6 +464,7 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.deferred_draws.clear();
+        self.focus = None;
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1161,6 +1162,29 @@ impl<'a> WindowContext<'a> {
         )
     }
 
+    /// Register a callback to be invoked when the given Model or View is released.
+    pub fn observe_release<E, T>(
+        &mut self,
+        entity: &E,
+        mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        let entity_id = entity.entity_id();
+        let window_handle = self.window.handle;
+        let (subscription, activate) = self.app.release_listeners.insert(
+            entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
     /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {
@@ -1437,7 +1461,6 @@ impl<'a> WindowContext<'a> {
                 &mut self.window.rendered_frame.dispatch_tree,
                 self.window.focus,
             );
-        self.window.next_frame.focus = self.window.focus;
         self.window.next_frame.window_active = self.window.active.get();
 
         // Register requested input handler with the platform window.
@@ -1551,7 +1574,7 @@ impl<'a> WindowContext<'a> {
         self.paint_deferred_draws(&sorted_deferred_draws);
 
         if let Some(mut prompt_element) = prompt_element {
-            prompt_element.paint(self)
+            prompt_element.paint(self);
         } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self);
         } else if let Some(mut tooltip_element) = tooltip_element {
@@ -1707,7 +1730,13 @@ impl<'a> WindowContext<'a> {
         let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut window.rendered_frame.dispatch_tree,
+            window.focus,
         );
+
+        if reused_subtree.contains_focus() {
+            window.next_frame.focus = window.focus;
+        }
+
         window.next_frame.deferred_draws.extend(
             window.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
@@ -2822,13 +2851,16 @@ impl<'a> WindowContext<'a> {
     /// Sets the focus handle for the current element. This handle will be used to manage focus state
     /// and keyboard event dispatch for the element.
     ///
-    /// This method should only be called as part of the paint phase of element drawing.
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
         debug_assert_eq!(
             self.window.draw_phase,
-            DrawPhase::Paint,
-            "this method can only be called during paint"
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
         );
+        if focus_handle.is_focused(self) {
+            self.window.next_frame.focus = Some(focus_handle.id);
+        }
         self.window
             .next_frame
             .dispatch_tree
