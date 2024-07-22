@@ -455,9 +455,14 @@ impl AssistantPanel {
             if let Some(context_editor) = self.active_context_editor(cx) {
                 let new_summary = model_summary_editor.read(cx).text(cx);
                 context_editor.update(cx, |context_editor, cx| {
-                    context_editor
-                        .context
-                        .update(cx, |context, cx| context.custom_summary(new_summary, cx));
+                    context_editor.context.update(cx, |context, cx| {
+                        if context.summary().is_none()
+                            && (new_summary == DEFAULT_TAB_TITLE || new_summary.trim().is_empty())
+                        {
+                            return;
+                        }
+                        context.custom_summary(new_summary, cx)
+                    });
                 });
             }
         }
@@ -2579,14 +2584,13 @@ impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
             .gap_2()
-            // TODO does not grow to hold the entire text
             .flex_1()
             .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
             .when(self.active_context_editor.is_some(), |left_side| {
                 left_side
                     .child(
                         IconButton::new("regenerate-context", IconName::ArrowCircle)
-                            .tooltip(|cx| Tooltip::text("Regenerate context", cx))
+                            .tooltip(|cx| Tooltip::text("Regenerate Summary", cx))
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
                             })),
