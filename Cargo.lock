@@ -375,7 +375,6 @@ dependencies = [
  "assets",
  "assistant_slash_command",
  "async-watch",
- "breadcrumbs",
  "cargo_toml",
  "chrono",
  "client",
