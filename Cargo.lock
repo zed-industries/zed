@@ -9599,6 +9599,7 @@ dependencies = [
  "heed",
  "http 0.1.0",
  "language",
+ "language_model",
  "languages",
  "log",
  "open_ai",

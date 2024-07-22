@@ -16,6 +16,7 @@ use gpui::{
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use parking_lot::Mutex;
 use project::{Entry, Project, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
@@ -494,6 +495,7 @@ struct WorktreeIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
     db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    summary_db: heed::Database<Str, SerdeBincode<SummaryFile>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -516,16 +518,23 @@ impl WorktreeIndex {
     ) -> Task<Result<Model<Self>>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
         cx.spawn(|mut cx| async move {
-            let db = cx
+            let (db, summary_db) = cx
                 .background_executor()
                 .spawn({
                     let db_connection = db_connection.clone();
                     async move {
                         let mut txn = db_connection.write_txn()?;
-                        let db_name = worktree_abs_path.to_string_lossy();
-                        let db = db_connection.create_database(&mut txn, Some(&db_name))?;
+                        let db = {
+                            let db_name = worktree_abs_path.to_string_lossy();
+                            db_connection.create_database(&mut txn, Some(&db_name))?
+                        };
+                        let summary_db = {
+                            let db_name =
+                                format!("summaries-{}", worktree_abs_path.to_string_lossy());
+                            db_connection.create_database(&mut txn, Some(&db_name))?
+                        };
                         txn.commit()?;
-                        anyhow::Ok(db)
+                        anyhow::Ok((db, summary_db))
                     }
                 })
                 .await?;
@@ -534,6 +543,7 @@ impl WorktreeIndex {
                     worktree,
                     db_connection,
                     db,
+                    summary_db,
                     status_tx,
                     language_registry,
                     fs,
@@ -550,6 +560,7 @@ impl WorktreeIndex {
         worktree: Model<Worktree>,
         db_connection: heed::Env,
         db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        summary_db: heed::Database<Str, SerdeBincode<SummaryFile>>,
         status: channel::Sender<()>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -567,6 +578,7 @@ impl WorktreeIndex {
         Self {
             db_connection,
             db,
+            summary_db,
             worktree,
             language_registry,
             fs,
@@ -617,14 +629,61 @@ impl WorktreeIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
+        let summarize = Self::summarize_updated_entries(cx, updated_entries.clone());
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
-            futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
+            futures::try_join!(scan.task, chunk.task, embed.task, summarize, persist)?;
             Ok(())
         }
+    }
+
+    fn summarize_updated_entries(
+        cx: &AppContext,
+        updated_entries: UpdatedEntriesSet,
+    ) -> Task<Result<()>> {
+        let prompt = "TODO prompt goes here".to_string();
+        let request = LanguageModelRequest {
+            model: CompletionProvider::global(cx).model(),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: prompt,
+            }],
+            stop: vec![],
+            temperature: 1.0,
+        };
+
+        let provider = CompletionProvider::global(cx);
+        let response = provider.stream_completion(request, cx);
+
+        cx.background_executor().spawn(async move {
+            match response.await {
+                Ok(mut chunks) => {
+                    let mut completion = String::new();
+
+                    while let Some(chunk) = chunks.next().await {
+                        match chunk {
+                            Ok(chunk) => {
+                                completion.push_str(&chunk);
+                            }
+                            Err(chunk_err) => {
+                                log::error!(
+                                    "Unable to get response chunk for summarization: {:?}",
+                                    chunk_err
+                                );
+                            }
+                        }
+                    }
+
+                    dbg!(&completion);
+                }
+                Err(err) => {
+                    log::error!("Unable to get response for summarization: {:?}", err);
+                }
+            }
+        })
     }
 
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
@@ -1045,6 +1104,13 @@ impl Drop for IndexingEntryHandle {
             set.entry_ids.lock().remove(&self.entry_id);
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SummaryFile {
+    // The db key is a hash of the contents of the file, so we
+    // don't record the contents of the file in the db too, just the actual summary.
+    summary: String,
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
