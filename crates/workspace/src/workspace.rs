@@ -1670,7 +1670,7 @@ impl Workspace {
                 })?
                 .await;
 
-            if !quitting && save_result.as_ref().map_or(false, |res| *res == true) {
+            if !quitting && save_result.as_ref().map_or(false, |&res| res) {
                 this.update(&mut cx, |this, cx| {
                     // TODO: Isn't there a better place at which we can save this?
                     this.session_id.take();
