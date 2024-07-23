@@ -101,7 +101,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        match request.model {
+        match &request.model {
             LanguageModel::Cloud(CloudModel::Gpt4)
             | LanguageModel::Cloud(CloudModel::Gpt4Turbo)
             | LanguageModel::Cloud(CloudModel::Gpt4Omni)
@@ -118,19 +118,24 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
                 count_open_ai_tokens(request, cx.background_executor())
             }
             LanguageModel::Cloud(CloudModel::Custom { name, .. }) => {
-                let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model: name,
-                    messages: request
-                        .messages
-                        .iter()
-                        .map(|message| message.to_proto())
-                        .collect(),
-                });
-                async move {
-                    let response = request.await?;
-                    Ok(response.token_count as usize)
+                if name.starts_with("anthropic/") {
+                    // Can't find a tokenizer for Anthropic models, so for now just use the same as OpenAI's as an approximation.
+                    count_open_ai_tokens(request, cx.background_executor())
+                } else {
+                    let request = self.client.request(proto::CountTokensWithLanguageModel {
+                        model: name.clone(),
+                        messages: request
+                            .messages
+                            .iter()
+                            .map(|message| message.to_proto())
+                            .collect(),
+                    });
+                    async move {
+                        let response = request.await?;
+                        Ok(response.token_count as usize)
+                    }
+                    .boxed()
                 }
-                .boxed()
             }
             _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }

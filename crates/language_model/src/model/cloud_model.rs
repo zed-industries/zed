@@ -1,4 +1,3 @@
-use crate::LanguageModelRequest;
 pub use anthropic::Model as AnthropicModel;
 pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
@@ -86,21 +85,6 @@ impl CloudModel {
             Self::Gemini15Pro => 128000,
             Self::Gemini15Flash => 32000,
             Self::Custom { max_tokens, .. } => max_tokens.unwrap_or(200_000),
-        }
-    }
-
-    pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
-        match self {
-            Self::Claude3Opus
-            | Self::Claude3Sonnet
-            | Self::Claude3Haiku
-            | Self::Claude3_5Sonnet => {
-                request.preprocess_anthropic();
-            }
-            Self::Custom { name, .. } if name.starts_with("anthropic/") => {
-                request.preprocess_anthropic();
-            }
-            _ => {}
         }
     }
 }
