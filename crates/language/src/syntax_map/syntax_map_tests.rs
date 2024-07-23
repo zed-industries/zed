@@ -209,7 +209,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             Point::new(3, 0)..Point::new(3, 0),
             &[
                 "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
                 "...(function_item name: (identifier) parameters: (parameters) body: (block)...",
             ],
         );
@@ -226,7 +226,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             Point::new(3, 0)..Point::new(3, 0),
             &[
                 "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
                 "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
             ],
         );
@@ -243,7 +243,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             Point::new(3, 0)..Point::new(3, 0),
             &[
                 "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
             ],
         );
     assert!(syntax_map.contains_unknown_injections());
@@ -257,7 +257,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             Point::new(3, 0)..Point::new(3, 0),
             &[
                 "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
                 "(document (text))",
             ],
         );
@@ -1258,7 +1258,7 @@ fn markdown_inline_lang() -> Language {
             name: "Markdown-Inline".into(),
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_md::language()),
+        Some(tree_sitter_md::inline_language()),
     )
 }
 
