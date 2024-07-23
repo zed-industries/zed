@@ -2539,6 +2539,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "session",
  "settings",
  "sha2 0.10.7",
  "sqlx",
@@ -9712,6 +9713,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "session"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "util",
+ "uuid",
+]
+
+[[package]]
 name = "settings"
 version = "0.1.0"
 dependencies = [
@@ -13470,6 +13480,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "session",
  "settings",
  "smallvec",
  "sqlez",
@@ -13819,6 +13830,7 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
+ "session",
  "settings",
  "settings_ui",
  "simplelog",

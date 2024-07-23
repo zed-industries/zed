@@ -32,6 +32,7 @@ use rpc::{
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
+use session::Session;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -276,6 +277,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -403,6 +405,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
 
         cx.update(|cx| {
