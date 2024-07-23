@@ -323,7 +323,7 @@ impl ProjectIndex {
                     .read_with(&cx, |index, cx| {
                         let worktree_id = index.worktree.read(cx).id();
                         let db_connection = index.db_connection.clone();
-                        let db = index.db;
+                        let db = index.embedding_db;
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
@@ -502,8 +502,8 @@ impl EventEmitter<Status> for ProjectIndex {}
 struct WorktreeIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
-    db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-    summary_db: heed::Database<Str, SerdeBincode<SummaryFile>>,
+    embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    summary_db: heed::Database<Str, Str>, // Key: BLAKE3 hash of source code. Val: LLM summary of that code.
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -538,6 +538,9 @@ impl WorktreeIndex {
                         };
                         let summary_db = {
                             let db_name =
+                                // Prepend something that wouldn't be found at the beginning of an
+                                // absolute path, so we don't get db key namespace conflicts with
+                                // embeddings, which use the abs path as a key.
                                 format!("summaries-{}", worktree_abs_path.to_string_lossy());
                             db_connection.create_database(&mut txn, Some(&db_name))?
                         };
@@ -567,8 +570,8 @@ impl WorktreeIndex {
     fn new(
         worktree: Model<Worktree>,
         db_connection: heed::Env,
-        db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-        summary_db: heed::Database<Str, SerdeBincode<SummaryFile>>,
+        embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        summary_db: heed::Database<Str, Str>,
         status: channel::Sender<()>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -585,7 +588,7 @@ impl WorktreeIndex {
 
         Self {
             db_connection,
-            db,
+            embedding_db,
             summary_db,
             worktree,
             language_registry,
@@ -621,11 +624,20 @@ impl WorktreeIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
         // TODO: summarize in here
-        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
-        let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        let processed = self.process_files(worktree_abs_path, scan.updated_entries, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), processed.chunked_files, cx);
+        let summaries = Self::summarize_files(processed.unsummarized_files, cx);
+        let persist_embeds = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        let persist_summaries = self.persist_summaries(summaries.files, cx);
         async move {
-            futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
+            futures::try_join!(
+                scan.task,
+                processed.task,
+                embed.task,
+                summaries.task,
+                persist_embeds,
+                persist_summaries
+            )?;
             Ok(())
         }
     }
@@ -638,17 +650,25 @@ impl WorktreeIndex {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
-        // let summarize = Self::summarize_code(cx, &worktree, scan.updated_entries);
-        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
-        let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        let processed = self.process_files(worktree_abs_path, scan.updated_entries, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), processed.chunked_files, cx);
+        let summaries = Self::summarize_files(processed.unsummarized_files, cx);
+        let persist_embeds = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        let persist_summaries = self.persist_summaries(summaries.files, cx);
         async move {
-            futures::try_join!(scan.task, chunk.task, embed.task, /*summarize,*/ persist)?;
+            futures::try_join!(
+                scan.task,
+                processed.task,
+                embed.task,
+                summaries.task,
+                persist_embeds,
+                persist_summaries
+            )?;
             Ok(())
         }
     }
 
-    fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<()>> {
+    fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
         let provider = CompletionProvider::global(cx);
         let model = if provider
             .available_models()
@@ -674,15 +694,13 @@ impl WorktreeIndex {
 
         cx.background_executor().spawn(async move {
             let mut chunks = response.await?;
-            let mut completion = String::new();
+            let mut answer = String::new();
 
             while let Some(chunk) = chunks.next().await {
-                completion.push_str(chunk?.as_str());
+                answer.push_str(chunk?.as_str());
             }
 
-            dbg!(&completion);
-
-            Ok(())
+            Ok(answer)
         })
     }
 
@@ -690,7 +708,7 @@ impl WorktreeIndex {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
@@ -808,23 +826,21 @@ impl WorktreeIndex {
         }
     }
 
-    fn chunk_files(
+    fn process_files(
         &self,
         worktree_abs_path: Arc<Path>,
         entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
         cx: &AppContext,
-    ) -> ChunkFiles {
+    ) -> ProcessedFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let completion_provider = CompletionProvider::global(cx);
+        let (unsummarized_tx, unsummarized_rx) = channel::bounded(2048);
         let task = cx.spawn(|cx| async move {
             cx.background_executor()
-                .scoped(|scope| {
-                    // TODO: `scope` was previously named `cx`, shadowing the one from cx.spawn. Is it ok to use that cx after doing scoped?
-                    // TODO: Shouldn't we max this out at (num_cpus - 1).max(1), since the render thread will always get its own cpu?
-                    for _ in 0..scope.num_cpus() {
-                        scope.spawn(async {
+                .scoped(|cx| {
+                    for _ in 0..cx.num_cpus() {
+                        cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
                                 let Some(text) = fs
@@ -837,44 +853,20 @@ impl WorktreeIndex {
                                 else {
                                     continue;
                                 };
-                                let chunk_file = async {
-                                    let language = language_registry
-                                        .language_for_file_path(&entry.path)
-                                        .await
-                                        .ok();
-                                    let chunked_file = ChunkedFile {
-                                        chunks: chunk_text(&text, language.as_ref(), &entry.path),
-                                        handle,
-                                        path: entry.path,
-                                        mtime: entry.mtime,
-                                        text,
-                                    };
-
-                                    if let Err(err) = chunked_files_tx.send(chunked_file).await {
-                                        log::error!(
-                                            "Error trying to send chunked file to channel: {:?}",
-                                            err
-                                        );
-                                    }
+                                let language = language_registry
+                                    .language_for_file_path(&entry.path)
+                                    .await
+                                    .ok();
+                                let chunked_file = ChunkedFile {
+                                    chunks: chunk_text(&text, language.as_ref(), &entry.path),
+                                    handle,
+                                    path: entry.path,
+                                    mtime: entry.mtime,
+                                    text,
                                 };
 
-                                match cx.update(|cx| Self::summarize_code(&text, cx)) {
-                                    Ok(summarize) => {
-                                        if let Err(err) = futures::try_join!(summarize, async {
-                                            Ok(chunk_file.await)
-                                        }) {
-                                            // chunk_file can't return Err, so the error must have come from summarize.
-                                            log::error!("Error summarizing code: {:?}", err,);
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::error!(
-                                            "Error getting AppContext for summarizing code: {:?}",
-                                            err,
-                                        );
-
-                                        chunk_file.await
-                                    }
+                                if chunked_files_tx.send(chunked_file).await.is_err() {
+                                    return;
                                 }
                             }
                         });
@@ -884,8 +876,9 @@ impl WorktreeIndex {
             Ok(())
         });
 
-        ChunkFiles {
-            files: chunked_files_rx,
+        ProcessedFiles {
+            chunked_files: chunked_files_rx,
+            unsummarized_files: unsummarized_rx,
             task,
         }
     }
@@ -978,7 +971,7 @@ impl WorktreeIndex {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         cx.background_executor().spawn(async move {
             while let Some(deletion_range) = deleted_entry_ranges.next().await {
                 let mut txn = db_connection.write_txn()?;
@@ -1000,7 +993,32 @@ impl WorktreeIndex {
                 txn.commit()?;
 
                 drop(embedded_files);
-                log::debug!("committed");
+                log::debug!("committed embeddings");
+            }
+
+            Ok(())
+        })
+    }
+
+    fn persist_summaries(
+        &self,
+        summaries: channel::Receiver<(SummarizedFile, IndexingEntryHandle)>,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let db_connection = self.db_connection.clone();
+        let db = self.summary_db;
+        cx.background_executor().spawn(async move {
+            let mut summaries = summaries.chunks_timeout(4096, Duration::from_secs(2));
+            while let Some(summaries) = summaries.next().await {
+                let mut txn = db_connection.write_txn()?;
+                for (file, _) in &summaries {
+                    log::debug!("saving summary for content hash {:?}", file.content_hash);
+                    db.put(&mut txn, &file.content_hash, &file.summary)?;
+                }
+                txn.commit()?;
+
+                drop(summaries);
+                log::debug!("committed summaries");
             }
 
             Ok(())
@@ -1009,7 +1027,7 @@ impl WorktreeIndex {
 
     fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -1029,7 +1047,7 @@ impl WorktreeIndex {
         cx: &AppContext,
     ) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -1048,7 +1066,123 @@ impl WorktreeIndex {
             .db_connection
             .read_txn()
             .context("failed to create read transaction")?;
-        Ok(self.db.len(&txn)?)
+        Ok(self.embedding_db.len(&txn)?)
+    }
+
+    fn summarize_files(
+        unsummarized_files: channel::Receiver<UnsummarizedFile>,
+        cx: &AppContext,
+    ) -> SummarizeFiles {
+        let completion_provider = CompletionProvider::global(cx);
+        let (summarized_tx, summarized_rx) = channel::bounded(512);
+
+        let task = cx.spawn(|cx| async {
+            let mut summaries = Vec::new();
+            let mut summarize_tasks = Vec::new();
+            let mut unsummarized_receiver = unsummarized_files.clone();
+
+            loop {
+                futures::select! {
+                    next = unsummarized_receiver.next() => {
+                        if let Some(file) = next {
+                            let task =  cx.update(|cx| Self::summarize_code(&file.contents, cx));
+
+                            summarize_tasks.push(task);
+                        }
+                    },
+                    result = futures::future::select_all(&mut summarize_tasks) => {
+                        match result {
+                            Ok(_) => {}
+                            Err(_) => {}
+                        }
+                    }
+                    complete => break,
+                }
+            }
+
+            Ok(())
+        });
+
+        // let summaries = futures::future::join_all(summarize_tasks);
+
+        // let task = cx.background_executor().spawn(async move {
+        //     let mut unsummarized_batches =
+        //         unsummarized_files.chunks_timeout(512, Duration::from_secs(2));
+        //     while let Some(unsummarized) = unsummarized_batches.next().await {
+        //         // View the batch of files as a vec of chunks
+        //         // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
+        //         // Once those are done, reassemble them back into the files in which they belong
+        //         // If any embeddings fail for a file, the entire file is discarded
+
+        //         let summaries = futures::future::join_all(
+        //             unsummarized.iter().map(|file| {
+        //                 Self::summarize_code(&file.contents, cx)
+        //             })
+        //         );
+
+        //         let chunks: Vec<TextToEmbed> = unsummarized
+        //             .iter()
+        //             .flat_map(|file| {
+        //                 file.chunks.iter().map(|chunk| TextToEmbed {
+        //                     text: &file.text[chunk.range.clone()],
+        //                     digest: chunk.digest,
+        //                 })
+        //             })
+        //             .collect::<Vec<_>>();
+
+        //         let mut embeddings: Vec<Option<Embedding>> = Vec::new();
+        //         for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
+        //             if let Some(batch_embeddings) =
+        //                 embedding_provider.embed(embedding_batch).await.log_err()
+        //             {
+        //                 if batch_embeddings.len() == embedding_batch.len() {
+        //                     embeddings.extend(batch_embeddings.into_iter().map(Some));
+        //                     continue;
+        //                 }
+        //                 log::error!(
+        //                     "embedding provider returned unexpected embedding count {}, expected {}",
+        //                     batch_embeddings.len(), embedding_batch.len()
+        //                 );
+        //             }
+
+        //             embeddings.extend(iter::repeat(None).take(embedding_batch.len()));
+        //         }
+
+        //         let mut embeddings = embeddings.into_iter();
+        //         for chunked_file in unsummarized {
+        //             let mut embedded_file = EmbeddedFile {
+        //                 path: chunked_file.path,
+        //                 mtime: chunked_file.mtime,
+        //                 chunks: Vec::new(),
+        //             };
+
+        //             let mut embedded_all_chunks = true;
+        //             for (chunk, embedding) in
+        //                 chunked_file.chunks.into_iter().zip(embeddings.by_ref())
+        //             {
+        //                 if let Some(embedding) = embedding {
+        //                     embedded_file
+        //                         .chunks
+        //                         .push(EmbeddedChunk { chunk, embedding });
+        //                 } else {
+        //                     embedded_all_chunks = false;
+        //                 }
+        //             }
+
+        //             if embedded_all_chunks {
+        //                 summarized_tx
+        //                     .send((embedded_file, chunked_file.handle))
+        //                     .await?;
+        //             }
+        //         }
+        //     }
+        //     Ok(())
+        // });
+
+        SummarizeFiles {
+            files: summarized_rx,
+            task,
+        }
     }
 }
 
@@ -1058,8 +1192,9 @@ struct ScanEntries {
     task: Task<Result<()>>,
 }
 
-struct ChunkFiles {
-    files: channel::Receiver<ChunkedFile>,
+struct ProcessedFiles {
+    chunked_files: channel::Receiver<ChunkedFile>,
+    unsummarized_files: channel::Receiver<UnsummarizedFile>,
     task: Task<Result<()>>,
 }
 
@@ -1087,6 +1222,11 @@ struct EmbeddedFile {
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
+}
+
+struct SummarizeFiles {
+    files: channel::Receiver<(SummarizedFile, IndexingEntryHandle)>,
+    task: Task<Result<()>>,
 }
 
 /// The set of entries that are currently being indexed.
@@ -1134,9 +1274,18 @@ impl Drop for IndexingEntryHandle {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct SummaryFile {
-    // The db key is a hash of the contents of the file, so we
-    // don't record the contents of the file in the db too, just the actual summary.
+struct UnsummarizedFile {
+    // BLAKE3 hash of the source file's contents
+    content_hash: String,
+    // The source file's contents
+    contents: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SummarizedFile {
+    // BLAKE3 hash of the source file's contents
+    content_hash: String,
+    // The LLM's summary of the file's contents
     summary: String,
 }
 
