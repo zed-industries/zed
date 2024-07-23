@@ -8,22 +8,23 @@ use crate::{
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep,
-    EditStepOperations, EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant,
-    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, ResetKey, Role, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector,
+    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepOperations,
+    EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
+    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, ResetKey, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use breadcrumbs::Breadcrumbs;
 use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
+use completion::CompletionProvider;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
+        ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
@@ -42,6 +43,7 @@ use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
+use language_model::Role;
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -453,7 +455,7 @@ impl AssistantPanel {
 
     pub fn inline_assist(
         workspace: &mut Workspace,
-        _: &InlineAssist,
+        action: &InlineAssist,
         cx: &mut ViewContext<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
@@ -471,6 +473,7 @@ impl AssistantPanel {
             return;
         };
 
+        let initial_prompt = action.prompt.clone();
         if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
             match inline_assist_target {
                 InlineAssistTarget::Editor(active_editor, include_context) => {
@@ -479,6 +482,7 @@ impl AssistantPanel {
                             &active_editor,
                             Some(cx.view().downgrade()),
                             include_context.then_some(&assistant_panel),
+                            initial_prompt,
                             cx,
                         )
                     })
@@ -489,6 +493,7 @@ impl AssistantPanel {
                             &active_terminal,
                             Some(cx.view().downgrade()),
                             Some(&assistant_panel),
+                            initial_prompt,
                             cx,
                         )
                     })
@@ -513,6 +518,7 @@ impl AssistantPanel {
                                     &active_editor,
                                     Some(workspace),
                                     assistant_panel.as_ref(),
+                                    initial_prompt,
                                     cx,
                                 )
                             })
@@ -523,6 +529,7 @@ impl AssistantPanel {
                                     &active_terminal,
                                     Some(workspace),
                                     assistant_panel.upgrade().as_ref(),
+                                    initial_prompt,
                                     cx,
                                 )
                             })
@@ -984,11 +991,11 @@ pub struct ContextEditor {
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
-    blocks: HashSet<BlockId>,
+    blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
+    pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
     _subscriptions: Vec<Subscription>,
     active_edit_step: Option<ActiveEditStep>,
     assistant_panel: WeakView<AssistantPanel>,

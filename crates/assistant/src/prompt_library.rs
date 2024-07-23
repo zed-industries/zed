@@ -1,6 +1,6 @@
 use crate::{
     slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    InlineAssist, InlineAssistant,
 };
 use anyhow::{anyhow, Result};
 use assets::Assets;
@@ -19,6 +19,7 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
@@ -628,7 +629,7 @@ impl PromptLibrary {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
-    pub fn inline_assist(&mut self, _: &InlineAssist, cx: &mut ViewContext<Self>) {
+    pub fn inline_assist(&mut self, action: &InlineAssist, cx: &mut ViewContext<Self>) {
         let Some(active_prompt_id) = self.active_prompt_id else {
             cx.propagate();
             return;
@@ -636,9 +637,10 @@ impl PromptLibrary {
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
         let provider = CompletionProvider::global(cx);
+        let initial_prompt = action.prompt.clone();
         if provider.is_authenticated() {
             InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, None, cx)
+                assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
             })
         } else {
             for window in cx.windows() {

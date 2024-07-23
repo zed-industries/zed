@@ -142,14 +142,14 @@ impl Render for QuickActionBar {
             "toggle inline assistant",
             IconName::MagicWand,
             false,
-            Box::new(InlineAssist),
+            Box::new(InlineAssist::default()),
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
                 move |_, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
+                            AssistantPanel::inline_assist(workspace, &InlineAssist::default(), cx);
                         });
                     }
                 }

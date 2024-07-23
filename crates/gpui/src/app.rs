@@ -112,7 +112,18 @@ impl App {
         log::info!("GPUI was compiled in test mode");
 
         Self(AppContext::new(
-            current_platform(),
+            current_platform(false),
+            Arc::new(()),
+            http::client(None),
+        ))
+    }
+
+    /// Build an app in headless mode. This prevents opening windows,
+    /// but makes it possible to run an application in an context like
+    /// SSH, where GUI applications are not allowed.
+    pub fn headless() -> Self {
+        Self(AppContext::new(
+            current_platform(true),
             Arc::new(()),
             http::client(None),
         ))
@@ -1119,14 +1130,7 @@ impl AppContext {
         for window in self.windows() {
             window
                 .update(self, |_, cx| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
-                    cx.window
-                        .next_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
+                    cx.clear_pending_keystrokes();
                 })
                 .ok();
         }

@@ -1,4 +1,8 @@
+use crate::{
+    handle_open_request, init_headless, init_ui, zed::ssh_connection_modal::SshConnectionModal,
+};
 use anyhow::{anyhow, Context, Result};
+use auto_update::AutoUpdater;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -9,8 +13,12 @@ use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
+use gpui::{
+    AppContext, AsyncAppContext, Global, SemanticVersion, View, VisualContext as _, WindowHandle,
+};
 use language::{Bias, Point};
+use release_channel::{AppVersion, ReleaseChannel};
+use remote::SshPlatform;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,14 +30,21 @@ use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
 use workspace::{AppState, Workspace};
 
-use crate::{handle_open_request, init_headless, init_ui};
-
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
     pub open_paths: Vec<PathLikeWithPosition<PathBuf>>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
+    pub ssh_connection: Option<SshConnectionInfo>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct SshConnectionInfo {
+    pub username: String,
+    pub password: Option<String>,
+    pub host: String,
+    pub port: u16,
 }
 
 impl OpenRequest {
@@ -42,6 +57,8 @@ impl OpenRequest {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
+            } else if url.starts_with("ssh://") {
+                this.parse_ssh_file_path(&url)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -60,6 +77,37 @@ impl OpenRequest {
                 self.open_paths.push(path_buf)
             }
         }
+    }
+
+    fn parse_ssh_file_path(&mut self, file: &str) -> Result<()> {
+        let url = url::Url::parse(file)?;
+        let host = url
+            .host()
+            .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
+            .to_string();
+        let username = url.username().to_string();
+        if username.is_empty() {
+            return Err(anyhow!("missing username in ssh url: {}", file));
+        }
+        let password = url.password().map(|s| s.to_string());
+        let port = url.port().unwrap_or(22);
+        if !self.open_paths.is_empty() {
+            return Err(anyhow!("cannot open both local and ssh paths"));
+        }
+        let connection = SshConnectionInfo {
+            username,
+            password,
+            host,
+            port,
+        };
+        if let Some(ssh_connection) = &self.ssh_connection {
+            if *ssh_connection != connection {
+                return Err(anyhow!("cannot open multiple ssh connections"));
+            }
+        }
+        self.ssh_connection = Some(connection);
+        self.parse_file_path(url.path());
+        Ok(())
     }
 
     fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
@@ -106,6 +154,119 @@ impl OpenListener {
             .unbounded_send(urls)
             .map_err(|_| anyhow!("no listener for open requests"))
             .log_err();
+    }
+}
+
+#[derive(Clone)]
+struct SshClientDelegate {
+    window: WindowHandle<Workspace>,
+    modal: View<SshConnectionModal>,
+    known_password: Option<String>,
+}
+
+impl remote::SshClientDelegate for SshClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<String>> {
+        let (tx, rx) = oneshot::channel();
+        let mut known_password = self.known_password.clone();
+        if let Some(password) = known_password.take() {
+            tx.send(Ok(password)).ok();
+        } else {
+            self.window
+                .update(cx, |_, cx| {
+                    self.modal.update(cx, |modal, cx| {
+                        modal.set_prompt(prompt, tx, cx);
+                    });
+                })
+                .ok();
+        }
+        rx
+    }
+
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+        self.update_status(status, cx)
+    }
+
+    fn get_server_binary(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
+        let (tx, rx) = oneshot::channel();
+        let this = self.clone();
+        cx.spawn(|mut cx| async move {
+            tx.send(this.get_server_binary_impl(platform, &mut cx).await)
+                .ok();
+        })
+        .detach();
+        rx
+    }
+
+    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf> {
+        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
+        Ok(format!(".local/zed-remote-server-{}", release_channel.dev_name()).into())
+    }
+}
+
+impl SshClientDelegate {
+    fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+        self.window
+            .update(cx, |_, cx| {
+                self.modal.update(cx, |modal, cx| {
+                    modal.set_status(status.map(|s| s.to_string()), cx);
+                });
+            })
+            .ok();
+    }
+
+    async fn get_server_binary_impl(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(PathBuf, SemanticVersion)> {
+        let (version, release_channel) =
+            cx.update(|cx| (AppVersion::global(cx), ReleaseChannel::global(cx)))?;
+
+        // In dev mode, build the remote server binary from source
+        #[cfg(debug_assertions)]
+        if crate::stdout_is_a_pty()
+            && release_channel == ReleaseChannel::Dev
+            && platform.arch == std::env::consts::ARCH
+            && platform.os == std::env::consts::OS
+        {
+            use smol::process::{Command, Stdio};
+
+            self.update_status(Some("building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
+            run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
+            run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+
+            let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+            return Ok((path, version));
+
+            async fn run_cmd(command: &mut Command) -> Result<()> {
+                let output = command.stderr(Stdio::inherit()).output().await?;
+                if !output.status.success() {
+                    Err(anyhow!("failed to run command: {:?}", command))?;
+                }
+                Ok(())
+            }
+        }
+
+        self.update_status(Some("checking for latest version of remote server"), cx);
+        let binary_path = AutoUpdater::get_latest_remote_server_release(
+            platform.os,
+            platform.arch,
+            release_channel,
+            cx,
+        )
+        .await?;
+
+        Ok((binary_path, version))
     }
 }
 
@@ -158,6 +319,81 @@ fn connect_to_cli(
     });
 
     Ok((async_request_rx, response_tx))
+}
+
+pub async fn open_ssh_paths(
+    connection_info: SshConnectionInfo,
+    paths: Vec<PathLikeWithPosition<PathBuf>>,
+    app_state: Arc<AppState>,
+    _open_options: workspace::OpenOptions,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+    let window = cx.open_window(options, |cx| {
+        let project = project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+        cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
+    })?;
+
+    let modal = window.update(cx, |workspace, cx| {
+        cx.activate_window();
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(connection_info.host.clone(), cx)
+        });
+        workspace.active_modal::<SshConnectionModal>(cx).unwrap()
+    })?;
+
+    let session = remote::SshSession::client(
+        connection_info.username,
+        connection_info.host,
+        connection_info.port,
+        Arc::new(SshClientDelegate {
+            window,
+            modal,
+            known_password: connection_info.password,
+        }),
+        cx,
+    )
+    .await;
+
+    if session.is_err() {
+        window.update(cx, |_, cx| cx.remove_window()).ok();
+    }
+
+    let session = session?;
+
+    let project = cx.update(|cx| {
+        project::Project::ssh(
+            session,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        )
+    })?;
+
+    for path in paths {
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(&path.path_like, true, cx)
+            })?
+            .await?;
+    }
+
+    window.update(cx, |_, cx| {
+        cx.replace_root_view(|cx| Workspace::new(None, project, app_state, cx))
+    })?;
+    window.update(cx, |_, cx| cx.activate_window())?;
+
+    Ok(())
 }
 
 pub async fn open_paths_with_positions(

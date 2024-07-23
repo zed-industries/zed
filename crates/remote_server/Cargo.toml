@@ -1,0 +1,51 @@
+[package]
+name = "remote_server"
+description = "Daemon used for remote editing"
+edition = "2021"
+version = "0.1.0"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/remote_server.rs"
+doctest = false
+
+[[bin]]
+name = "remote_server"
+
+[features]
+default = []
+test-support = ["fs/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+project.workspace = true
+remote.workspace = true
+rpc.workspace = true
+settings.workspace = true
+smol.workspace = true
+worktree.workspace = true
+
+[dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+node_runtime = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
+
+serde_json.workspace = true
+
+[build-dependencies]
+cargo_toml.workspace = true
+toml.workspace = true

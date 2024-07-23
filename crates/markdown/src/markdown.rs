@@ -719,6 +719,9 @@ impl Element for MarkdownElement {
         rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
+        let focus_handle = self.markdown.read(cx).focus_handle.clone();
+        cx.set_focus_handle(&focus_handle);
+
         let hitbox = cx.insert_hitbox(bounds, false);
         rendered_markdown.element.prepaint(cx);
         self.autoscroll(&rendered_markdown.text, cx);
@@ -733,9 +736,6 @@ impl Element for MarkdownElement {
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        let focus_handle = self.markdown.read(cx).focus_handle.clone();
-        cx.set_focus_handle(&focus_handle);
-
         let mut context = KeyContext::default();
         context.add("Markdown");
         cx.set_key_context(context);

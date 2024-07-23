@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count,
     prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionProvider,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -13,10 +13,11 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
-    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
+    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -26,7 +27,7 @@ use std::{
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -73,11 +74,13 @@ impl TerminalInlineAssistant {
         terminal_view: &View<TerminalView>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
+        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let prompt_buffer =
+            cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
         let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 
@@ -556,8 +559,7 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
-                                    {
+                                    for model in CompletionProvider::global(cx).available_models() {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -586,7 +588,7 @@ impl Render for PromptEditor {
                             })
                             .trigger(
                                 IconButton::new("context", IconName::Settings)
-                                    .size(ButtonSize::None)
+                                    .shape(IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip(move |cx| {
@@ -598,7 +600,7 @@ impl Render for PromptEditor {
                                                     .display_name()
                                             ),
                                             None,
-                                            "Click to Change Model",
+                                            "Change Model",
                                             cx,
                                         )
                                     }),
@@ -943,13 +945,9 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
+            font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
         EditorElement::new(
             &self.editor,

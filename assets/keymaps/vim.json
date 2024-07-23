@@ -253,7 +253,7 @@
       "[ d": "editor::GoToPrevDiagnostic",
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPrevHunk",
-      "g c c": "vim::ToggleComments"
+      "g c": ["vim::PushOperator", "ToggleComments"]
     }
   },
   {
@@ -432,6 +432,12 @@
     "context": "vim_operator == <",
     "bindings": {
       "<": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gc",
+    "bindings": {
+      "c": "vim::CurrentLine"
     }
   },
   {

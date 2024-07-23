@@ -46,7 +46,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -167,7 +167,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     supermaven::init(app_state.client.clone(), cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-    repl::init(cx);
+    repl::init(app_state.fs.clone(), cx);
     extension::init(
         app_state.fs.clone(),
         app_state.client.clone(),
@@ -519,6 +519,21 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         fail_to_open_window(e, cx);
         return;
     };
+
+    if let Some(connection_info) = request.ssh_connection {
+        cx.spawn(|mut cx| async move {
+            open_ssh_paths(
+                connection_info,
+                request.open_paths,
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut cx,
+            )
+            .await
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
 
     let mut task = None;
     if !request.open_paths.is_empty() {
@@ -890,7 +905,10 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
         Err(error) => {
-            if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
+            if arg.starts_with("file://")
+                || arg.starts_with("zed-cli://")
+                || arg.starts_with("ssh://")
+            {
                 Ok(arg.into())
             } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())

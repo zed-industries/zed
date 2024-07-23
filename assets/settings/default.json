@@ -705,7 +705,7 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -742,6 +742,9 @@
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "Erlang": {
+      "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Go": {
       "code_actions_on_format": {
@@ -811,6 +814,9 @@
         "allowed": true,
         "plugins": ["prettier-plugin-sql"]
       }
+    },
+    "Starlark": {
+      "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
     "Svelte": {
       "prettier": {
@@ -884,6 +890,15 @@
     //     }
     // }
   },
+  // Jupyter settings
+  "jupyter": {
+    "enabled": true
+    // Specify the language name as the key and the kernel name as the value.
+    // "kernel_selections": {
+    //    "python": "conda-base"
+    //    "typescript": "deno"
+    // }
+  },
   // Vim settings
   "vim": {
     "use_system_clipboard": "always",
@@ -936,5 +951,13 @@
   // Examples:
   //   - "proxy": "socks5://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
-  "proxy": null
+  "proxy": null,
+  // Set to configure aliases for the command palette.
+  // When typing a query which is a key of this object, the value will be used instead.
+  //
+  // Examples:
+  // {
+  //   "W": "workspace::Save"
+  // }
+  "command_aliases": {}
 }
