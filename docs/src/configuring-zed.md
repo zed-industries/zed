@@ -605,7 +605,7 @@ To override settings for a language, add an entry for that language server's nam
 ```json
 {
   "formatter": [
-    {"language_server": "rust-analyzer"},
+    {"language_server": {"name": "rust-analyzer"}},
     {"external": {
       "command": "sed",
       "arguments": ["-e", "s/ *$//"]
