@@ -77,14 +77,14 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Custom { .. } => "custom",
+            Self::Custom { name, .. } => name,
         }
     }
 

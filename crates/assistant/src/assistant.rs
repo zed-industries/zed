@@ -15,20 +15,20 @@ use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-use completion::CompletionProvider;
+use completion::LanguageModelCompletionProvider;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
-use gpui::{
-    actions, impl_actions, AppContext, BorrowAppContext, Global, SharedString, UpdateGlobal,
-};
+use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
-use language_model::LanguageModelResponseMessage;
+use language_model::{
+    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelResponseMessage,
+};
 pub(crate) use model_selector::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
@@ -165,6 +165,16 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
+    // TODO: remove this when 0.148.0 is released.
+    if AssistantSettings::get_global(cx).using_outdated_settings_version {
+        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+            let fs = fs.clone();
+            |content, cx| {
+                content.update_file(fs, cx);
+            }
+        });
+    }
+
     cx.spawn(|mut cx| {
         let client = client.clone();
         async move {
@@ -182,7 +192,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
     context_store::init(&client);
     prompt_library::init(cx);
-    init_completion_provider(Arc::clone(&client), cx);
+    init_completion_provider(cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
@@ -207,18 +217,36 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 }
 
-fn init_completion_provider(client: Arc<Client>, cx: &mut AppContext) {
-    let provider = assistant_settings::create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(CompletionProvider::new(provider, Some(client)));
+fn init_completion_provider(cx: &mut AppContext) {
+    completion::init(cx);
+    update_active_language_model_from_settings(cx);
 
-    let mut settings_version = 0;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        settings_version += 1;
-        cx.update_global::<CompletionProvider, _>(|provider, cx| {
-            assistant_settings::update_completion_provider_settings(provider, settings_version, cx);
-        })
+    cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
+        .detach();
+    cx.observe(&LanguageModelRegistry::global(cx), |_, cx| {
+        update_active_language_model_from_settings(cx)
     })
     .detach();
+}
+
+fn update_active_language_model_from_settings(cx: &mut AppContext) {
+    let settings = AssistantSettings::get_global(cx);
+    let provider_name = LanguageModelProviderName::from(settings.default_model.provider.clone());
+    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_name)
+    else {
+        return;
+    };
+
+    let models = provider.provided_models(cx);
+    if let Some(model) = models.iter().find(|model| model.id() == model_id).cloned() {
+        LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
+            completion_provider.set_active_model(model, cx);
+        });
+    }
 }
 
 fn register_slash_commands(cx: &mut AppContext) {

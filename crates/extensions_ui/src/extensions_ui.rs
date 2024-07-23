@@ -910,7 +910,7 @@ impl ExtensionsPage {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
                     Selection::Unselected => false,
                     Selection::Selected => true,

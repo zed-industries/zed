@@ -26,7 +26,6 @@ anyhow.workspace = true
 assets.workspace = true
 assistant_slash_command.workspace = true
 async-watch.workspace = true
-breadcrumbs.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true

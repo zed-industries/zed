@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
+    ResolvedTask, Shell, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
     ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -45,10 +45,18 @@ pub struct TaskTemplate {
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     #[serde(default)]
     pub reveal: RevealStrategy,
-
+    /// What to do with the terminal pane and tab, after the command had finished:
+    /// * `never` — do nothing when the command finishes (default)
+    /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
+    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
+    #[serde(default)]
+    pub hide: HideStrategy,
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Which shell to use when spawning the task.
+    #[serde(default)]
+    pub shell: Shell,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -60,6 +68,19 @@ pub enum RevealStrategy {
     Always,
     /// Do not change terminal pane focus, but still add/reuse the task's tab there.
     Never,
+}
+
+/// What to do with the terminal pane and tab, after the command has finished.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HideStrategy {
+    /// Do nothing when the command finishes.
+    #[default]
+    Never,
+    /// Always hide the terminal tab, hide the pane also if it was the last tab in it.
+    Always,
+    /// Hide the terminal tab on task success only, otherwise behaves similar to `Always`.
+    OnSuccess,
 }
 
 /// A group of Tasks defined in a JSON file.
@@ -194,6 +215,8 @@ impl TaskTemplate {
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
+                hide: self.hide,
+                shell: self.shell.clone(),
             }),
         })
     }

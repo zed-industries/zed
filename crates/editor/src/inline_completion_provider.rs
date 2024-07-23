@@ -1,6 +1,7 @@
 use crate::Direction;
 use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
+use std::ops::Range;
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
@@ -31,7 +32,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str>;
+    ) -> Option<(&'a str, Option<Range<language::Anchor>>)>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -62,7 +63,7 @@ pub trait InlineCompletionProviderHandle {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str>;
+    ) -> Option<(&'a str, Option<Range<language::Anchor>>)>;
 }
 
 impl<T> InlineCompletionProviderHandle for Model<T>
@@ -117,7 +118,7 @@ where
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<Range<language::Anchor>>)> {
         self.read(cx)
             .active_completion_text(buffer, cursor_position, cx)
     }

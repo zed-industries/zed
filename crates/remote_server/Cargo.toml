@@ -31,7 +31,10 @@ project.workspace = true
 remote.workspace = true
 rpc.workspace = true
 settings.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 smol.workspace = true
+util.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

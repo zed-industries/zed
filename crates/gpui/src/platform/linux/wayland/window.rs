@@ -25,7 +25,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -1006,6 +1006,10 @@ impl PlatformWindow for WaylandWindow {
             state.inset = Some(inset);
             update_window(state);
         }
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.borrow().renderer.gpu_specs().into()
     }
 }
 

@@ -21,11 +21,7 @@ pub enum Model {
     #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
     #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        #[serde(default)]
-        max_tokens: Option<usize>,
-    },
+    Custom { name: String, max_tokens: usize },
 }
 
 impl Model {
@@ -39,10 +35,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Ok(Self::Custom {
-                name: id.to_string(),
-                max_tokens: None,
-            })
+            Err(anyhow!("invalid model id"))
         }
     }
 
@@ -52,7 +45,7 @@ impl Model {
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-opus-20240307",
-            Model::Custom { name, .. } => name,
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -72,7 +65,7 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
-            Self::Custom { max_tokens, .. } => max_tokens.unwrap_or(200_000),
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }

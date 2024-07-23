@@ -47,8 +47,10 @@ pub enum RestoreOnStartupBehaviour {
     /// Always start with an empty editor
     None,
     /// Restore the workspace that was closed last.
-    #[default]
     LastWorkspace,
+    /// Restore all workspaces that were open when quitting Zed.
+    #[default]
+    LastSession,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -74,8 +76,8 @@ pub struct WorkspaceSettingsContent {
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
     /// Controls previous session restoration in freshly launched Zed instance.
-    /// Values: none, last_workspace
-    /// Default: last_workspace
+    /// Values: none, last_workspace, last_session
+    /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehaviour>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.

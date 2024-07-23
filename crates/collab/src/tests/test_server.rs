@@ -32,6 +32,7 @@ use rpc::{
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
+use session::Session;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -156,6 +157,8 @@ impl TestServer {
     }
 
     pub async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
+        let fs = FakeFs::new(cx.executor());
+
         cx.update(|cx| {
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
@@ -264,7 +267,6 @@ impl TestServer {
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
-        let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
@@ -276,6 +278,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -295,7 +298,8 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
-            completion::FakeCompletionProvider::setup_test(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            completion::init(cx);
             assistant::context_store::init(&client);
         });
 
@@ -403,6 +407,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
 
         cx.update(|cx| {
