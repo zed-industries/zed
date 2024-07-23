@@ -13,14 +13,15 @@ path = "src/repl.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
 alacritty_terminal.workspace = true
+anyhow.workspace = true
 async-dispatcher.workspace = true
 base64.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 editor.workspace = true
-gpui.workspace = true
 futures.workspace = true
+gpui.workspace = true
 image.workspace = true
 language.workspace = true
 log.workspace = true
@@ -32,20 +33,20 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
-theme.workspace = true
 terminal_view.workspace = true
+theme.workspace = true
 ui.workspace = true
-uuid.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
