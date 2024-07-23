@@ -59,10 +59,15 @@ world extension {
     /// A list of environment variables.
     type env-vars = list<tuple<string, string>>;
 
+    variant command-type {
+        shell(string),
+        other(string),
+    }
+
     /// A command.
     record command {
         /// The command to execute.
-        command: string,
+        command: command-type,
         /// The arguments to pass to the command.
         args: list<string>,
         /// The environment variables to set for the command.

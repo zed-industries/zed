@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::fs;
 use zed_extension_api::{self as zed, Result};
 
 const SERVER_PATH: &str = "node_modules/.bin/purescript-language-server";
@@ -76,21 +76,40 @@ impl zed::Extension for PurescriptExtension {
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(config)?;
-        let command = "powershell.exe".into();
-        let env = vec![("PATH".to_string(), zed::node_environment_path()?)];
-        println!("==> Env: {:?}", env);
-        Ok(zed::Command {
-            command,
-            args: vec![
-                zed_extension_api::current_dir()
-                    .unwrap()
-                    .join(&server_path)
-                    .to_string_lossy()
-                    .to_string(),
-                "--stdio".to_string(),
-            ],
-            env,
-        })
+        match zed::current_platform().0 {
+            zed_extension_api::Os::Windows => {
+                let command = zed::CommandType::Shell("powershell.exe".into());
+                let env = vec![("PATH".to_string(), zed::node_environment_path()?)];
+                println!("==> Env: {:?}", env);
+                Ok(zed::Command {
+                    command,
+                    args: vec![
+                        zed_extension_api::current_dir()
+                            .unwrap()
+                            .join(&server_path)
+                            .to_string_lossy()
+                            .to_string(),
+                        "--stdio".to_string(),
+                    ],
+                    env,
+                })
+            }
+            _ => {
+                let command = zed::CommandType::Other(zed::node_binary_path()?);
+                Ok(zed::Command {
+                    command,
+                    args: vec![
+                        zed_extension_api::current_dir()
+                            .unwrap()
+                            .join(&server_path)
+                            .to_string_lossy()
+                            .to_string(),
+                        "--stdio".to_string(),
+                    ],
+                    env: Default::default(),
+                })
+            }
+        }
     }
 
     fn language_server_initialization_options(

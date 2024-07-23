@@ -29,8 +29,8 @@ pub use wit::{
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, CommandType, DownloadedFileType,
+    EnvVars, KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.

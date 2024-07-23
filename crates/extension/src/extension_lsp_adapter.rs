@@ -68,11 +68,11 @@ impl LspAdapter for ExtensionLspAdapter {
                 })
                 .await?;
 
-            let path = if command.command.as_str() == "powershell.exe" {
-                command.command.into()
-            } else {
-                self.host
-                    .path_from_extension(&self.extension.manifest.id, command.command.as_ref())
+            let path = match command.command {
+                crate::wit::CommandType::Shell(shell) => shell.into(),
+                crate::wit::CommandType::Other(other) => self
+                    .host
+                    .path_from_extension(&self.extension.manifest.id, other.as_ref()),
             };
 
             // TODO: This should now be done via the `zed::make_file_executable` function in

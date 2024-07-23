@@ -21,7 +21,7 @@ pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
-    CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
+    CodeLabel, CodeLabelSpan, Command, CommandType, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
 
