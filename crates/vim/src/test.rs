@@ -956,8 +956,6 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("g x");
     cx.assert_state("1234fooˇ56789", Mode::Normal);
 
-    cx.executor().allow_parking();
-
     // test command
     cx.update(|cx| {
         cx.bind_keys([KeyBinding::new(
