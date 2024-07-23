@@ -72,6 +72,15 @@ pub struct DebugAdapterClient {
 }
 
 impl DebugAdapterClient {
+    /// Creates & returns a new debug adapter client
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     pub async fn new(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -90,6 +99,17 @@ impl DebugAdapterClient {
         }
     }
 
+    /// Creates a debug client that connects to an adapter through tcp
+    ///
+    /// TCP clients don't have an error communication stream with an adapter
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     async fn create_tcp_client(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -143,6 +163,7 @@ impl DebugAdapterClient {
         )
     }
 
+    /// Get an open port to use with the tcp client when not supplied by debug config
     async fn get_port() -> Option<u16> {
         Some(
             TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
@@ -154,6 +175,15 @@ impl DebugAdapterClient {
         )
     }
 
+    /// Creates a debug client that connects to an adapter through std input/output
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     async fn create_stdio_client(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -226,6 +256,14 @@ impl DebugAdapterClient {
         Ok(client)
     }
 
+    /// Set's up a client's event handler.
+    ///
+    /// This function should only be called once or else errors will arise
+    /// # Parameters
+    /// `client`: A pointer to the client to pass the event handler too
+    /// `event_handler`: The function that is called to handle events
+    ///     should be DebugPanel::handle_debug_client_events
+    /// `cx`: The context that this task will run in
     pub async fn handle_events<F>(
         client: Arc<Self>,
         mut event_handler: F,
@@ -258,6 +296,8 @@ impl DebugAdapterClient {
         }
     }
 
+    /// Send a request to an adapter and get a response back
+    /// Note: This function will block until a response is sent back from the adapter
     pub async fn request<R: dap_types::requests::Request>(
         &self,
         arguments: R::Arguments,
