@@ -1268,6 +1268,29 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
           "},
         Mode::Normal,
     );
+
+    // works with count
+    cx.simulate_keystrokes("g c 2 j");
+    cx.assert_state(
+        indoc! {"
+            // // ˇone
+            // two
+            // three
+            "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g c g g");
+    cx.assert_state(
+        indoc! {"
+            // one
+            two
+            three
+            ˇ"},
+        Mode::Normal,
+    );
 }
 
 #[gpui::test]
