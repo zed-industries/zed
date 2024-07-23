@@ -17,7 +17,7 @@ use serde::{
 };
 use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsSources};
-use std::{error::Error, num::NonZeroU32, path::Path, sync::Arc};
+use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
@@ -51,17 +51,6 @@ pub fn all_language_settings<'a>(
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| f.as_ref().into());
     AllLanguageSettings::get(location, cx)
-}
-
-fn multi_entry<'de, T: for<'d> Deserialize<'d>, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<T>, D::Error> {
-    let v = SingleOrVec::<T>::deserialize(deserializer)?;
-
-    Ok(match v {
-        SingleOrVec::Single(single) => vec![*single],
-        SingleOrVec::Vec(v) => v,
-    })
 }
 
 /// The settings for all languages.
@@ -641,7 +630,7 @@ pub struct FormatterList(SingleOrVec<Formatter>);
 impl AsRef<[Formatter]> for FormatterList {
     fn as_ref(&self) -> &[Formatter] {
         match &self.0 {
-            SingleOrVec::Single(single) => slice::from_ref(&*single),
+            SingleOrVec::Single(single) => slice::from_ref(single),
             SingleOrVec::Vec(v) => &v,
         }
     }
@@ -1131,7 +1120,7 @@ mod tests {
         assert_eq!(
             settings.formatter,
             Some(SelectedFormatter::List(FormatterList(
-                Formatter::LanguageServer.into()
+                Formatter::LanguageServer { name: None }.into()
             )))
         );
         let raw = "{\"formatter\": [\"language_server\"]}";
@@ -1139,7 +1128,7 @@ mod tests {
         assert_eq!(
             settings.formatter,
             Some(SelectedFormatter::List(FormatterList(
-                vec![Formatter::LanguageServer].into()
+                vec![Formatter::LanguageServer { name: None }].into()
             )))
         );
         let raw = "{\"formatter\": [\"language_server\", \"prettier\"]}";
@@ -1147,7 +1136,11 @@ mod tests {
         assert_eq!(
             settings.formatter,
             Some(SelectedFormatter::List(FormatterList(
-                vec![Formatter::LanguageServer, Formatter::Prettier].into()
+                vec![
+                    Formatter::LanguageServer { name: None },
+                    Formatter::Prettier
+                ]
+                .into()
             )))
         );
     }
