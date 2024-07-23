@@ -1123,7 +1123,7 @@ mod tests {
                 Formatter::LanguageServer { name: None }.into()
             )))
         );
-        let raw = "{\"formatter\": [\"language_server\"]}";
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
@@ -1131,7 +1131,7 @@ mod tests {
                 vec![Formatter::LanguageServer { name: None }].into()
             )))
         );
-        let raw = "{\"formatter\": [\"language_server\", \"prettier\"]}";
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
