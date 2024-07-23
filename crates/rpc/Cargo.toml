@@ -27,7 +27,7 @@ gpui = { workspace = true, optional = true }
 parking_lot.workspace = true
 proto.workspace = true
 rand.workspace = true
-rsa = "0.4"
+rsa.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
