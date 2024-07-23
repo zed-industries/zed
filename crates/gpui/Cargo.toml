@@ -39,7 +39,7 @@ derive_more.workspace = true
 env_logger.workspace = true
 etagere = "0.2"
 futures.workspace = true
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4" }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7" }
 gpui_macros.workspace = true
 http.workspace = true
 image = "0.25.1"
@@ -143,7 +143,7 @@ xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca
     "x11rb-xcb",
     "x11rb-client",
 ] }
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4", features = [
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", features = [
     "source-fontconfig-dlopen",
 ] }
 x11-clipboard = "0.9.2"
