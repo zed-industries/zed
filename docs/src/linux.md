@@ -125,7 +125,7 @@ Some window managers, such as `Hyprland`, don't provide a file picker by default
 
 ### Could not start inotify
 
-Zed relies on inotify to watch your filesytem for changes. If you cannot start inotify then Zed will not work reliably.
+Zed relies on inotify to watch your filesystem for changes. If you cannot start inotify then Zed will not work reliably.
 
 If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 *  You should see that max_user_instances is 128 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_instances=1024`). Zed needs only 1 inotify instance.
