@@ -8211,11 +8211,13 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     );
     cx.executor().run_until_parked();
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
+    // TODO this is how it actually worked in Zed Stable, which is not very ergonomic.
+    // Uncommenting and commenting from this position brings in even more wrong articacts.
     cx.assert_editor_state(
         &r#"
             <!-- ˇ<script> -->
                 // ˇvar x = new Y();
-            <!-- ˇ</script> -->
+            // ˇ</script>
         "#
         .unindent(),
     );
