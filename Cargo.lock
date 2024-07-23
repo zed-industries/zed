@@ -8808,6 +8808,7 @@ dependencies = [
  "async-dispatcher",
  "base64 0.13.1",
  "collections",
+ "command_palette_hooks",
  "editor",
  "env_logger",
  "futures 0.3.28",

@@ -25,6 +25,14 @@ pub use crate::repl_sessions_ui::{
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
+pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    set_dispatcher(zed_dispatcher(cx));
+    JupyterSettings::register(cx);
+    ::editor::init_settings(cx);
+    repl_sessions_ui::init(cx);
+    ReplStore::init(fs, cx);
+}
+
 fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     struct ZedDispatcher {
         dispatcher: Arc<dyn PlatformDispatcher>,
@@ -47,12 +55,4 @@ fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     ZedDispatcher {
         dispatcher: cx.background_executor().dispatcher.clone(),
     }
-}
-
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    ::editor::init_settings(cx);
-    repl_sessions_ui::init(cx);
-    ReplStore::init(fs, cx);
 }
