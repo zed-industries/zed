@@ -2400,7 +2400,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let worktree_id = project.read_with(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
@@ -2836,7 +2836,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
-            this.worktrees().next().unwrap().read(cx).id()
+            this.worktrees(cx).next().unwrap().read(cx).id()
         });
 
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -3053,7 +3053,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
-            this.worktrees().next().unwrap().read(cx).id()
+            this.worktrees(cx).next().unwrap().read(cx).id()
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let panes: Vec<_> = window

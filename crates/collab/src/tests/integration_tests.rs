@@ -1377,7 +1377,7 @@ async fn test_unshare_project(
         .await
         .unwrap();
 
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     executor.run_until_parked();
 
@@ -1505,7 +1505,8 @@ async fn test_project_reconnect(
     let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
     let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
     let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
-    let worktree_a1 = project_a1.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let worktree_a1 =
+        project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project1_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a1.clone(), cx))
         .await
@@ -2308,7 +2309,7 @@ async fn test_propagate_saves_and_fs_changes(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
-    let worktree_a = project_a.read_with(cx_a, |p, _| p.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2318,9 +2319,9 @@ async fn test_propagate_saves_and_fs_changes(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let project_c = client_c.build_dev_server_project(project_id, cx_c).await;
 
-    let worktree_b = project_b.read_with(cx_b, |p, _| p.worktrees().next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
-    let worktree_c = project_c.read_with(cx_c, |p, _| p.worktrees().next().unwrap());
+    let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
     // Open and edit a buffer as both guests B and C.
     let buffer_b = project_b
@@ -3022,8 +3023,8 @@ async fn test_fs_operations(
         .unwrap();
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
-    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
 
     let entry = project_b
         .update(cx_b, |project, cx| {
@@ -3323,7 +3324,7 @@ async fn test_local_settings(
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
-    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
     executor.run_until_parked();
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
@@ -3735,7 +3736,7 @@ async fn test_leaving_project(
     // Client B opens a buffer.
     let buffer_b1 = project_b1
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
@@ -3773,7 +3774,7 @@ async fn test_leaving_project(
 
     let buffer_b2 = project_b2
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
@@ -4627,7 +4628,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_1.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
         let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4656,7 +4657,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
         let target_buffer = definitions_2[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4814,7 +4815,7 @@ async fn test_references(
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
-        assert_eq!(project.worktrees().count(), 2);
+        assert_eq!(project.worktrees(cx).count(), 2);
 
         let two_buffer = references[0].buffer.read(cx);
         let three_buffer = references[2].buffer.read(cx);
@@ -6199,7 +6200,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     let project = workspace.update(cx, |workspace, _| workspace.project().clone());
 
     let worktree_id = project.update(cx, |project, cx| {
-        project.worktrees().next().unwrap().read(cx).id()
+        project.worktrees(cx).next().unwrap().read(cx).id()
     });
 
     let path_1 = ProjectPath {
