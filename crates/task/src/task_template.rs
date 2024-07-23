@@ -46,8 +46,9 @@ pub struct TaskTemplate {
     #[serde(default)]
     pub reveal: RevealStrategy,
     /// What to do with the terminal pane and tab, after the command had finished:
+    /// * `never` — do nothing when the command finishes (default)
     /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
-    /// * `never` — do nothing when the command finishes
+    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
