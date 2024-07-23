@@ -183,7 +183,7 @@
   {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
-      "cmd-enter": "repl::Run"
+      "ctrl-shift-enter": "repl::Run"
     }
   },
   {
