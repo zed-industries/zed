@@ -143,25 +143,22 @@ fn snippet(
 
     let buffer = editor.buffer().read(cx).snapshot(cx);
 
-    let selection = editor.selections.newest::<usize>(cx);
+    let selection = editor.selections.newest::<Point>(cx);
     let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
     let range = if selection.is_empty() {
-        let cursor = selection.head();
-
-        let cursor_row = multi_buffer_snapshot.offset_to_point(cursor).row;
-        let start_offset = multi_buffer_snapshot.point_to_offset(Point::new(cursor_row, 0));
-
-        let end_point = Point::new(
-            cursor_row,
-            multi_buffer_snapshot.line_len(MultiBufferRow(cursor_row)),
-        );
-        let end_offset = start_offset.saturating_add(end_point.column as usize);
-
-        // Create a range from the start to the end of the line
-        start_offset..end_offset
+        Point::new(selection.start.row, 0)
+            ..Point::new(
+                selection.start.row,
+                multi_buffer_snapshot.line_len(MultiBufferRow(selection.start.row)),
+            )
     } else {
-        selection.range()
+        let mut range = selection.range();
+        if range.end.column == 0 {
+            range.end.row -= 1;
+            range.end.column = multi_buffer_snapshot.line_len(MultiBufferRow(range.end.row));
+        }
+        range
     };
 
     let anchor_range = range.to_anchors(&multi_buffer_snapshot);
