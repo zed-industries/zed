@@ -12,6 +12,7 @@ use std::os::unix::fs::MetadataExt;
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
+use gpui::{AppContext, Global, ReadGlobal};
 use rope::Rope;
 use smol::io::AsyncWriteExt;
 use std::{
@@ -99,6 +100,22 @@ pub trait Fs: Send + Sync {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called as_fake on a real fs");
+    }
+}
+
+struct GlobalFs(Arc<dyn Fs>);
+
+impl Global for GlobalFs {}
+
+impl dyn Fs {
+    /// Returns the global [`Fs`].
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        GlobalFs::global(cx).0.clone()
+    }
+
+    /// Sets the global [`Fs`].
+    pub fn set_global(fs: Arc<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalFs(fs));
     }
 }
 
