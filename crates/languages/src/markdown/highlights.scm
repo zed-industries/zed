@@ -14,6 +14,3 @@
 (fenced_code_block
   (info_string
     (language) @text.literal))
-
-(link_destination) @link_uri
-(link_label) @link_text
