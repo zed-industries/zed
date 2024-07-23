@@ -2,7 +2,7 @@
 
 Place your snippet files in `~/.config/zed/snippets` directory.
 
-Ex: If you are wanting to create snippets that targetted JavaScript files, your file would be `javascript.json` and it might contain:
+Ex: If you want to create snippets that targeted JavaScript files, your file would be `javascript.json` and it might contain:
 
 ```json
 {
