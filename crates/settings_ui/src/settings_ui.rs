@@ -1,3 +1,5 @@
+mod theme_settings_ui;
+
 use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
@@ -6,6 +8,8 @@ use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
+
+use crate::theme_settings_ui::{BufferFontSettingsControl, UiFontSettingsControl};
 
 pub struct SettingsUiFeatureFlag;
 
@@ -103,5 +107,7 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
+            .child(UiFontSettingsControl {})
+            .child(BufferFontSettingsControl {})
     }
 }
