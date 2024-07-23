@@ -108,12 +108,12 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
 pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
-    update: impl 'static + Send + FnOnce(&mut T::FileContent),
+    update: impl 'static + Send + FnOnce(&mut T::FileContent, &mut AppContext),
 ) {
-    cx.spawn(|cx| async move {
+    cx.spawn(|mut cx| async move {
         let old_text = load_settings(&fs).await?;
-        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-            store.new_text_for_update::<T>(old_text, update)
+        let new_text = cx.update_global(|store: &mut SettingsStore, cx| {
+            store.new_text_for_update::<T>(old_text, |content| update(content, cx))
         })?;
         let initial_path = paths::settings_file().as_path();
         if fs.is_file(initial_path).await {

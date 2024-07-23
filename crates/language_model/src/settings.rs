@@ -29,31 +29,31 @@ pub struct AllLanguageModelSettings {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
-    anthropic: Option<AnthropicSettingsContent>,
-    ollama: Option<OllamaSettingsContent>,
-    open_ai: Option<OpenAiSettingsContent>,
+    pub anthropic: Option<AnthropicSettingsContent>,
+    pub ollama: Option<OllamaSettingsContent>,
+    pub open_ai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
-    zed_dot_dev: Option<ZedDotDevSettingsContent>,
+    pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AnthropicSettingsContent {
-    api_url: Option<String>,
-    low_speed_timeout_in_seconds: Option<u64>,
-    available_models: Option<Vec<anthropic::Model>>,
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<anthropic::Model>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OllamaSettingsContent {
-    api_url: Option<String>,
-    low_speed_timeout_in_seconds: Option<u64>,
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenAiSettingsContent {
-    api_url: Option<String>,
-    low_speed_timeout_in_seconds: Option<u64>,
-    available_models: Option<Vec<open_ai::Model>>,
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<open_ai::Model>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]

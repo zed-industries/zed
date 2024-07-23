@@ -448,14 +448,18 @@ impl Panel for RuntimePanel {
         position: workspace::dock::DockPosition,
         cx: &mut ViewContext<Self>,
     ) {
-        settings::update_settings_file::<JupyterSettings>(self.fs.clone(), cx, move |settings| {
-            let dock = match position {
-                workspace::dock::DockPosition::Left => JupyterDockPosition::Left,
-                workspace::dock::DockPosition::Right => JupyterDockPosition::Right,
-                workspace::dock::DockPosition::Bottom => JupyterDockPosition::Bottom,
-            };
-            settings.set_dock(dock);
-        })
+        settings::update_settings_file::<JupyterSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    workspace::dock::DockPosition::Left => JupyterDockPosition::Left,
+                    workspace::dock::DockPosition::Right => JupyterDockPosition::Right,
+                    workspace::dock::DockPosition::Bottom => JupyterDockPosition::Bottom,
+                };
+                settings.set_dock(dock);
+            },
+        )
     }
 
     fn size(&self, cx: &ui::WindowContext) -> Pixels {

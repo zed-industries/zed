@@ -2,9 +2,10 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
+use fs::Fs;
 use gpui::AppContext;
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, str};
+use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 
 pub use keymap_file::KeymapFile;
@@ -20,8 +21,8 @@ pub use settings_store::{
 #[exclude = "*.DS_Store"]
 pub struct SettingsAssets;
 
-pub fn init(cx: &mut AppContext) {
-    let mut settings = SettingsStore::default();
+pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    let mut settings = SettingsStore::new(fs);
     settings
         .set_default_settings(&default_settings(), cx)
         .unwrap();

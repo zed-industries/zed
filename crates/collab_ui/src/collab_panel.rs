@@ -2806,7 +2806,7 @@ impl Panel for CollabPanel {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| settings.dock = Some(position),
+            move |settings, _| settings.dock = Some(position),
         );
     }
 

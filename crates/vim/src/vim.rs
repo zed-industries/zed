@@ -147,7 +147,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, _: &ToggleVimMode, cx| {
         let fs = workspace.app_state().fs.clone();
         let currently_enabled = VimModeSetting::get_global(cx).0;
-        update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
+        update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
             *setting = Some(!currently_enabled)
         })
     });

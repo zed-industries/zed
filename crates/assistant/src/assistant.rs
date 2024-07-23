@@ -28,7 +28,7 @@ use language_model::{
 pub(crate) use model_selector::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
@@ -164,6 +164,14 @@ impl Assistant {
 pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
+
+    // TODO: remove this when 0.148.0 is released.
+    update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+        let fs = fs.clone();
+        |content, cx| {
+            dbg!(content.update_file(fs, cx));
+        }
+    });
 
     cx.spawn(|mut cx| {
         let client = client.clone();

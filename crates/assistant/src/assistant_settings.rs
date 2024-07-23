@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use anthropic::Model as AnthropicModel;
-use gpui::Pixels;
-use language_model::{CloudModel, LanguageModel};
+use fs::Fs;
+use gpui::{AppContext, Pixels};
+use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use open_ai::Model as OpenAiModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{update_settings_file, Settings, SettingsSources};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +84,76 @@ impl Default for AssistantSettingsContent {
 }
 
 impl AssistantSettingsContent {
+    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+        if let AssistantSettingsContent::Versioned(settings) = self {
+            if let VersionedAssistantSettingsContent::V1(settings) = settings {
+                if let Some(provider) = settings.provider.clone() {
+                    match provider {
+                        AssistantProviderContentV1::Anthropic {
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            ..
+                        } => update_settings_file::<AllLanguageModelSettings>(
+                            fs,
+                            cx,
+                            move |content, _| {
+                                if content.anthropic.is_none() {
+                                    content.anthropic =
+                                        Some(language_model::settings::AnthropicSettingsContent {
+                                            api_url,
+                                            low_speed_timeout_in_seconds,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        ),
+                        AssistantProviderContentV1::Ollama {
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            ..
+                        } => update_settings_file::<AllLanguageModelSettings>(
+                            fs,
+                            cx,
+                            move |content, _| {
+                                if content.ollama.is_none() {
+                                    content.ollama =
+                                        Some(language_model::settings::OllamaSettingsContent {
+                                            api_url,
+                                            low_speed_timeout_in_seconds,
+                                        });
+                                }
+                            },
+                        ),
+                        AssistantProviderContentV1::OpenAi {
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                            ..
+                        } => update_settings_file::<AllLanguageModelSettings>(
+                            fs,
+                            cx,
+                            move |content, _| {
+                                if content.open_ai.is_none() {
+                                    content.open_ai =
+                                        Some(language_model::settings::OpenAiSettingsContent {
+                                            api_url,
+                                            low_speed_timeout_in_seconds,
+                                            available_models,
+                                        });
+                                }
+                            },
+                        ),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        *self = AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
+            self.upgrade(),
+        ));
+    }
+
     fn upgrade(&self) -> AssistantSettingsContentV2 {
         match self {
             AssistantSettingsContent::Versioned(settings) => match settings {

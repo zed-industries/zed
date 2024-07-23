@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, UpdateGlobal};
+use fs::Fs;
+use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -152,6 +154,7 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
 pub struct SettingsStore {
+    fs: Arc<dyn Fs>,
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
@@ -161,22 +164,13 @@ pub struct SettingsStore {
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
+    _setting_file_updates: Task<()>,
+    setting_file_updates_tx: mpsc::UnboundedSender<
+        Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
+    >,
 }
 
 impl Global for SettingsStore {}
-
-impl Default for SettingsStore {
-    fn default() -> Self {
-        SettingsStore {
-            setting_values: Default::default(),
-            raw_default_settings: serde_json::json!({}),
-            raw_user_settings: serde_json::json!({}),
-            raw_extension_settings: serde_json::json!({}),
-            raw_local_settings: Default::default(),
-            tab_size_callback: Default::default(),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct SettingValue<T> {
@@ -207,6 +201,25 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self {
+            fs,
+            setting_values: Default::default(),
+            raw_default_settings: Default::default(),
+            raw_user_settings: Default::default(),
+            raw_extension_settings: Default::default(),
+            raw_local_settings: Default::default(),
+            tab_size_callback: Default::default(),
+            setting_file_updates_tx,
+            _setting_file_updates: cx.spawn(|cx| async move {
+                while let Some(setting_file_update) = setting_file_updates_rx.next().await {
+                    (setting_file_update)(cx.clone()).await;
+                }
+            }),
+        }
+    }
+
     pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
     where
         C: BorrowAppContext,
@@ -300,8 +313,8 @@ impl SettingsStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut AppContext) -> Self {
-        let mut this = Self::default();
+    pub fn test(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
+        let mut this = Self::new(fs, cx);
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
         this.set_user_settings("{}", cx).unwrap();
@@ -321,6 +334,60 @@ impl SettingsStore {
         let old_text = serde_json::to_string(&self.raw_user_settings).unwrap();
         let new_text = self.new_text_for_update::<T>(old_text, update);
         self.set_user_settings(&new_text, cx).unwrap();
+    }
+
+    async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(paths::settings_file()).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Ok(crate::initial_user_settings_content().to_string());
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub fn update_settings_file<T: Settings>(
+        &mut self,
+        cx: &mut AppContext,
+        update: impl 'static + Send + FnOnce(&mut T::FileContent, &mut AppContext),
+    ) {
+        let fs = self.fs.clone();
+        self.setting_file_updates_tx
+            .unbounded_send(Box::new(move |mut cx: AsyncAppContext| {
+                async move {
+                    let old_text = Self::load_settings(&fs).await?;
+                    let new_text = cx.update_global(|store: &mut SettingsStore, cx| {
+                        store.new_text_for_update::<T>(old_text, |content| update(content, cx))
+                    })?;
+                    let initial_path = paths::settings_file().as_path();
+                    if fs.is_file(initial_path).await {
+                        let resolved_path =
+                            fs.canonicalize(initial_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            })?;
+
+                        fs.atomic_write(resolved_path.clone(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", resolved_path)
+                            })?;
+                    } else {
+                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", initial_path)
+                            })?;
+                    }
+
+                    anyhow::Ok(())
+                }
+                .boxed_local()
+            }))
+            .ok();
     }
 
     /// Updates the value of a setting in a JSON file, returning the new text

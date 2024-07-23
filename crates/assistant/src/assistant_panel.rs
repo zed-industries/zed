@@ -887,14 +887,18 @@ impl Panel for AssistantPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<AssistantSettings>(self.fs.clone(), cx, move |settings| {
-            let dock = match position {
-                DockPosition::Left => AssistantDockPosition::Left,
-                DockPosition::Bottom => AssistantDockPosition::Bottom,
-                DockPosition::Right => AssistantDockPosition::Right,
-            };
-            settings.set_dock(dock);
-        });
+        settings::update_settings_file::<AssistantSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => AssistantDockPosition::Left,
+                    DockPosition::Bottom => AssistantDockPosition::Bottom,
+                    DockPosition::Right => AssistantDockPosition::Right,
+                };
+                settings.set_dock(dock);
+            },
+        );
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {

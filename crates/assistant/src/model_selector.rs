@@ -78,7 +78,7 @@ impl RenderOnce for ModelSelector {
                                         update_settings_file::<AssistantSettings>(
                                             fs.clone(),
                                             cx,
-                                            move |settings| settings.set_model(model),
+                                            move |settings, _| settings.set_model(model),
                                         );
                                     }
                                 },
