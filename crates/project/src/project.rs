@@ -110,7 +110,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -9587,9 +9587,25 @@ impl Project {
                     use_new_terminal: template.use_new_terminal,
                     allow_concurrent_runs: template.allow_concurrent_runs,
                     reveal: match template.reveal {
-                        RevealStrategy::Always => proto::RevealStrategy::Always as i32,
-                        RevealStrategy::Never => proto::RevealStrategy::Never as i32,
+                        RevealStrategy::Always => proto::RevealStrategy::RevealAlways as i32,
+                        RevealStrategy::Never => proto::RevealStrategy::RevealNever as i32,
                     },
+                    hide: match template.hide {
+                        HideStrategy::Always => proto::HideStrategy::HideAlways as i32,
+                        HideStrategy::Never => proto::HideStrategy::HideNever as i32,
+                        HideStrategy::OnSuccess => proto::HideStrategy::HideOnSuccess as i32,
+                    },
+                    shell: Some(proto::Shell {
+                        shell_type: Some(match template.shell {
+                            Shell::System => proto::shell::ShellType::System(proto::System {}),
+                            Shell::Program(program) => proto::shell::ShellType::Program(program),
+                            Shell::WithArguments { program, args } => {
+                                proto::shell::ShellType::WithArguments(
+                                    proto::shell::WithArguments { program, args },
+                                )
+                            }
+                        }),
+                    }),
                     tags: template.tags,
                 });
                 proto::TemplatePair { kind, template }
@@ -10628,10 +10644,31 @@ impl Project {
 
                     let proto_template = template_pair.template?;
                     let reveal = match proto::RevealStrategy::from_i32(proto_template.reveal)
-                        .unwrap_or(proto::RevealStrategy::Always)
+                        .unwrap_or(proto::RevealStrategy::RevealAlways)
                     {
-                        proto::RevealStrategy::Always => RevealStrategy::Always,
-                        proto::RevealStrategy::Never => RevealStrategy::Never,
+                        proto::RevealStrategy::RevealAlways => RevealStrategy::Always,
+                        proto::RevealStrategy::RevealNever => RevealStrategy::Never,
+                    };
+                    let hide = match proto::HideStrategy::from_i32(proto_template.hide)
+                        .unwrap_or(proto::HideStrategy::HideNever)
+                    {
+                        proto::HideStrategy::HideAlways => HideStrategy::Always,
+                        proto::HideStrategy::HideNever => HideStrategy::Never,
+                        proto::HideStrategy::HideOnSuccess => HideStrategy::OnSuccess,
+                    };
+                    let shell = match proto_template
+                        .shell
+                        .and_then(|shell| shell.shell_type)
+                        .unwrap_or(proto::shell::ShellType::System(proto::System {}))
+                    {
+                        proto::shell::ShellType::System(_) => Shell::System,
+                        proto::shell::ShellType::Program(program) => Shell::Program(program),
+                        proto::shell::ShellType::WithArguments(with_arguments) => {
+                            Shell::WithArguments {
+                                program: with_arguments.program,
+                                args: with_arguments.args,
+                            }
+                        }
                     };
                     let task_template = TaskTemplate {
                         label: proto_template.label,
@@ -10642,6 +10679,8 @@ impl Project {
                         use_new_terminal: proto_template.use_new_terminal,
                         allow_concurrent_runs: proto_template.allow_concurrent_runs,
                         reveal,
+                        hide,
+                        shell,
                         tags: proto_template.tags,
                     };
                     Some((task_source_kind, task_template))
