@@ -2,7 +2,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectPath,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
 use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
 use gpui::{
@@ -25,7 +25,7 @@ use worktree::{
 
 /// A set of open buffers.
 pub struct BufferStore {
-    retain_buffers: bool,
+    remote_id: Option<u64>,
     #[allow(unused)]
     worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
@@ -77,7 +77,7 @@ impl BufferStore {
     /// weak handles.
     pub fn new(
         worktree_store: Model<WorktreeStore>,
-        retain_buffers: bool,
+        remote_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, |this, _, event, cx| match event {
@@ -89,7 +89,7 @@ impl BufferStore {
         .detach();
 
         Self {
-            retain_buffers,
+            remote_id,
             worktree_store,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
@@ -528,7 +528,7 @@ impl BufferStore {
     fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = buffer.read(cx).replica_id() != 0;
-        let open_buffer = if self.retain_buffers {
+        let open_buffer = if self.remote_id.is_some() {
             OpenBuffer::Strong(buffer.clone())
         } else {
             OpenBuffer::Weak(buffer.downgrade())
@@ -664,7 +664,7 @@ impl BufferStore {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut AppContext) {
-        self.set_retain_buffers(false, cx);
+        self.set_remote_id(None, cx);
 
         for buffer in self.buffers() {
             buffer.update(cx, |buffer, cx| {
@@ -677,10 +677,10 @@ impl BufferStore {
         self.remote_buffer_listeners.clear();
     }
 
-    pub fn set_retain_buffers(&mut self, retain_buffers: bool, cx: &mut AppContext) {
-        self.retain_buffers = retain_buffers;
+    pub fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut AppContext) {
+        self.remote_id = remote_id;
         for open_buffer in self.opened_buffers.values_mut() {
-            if retain_buffers {
+            if remote_id.is_some() {
                 if let OpenBuffer::Weak(buffer) = open_buffer {
                     if let Some(buffer) = buffer.upgrade() {
                         *open_buffer = OpenBuffer::Strong(buffer);
@@ -899,11 +899,10 @@ impl BufferStore {
         Ok(())
     }
 
-    pub fn handle_update_buffer(
-        &mut self,
+    pub async fn handle_update_buffer(
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        is_remote: bool,
-        cx: &mut AppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let payload = envelope.payload.clone();
         let buffer_id = BufferId::new(payload.buffer_id)?;
@@ -912,26 +911,21 @@ impl BufferStore {
             .into_iter()
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
-        match self.opened_buffers.entry(buffer_id) {
-            hash_map::Entry::Occupied(mut e) => match e.get_mut() {
-                OpenBuffer::Strong(buffer) => {
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+        this.update(&mut cx, |this, cx| {
+            match this.opened_buffers.entry(buffer_id) {
+                hash_map::Entry::Occupied(mut e) => match e.get_mut() {
+                    OpenBuffer::Strong(buffer) => {
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                    }
+                    OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
+                    OpenBuffer::Weak(_) => {}
+                },
+                hash_map::Entry::Vacant(e) => {
+                    e.insert(OpenBuffer::Operations(ops));
                 }
-                OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                OpenBuffer::Weak(_) => {}
-            },
-            hash_map::Entry::Vacant(e) => {
-                if !is_remote {
-                    debug_panic!(
-                        "received buffer update from {:?}",
-                        envelope.original_sender_id
-                    );
-                    return Err(anyhow!("received buffer update for non-remote project"));
-                }
-                e.insert(OpenBuffer::Operations(ops));
             }
-        }
-        Ok(proto::Ack {})
+            Ok(proto::Ack {})
+        })?
     }
 
     pub fn handle_create_buffer_for_peer(
@@ -1020,12 +1014,16 @@ impl BufferStore {
 
     pub async fn handle_save_buffer(
         this: Model<Self>,
-        project_id: u64,
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let buffer = this.update(&mut cx, |this, _| this.get_existing(buffer_id))??;
+        let (buffer, project_id) = this.update(&mut cx, |this, _| {
+            anyhow::Ok((
+                this.get_existing(buffer_id)?,
+                this.remote_id.context("project is not shared")?,
+            ))
+        })??;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))

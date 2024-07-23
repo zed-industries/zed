@@ -40,7 +40,8 @@ impl HeadlessProject {
         let this = cx.weak_model();
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
-        let buffer_store = cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
+        let buffer_store =
+            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx));
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
 
@@ -115,22 +116,19 @@ impl HeadlessProject {
     pub async fn handle_update_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.handle_update_buffer(envelope, false, cx)
-            })
-        })?
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
     pub async fn handle_save_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
-        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_save_buffer(buffer_store, PROJECT_ID, envelope, cx).await
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_save_buffer(buffer_store, envelope, cx).await
     }
 
     pub async fn handle_open_buffer_by_path(

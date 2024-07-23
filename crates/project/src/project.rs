@@ -702,11 +702,6 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_message_handler(Self::handle_update_worktree_settings);
-        client.add_model_request_handler(Self::handle_create_project_entry);
-        client.add_model_request_handler(Self::handle_rename_project_entry);
-        client.add_model_request_handler(Self::handle_copy_project_entry);
-        client.add_model_request_handler(Self::handle_delete_project_entry);
-        client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
@@ -741,6 +736,12 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+
+        client.add_model_request_handler(WorktreeStore::handle_create_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_copy_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_delete_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_expand_project_entry);
     }
 
     pub fn local(
@@ -765,7 +766,7 @@ impl Project {
                 .detach();
 
             let buffer_store =
-                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), false, cx));
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), None, cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
@@ -930,7 +931,7 @@ impl Project {
             let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
 
             let buffer_store =
-                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
@@ -1577,9 +1578,14 @@ impl Project {
                 .subscribe_to_entity(project_id)?
                 .set_model(&cx.handle(), &mut cx.to_async()),
         );
+        self.client_subscriptions.push(
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&self.worktree_store, &mut cx.to_async()),
+        );
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.set_retain_buffers(true, cx)
+            buffer_store.set_remote_id(Some(project_id), cx)
         });
         self.worktree_store.update(cx, |store, cx| {
             store.set_shared(true, cx);
@@ -1789,9 +1795,8 @@ impl Project {
             self.worktree_store.update(cx, |store, cx| {
                 store.set_shared(false, cx);
             });
-            self.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.set_retain_buffers(false, cx)
-            });
+            self.buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.set_remote_id(None, cx));
             self.client
                 .send(proto::UnshareProject {
                     project_id: remote_id,
@@ -8827,51 +8832,6 @@ impl Project {
         })?
     }
 
-    async fn handle_create_project_entry(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::CreateProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
-        WorktreeStore::handle_create_project_entry(worktree_store, envelope, cx).await
-    }
-
-    async fn handle_rename_project_entry(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::RenameProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
-        WorktreeStore::handle_rename_project_entry(worktree_store, envelope, cx).await
-    }
-
-    async fn handle_copy_project_entry(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::CopyProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
-        WorktreeStore::handle_copy_project_entry(worktree_store, envelope, cx).await
-    }
-
-    async fn handle_delete_project_entry(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::DeleteProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
-        WorktreeStore::handle_delete_project_entry(worktree_store, envelope, cx).await
-    }
-
-    async fn handle_expand_project_entry(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::ExpandProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ExpandProjectEntryResponse> {
-        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
-        WorktreeStore::handle_expand_project_entry(worktree_store, envelope, cx).await
-    }
-
     async fn handle_update_diagnostic_summary(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
@@ -9008,9 +8968,9 @@ impl Project {
     async fn handle_update_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
+        let buffer_store = this.read_with(&cx, |this, cx| {
             if let Some(ssh) = &this.ssh_session {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = 0;
@@ -9018,10 +8978,9 @@ impl Project {
                     .spawn(ssh.request(payload))
                     .detach_and_log_err(cx);
             }
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.handle_update_buffer(envelope, this.is_remote(), cx)
-            })
-        })?
+            this.buffer_store.clone()
+        })?;
+        BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
     async fn handle_create_buffer_for_peer(
@@ -9097,12 +9056,8 @@ impl Project {
         envelope: TypedEnvelope<proto::SaveBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
-        let (buffer_store, project_id) = this.update(&mut cx, |this, _| {
-            let buffer_store = this.buffer_store.clone();
-            let project_id = this.remote_id().context("not connected")?;
-            anyhow::Ok((buffer_store, project_id))
-        })??;
-        BufferStore::handle_save_buffer(buffer_store, project_id, envelope, cx).await
+        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_save_buffer(buffer_store, envelope, cx).await
     }
 
     async fn handle_reload_buffers(
