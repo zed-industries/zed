@@ -792,29 +792,27 @@ mod tests {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
             })
             .unwrap();
+
+        // Now open a file inside that workspace, but tell Zed to open a new window
+        open_workspace_file("/root/dir1/file1.txt", Some(true), app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 2);
+
+        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        workspace_2
+            .update(cx, |workspace, cx| {
+                assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                let items = workspace.items(cx).collect::<Vec<_>>();
+                assert_eq!(items.len(), 1, "Workspace should have two items");
+            })
+            .unwrap();
     }
 
     #[gpui::test]
     async fn test_open_workspace_with_nonexistant_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                "/root",
-                json!({
-                    "dir1": {
-                        "file1.txt": "content1",
-                        "file2.txt": "content2",
-                    },
-                    "dir2": {
-                        "file3.txt": "content3",
-                    },
-                    "file4.txt": "content4",
-                }),
-            )
-            .await;
+        app_state.fs.as_fake().insert_tree("/root", json!({})).await;
 
         assert_eq!(cx.windows().len(), 0);
 
