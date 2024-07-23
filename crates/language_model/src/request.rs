@@ -45,13 +45,16 @@ impl LanguageModelRequest {
     pub fn preprocess(&mut self) {
         match &self.model {
             LanguageModel::OpenAi(_) => {}
-            LanguageModel::Anthropic(_) => {}
+            LanguageModel::Anthropic(_) => self.preprocess_anthropic(),
             LanguageModel::Ollama(_) => {}
             LanguageModel::Cloud(model) => match model {
                 CloudModel::Claude3Opus
                 | CloudModel::Claude3Sonnet
                 | CloudModel::Claude3Haiku
                 | CloudModel::Claude3_5Sonnet => {
+                    self.preprocess_anthropic();
+                }
+                CloudModel::Custom { name, .. } if name.starts_with("anthropic/") => {
                     self.preprocess_anthropic();
                 }
                 _ => {}
