@@ -660,7 +660,7 @@ pub enum Event {
     ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
-    SpawnTask(SpawnInTerminal),
+    SpawnTask(Box<SpawnInTerminal>),
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,

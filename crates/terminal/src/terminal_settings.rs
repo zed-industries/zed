@@ -9,6 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
+use task::Shell;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -256,60 +257,6 @@ pub enum TerminalBlink {
     On,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    /// Use the system's default terminal configuration in /etc/passwd
-    System,
-    Program(String),
-    WithArguments {
-        program: String,
-        args: Vec<String>,
-    },
-}
-
-impl Shell {
-    pub fn retrieve_system_shell() -> Option<String> {
-        #[cfg(not(target_os = "windows"))]
-        {
-            use anyhow::Context;
-            use util::ResultExt;
-
-            return std::env::var("SHELL")
-                .context("Error finding SHELL in env.")
-                .log_err();
-        }
-        // `alacritty_terminal` uses this as default on Windows. See:
-        // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
-        #[cfg(target_os = "windows")]
-        return Some("powershell".to_owned());
-    }
-
-    /// Convert unix-shell variable syntax to windows-shell syntax.
-    /// `powershell` and `cmd` are considered valid here.
-    #[cfg(target_os = "windows")]
-    pub fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
-        match shell_type {
-            WindowsShellType::Powershell => to_powershell_variable(input),
-            WindowsShellType::Cmd => to_cmd_variable(input),
-            WindowsShellType::Other => input,
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn to_windows_shell_type(shell: &str) -> WindowsShellType {
-        if shell == "powershell" || shell.ends_with("powershell.exe") {
-            WindowsShellType::Powershell
-        } else if shell == "cmd" || shell.ends_with("cmd.exe") {
-            WindowsShellType::Cmd
-        } else {
-            // Someother shell detected, the user might install and use a
-            // unix-like shell.
-            WindowsShellType::Other
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
@@ -340,56 +287,4 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub title: Option<bool>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowsShellType {
-    Powershell,
-    Cmd,
-    Other,
-}
-
-/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
-#[inline]
-#[cfg(target_os = "windows")]
-fn to_cmd_variable(input: String) -> String {
-    if let Some(var_str) = input.strip_prefix("${") {
-        if var_str.find(':').is_none() {
-            // If the input starts with "${", remove the trailing "}"
-            format!("%{}%", &var_str[..var_str.len() - 1])
-        } else {
-            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-            // which will result in the task failing to run in such cases.
-            input
-        }
-    } else if let Some(var_str) = input.strip_prefix('$') {
-        // If the input starts with "$", directly append to "$env:"
-        format!("%{}%", var_str)
-    } else {
-        // If no prefix is found, return the input as is
-        input
-    }
-}
-
-/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
-#[inline]
-#[cfg(target_os = "windows")]
-fn to_powershell_variable(input: String) -> String {
-    if let Some(var_str) = input.strip_prefix("${") {
-        if var_str.find(':').is_none() {
-            // If the input starts with "${", remove the trailing "}"
-            format!("$env:{}", &var_str[..var_str.len() - 1])
-        } else {
-            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-            // which will result in the task failing to run in such cases.
-            input
-        }
-    } else if let Some(var_str) = input.strip_prefix('$') {
-        // If the input starts with "$", directly append to "$env:"
-        format!("$env:{}", var_str)
-    } else {
-        // If no prefix is found, return the input as is
-        input
-    }
 }

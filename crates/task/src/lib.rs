@@ -7,12 +7,13 @@ mod vscode_format;
 
 use collections::{hash_map, HashMap, HashSet};
 use gpui::SharedString;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
 
-pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
+pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
@@ -78,6 +79,10 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started.
     pub reveal: RevealStrategy,
+    /// What to do with the terminal pane and tab, after the command had finished.
+    pub hide: HideStrategy,
+    /// Which shell to use when spawning the task.
+    pub shell: Shell,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
@@ -271,3 +276,21 @@ pub struct TaskContext {
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
+
+/// Shell configuration to open the terminal with.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Shell {
+    /// Use the system's default terminal configuration in /etc/passwd
+    #[default]
+    System,
+    /// Use a specific program with no arguments.
+    Program(String),
+    /// Use a specific program with arguments.
+    WithArguments {
+        /// The program to run.
+        program: String,
+        /// The arguments to pass to the program.
+        args: Vec<String>,
+    },
+}

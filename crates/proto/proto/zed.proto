@@ -2284,12 +2284,35 @@ message TaskTemplate {
     bool use_new_terminal = 6;
     bool allow_concurrent_runs = 7;
     RevealStrategy reveal = 8;
+    HideStrategy hide = 10;
     repeated string tags = 9;
+    Shell shell = 11;
 }
 
+message Shell {
+    message WithArguments {
+        string program = 1;
+        repeated string args = 2;
+    }
+
+    oneof shell_type {
+        System system = 1;
+        string program = 2;
+        WithArguments with_arguments = 3;
+    }
+}
+
+message System {}
+
 enum RevealStrategy {
-    Always = 0;
-    Never = 1;
+    RevealAlways = 0;
+    RevealNever = 1;
+}
+
+enum HideStrategy {
+    HideAlways = 0;
+    HideNever = 1;
+    HideOnSuccess = 2;
 }
 
 message TaskSourceKind {
