@@ -108,6 +108,20 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_and_decode_base64_public_key() {
+        // A base64-encoded public key.
+        //
+        // We're using a literal string to ensure that encoding and decoding works across differences in implementations.
+        let encoded_public_key = "MIGJAoGBAMPvufou8wOuUIF1Wlkbtn0ZMM9nC55QJ06nTZvgMfZv5esFVU9-cQO_JC1P9ZoEcMDJweFERnQuQLqzsrMDLFbkdgL128ZU43WOLiQraxaICFIZsPUeTtWMKp2D5bPWsNxs-lnCma7vCAry6fpXuj5AKQdk7cTZJNucgvZQ0uUfAgMBAAE=".to_string();
+
+        // Make sure we can parse the public key.
+        let public_key = PublicKey::try_from(encoded_public_key.clone()).unwrap();
+
+        // Make sure we re-encode to the same format.
+        assert_eq!(encoded_public_key, String::try_from(public_key).unwrap());
+    }
+
+    #[test]
     fn test_tokens_are_always_url_safe() {
         for _ in 0..5 {
             let token = random_token();
