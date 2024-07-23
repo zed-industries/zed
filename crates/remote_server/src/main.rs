@@ -2,15 +2,28 @@ use fs::RealFs;
 use futures::channel::mpsc;
 use gpui::Context as _;
 use remote::{
+    json_log::LogRecord,
     protocol::{read_message, write_message},
     SshSession,
 };
 use remote_server::HeadlessProject;
 use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
-use std::{env, io, mem, process, sync::Arc};
+use std::{
+    env,
+    io::{self, Write},
+    mem, process,
+    sync::Arc,
+};
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
+    env_logger::builder()
+        .format(|buf, record| {
+            serde_json::to_writer(&mut *buf, &LogRecord::new(&record))?;
+            buf.write_all(b"\n")?;
+            Ok(())
+        })
+        .init();
 
     let subcommand = std::env::args().nth(1);
     match subcommand.as_deref() {
@@ -24,8 +37,6 @@ fn main() {
             process::exit(1);
         }
     }
-
-    env_logger::init();
 
     gpui::App::headless().run(move |cx| {
         HeadlessProject::init(cx);

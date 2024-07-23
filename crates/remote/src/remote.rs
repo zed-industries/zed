@@ -1,3 +1,4 @@
+pub mod json_log;
 pub mod protocol;
 pub mod ssh_session;
 

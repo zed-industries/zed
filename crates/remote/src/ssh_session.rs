@@ -1,5 +1,8 @@
-use crate::protocol::{
-    message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
+use crate::{
+    json_log::LogRecord,
+    protocol::{
+        message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
+    },
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -117,9 +120,14 @@ impl SshSession {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
+        run_cmd(client_state.ssh_command(&remote_binary_path).arg("version")).await?;
+
         let mut remote_server_child = client_state
-            .ssh_command(&remote_binary_path)
-            .arg("run")
+            .ssh_command(&format!(
+                "RUST_LOG={} {:?} run",
+                std::env::var("RUST_LOG").unwrap_or(String::new()),
+                remote_binary_path,
+            ))
             .spawn()
             .context("failed to spawn remote server")?;
         let mut child_stderr = remote_server_child.stderr.take().unwrap();
@@ -198,9 +206,13 @@ impl SshSession {
                                 let mut start_ix = 0;
                                 while let Some(ix) = stderr_buffer[start_ix..stderr_offset].iter().position(|b| b == &b'\n') {
                                     let line_ix = start_ix + ix;
-                                    let content = String::from_utf8_lossy(&stderr_buffer[start_ix..line_ix]);
+                                    let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    eprintln!("(remote) {}", content);
+                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(&content) {
+                                        record.log(log::logger())
+                                    } else {
+                                        eprintln!("(remote) {}", String::from_utf8_lossy(content));
+                                    }
                                 }
                                 stderr_buffer.drain(0..start_ix);
                                 stderr_offset -= start_ix;
