@@ -12,7 +12,7 @@ use schemars::{
     JsonSchema,
 };
 use serde::{
-    de::{self, MapAccess, SeqAccess, Visitor},
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
 };
 use settings::{Settings, SettingsLocation, SettingsSources};
@@ -428,6 +428,7 @@ pub enum ShowWhitespaceSetting {
 /// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
@@ -456,7 +457,9 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
                 } else {
-                    Err(E::custom(format!("Unknown variant: {}", v)))
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(SelectedFormatter::List)
                 }
             }
             fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
@@ -966,6 +969,37 @@ pub struct PrettierSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_formatter_deserialization() {
+        let raw_auto = "{\"formatter\": \"auto\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
+        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        let raw = "{\"formatter\": \"language_server\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                Formatter::LanguageServer.into()
+            )))
+        );
+        let raw = "{\"formatter\": [\"language_server\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![Formatter::LanguageServer].into()
+            )))
+        );
+        let raw = "{\"formatter\": [\"language_server\", \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![Formatter::LanguageServer, Formatter::Prettier].into()
+            )))
+        );
+    }
 
     #[test]
     pub fn test_resolve_language_servers() {
