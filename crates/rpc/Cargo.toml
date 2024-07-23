@@ -18,7 +18,7 @@ test-support = ["collections/test-support", "gpui/test-support", "proto/test-sup
 
 [dependencies]
 anyhow.workspace = true
-async-tungstenite = "0.23"
+async-tungstenite.workspace = true
 base64.workspace = true
 chrono.workspace = true
 collections.workspace = true

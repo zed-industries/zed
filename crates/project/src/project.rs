@@ -39,7 +39,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
-use http::{HttpClient, Url};
+use http_client::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -1120,7 +1120,7 @@ impl Project {
         let fs = Arc::new(RealFs::default());
         let languages = LanguageRegistry::test(cx.background_executor().clone());
         let clock = Arc::new(FakeSystemClock::default());
-        let http_client = http::FakeHttpClient::with_404_response();
+        let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
             .update(|cx| client::Client::new(clock, http_client.clone(), cx))
             .unwrap();
@@ -1164,7 +1164,7 @@ impl Project {
 
         let languages = LanguageRegistry::test(cx.executor());
         let clock = Arc::new(FakeSystemClock::default());
-        let http_client = http::FakeHttpClient::with_404_response();
+        let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
