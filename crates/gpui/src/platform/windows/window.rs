@@ -654,6 +654,10 @@ impl PlatformWindow for WindowsWindow {
     fn get_raw_handle(&self) -> HWND {
         self.0.hwnd
     }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        Some(self.0.state.borrow().renderer.gpu_specs())
+    }
 }
 
 #[implement(IDropTarget)]

@@ -3,7 +3,7 @@ name = "Astro"
 description = "Astro support."
 version = "0.0.3"
 schema_version = 1
-authors = ["Alvaro Gaona <alvgaona@gmail.com>"]
+authors = ["Alvaro Gaona <alvgaona@gmail.com>", "0xk1f0 <dev@k1f0.dev>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.astro-language-server]

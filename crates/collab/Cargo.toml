@@ -30,7 +30,6 @@ chrono.workspace = true
 clock.workspace = true
 clickhouse.workspace = true
 collections.workspace = true
-completion.workspace = true
 dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true

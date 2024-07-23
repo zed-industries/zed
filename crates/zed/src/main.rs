@@ -168,7 +168,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     supermaven::init(app_state.client.clone(), cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-    repl::init(cx);
+    repl::init(app_state.fs.clone(), cx);
     extension::init(
         app_state.fs.clone(),
         app_state.client.clone(),
@@ -230,6 +230,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     feedback::init(cx);
     markdown_preview::init(cx);
     welcome::init(cx);
+    settings_ui::init(cx);
     extensions_ui::init(cx);
 
     // Initialize each completion provider. Settings are used for toggling between them.

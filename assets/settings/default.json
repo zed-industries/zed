@@ -699,7 +699,7 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "tsconfig.json"]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -809,6 +809,9 @@
         "plugins": ["prettier-plugin-sql"]
       }
     },
+    "Starlark": {
+      "language_servers": ["starpls", "!buck2-lsp", "..."]
+    },
     "Svelte": {
       "prettier": {
         "allowed": true,
@@ -881,6 +884,15 @@
     //             "command": "clippy" // rust-analyzer.check.command (default: "check")
     //         }
     //     }
+    // }
+  },
+  // Jupyter settings
+  "jupyter": {
+    "enabled": true
+    // Specify the language name as the key and the kernel name as the value.
+    // "kernel_selections": {
+    //    "python": "conda-base"
+    //    "typescript": "deno"
     // }
   },
   // Vim settings
