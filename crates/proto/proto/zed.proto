@@ -268,11 +268,10 @@ message Envelope {
         GetSignatureHelpResponse get_signature_help_response = 218;
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
-        UpdateDevServerProject update_dev_server_project = 221; // current max
+        UpdateDevServerProject update_dev_server_project = 221;
 
-        // Remote
-        AddWorktree add_worktree = 500;
-        AddWorktreeResponse add_worktree_response = 501;
+        AddWorktree add_worktree = 222;
+        AddWorktreeResponse add_worktree_response = 223; // current max
     }
 
     reserved 158 to 161;
