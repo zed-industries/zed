@@ -1670,13 +1670,11 @@ impl Workspace {
                 })?
                 .await;
 
+            // If we're not quitting, but closing, we remove the workspace from
+            // the current session.
             if !quitting && save_result.as_ref().map_or(false, |&res| res) {
-                this.update(&mut cx, |this, cx| {
-                    // TODO: Isn't there a better place at which we can save this?
-                    this.session_id.take();
-                    this.serialize_workspace_internal(cx)
-                })?
-                .await;
+                this.update(&mut cx, |this, cx| this.remove_from_session(cx))?
+                    .await;
             }
 
             save_result
@@ -3860,6 +3858,11 @@ impl Workspace {
         }
     }
 
+    fn remove_from_session(&mut self, cx: &mut WindowContext) -> Task<()> {
+        self.session_id.take();
+        self.serialize_workspace_internal(cx)
+    }
+
     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
         self.panes.retain(|p| p != pane);
         self.panes
@@ -3991,8 +3994,6 @@ impl Workspace {
         }
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
-            // TODO: This needs to be changed if we want to serialize workspaces without
-            // local worktrees
             if !local_paths.is_empty() {
                 Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
             } else {
