@@ -677,6 +677,7 @@ impl Vim {
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
+                | Operator::ToggleComments
         ) {
             self.start_recording(cx)
         };
