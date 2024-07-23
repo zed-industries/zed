@@ -1650,7 +1650,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=91322fd874d4bbf39748a75b1cf92d675871cdfe#91322fd874d4bbf39748a75b1cf92d675871cdfe"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "ash",
  "ash-window",
@@ -1680,7 +1680,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=91322fd874d4bbf39748a75b1cf92d675871cdfe#91322fd874d4bbf39748a75b1cf92d675871cdfe"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1690,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=91322fd874d4bbf39748a75b1cf92d675871cdfe#91322fd874d4bbf39748a75b1cf92d675871cdfe"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -6682,8 +6682,9 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "0.20.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=f44f52a85ddb3e7b93fe195fb98a8990b05575d8#f44f52a85ddb3e7b93fe195fb98a8990b05575d8"
+version = "22.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09eeccb9b50f4f7839b214aa3e08be467159506a986c18e0702170ccf720a453"
 dependencies = [
  "arrayvec",
  "bit-set 0.6.0",

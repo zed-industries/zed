@@ -144,7 +144,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let message = format!(db::indoc!{r#"
                 Zed uses Vulkan for rendering and requires a compatible GPU.
 
-
                 Currently you are using a software emulated GPU ({}) which
                 will result in awful performance.
 
@@ -155,7 +154,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             cx.spawn(|_, mut cx| async move {
                 if prompt.await == Ok(0) {
                     cx.update(|cx| {
-                        cx.open_url("https://zed.dev/docs/linux#zed-is-very-slow");
+                        cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
                         cx.quit();
                     }).ok();
                 }
