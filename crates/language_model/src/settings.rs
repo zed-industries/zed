@@ -40,6 +40,7 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     api_url: Option<String>,
     low_speed_timeout_in_seconds: Option<u64>,
+    available_models: Option<Vec<anthropic::Model>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -87,6 +88,13 @@ impl settings::Settings for AllLanguageModelSettings {
                 settings.anthropic.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
+            merge(
+                &mut settings.anthropic.available_models,
+                value
+                    .anthropic
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
 
             merge(
                 &mut settings.ollama.api_url,

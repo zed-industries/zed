@@ -20,6 +20,8 @@ pub enum Model {
     Claude3Sonnet,
     #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
+    #[serde(rename = "custom")]
+    Custom { name: String, max_tokens: usize },
 }
 
 impl Model {
@@ -37,21 +39,23 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-opus-20240307",
+            Self::Custom { name, .. } => name,
         }
     }
 
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &str {
         match self {
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -61,6 +65,7 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }

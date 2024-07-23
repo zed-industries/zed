@@ -22,18 +22,6 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     registry::init(client, cx);
 }
 
-#[derive(Clone)]
-pub struct ProvidedLanguageModel {
-    pub id: LanguageModelId,
-    pub name: LanguageModelName,
-}
-
-#[derive(Clone)]
-pub struct AvailableLanguageModel {
-    pub provider: LanguageModelProviderName,
-    pub model: ProvidedLanguageModel,
-}
-
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -57,12 +45,11 @@ pub trait LanguageModel: Send + Sync {
 
 pub trait LanguageModelProvider: 'static {
     fn name(&self) -> LanguageModelProviderName;
-    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel>;
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>>;
-    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>>;
 }
 
 pub trait LanguageModelProviderState: 'static {

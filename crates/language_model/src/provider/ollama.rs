@@ -10,7 +10,7 @@ use ui::{prelude::*, ButtonLike, ElevationIndex};
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ProvidedLanguageModel, Role,
+    LanguageModelRequest, Role,
 };
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -121,14 +121,18 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         self.state
             .read(cx)
             .available_models
             .iter()
-            .map(|model| ProvidedLanguageModel {
-                id: LanguageModelId::from(model.name.clone()),
-                name: LanguageModelName::from(model.name.clone()),
+            .map(|model| {
+                Arc::new(OllamaLanguageModel {
+                    id: LanguageModelId::from(model.name.clone()),
+                    model: model.clone(),
+                    http_client: self.http_client.clone(),
+                    state: self.state.clone(),
+                }) as Arc<dyn LanguageModel>
             })
             .collect()
     }
@@ -157,24 +161,6 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         self.fetch_models(cx)
-    }
-
-    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        let model = self
-            .state
-            .read(cx)
-            .available_models
-            .iter()
-            .find(|model| model.name == id.0)
-            .cloned()
-            .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?;
-
-        Ok(Arc::new(OllamaLanguageModel {
-            id,
-            model,
-            http_client: self.http_client.clone(),
-            state: self.state.clone(),
-        }))
     }
 }
 

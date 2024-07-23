@@ -2,15 +2,11 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    ProvidedLanguageModel,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use client::Client;
-use futures::{
-    future::{self, BoxFuture},
-    stream::BoxStream,
-    FutureExt, StreamExt, TryFutureExt,
-};
+use collections::HashMap;
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -98,23 +94,29 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
-        let available_models = &self.state.read(cx).settings.available_models;
-        if !available_models.is_empty() {
-            return available_models
-                .iter()
-                .map(|model| ProvidedLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    name: LanguageModelName::from(model.display_name().to_string()),
-                })
-                .collect();
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models = HashMap::default();
+
+        // Add base models from CloudModel::iter()
+        for model in CloudModel::iter() {
+            if !matches!(model, CloudModel::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
         }
 
-        CloudModel::iter()
-            .filter(|model| !matches!(model, CloudModel::Custom { .. }))
-            .map(|model| ProvidedLanguageModel {
-                id: LanguageModelId::from(model.id().to_string()),
-                name: LanguageModelName::from(model.display_name().to_string()),
+        // Override with available models from settings
+        for model in &self.state.read(cx).settings.available_models {
+            models.insert(model.id().to_string(), model.clone());
+        }
+
+        models
+            .into_values()
+            .map(|model| {
+                Arc::new(CloudLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model,
+                    client: self.client.clone(),
+                }) as Arc<dyn LanguageModel>
             })
             .collect()
     }
@@ -136,27 +138,6 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        let model = match CloudModel::from_id(&id.0) {
-            Ok(model) => model,
-            Err(_) => self
-                .state
-                .read(cx)
-                .settings
-                .available_models
-                .iter()
-                .find(|model| model.id() == id.0.as_ref())
-                .cloned()
-                .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?,
-        };
-
-        Ok(Arc::new(CloudLanguageModel {
-            id,
-            model,
-            client: self.client.clone(),
-        }))
     }
 }
 
@@ -206,9 +187,9 @@ impl LanguageModel for CloudLanguageModel {
             | CloudModel::Claude3Opus
             | CloudModel::Claude3Sonnet
             | CloudModel::Claude3Haiku => count_anthropic_tokens(request, cx),
-            CloudModel::Custom { name, .. } => {
+            _ => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model: name.clone(),
+                    model: self.model.id().to_string(),
                     messages: request
                         .messages
                         .iter()
@@ -221,8 +202,6 @@ impl LanguageModel for CloudLanguageModel {
                 }
                 .boxed()
             }
-            //TODO: how to handle Gemini models?
-            _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }
     }
 

@@ -4,7 +4,7 @@ use crate::{
     assistant_settings::AssistantSettings, LanguageModelCompletionProvider, ToggleModelSelector,
 };
 use fs::Fs;
-use language_model::{AvailableLanguageModel, LanguageModelRegistry};
+use language_model::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -62,7 +62,7 @@ impl RenderOnce for ModelSelector {
                         for available_model in available_models {
                             menu = menu.custom_entry(
                                 {
-                                    let model_name = available_model.name.0.clone();
+                                    let model_name = available_model.name().0.clone();
                                     move |_| {
                                         h_flex()
                                             .w_full()
@@ -72,20 +72,13 @@ impl RenderOnce for ModelSelector {
                                 },
                                 {
                                     let fs = self.fs.clone();
-                                    let provider = provider.clone();
                                     let model = available_model.clone();
                                     move |cx| {
-                                        let provider = provider.clone();
                                         let model = model.clone();
                                         update_settings_file::<AssistantSettings>(
                                             fs.clone(),
                                             cx,
-                                            move |settings| {
-                                                settings.set_model(AvailableLanguageModel {
-                                                    provider: provider.clone(),
-                                                    model: model.clone(),
-                                                })
-                                            },
+                                            move |settings| settings.set_model(model),
                                         );
                                     }
                                 },

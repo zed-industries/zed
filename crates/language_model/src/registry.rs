@@ -1,4 +1,3 @@
-use anyhow::Result;
 use client::Client;
 use collections::HashMap;
 use gpui::{AppContext, Global, Model, ModelContext};
@@ -10,8 +9,7 @@ use crate::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
         ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
     },
-    AvailableLanguageModel, LanguageModel, LanguageModelProvider, LanguageModelProviderName,
-    LanguageModelProviderState, ProvidedLanguageModel,
+    LanguageModel, LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
 };
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -122,41 +120,21 @@ impl LanguageModelRegistry {
         self.providers.iter()
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<AvailableLanguageModel> {
+    pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         self.providers
             .values()
-            .flat_map(|provider| {
-                provider
-                    .provided_models(cx)
-                    .into_iter()
-                    .map(|model| AvailableLanguageModel {
-                        provider: provider.name(),
-                        model,
-                    })
-            })
+            .flat_map(|provider| provider.provided_models(cx))
             .collect()
     }
 
     pub fn available_models_grouped_by_provider(
         &self,
         cx: &AppContext,
-    ) -> Vec<(LanguageModelProviderName, Vec<ProvidedLanguageModel>)> {
+    ) -> HashMap<LanguageModelProviderName, Vec<Arc<dyn LanguageModel>>> {
         self.providers
-            .values()
-            .map(|provider| (provider.name(), provider.provided_models(cx)))
+            .iter()
+            .map(|(name, provider)| (name.clone(), provider.provided_models(cx)))
             .collect()
-    }
-
-    pub fn model(
-        &self,
-        requested: &AvailableLanguageModel,
-        cx: &AppContext,
-    ) -> Result<Arc<dyn LanguageModel>> {
-        let provider = self.providers.get(&requested.provider).ok_or_else(|| {
-            anyhow::anyhow!("No provider found for name: {:?}", requested.provider)
-        })?;
-
-        provider.model(requested.model.id.clone(), cx)
     }
 
     pub fn provider(

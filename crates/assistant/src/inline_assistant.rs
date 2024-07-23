@@ -1436,9 +1436,9 @@ impl Render for PromptEditor {
                                     {
                                         menu = menu.custom_entry(
                                             {
-                                                let model_name =
-                                                    available_model.model.name.0.clone();
-                                                let provider = available_model.provider.0.clone();
+                                                let model_name = available_model.name().0.clone();
+                                                let provider =
+                                                    available_model.provider_name().0.clone();
                                                 move |_| {
                                                     h_flex()
                                                         .w_full()

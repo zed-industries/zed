@@ -6,7 +6,6 @@ use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, St
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    ProvidedLanguageModel,
 };
 use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use http::Result;
@@ -40,11 +39,10 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         provider_name()
     }
 
-    fn provided_models(&self, _: &AppContext) -> Vec<ProvidedLanguageModel> {
-        vec![ProvidedLanguageModel {
-            id: language_model_id(),
-            name: language_model_name(),
-        }]
+    fn provided_models(&self, _: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+        vec![Arc::new(FakeLanguageModel {
+            current_completion_txs: self.current_completion_txs.clone(),
+        })]
     }
 
     fn is_authenticated(&self, _: &AppContext) -> bool {
@@ -61,12 +59,6 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
 
     fn reset_credentials(&self, _: &AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn model(&self, _: LanguageModelId, _: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        Ok(Arc::new(FakeLanguageModel {
-            current_completion_txs: self.current_completion_txs.clone(),
-        }))
     }
 }
 

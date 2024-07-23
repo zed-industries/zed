@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
-use language_model::{AvailableLanguageModel, CloudModel};
+use language_model::{CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use open_ai::Model as OpenAiModel;
 use schemars::{schema::Schema, JsonSchema};
@@ -157,9 +159,9 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn set_model(&mut self, language_model: AvailableLanguageModel) {
-        let model = language_model.model.id.0.to_string();
-        let provider = language_model.provider.0.to_string();
+    pub fn set_model(&mut self, language_model: Arc<dyn LanguageModel>) {
+        let model = language_model.id().0.to_string();
+        let provider = language_model.provider_name().0.to_string();
 
         match self {
             AssistantSettingsContent::Versioned(settings) => match settings {
@@ -228,7 +230,7 @@ impl AssistantSettingsContent {
                 }
             },
             AssistantSettingsContent::Legacy(settings) => {
-                if let Ok(model) = open_ai::Model::from_id(&language_model.model.id.0) {
+                if let Ok(model) = open_ai::Model::from_id(&language_model.id().0) {
                     settings.default_open_ai_model = Some(model);
                 }
             }

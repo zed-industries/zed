@@ -36,7 +36,6 @@ use slash_command::{
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
-use util::ResultExt;
 
 actions!(
     assistant,
@@ -228,22 +227,12 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
         return;
     };
 
-    let Some(model_id) = provider
-        .provided_models(cx)
-        .iter()
-        .find(|model| model.id == model_id)
-        .map(|model| model.id.clone())
-    else {
-        return;
-    };
-
-    let Some(model) = provider.model(model_id, cx).log_err() else {
-        return;
-    };
-
-    LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
-        completion_provider.set_active_model(model, cx);
-    });
+    let models = provider.provided_models(cx);
+    if let Some(model) = models.iter().find(|model| model.id() == model_id).cloned() {
+        LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
+            completion_provider.set_active_model(model, cx);
+        });
+    }
 }
 
 fn register_slash_commands(cx: &mut AppContext) {

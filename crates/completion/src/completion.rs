@@ -64,10 +64,7 @@ impl LanguageModelCompletionProvider {
                 .first()
                 .unwrap()
                 .clone();
-            let model = LanguageModelRegistry::read_global(cx)
-                .model(&available_model, cx)
-                .unwrap();
-            this.set_active_model(model, cx);
+            this.set_active_model(available_model, cx);
             this
         });
         cx.set_global(GlobalLanguageModelCompletionProvider(provider));
@@ -205,9 +202,6 @@ mod tests {
             .available_models(cx)
             .first()
             .cloned()
-            .unwrap();
-        let model = LanguageModelRegistry::read_global(cx)
-            .model(&model, cx)
             .unwrap();
 
         let provider = cx.new_model(|cx| {

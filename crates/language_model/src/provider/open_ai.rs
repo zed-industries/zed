@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
@@ -17,7 +18,7 @@ use util::ResultExt;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ProvidedLanguageModel, Role,
+    LanguageModelRequest, Role,
 };
 
 const PROVIDER_NAME: &str = "openai";
@@ -68,23 +69,30 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<ProvidedLanguageModel> {
-        let available_models = &self.state.read(cx).settings.available_models;
-        if !available_models.is_empty() {
-            return available_models
-                .iter()
-                .map(|model| ProvidedLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    name: LanguageModelName::from(model.display_name().to_string()),
-                })
-                .collect();
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models = HashMap::default();
+
+        // Add base models from open_ai::Model::iter()
+        for model in open_ai::Model::iter() {
+            if !matches!(model, open_ai::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
         }
 
-        open_ai::Model::iter()
-            .filter(|model| !matches!(model, open_ai::Model::Custom { .. }))
-            .map(|model| ProvidedLanguageModel {
-                id: LanguageModelId::from(model.id().to_string()),
-                name: LanguageModelName::from(model.display_name().to_string()),
+        // Override with available models from settings
+        for model in &self.state.read(cx).settings.available_models {
+            models.insert(model.id().to_string(), model.clone());
+        }
+
+        models
+            .into_values()
+            .map(|model| {
+                Arc::new(OpenAiLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model,
+                    state: self.state.clone(),
+                    http_client: self.http_client.clone(),
+                }) as Arc<dyn LanguageModel>
             })
             .collect()
     }
@@ -132,28 +140,6 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 cx.notify();
             })
         })
-    }
-
-    fn model(&self, id: LanguageModelId, cx: &AppContext) -> Result<Arc<dyn LanguageModel>> {
-        let model = match open_ai::Model::from_id(&id.0) {
-            Ok(model) => model,
-            Err(_) => self
-                .state
-                .read(cx)
-                .settings
-                .available_models
-                .iter()
-                .find(|model| model.id() == id.0.as_ref())
-                .cloned()
-                .ok_or_else(|| anyhow!("No model found for name: {:?}", id.0))?,
-        };
-
-        Ok(Arc::new(OpenAiLanguageModel {
-            id,
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-        }))
     }
 }
 
