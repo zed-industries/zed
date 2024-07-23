@@ -1,6 +1,9 @@
-use gpui::CursorStyle;
-use settings::Settings;
-use theme::ThemeSettings;
+use std::sync::Arc;
+
+use fs::Fs;
+use gpui::{AppContext, CursorStyle};
+use settings::{update_settings_file, Settings};
+use theme::{ThemeSettings, ThemeSettingsContent};
 use ui::{prelude::*, ListHeader, NumericStepper};
 
 // pub enum ScalarType {
@@ -11,19 +14,31 @@ pub enum SettingKind {
     Scalar,
 }
 
-pub trait EditableSetting {
+pub trait EditableSetting: RenderOnce + Send + Sync {
+    type Value: Send;
     type Settings: Settings;
 
     fn name(&self) -> SharedString;
 
     fn new(settings: &Self::Settings) -> Self;
 
-    fn write(&self, settings: &mut Self::Settings);
+    fn update(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value);
+
+    // fn update(fs: Arc<dyn Fs>, cx: &AppContext, update: impl  FnOnce(&mut <Self::Settings as Settings>::FileContent, &AppContext) + Send + 'static) {
+
+    // }
+
+    fn write(value: Self::Value, fs: Arc<dyn Fs>, cx: &AppContext) {
+        update_settings_file::<Self::Settings>(fs, cx, move |settings, _cx| {
+            Self::update(settings, value);
+        });
+    }
 }
 
 pub struct UiFontSizeSetting(Pixels);
 
 impl EditableSetting for UiFontSizeSetting {
+    type Value = Pixels;
     type Settings = ThemeSettings;
 
     fn name(&self) -> SharedString {
@@ -34,16 +49,70 @@ impl EditableSetting for UiFontSizeSetting {
         Self(settings.ui_font_size)
     }
 
-    fn write(&self, settings: &mut Self::Settings) {
-        settings.ui_font_size = self.0;
+    fn update(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
+        settings.ui_font_size = Some(value.into());
     }
 }
+
+impl RenderOnce for UiFontSizeSetting {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = self.0;
+
+        h_flex()
+            .gap_2()
+            .w_full()
+            .justify_between()
+            .cursor(CursorStyle::Arrow)
+            .child(Label::new(self.name()))
+            .child(NumericStepper::new(
+                self.0.to_string(),
+                |_, cx| {
+                    Self::write(value - px(1.))
+                    // self.save
+                },
+                |_, cx| {
+                    //
+                }, // cx.listener(|this, _event, cx| {
+                   //     if this.0 > px(0.) {
+                   //         this.0 -= px(1.);
+                   //     }
+                   // }),
+                   // cx.listener(|this, _event, cx| {
+                   //     this.0 += px(1.);
+                   // }),
+            ))
+    }
+}
+
+// impl Render for UiFontSizeSetting {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+//         h_flex()
+//             .gap_2()
+//             .w_full()
+//             .justify_between()
+//             .cursor(CursorStyle::Arrow)
+//             .child(Label::new(self.name()))
+//             .child(NumericStepper::new(
+//                 self.0.to_string(),
+//                 cx.listener(|this, _event, cx| {
+//                     if this.0 > px(0.) {
+//                         this.0 -= px(1.);
+//                     }
+//                 }),
+//                 cx.listener(|this, _event, cx| {
+//                     this.0 += px(1.);
+//                 }),
+//             ))
+//     }
+// }
 
 #[derive(IntoElement)]
 pub struct UiFontSettingsControl {}
 
 impl RenderOnce for UiFontSettingsControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let theme_settings = ThemeSettings::get_global(cx);
+
         v_flex()
             .p_1()
             .gap_2()
@@ -56,7 +125,7 @@ impl RenderOnce for UiFontSettingsControl {
                     .cursor(CursorStyle::Arrow)
                     .child(Label::new("UI Font Size"))
                     .child(NumericStepper::new(
-                        theme::get_ui_font_size(cx).to_string(),
+                        theme_settings.ui_font_size.to_string(),
                         |_, cx| cx.dispatch_action(Box::new(zed_actions::DecreaseUiFontSize)),
                         |_, cx| cx.dispatch_action(Box::new(zed_actions::IncreaseUiFontSize)),
                     )),

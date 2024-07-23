@@ -4,12 +4,16 @@ use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
+use gpui::{actions, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, View};
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_ui::{BufferFontSettingsControl, UiFontSettingsControl};
+use crate::theme_settings_ui::{
+    BufferFontSettingsControl, EditableSetting, UiFontSettingsControl, UiFontSizeSetting,
+};
 
 pub struct SettingsUiFeatureFlag;
 
@@ -60,12 +64,19 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct SettingsPage {
     focus_handle: FocusHandle,
+    settings: Vec<AnyView>,
 }
 
 impl SettingsPage {
     pub fn new(_workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx| Self {
             focus_handle: cx.focus_handle(),
+            settings: vec![cx
+                .new_view(|cx| {
+                    let theme_settings = ThemeSettings::get_global(cx);
+                    UiFontSizeSetting::new(&theme_settings)
+                })
+                .into()],
         })
     }
 }
@@ -107,7 +118,8 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
-            .child(UiFontSettingsControl {})
-            .child(BufferFontSettingsControl {})
+            .children(self.settings.iter().cloned())
+        // .child(UiFontSettingsControl {})
+        // .child(BufferFontSettingsControl {})
     }
 }
