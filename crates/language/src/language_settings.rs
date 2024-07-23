@@ -15,8 +15,9 @@ use serde::{
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
 };
+use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsSources};
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use std::{error::Error, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
@@ -426,9 +427,7 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[serde(untagged)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
@@ -437,6 +436,53 @@ pub enum SelectedFormatter {
     List(FormatterList),
 }
 
+impl JsonSchema for SelectedFormatter {
+    fn schema_name() -> String {
+        "Formatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let mut valid_raw_values = SchemaObject::default();
+        valid_raw_values.enum_values = Some(vec![
+            Value::String("auto".into()),
+            Value::String("prettier".into()),
+            Value::String("language_server".into()),
+        ]);
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for SelectedFormatter {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            SelectedFormatter::Auto => serializer.serialize_str("auto"),
+            SelectedFormatter::List(list) => list.serialize(serializer),
+        }
+    }
+}
 impl<'de> Deserialize<'de> for SelectedFormatter {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -448,7 +494,7 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             type Value = SelectedFormatter;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                todo!()
+                formatter.write_str("a valid formatter kind")
             }
             fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
             where
