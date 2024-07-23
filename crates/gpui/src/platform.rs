@@ -87,6 +87,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn guess_compositor() -> &'static str {
+    if std::env::var_os("ZED_HEADLESS").is_some() {
+        return "Headless";
+    }
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
     let x11_display = std::env::var_os("DISPLAY");
 
