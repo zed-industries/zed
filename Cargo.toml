@@ -315,7 +315,7 @@ dashmap = "5.5.3"
 derive_more = "0.99.17"
 dirs = "4.0"
 emojis = "0.6.1"
-env_logger = "0.9"
+env_logger = "0.10"
 exec = "0.3.1"
 fork = "0.1.23"
 futures = "0.3"
@@ -483,8 +483,6 @@ features = [
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
-# Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968e819c0d9b015437ffc694511e175801a17c7" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
