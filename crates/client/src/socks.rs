@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
+use futures::io::{AsyncRead, AsyncWrite};
 use http::proxy::Proxy;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 pub enum SocksVersion {
     V4,
@@ -37,10 +37,10 @@ pub fn get_socks_proxy(proxy: &Proxy) -> Option<((String, u16), SocksVersion)> {
 
 impl<S: AsyncRead + Unpin> AsyncRead for SocksStream<S> {
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
         match self.get_mut() {
             SocksStream::NoProxy(s) => AsyncRead::poll_read(Pin::new(s), cx, buf),
             SocksStream::Socks4(s4) => AsyncRead::poll_read(Pin::new(s4), cx, buf),
@@ -73,14 +73,14 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for SocksStream<S> {
         }
     }
 
-    fn poll_shutdown(
+    fn poll_close(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), std::io::Error>> {
         match self.get_mut() {
-            SocksStream::NoProxy(s) => AsyncWrite::poll_shutdown(Pin::new(s), cx),
-            SocksStream::Socks4(s4) => AsyncWrite::poll_shutdown(Pin::new(s4), cx),
-            SocksStream::Socks5(s5) => AsyncWrite::poll_shutdown(Pin::new(s5), cx),
+            SocksStream::NoProxy(s) => AsyncWrite::poll_close(Pin::new(s), cx),
+            SocksStream::Socks4(s4) => AsyncWrite::poll_close(Pin::new(s4), cx),
+            SocksStream::Socks5(s5) => AsyncWrite::poll_close(Pin::new(s5), cx),
         }
     }
 }

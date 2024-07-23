@@ -6,7 +6,6 @@ pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context as _, Result};
-use async_compat::CompatExt;
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
@@ -1189,8 +1188,7 @@ impl Client {
             let socks_proxy = get_socks_proxy(&proxy);
             let stream = match socks_proxy {
                 Some((socks_proxy, SocksVersion::V4)) => {
-                    let stream =
-                        CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
+                    let stream = smol::net::TcpStream::connect(socks_proxy).await?;
                     SocksStream::Socks4(
                         tokio_socks::tcp::Socks4Stream::connect_with_socket(stream, rpc_host)
                             .await
@@ -1198,19 +1196,15 @@ impl Client {
                     )
                 }
                 Some((socks_proxy, SocksVersion::V5)) => {
-                    let stream =
-                        CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
+                    let stream = smol::net::TcpStream::connect(socks_proxy).await?;
                     SocksStream::Socks5(
                         tokio_socks::tcp::Socks5Stream::connect_with_socket(stream, rpc_host)
                             .await
                             .map_err(|err| anyhow!("error connecting to socks {}", err))?,
                     )
                 }
-                None => SocksStream::NoProxy(CompatExt::compat(
-                    smol::net::TcpStream::connect(rpc_host).await?,
-                )),
+                None => SocksStream::NoProxy(smol::net::TcpStream::connect(rpc_host).await?),
             };
-            let stream = CompatExt::compat(stream);
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 

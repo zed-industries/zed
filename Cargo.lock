@@ -2368,7 +2368,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compat",
  "async-native-tls 0.5.0",
  "async-recursion 0.3.2",
  "async-tungstenite",
@@ -2404,7 +2403,6 @@ dependencies = [
  "thiserror",
  "time",
  "tiny_http",
- "tokio",
  "tokio-socks",
  "url",
  "util",
@@ -11331,12 +11329,12 @@ dependencies = [
 [[package]]
 name = "tokio-socks"
 version = "0.5.2"
-source = "git+https://github.com/sticnarf/tokio-socks?rev=f1eac4f#f1eac4fbdfdc1ad1b6f2f6592f73ae76d8955264"
+source = "git+https://github.com/Congyuwang/tokio-socks?rev=9797594#9797594e26db7f5386d4c8a2e3d69a47763ec1ee"
 dependencies = [
  "either",
+ "futures 0.3.28",
  "futures-util",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
