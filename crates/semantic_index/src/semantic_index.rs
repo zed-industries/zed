@@ -570,7 +570,11 @@ impl WorktreeIndex {
         let (updated_entries_tx, updated_entries_rx) = channel::unbounded();
         let _subscription = cx.subscribe(&worktree, move |_this, _worktree, event, _cx| {
             if let worktree::Event::UpdatedEntries(update) = event {
+                dbg!(&update);
+                log::debug!("Updating entries...");
                 _ = updated_entries_tx.try_send(update.clone());
+            } else {
+                dbg!("non-update event");
             }
         });
 
@@ -635,6 +639,7 @@ impl WorktreeIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        log::debug!("index_updated_entries({:?})", &updated_entries);
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
@@ -670,6 +675,13 @@ impl WorktreeIndex {
         };
         const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
         let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
+
+        log::debug!(
+            "Summarizing code by sending this prompt to {:?}: {:?}",
+            &model,
+            &prompt
+        );
+
         let request = LanguageModelRequest {
             model,
             messages: vec![LanguageModelRequestMessage {
@@ -1029,7 +1041,11 @@ impl WorktreeIndex {
             while let Some(summaries) = summaries.next().await {
                 let mut txn = db_connection.write_txn()?;
                 for file in &summaries {
-                    log::debug!("saving summary for content hash {:?}", file.content_hash);
+                    log::debug!(
+                        "Saving {} bytes of summary for content hash {:?}",
+                        file.summary.len(),
+                        file.content_hash
+                    );
                     db.put(&mut txn, &file.content_hash, &file.summary)?;
                 }
                 txn.commit()?;
@@ -1094,6 +1110,7 @@ impl WorktreeIndex {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
         let task = cx.spawn(|cx| async move {
             while let Some(file) = unsummarized_files.next().await {
+                log::debug!("Summarizing {:?}", file);
                 let summary = cx.update(|cx| Self::summarize_code(&file.contents, cx))?;
 
                 summarized_tx
@@ -1129,9 +1146,12 @@ impl WorktreeIndex {
 
                 match db.get(&tx, &file.content_hash) {
                     Ok(opt_answer) => {
-                        // It's not in the summary cache db, so we need to summarize it.
                         if opt_answer.is_none() {
+                            // It's not in the summary cache db, so we need to summarize it.
+                            log::debug!("{:?} was NOT in the db cache and needs to be resummarized.", &file.content_hash);
                             needs_summary_tx.send(file).await?;
+                        } else {
+                            log::debug!("{:?} was in the db cache and does not need to be resummarized.", &file.content_hash);
                         }
                     }
                     Err(err) => {
