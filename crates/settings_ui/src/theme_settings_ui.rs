@@ -1,5 +1,43 @@
 use gpui::CursorStyle;
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{prelude::*, ListHeader, NumericStepper};
+
+// pub enum ScalarType {
+//     Float32,
+// }
+
+pub enum SettingKind {
+    Scalar,
+}
+
+pub trait EditableSetting {
+    type Settings: Settings;
+
+    fn name(&self) -> SharedString;
+
+    fn new(settings: &Self::Settings) -> Self;
+
+    fn write(&self, settings: &mut Self::Settings);
+}
+
+pub struct UiFontSizeSetting(Pixels);
+
+impl EditableSetting for UiFontSizeSetting {
+    type Settings = ThemeSettings;
+
+    fn name(&self) -> SharedString {
+        "UI Font Size".into()
+    }
+
+    fn new(settings: &Self::Settings) -> Self {
+        Self(settings.ui_font_size)
+    }
+
+    fn write(&self, settings: &mut Self::Settings) {
+        settings.ui_font_size = self.0;
+    }
+}
 
 #[derive(IntoElement)]
 pub struct UiFontSettingsControl {}
