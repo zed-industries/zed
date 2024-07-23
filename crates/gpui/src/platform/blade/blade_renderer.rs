@@ -3,9 +3,9 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Underline,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, GPUSpecs, Hsla,
+    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -449,6 +449,18 @@ impl BladeRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn gpu_specs(&self) -> GPUSpecs {
+        let info = self.gpu.device_information();
+
+        GPUSpecs {
+            is_software_emulated: info.is_software_emulated,
+            device_name: info.device_name.clone(),
+            driver_name: info.driver_name.clone(),
+            driver_info: info.driver_info.clone(),
+        }
     }
 
     #[cfg(target_os = "macos")]

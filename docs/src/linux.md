@@ -12,10 +12,13 @@ We also offer a preview build of Zed which receives updates about a week ahead o
 curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
-The install script does not work on systems that:
-* have no system-wide glibc (for example on NixOS or Alpine)
+The Zed installed by the script does not work on systems that:
+* have no Vulkan compatible GPU available (for example Linux on an M-series macBook)
+* have no system-wide glibc (for example on NixOS or Alpine by default)
 * have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
 * use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+
+Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
 
 ## Other ways to install Zed on Linux
 
@@ -80,30 +83,31 @@ Linux works on a large variety of systems configured in many different ways. We 
 If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, or [install Zed from source](./development/linux.md).
 
 ### Zed fails to open windows
+### Zed is very slow
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See the following GitHub issue for more details: [#13880](https://github.com/zed-industries/zed/issues/13880)).
 
-Otherwise, if you see error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED", you can begin troubleshooting Vulkan, by installing the `vulkan-tools` package, and running:
+If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can begin troubleshooting Vulkan by installing the `vulkan-tools` package and running:
 
 ```sh
 vkcube
 ```
 
-This should output a line describing your current graphics setup. If it contains `llvmpipe` then Vulkan is not using a GPU, which will make Zed run very slowly.
+This should output a line describing your current graphics setup and show a rotating cube. If this does not work, you should be able to fix it by installing Vulkan compatible GPU drivers, however in some cases (for example running Linux on an Arm-based MacBook) there is no Vulkan support yet.
 
-In most cases this can be fixed by configuring Vulkan and installing compatible GPU drivers, however in some cases (for example running Linux on an Arm-based MacBook) there is no Vulkan support yet.
+If you see errors like `ERROR_INITIALIZATION_FAILED` or `GPU Crashed` or `ERROR_SURFACE_LOST_KHR` then you may be able to work around this by installing different drivers for your GPU, or by selecting a different GPU to run on. (See the following GitHub issue for more details: [#14225](https://github.com/zed-industries/zed/issues/14225))
 
-For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps.
+As of Zed v0.146.x we log the selected GPU driver and you should see `Using GPU: ...` in the Zed log (`~/.local/share/zed/logs/Zed.log`).
 
-### Zed is very slow
+If Zed is selecting your integrated GPU instead of your discrete GPU, you can fix this by exporting the environment variable `DRI_PRIME=1` before running Zed.
 
-If you're on relatively modern hardware Zed should feel fast to use. That said, we do rely on the GPU to make rendering quick.
+If you are using Mesa, and want more control over which GPU is selected you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
 
-If you install the `vulkan-tools` package and run `vkcube` and you see `llvmpipe` in the output, you need to make sure your GPU is configured correctly.
+If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
 
-For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good troubleshooting steps.
+For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
