@@ -6,7 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
-use http::{self, AsyncBody, HttpClient};
+use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,

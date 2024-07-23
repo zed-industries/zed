@@ -1,5 +1,5 @@
 [package]
-name = "http"
+name = "http_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,10 +12,11 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/http.rs"
+path = "src/http_client.rs"
 doctest = true
 
 [dependencies]
+http = "1.0.0"
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true

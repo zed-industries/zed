@@ -16,7 +16,7 @@ test-support = [
     "backtrace",
     "collections/test-support",
     "util/test-support",
-    "http/test-support",
+    "http_client/test-support",
 ]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
@@ -41,7 +41,7 @@ etagere = "0.2"
 futures.workspace = true
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7" }
 gpui_macros.workspace = true
-http.workspace = true
+http_client.workspace = true
 image = "0.25.1"
 itertools.workspace = true
 lazy_static.workspace = true
@@ -79,7 +79,7 @@ waker-fn = "1.1.0"
 backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
 [build-dependencies]

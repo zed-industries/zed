@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::HttpClient;
+use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
