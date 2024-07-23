@@ -620,13 +620,15 @@ impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
         Ok(watcher::global(|w| {
-            w.inotify.watch(path, notify::RecursiveMode::NonRecursive)
+            w.inotify
+                .lock()
+                .watch(path, notify::RecursiveMode::NonRecursive)
         })??)
     }
 
     fn remove(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
-        Ok(watcher::global(|w| w.inotify.unwatch(path))??)
+        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
@@ -1797,41 +1799,38 @@ pub mod watcher {
     use util::ResultExt;
 
     pub struct GlobalWatcher {
-        pub(super) inotify: notify::INotifyWatcher,
-        pub(super) watchers: Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>,
+        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+        pub(super) inotify: Mutex<notify::INotifyWatcher>,
+        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
     }
 
     impl GlobalWatcher {
-        pub(super) fn add(&mut self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
-            self.watchers.push(Box::new(cb))
+        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
+            self.watchers.lock().push(Box::new(cb))
         }
     }
 
-    static INOTIFY_INSTANCE: OnceLock<Mutex<anyhow::Result<GlobalWatcher, notify::Error>>> =
+    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
         OnceLock::new();
 
     fn handle_event(event: Result<notify::Event, notify::Error>) {
         let Some(event) = event.log_err() else { return };
         global::<()>(move |watcher| {
-            for f in watcher.watchers.iter() {
+            for f in watcher.watchers.lock().iter() {
                 f(&event)
             }
         })
         .log_err();
     }
 
-    pub fn global<T>(f: impl FnOnce(&mut GlobalWatcher) -> T) -> anyhow::Result<T> {
-        let mutex = INOTIFY_INSTANCE.get_or_init(|| {
-            let result =
-                notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-                    inotify: file_watcher,
-                    watchers: Default::default(),
-                });
-
-            Mutex::new(result)
+    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
+        let result = INOTIFY_INSTANCE.get_or_init(|| {
+            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
+                inotify: Mutex::new(file_watcher),
+                watchers: Default::default(),
+            })
         });
-        let mut w = mutex.lock();
-        match &mut *w {
+        match result {
             Ok(g) => Ok(f(g)),
             Err(e) => Err(anyhow::anyhow!("{}", e)),
         }
