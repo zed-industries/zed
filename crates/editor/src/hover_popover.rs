@@ -213,22 +213,8 @@ fn show_hover(
     };
 
     if !ignore_timeout {
-        if editor
-            .hover_state
-            .info_popovers
-            .iter()
-            .any(|InfoPopover { symbol_range, .. }| {
-                symbol_range
-                    .as_text_range()
-                    .map(|range| {
-                        let hover_range = range.to_offset(&snapshot.buffer_snapshot);
-                        let offset = anchor.to_offset(&snapshot.buffer_snapshot);
-                        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                        // use an inclusive range here to check if we should dismiss the popover
-                        (hover_range.start..=hover_range.end).contains(&offset)
-                    })
-                    .unwrap_or(false)
-            })
+        if same_info_hover(editor, &snapshot, anchor)
+            || same_diagnostic_hover(editor, &snapshot, anchor)
         {
             // Hover triggered from same location as last time. Don't show again.
             return;
@@ -373,6 +359,43 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+}
+
+fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .info_popovers
+        .iter()
+        .any(|InfoPopover { symbol_range, .. }| {
+            symbol_range
+                .as_text_range()
+                .map(|range| {
+                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                    let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
+                    (hover_range.start..=hover_range.end).contains(&offset)
+                })
+                .unwrap_or(false)
+        })
+}
+
+fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .diagnostic_popover
+        .as_ref()
+        .map(|diagnostic| {
+            let hover_range = diagnostic
+                .local_diagnostic
+                .range
+                .to_offset(&snapshot.buffer_snapshot);
+            let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+
+            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
+            (hover_range.start..=hover_range.end).contains(&offset)
+        })
+        .unwrap_or(false)
 }
 
 async fn parse_blocks(
