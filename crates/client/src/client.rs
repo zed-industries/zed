@@ -1187,7 +1187,6 @@ impl Client {
 
             let stream = match get_socks_proxy(&proxy) {
                 Some((.., SocksVersion::V4)) => {
-                    // TODO: support socks4
                     log::error!("socks4 not supported yet");
                     smol::net::TcpStream::connect(rpc_host).await?
                 }
