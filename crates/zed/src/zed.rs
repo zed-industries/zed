@@ -199,8 +199,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
 
-            let runtime_panel = repl::RuntimePanel::load(workspace_handle.clone(), cx.clone());
-
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -218,7 +216,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
-                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -227,7 +224,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
-                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -235,7 +231,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
-                workspace.add_panel(runtime_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
@@ -3417,7 +3412,7 @@ mod tests {
             outline_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-            repl::init(cx);
+            repl::init(app_state.fs.clone(), cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

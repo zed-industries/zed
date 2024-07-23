@@ -4,7 +4,7 @@ use anthropic::{stream_completion, Model as AnthropicModel, Request, RequestMess
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
+use gpui::{AnyView, AppContext, Task, TextStyle, View};
 use http::HttpClient;
 use language_model::Role;
 use settings::Settings;
@@ -257,12 +257,8 @@ impl AuthenticationPrompt {
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key,

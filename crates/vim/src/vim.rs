@@ -409,6 +409,7 @@ impl Vim {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
+            state.selected_register.take();
             if mode == Mode::Normal || mode != last_mode {
                 state.current_tx.take();
                 state.current_anchor.take();
@@ -676,6 +677,7 @@ impl Vim {
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
+                | Operator::ToggleComments
         ) {
             self.start_recording(cx)
         };

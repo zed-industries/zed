@@ -3,11 +3,15 @@ name = "Erlang"
 description = "Erlang support."
 version = "0.0.1"
 schema_version = 1
-authors = ["Dairon M <dairon.medina@gmail.com>"]
+authors = ["Dairon M <dairon.medina@gmail.com>", "Fabian Bergström <fabian@fmbb.se>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.erlang-ls]
 name = "Erlang Language Server"
+language = "Erlang"
+
+[language_servers.elp]
+name = "Erlang Language Platform"
 language = "Erlang"
 
 [grammars.erlang]

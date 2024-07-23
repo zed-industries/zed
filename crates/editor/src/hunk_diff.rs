@@ -455,7 +455,6 @@ impl Editor {
                         .size_full()
                         .child(
                             v_flex()
-                                .justify_center()
                                 .max_w(gutter_dimensions.full_width())
                                 .min_w(gutter_dimensions.full_width())
                                 .size_full()

@@ -54,15 +54,15 @@ impl CloudCompletionProvider {
 
 impl LanguageModelCompletionProvider for CloudCompletionProvider {
     fn available_models(&self) -> Vec<LanguageModel> {
-        let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
-            Some(custom_model)
+        let mut custom_model = if matches!(self.model, CloudModel::Custom { .. }) {
+            Some(self.model.clone())
         } else {
             None
         };
         CloudModel::iter()
             .filter_map(move |model| {
-                if let CloudModel::Custom(_) = model {
-                    Some(CloudModel::Custom(custom_model.take()?))
+                if let CloudModel::Custom { .. } = model {
+                    custom_model.take()
                 } else {
                     Some(model)
                 }
@@ -101,7 +101,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        match request.model {
+        match &request.model {
             LanguageModel::Cloud(CloudModel::Gpt4)
             | LanguageModel::Cloud(CloudModel::Gpt4Turbo)
             | LanguageModel::Cloud(CloudModel::Gpt4Omni)
@@ -117,20 +117,25 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::Cloud(CloudModel::Custom(model)) => {
-                let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model,
-                    messages: request
-                        .messages
-                        .iter()
-                        .map(|message| message.to_proto())
-                        .collect(),
-                });
-                async move {
-                    let response = request.await?;
-                    Ok(response.token_count as usize)
+            LanguageModel::Cloud(CloudModel::Custom { name, .. }) => {
+                if name.starts_with("anthropic/") {
+                    // Can't find a tokenizer for Anthropic models, so for now just use the same as OpenAI's as an approximation.
+                    count_open_ai_tokens(request, cx.background_executor())
+                } else {
+                    let request = self.client.request(proto::CountTokensWithLanguageModel {
+                        model: name.clone(),
+                        messages: request
+                            .messages
+                            .iter()
+                            .map(|message| message.to_proto())
+                            .collect(),
+                    });
+                    async move {
+                        let response = request.await?;
+                        Ok(response.token_count as usize)
+                    }
+                    .boxed()
                 }
-                .boxed()
             }
             _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }

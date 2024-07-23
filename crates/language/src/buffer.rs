@@ -27,6 +27,7 @@ use gpui::{
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use serde_json::Value;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -213,6 +214,8 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
+    pub data: Option<Value>,
 }
 
 /// TODO - move this into the `project` crate and make it private.
@@ -3844,6 +3847,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            data: None,
         }
     }
 }

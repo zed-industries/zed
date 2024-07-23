@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::{env, fs};
 
 use serde::Deserialize;
-use zed::serde_json;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, serde_json, Result};
 
 const SERVER_PATH: &str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
 const SERVER_NAME: &str = "@astrojs/language-server";
@@ -36,13 +35,14 @@ impl AstroExtension {
         worktree: &zed::Worktree,
     ) -> Result<String> {
         let server_exists = self.file_path_exists(SERVER_PATH);
+
         if self.did_find_server && server_exists {
             self.ensure_typescript(language_server_id, worktree)?;
             return Ok(SERVER_PATH.to_string());
         }
 
         zed::set_language_server_installation_status(
-            &language_server_id,
+            language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let server_version = zed::npm_package_latest_version(SERVER_NAME)?;
@@ -50,7 +50,7 @@ impl AstroExtension {
             || zed::npm_package_installed_version(SERVER_NAME)?.as_ref() != Some(&server_version)
         {
             zed::set_language_server_installation_status(
-                &language_server_id,
+                language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
             let server_result = zed::npm_install_package(SERVER_NAME, &server_version);
@@ -168,6 +168,7 @@ impl zed::Extension for AstroExtension {
         _worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(serde_json::json!({
+            "provideFormatter": true,
             "typescript": {
                 "tsdk": self.tsdk_path
             }

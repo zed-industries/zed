@@ -13,10 +13,9 @@ use editor::{
 };
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, Global, Hsla, InteractiveElement, IntoElement,
-    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
-    WhiteSpace, WindowContext,
+    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
+    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
+    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
@@ -1341,12 +1340,8 @@ impl ProjectSearchBar {
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
