@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use ollama::{get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
