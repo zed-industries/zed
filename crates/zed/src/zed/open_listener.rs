@@ -809,7 +809,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_open_workspace_with_nonexistant_files(cx: &mut TestAppContext) {
+    async fn test_open_workspace_with_nonexistent_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
         app_state.fs.as_fake().insert_tree("/root", json!({})).await;
