@@ -1803,7 +1803,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             // Prevent dropping text from other programs.
                             if paths.is_empty() {
-                                data_offer.finish();
                                 data_offer.destroy();
                                 return;
                             }
