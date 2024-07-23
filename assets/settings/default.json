@@ -375,7 +375,7 @@
   },
   "assistant": {
     // Version of this setting.
-    "version": "1",
+    "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
     // Whether to show the assistant panel button in the status bar.
@@ -386,18 +386,12 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // AI provider.
-    "provider": {
-      "name": "openai",
-      // The default model to use when creating new contexts. This
-      // setting can take three values:
-      //
-      // 1. "gpt-3.5-turbo"
-      // 2. "gpt-4"
-      // 3. "gpt-4-turbo-preview"
-      // 4. "gpt-4o"
-      // 5. "gpt-4o-mini"
-      "default_model": "gpt-4o"
+    // The default model to use when creating new contexts.
+    "default_model": {
+      // The provider to use.
+      "provider": "openai",
+      // The model to use.
+      "model": "gpt-4o"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -858,6 +852,8 @@
       }
     }
   },
+  // Different settings for specific language models.
+  "language_models": {},
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
