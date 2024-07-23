@@ -6,7 +6,7 @@ use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http::{self, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -632,7 +632,7 @@ impl Telemetry {
 
                     let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
-                    let request = http::Request::builder()
+                    let request = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(
                             this.http_client

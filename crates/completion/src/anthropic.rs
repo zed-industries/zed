@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, Task, TextStyle, View};
-use http::HttpClient;
+use http_client::HttpClient;
 use language_model::Role;
 use settings::Settings;
 use std::time::Duration;

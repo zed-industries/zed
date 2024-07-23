@@ -12,8 +12,8 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
-use http::github::latest_github_release;
-use http::HttpClient;
+use http_client::github::latest_github_release;
+use http_client::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,

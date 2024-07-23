@@ -166,7 +166,7 @@ assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
-async-tungstenite = { version = "0.24.0" }
+async-tungstenite = { version = "0.16" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }

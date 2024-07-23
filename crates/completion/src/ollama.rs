@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
 use gpui::{AnyView, AppContext, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language_model::Role;
 use ollama::Model as OllamaModel;
 use ollama::{

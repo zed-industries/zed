@@ -38,7 +38,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
-use http::{HttpClient, Url};
+use http_client::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
     language_settings::{

@@ -20,7 +20,7 @@ use futures::{
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
@@ -233,7 +233,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    Http(#[from] http_client::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -1351,7 +1351,7 @@ impl Client {
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
-        let request: http::Request<AsyncBody> = Request::get(url.as_str())
+        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
 

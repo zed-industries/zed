@@ -4,9 +4,11 @@ pub use anyhow::{anyhow, Result};
 use derive_more::Deref;
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
-pub use http::{Method, StatusCode, Uri};
 use isahc::config::{Configurable, RedirectPolicy};
-use isahc::{AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response};
+pub use isahc::{
+    http::{Method, StatusCode, Uri},
+    AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
+};
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
