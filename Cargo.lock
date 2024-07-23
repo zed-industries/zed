@@ -9725,7 +9725,6 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "db",
  "util",
  "uuid",
