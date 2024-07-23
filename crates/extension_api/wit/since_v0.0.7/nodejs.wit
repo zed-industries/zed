@@ -10,4 +10,7 @@ interface nodejs {
 
     /// Installs the specified NPM package.
     npm-install-package: func(package-name: string, version: string) -> result<_, string>;
+
+    /// Retrieve `PATH` environment variable with `npm` included.
+    node-environment-path: func() -> result<string, string>;
 }

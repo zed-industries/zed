@@ -204,6 +204,14 @@ impl nodejs::Host for WasmState {
             .await
             .to_wasmtime_result()
     }
+
+    async fn node_environment_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .environment_path()
+            .await
+            .to_wasmtime_result()
+    }
 }
 
 #[async_trait]
