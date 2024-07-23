@@ -12,7 +12,7 @@ use crate::{
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
 };
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{anyhow, Context as _};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -1392,13 +1392,7 @@ pub async fn handle_websocket_request(
         let socket = socket
             .map_ok(to_tungstenite_message)
             .err_into()
-            .with(|message| async move {
-                if let Some(message) = to_axum_message(message) {
-                    Ok(message)
-                } else {
-                    bail!("Could not convert a tungstenite message to axum message");
-                }
-            });
+            .with(|message| async move { Ok(to_axum_message(message)) });
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
@@ -5160,21 +5154,16 @@ async fn get_private_user_info(
     Ok(())
 }
 
-fn to_axum_message(message: TungsteniteMessage) -> Option<AxumMessage> {
+fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
     match message {
-        TungsteniteMessage::Text(payload) => Some(AxumMessage::Text(payload)),
-        TungsteniteMessage::Binary(payload) => Some(AxumMessage::Binary(payload)),
-        TungsteniteMessage::Ping(payload) => Some(AxumMessage::Ping(payload)),
-        TungsteniteMessage::Pong(payload) => Some(AxumMessage::Pong(payload)),
-        TungsteniteMessage::Close(frame) => {
-            Some(AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
-                code: frame.code.into(),
-                reason: frame.reason,
-            })))
-        }
-        // we can ignore `Frame` frames as recommended by the tungstenite maintainers
-        // https://github.com/snapview/tungstenite-rs/issues/268
-        TungsteniteMessage::Frame(_) => None,
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
+        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+            code: frame.code.into(),
+            reason: frame.reason,
+        })),
     }
 }
 
