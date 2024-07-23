@@ -411,7 +411,7 @@ tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = "0.21"
 tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod"}
 tree-sitter-gowork = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-work", rev = "7e9d2de03e69dd8d9724b1feb7a9b7586c179f40" }
-tree-sitter-heex = { git = "https://github.com/SomeoneToIgnore/tree-sitter-heex", rev = "ab587094681cc742613cd95fdbc68ba08cc6c5e7" }
+tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.21"
 tree-sitter-json = "0.21"

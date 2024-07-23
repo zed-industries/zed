@@ -11580,7 +11580,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-heex"
 version = "0.0.1"
-source = "git+https://github.com/SomeoneToIgnore/tree-sitter-heex?rev=ab587094681cc742613cd95fdbc68ba08cc6c5e7#ab587094681cc742613cd95fdbc68ba08cc6c5e7"
+source = "git+https://github.com/phoenixframework/tree-sitter-heex?rev=6dd0303acf7138dd2b9b432a229e16539581c701#6dd0303acf7138dd2b9b432a229e16539581c701"
 dependencies = [
  "cc",
  "tree-sitter",
