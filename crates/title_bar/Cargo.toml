@@ -21,7 +21,7 @@ test-support = [
     "collections/test-support",
     "editor/test-support",
     "gpui/test-support",
-    "http/test-support",
+    "http_client/test-support",
     "project/test-support",
     "settings/test-support",
     "util/test-support",
@@ -61,7 +61,7 @@ client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }

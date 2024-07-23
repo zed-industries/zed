@@ -13,7 +13,7 @@ use image::{ImageBuffer, ImageError};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 
-use http;
+use http_client;
 use thiserror::Error;
 use util::ResultExt;
 
@@ -413,7 +413,7 @@ impl Asset for Image {
 pub enum ImageCacheError {
     /// An error that occurred while fetching an image from a remote source.
     #[error("http error: {0}")]
-    Client(#[from] http::Error),
+    Client(#[from] http_client::Error),
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
@@ -423,7 +423,7 @@ pub enum ImageCacheError {
         /// The URI of the image.
         uri: SharedUri,
         /// The HTTP status code.
-        status: http::StatusCode,
+        status: http_client::StatusCode,
         /// The HTTP response body.
         body: String,
     },

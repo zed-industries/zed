@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
-use http::HttpClient;
+use http_client::HttpClient;
 use isahc::config::Configurable;
 use isahc::{AsyncBody, Request};
 use regex::Regex;

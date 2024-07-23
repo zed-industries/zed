@@ -6,7 +6,7 @@ use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
     WhiteSpace,
 };
-use http::HttpClient;
+use http_client::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
