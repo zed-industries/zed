@@ -3,13 +3,14 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
-        StepBack, StepIn, StepOut,
+        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Restart,
+        SetBreakpoints, StepBack, StepIn, StepOut,
     },
-    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments,
-    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
-    Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame,
-    StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity, Variable,
+    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
+    DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
+    NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
+    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
+    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
@@ -42,6 +43,7 @@ pub enum ThreadStatus {
     #[default]
     Running,
     Stopped,
+    Exited,
     Ended,
 }
 
@@ -113,12 +115,15 @@ impl DebugAdapterClient {
 
         let process = command
             .spawn()
-            .with_context(|| "failed to spawn command.")?;
+            .with_context(|| "failed to start debug adapter.")?;
 
-        // give the adapter some time to spin up the tcp server
-        cx.background_executor()
-            .timer(Duration::from_millis(1000))
-            .await;
+        if let Some(delay) = host.delay {
+            // some debug adapters need some time to start the TCP server
+            // so we have to wait few milliseconds before we can connect to it
+            cx.background_executor()
+                .timer(Duration::from_millis(delay))
+                .await;
+        }
 
         let address = SocketAddrV4::new(
             host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1)),
@@ -293,6 +298,10 @@ impl DebugAdapterClient {
         self.config.request.clone()
     }
 
+    pub fn capabilities(&self) -> dap_types::Capabilities {
+        self.capabilities.clone().unwrap()
+    }
+
     pub fn next_request_id(&self) -> u64 {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
@@ -352,26 +361,24 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn resume(&self, thread_id: u64) {
+    pub async fn resume(&self, thread_id: u64) -> Result<ContinueResponse> {
         self.request::<Continue>(ContinueArguments {
             thread_id,
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_over(&self, thread_id: u64) {
+    pub async fn step_over(&self, thread_id: u64) -> Result<()> {
         self.request::<Next>(NextArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_in(&self, thread_id: u64) {
+    pub async fn step_in(&self, thread_id: u64) -> Result<()> {
         self.request::<StepIn>(StepInArguments {
             thread_id,
             target_id: None,
@@ -379,34 +386,34 @@ impl DebugAdapterClient {
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_out(&self, thread_id: u64) {
+    pub async fn step_out(&self, thread_id: u64) -> Result<()> {
         self.request::<StepOut>(StepOutArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
             single_thread: Some(true),
         })
         .await
-        .log_err();
     }
 
-    pub async fn step_back(&self, thread_id: u64) {
+    pub async fn step_back(&self, thread_id: u64) -> Result<()> {
         self.request::<StepBack>(StepBackArguments {
             thread_id,
             single_thread: Some(true),
             granularity: Some(SteppingGranularity::Statement),
         })
         .await
-        .log_err();
     }
 
-    pub async fn restart(&self, thread_id: u64) {
-        self.request::<StepBack>(StepBackArguments {
-            thread_id,
-            single_thread: Some(true),
-            granularity: Some(SteppingGranularity::Statement),
+    pub async fn restart(&self) {
+        self.request::<Restart>(RestartArguments {
+            raw: self
+                .config
+                .request_args
+                .as_ref()
+                .map(|v| v.args.clone())
+                .unwrap_or(Value::Null),
         })
         .await
         .log_err();
@@ -416,6 +423,16 @@ impl DebugAdapterClient {
         self.request::<Pause>(PauseArguments { thread_id })
             .await
             .log_err();
+    }
+
+    pub async fn stop(&self) {
+        self.request::<Disconnect>(DisconnectArguments {
+            restart: Some(false),
+            terminate_debuggee: Some(false),
+            suspend_debuggee: Some(false),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn set_breakpoints(

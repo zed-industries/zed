@@ -11,7 +11,7 @@ use futures::{
 };
 use gpui::AsyncAppContext;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use std::{collections::HashMap, sync::Arc};
@@ -64,7 +64,20 @@ pub struct Response {
     pub success: bool,
     pub command: String,
     pub message: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_empty_object")]
     pub body: Option<Value>,
+}
+
+fn deserialize_empty_object<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if value == Value::Object(serde_json::Map::new()) {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
 }
 
 #[derive(Debug)]

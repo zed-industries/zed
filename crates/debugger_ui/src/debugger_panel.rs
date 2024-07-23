@@ -3,8 +3,9 @@ use dap::client::{self, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    ContinuedEvent, DisconnectArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments,
-    StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
+    Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, Scope, ScopesArguments,
+    StackFrame, StackTraceArguments, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
+    Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -16,11 +17,11 @@ use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use task::DebugRequestType;
 use ui::prelude::*;
+use workspace::Pane;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use workspace::{NewFile, Pane};
 
 use crate::debugger_panel_item::DebugPanelItem;
 
@@ -51,7 +52,7 @@ impl DebugPanel {
                     workspace.project().clone(),
                     Default::default(),
                     None,
-                    NewFile.boxed_clone(),
+                    None,
                     cx,
                 );
                 pane.set_can_split(false, cx);
@@ -113,40 +114,12 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            Events::Initialized(_) => {
-                let client = this.debug_client_by_id(*client_id, cx);
-
-                cx.spawn(|this, mut cx| async move {
-                    let task = this.update(&mut cx, |this, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.project().update(cx, |project, cx| {
-                                let client = client.clone();
-
-                                project.send_breakpoints(client, cx)
-                            })
-                        })
-                    })??;
-
-                    task.await?;
-
-                    // client.is_server_ready = true;
-                    client.configuration_done().await?;
-
-                    let request_args = client.config().request_args.map(|a| a.args);
-
-                    // send correct request based on adapter config
-                    match client.config().request {
-                        DebugRequestType::Launch => client.launch(request_args).await?,
-                        DebugRequestType::Attach => client.attach(request_args).await?,
-                    };
-
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+            Events::Initialized(event) => {
+                Self::handle_initialized_event(this, client_id, event, cx)
             }
             Events::Stopped(event) => Self::handle_stopped_event(this, client_id, event, cx),
             Events::Continued(event) => Self::handle_continued_event(this, client_id, event, cx),
-            Events::Exited(_) => {}
+            Events::Exited(event) => Self::handle_exited_event(this, client_id, event, cx),
             Events::Terminated(event) => Self::handle_terminated_event(this, client_id, event, cx),
             Events::Thread(event) => Self::handle_thread_event(this, client_id, event, cx),
             Events::Output(_) => {}
@@ -282,6 +255,32 @@ impl DebugPanel {
         editor.update(&mut cx, |editor, _| {
             editor.clear_row_highlights::<DebugCurrentRowHighlight>();
         })
+    }
+
+    fn handle_initialized_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        _: &Option<Capabilities>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let client = this.debug_client_by_id(*client_id, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let task = this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.project().update(cx, |project, cx| {
+                        let client = client.clone();
+
+                        project.send_breakpoints(client, cx)
+                    })
+                })
+            })??;
+
+            task.await?;
+
+            client.configuration_done().await
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_continued_event(
@@ -471,6 +470,21 @@ impl DebugPanel {
         }
 
         cx.emit(DebugPanelEvent::Thread((*client_id, event.clone())));
+    }
+
+    fn handle_exited_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        _: &ExitedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let client = this.debug_client_by_id(*client_id, cx);
+        cx.spawn(|_, _| async move {
+            for thread_state in client.thread_states().values_mut() {
+                thread_state.status = ThreadStatus::Exited;
+            }
+        })
+        .detach();
     }
 
     fn handle_terminated_event(

@@ -294,7 +294,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewFile.boxed_clone(),
+                Some(NewFile.boxed_clone()),
                 cx,
             );
             pane.set_can_split(false, cx);
