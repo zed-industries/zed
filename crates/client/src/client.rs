@@ -1810,7 +1810,7 @@ fn get_socks_proxy(proxy: &Proxy) -> Option<(String, u16, SocksVersion)> {
     };
     let socks_version = if schema.starts_with("socks4") {
         socksv5::SocksVersion::V4
-    } else if schema.starts_with("socks5") {
+    } else if schema.starts_with("socks4") {
         socksv5::SocksVersion::V5
     } else {
         return None;
