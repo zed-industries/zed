@@ -53,7 +53,7 @@ Assign kernels by name to languages in your `settings.json`.
 ```jsonc
 {
   "jupyter": {
-    "kernels": {
+    "kernel_selections": {
       "python": "conda-env",
       "typescript": "deno-debug"
     }
