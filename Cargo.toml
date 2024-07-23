@@ -98,7 +98,6 @@ members = [
     "crates/story",
     "crates/storybook",
     "crates/sum_tree",
-    "crates/summaries",
     "crates/supermaven",
     "crates/supermaven_api",
     "crates/tab_switcher",
@@ -257,7 +256,6 @@ sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
-summaries = { path = "crates/summaries" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
