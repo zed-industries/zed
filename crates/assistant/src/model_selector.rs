@@ -26,10 +26,16 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for (provider, available_models) in LanguageModelRegistry::global(cx)
+                    for (index, (provider, available_models)) in LanguageModelRegistry::global(cx)
                         .read(cx)
                         .available_models_grouped_by_provider(cx)
+                        .into_iter()
+                        .enumerate()
                     {
+                        if index > 0 {
+                            menu = menu.separator();
+                        }
+
                         menu = menu.header(provider.0.clone());
 
                         if available_models.is_empty() {
