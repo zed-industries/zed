@@ -1163,13 +1163,7 @@ impl Project {
             .log_err()?;
 
             // initialize request
-            client.initialize().await.log_err()?;
-
-            // send correct request based on adapter config
-            // match adapter_config.request {
-            //     DebugRequestType::Launch => client.launch(request_args).await.log_err()?,
-            //     DebugRequestType::Attach => client.attach(request_args).await.log_err()?,
-            // };
+            let _capabilities = client.initialize().await.log_err()?;
 
             let client = Arc::new(client);
 
@@ -1207,6 +1201,11 @@ impl Project {
                 anyhow::Ok(())
             })
             .log_err();
+
+            match adapter_config.request {
+                DebugRequestType::Launch => client.launch(request_args).await.log_err()?,
+                DebugRequestType::Attach => client.attach(request_args).await.log_err()?,
+            };
 
             Some(client)
         });

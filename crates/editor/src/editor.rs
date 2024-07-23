@@ -450,7 +450,7 @@ struct ResolvedTasks {
 #[derive(Clone, Debug)]
 struct Breakpoint {
     row: MultiBufferRow,
-    line: BufferRow,
+    _line: BufferRow,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -5942,11 +5942,11 @@ impl Editor {
                 key,
                 Breakpoint {
                     row: MultiBufferRow(row),
-                    line: row,
+                    _line: row,
                 },
             );
         }
-        
+
         project.update(cx, |project, cx| {
             project.update_breakpoint(buffer, row + 1, cx);
         });

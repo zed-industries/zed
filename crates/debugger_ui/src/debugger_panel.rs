@@ -1,5 +1,5 @@
 use anyhow::Result;
-use dap::client::{self, DebugAdapterClientId, ThreadState, ThreadStatus};
+use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
@@ -132,8 +132,8 @@ impl DebugPanel {
             Events::ProgressEnd(_) => {}
             Events::ProgressStart(_) => {}
             Events::ProgressUpdate(_) => {}
-            Events::Invalidated(_) => {},
-            Events::Other(_) => {},
+            Events::Invalidated(_) => {}
+            Events::Other(_) => {}
         }
     }
 
