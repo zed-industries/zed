@@ -169,7 +169,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     update_settings_file::<AssistantSettings>(fs.clone(), cx, {
         let fs = fs.clone();
         |content, cx| {
-            dbg!(content.update_file(fs, cx));
+            content.update_file(fs, cx);
         }
     });
 

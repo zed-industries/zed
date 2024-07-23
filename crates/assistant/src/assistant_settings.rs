@@ -84,7 +84,7 @@ impl Default for AssistantSettingsContent {
 }
 
 impl AssistantSettingsContent {
-    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &AppContext) {
         if let AssistantSettingsContent::Versioned(settings) = self {
             if let VersionedAssistantSettingsContent::V1(settings) = settings {
                 if let Some(provider) = settings.provider.clone() {

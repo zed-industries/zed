@@ -154,7 +154,6 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
 pub struct SettingsStore {
-    fs: Arc<dyn Fs>,
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
@@ -201,10 +200,9 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
+    pub fn new(cx: &AppContext) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         Self {
-            fs,
             setting_values: Default::default(),
             raw_default_settings: Default::default(),
             raw_user_settings: Default::default(),
@@ -214,7 +212,7 @@ impl SettingsStore {
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(|cx| async move {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
-                    (setting_file_update)(cx.clone()).await;
+                    (setting_file_update)(cx.clone()).await.log_err();
                 }
             }),
         }
@@ -313,8 +311,8 @@ impl SettingsStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
-        let mut this = Self::new(fs, cx);
+    pub fn test(cx: &mut AppContext) -> Self {
+        let mut this = Self::new(cx);
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
         this.set_user_settings("{}", cx).unwrap();
@@ -351,16 +349,15 @@ impl SettingsStore {
     }
 
     pub fn update_settings_file<T: Settings>(
-        &mut self,
-        cx: &mut AppContext,
-        update: impl 'static + Send + FnOnce(&mut T::FileContent, &mut AppContext),
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut T::FileContent, &AppContext),
     ) {
-        let fs = self.fs.clone();
         self.setting_file_updates_tx
-            .unbounded_send(Box::new(move |mut cx: AsyncAppContext| {
+            .unbounded_send(Box::new(move |cx: AsyncAppContext| {
                 async move {
                     let old_text = Self::load_settings(&fs).await?;
-                    let new_text = cx.update_global(|store: &mut SettingsStore, cx| {
+                    let new_text = cx.read_global(|store: &SettingsStore, cx| {
                         store.new_text_for_update::<T>(old_text, |content| update(content, cx))
                     })?;
                     let initial_path = paths::settings_file().as_path();
@@ -1086,7 +1083,7 @@ mod tests {
 
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<TurboSetting>(cx);
         store.register_setting::<MultiKeySettings>(cx);
@@ -1215,7 +1212,7 @@ mod tests {
 
     #[gpui::test]
     fn test_setting_store_assign_json_before_register(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store
             .set_default_settings(
                 r#"{
@@ -1258,7 +1255,7 @@ mod tests {
 
     #[gpui::test]
     fn test_setting_store_update(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store.register_setting::<MultiKeySettings>(cx);
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<LanguageSettings>(cx);
