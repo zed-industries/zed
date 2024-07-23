@@ -9,8 +9,8 @@ use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language::{
-    proto::{deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Language, Operation,
+    proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
+    Buffer, Capability, Event as BufferEvent, Language, Operation,
 };
 use rpc::{
     proto::{self, AnyProtoClient, PeerId},
@@ -575,6 +575,7 @@ impl BufferStore {
             }
         }
 
+        cx.subscribe(&buffer, Self::on_buffer_event).detach();
         cx.emit(BufferStoreEvent::BufferAdded(buffer));
         Ok(())
     }
@@ -700,6 +701,20 @@ impl BufferStore {
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
     }
 
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::FileHandleChanged => {
+                self.buffer_changed_file(buffer, cx);
+            }
+            _ => {}
+        }
+    }
+
     fn local_worktree_entry_changed(
         &mut self,
         entry_id: ProjectEntryId,
@@ -808,11 +823,7 @@ impl BufferStore {
         None
     }
 
-    pub fn buffer_changed_file(
-        &mut self,
-        buffer: Model<Buffer>,
-        cx: &mut AppContext,
-    ) -> Option<()> {
+    fn buffer_changed_file(&mut self, buffer: Model<Buffer>, cx: &mut AppContext) -> Option<()> {
         let file = File::from_dyn(buffer.read(cx).file())?;
 
         let remote_id = buffer.read(cx).remote_id();
@@ -1037,6 +1048,44 @@ impl BufferStore {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: buffer.saved_mtime().map(|time| time.into()),
+        })
+    }
+
+    pub async fn handle_buffer_saved(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::BufferSaved>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let mtime = envelope.payload.mtime.map(|time| time.into());
+        this.update(&mut cx, |this, cx| {
+            if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.did_save(version, mtime, cx);
+                });
+            }
+        })
+    }
+
+    pub async fn handle_buffer_reloaded(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::BufferReloaded>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let mtime = envelope.payload.mtime.map(|time| time.into());
+        let line_ending = deserialize_line_ending(
+            proto::LineEnding::from_i32(envelope.payload.line_ending)
+                .ok_or_else(|| anyhow!("missing line ending"))?,
+        );
+        this.update(&mut cx, |this, cx| {
+            if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.did_reload(version, line_ending, mtime, cx);
+                });
+            }
         })
     }
 

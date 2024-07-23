@@ -48,8 +48,8 @@ use language::{
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
-        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_line_ending, serialize_version, split_operations,
+        deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
+        serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
@@ -213,7 +213,7 @@ pub struct Project {
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<BufferId>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
-    git_diff_debouncer: DebouncedDelay,
+    git_diff_debouncer: DebouncedDelay<Self>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<Result<()>>,
@@ -1929,30 +1929,6 @@ impl Project {
         })
     }
 
-    pub fn open_buffer_for_full_path(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Buffer>>> {
-        if let Some(worktree_name) = path.components().next() {
-            let worktree = self.worktrees(cx).find(|worktree| {
-                OsStr::new(worktree.read(cx).root_name()) == worktree_name.as_os_str()
-            });
-            if let Some(worktree) = worktree {
-                let worktree = worktree.read(cx);
-                let worktree_root_path = Path::new(worktree.root_name());
-                if let Ok(path) = path.strip_prefix(worktree_root_path) {
-                    let project_path = ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: path.into(),
-                    };
-                    return self.open_buffer(project_path, cx);
-                }
-            }
-        }
-        Task::ready(Err(anyhow!("buffer not found for {:?}", path)))
-    }
-
     pub fn open_local_buffer(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -1979,7 +1955,6 @@ impl Project {
         })
     }
 
-    /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
         mut abs_path: lsp::Url,
@@ -2663,11 +2638,6 @@ impl Project {
                 }
             }
 
-            BufferEvent::FileHandleChanged => {
-                self.buffer_store.update(cx, |buffer_store, cx| {
-                    buffer_store.buffer_changed_file(buffer, cx)
-                })?;
-            }
             _ => {}
         }
 
@@ -10133,22 +10103,8 @@ impl Project {
         envelope: TypedEnvelope<proto::BufferSaved>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let version = deserialize_version(&envelope.payload.version);
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let mtime = envelope.payload.mtime.map(|time| time.into());
-
-        this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .buffer_store
-                .read(cx)
-                .get_possibly_incomplete(buffer_id);
-            if let Some(buffer) = buffer {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, mtime, cx);
-                });
-            }
-            Ok(())
-        })?
+        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_buffer_saved(buffer_store, envelope, cx).await
     }
 
     async fn handle_buffer_reloaded(
@@ -10156,26 +10112,8 @@ impl Project {
         envelope: TypedEnvelope<proto::BufferReloaded>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let payload = envelope.payload;
-        let version = deserialize_version(&payload.version);
-        let line_ending = deserialize_line_ending(
-            proto::LineEnding::from_i32(payload.line_ending)
-                .ok_or_else(|| anyhow!("missing line ending"))?,
-        );
-        let mtime = payload.mtime.map(|time| time.into());
-        let buffer_id = BufferId::new(payload.buffer_id)?;
-        this.update(&mut cx, |this, cx| {
-            if let Some(buffer) = this
-                .buffer_store
-                .read(cx)
-                .get_possibly_incomplete(buffer_id)
-            {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, line_ending, mtime, cx);
-                });
-            }
-            Ok(())
-        })?
+        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_buffer_reloaded(buffer_store, envelope, cx).await
     }
 
     #[allow(clippy::type_complexity)]
@@ -10328,14 +10266,10 @@ impl Project {
 
     pub fn supplementary_language_servers(
         &self,
-    ) -> impl '_
-           + Iterator<
-        Item = (
-            &LanguageServerId,
-            &(LanguageServerName, Arc<LanguageServer>),
-        ),
-    > {
-        self.supplementary_language_servers.iter()
+    ) -> impl '_ + Iterator<Item = (&LanguageServerId, &LanguageServerName)> {
+        self.supplementary_language_servers
+            .iter()
+            .map(|(id, (name, _))| (id, name))
     }
 
     pub fn language_server_adapter_for_id(
