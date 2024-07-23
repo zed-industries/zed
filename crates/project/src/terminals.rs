@@ -13,9 +13,9 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use task::{SpawnInTerminal, TerminalWorkDir};
+use task::{Shell, SpawnInTerminal, TerminalWorkDir};
 use terminal::{
-    terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
+    terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;

@@ -364,14 +364,14 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => Shell::retrieve_system_shell().map(|shell| (shell, Vec::new())),
+            Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
         #[cfg(target_os = "windows")]
-        let windows_shell_type = Shell::to_windows_shell_type(&shell);
+        let windows_shell_type = to_windows_shell_type(&shell);
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -404,7 +404,7 @@ impl TerminalPanel {
                 #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
                 #[cfg(target_os = "windows")]
-                command.push_str(&Shell::to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
 
@@ -844,4 +844,42 @@ struct SerializedTerminalPanel {
     active_item_id: Option<u64>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+}
+
+fn retrieve_system_shell() -> Option<String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        use anyhow::Context;
+        use util::ResultExt;
+
+        return std::env::var("SHELL")
+            .context("Error finding SHELL in env.")
+            .log_err();
+    }
+    // `alacritty_terminal` uses this as default on Windows. See:
+    // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+    #[cfg(target_os = "windows")]
+    return Some("powershell".to_owned());
+}
+
+#[cfg(target_os = "windows")]
+fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
+    match shell_type {
+        WindowsShellType::Powershell => to_powershell_variable(input),
+        WindowsShellType::Cmd => to_cmd_variable(input),
+        WindowsShellType::Other => input,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn to_windows_shell_type(shell: &str) -> WindowsShellType {
+    if shell == "powershell" || shell.ends_with("powershell.exe") {
+        WindowsShellType::Powershell
+    } else if shell == "cmd" || shell.ends_with("cmd.exe") {
+        WindowsShellType::Cmd
+    } else {
+        // Someother shell detected, the user might install and use a
+        // unix-like shell.
+        WindowsShellType::Other
+    }
 }

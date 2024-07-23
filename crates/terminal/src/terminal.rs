@@ -39,8 +39,8 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::TaskId;
-use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
+use task::{Shell, TaskId};
+use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
