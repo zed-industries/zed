@@ -68,6 +68,7 @@ impl Item for SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .p_4()
             .size_full()
             .child(Label::new("Settings").size(LabelSize::Large))
     }
