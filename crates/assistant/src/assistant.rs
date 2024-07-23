@@ -30,9 +30,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command,
+    active_command, default_command, diagnostics_command, directory_command, docs_command,
+    fetch_command, file_command, now_command, project_command, prompt_command, search_command,
+    symbols_command, tabs_command, term_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -236,6 +236,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+    slash_command_registry.register_command(directory_command::DirectorySlashCommand, true);
 }
 
 pub fn humanize_token_count(count: usize) -> String {
