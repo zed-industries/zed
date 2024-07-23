@@ -96,12 +96,31 @@ impl zed::Extension for RuffExtension {
 
     fn language_server_command(
         &mut self,
-        language_server_id: &LanguageServerId,
+        server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let mut binary = None;
+        let mut args = None;
+        if let Some(binary_settings) = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.binary)
+        {
+            if let Some(bin_path) = binary_settings.path {
+                binary = Some(bin_path);
+            }
+            if let Some(bin_args) = binary_settings.arguments {
+                args = Some(bin_args);
+            }
+        }
+        let command = if let Some(binary) = binary {
+            binary
+        } else {
+            self.language_server_binary_path(server_id, worktree)?
+        };
+        let args = args.unwrap_or_else(|| vec!["server".into()]);
         Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
-            args: vec!["server".into(), "--preview".into()],
+            command,
+            args,
             env: vec![],
         })
     }
