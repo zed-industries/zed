@@ -61,7 +61,7 @@ impl TryFrom<PublicKey> for String {
     fn try_from(key: PublicKey) -> Result<Self> {
         let bytes = key
             .0
-            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .to_pkcs1_der()
             .context("failed to serialize public key")?;
         let string = base64::encode_config(&bytes, base64::URL_SAFE);
         Ok(string)
@@ -73,9 +73,7 @@ impl TryFrom<String> for PublicKey {
     fn try_from(value: String) -> Result<Self> {
         let bytes = base64::decode_config(&value, base64::URL_SAFE)
             .context("failed to base64-decode public key string")?;
-        let pem_key = String::from_utf8(bytes).context("failed to parse public key as UTF-8")?;
-        let key =
-            Self(RsaPublicKey::from_pkcs1_pem(&pem_key).context("failed to parse public key")?);
+        let key = Self(RsaPublicKey::from_pkcs1_der(&bytes).context("failed to parse public key")?);
         Ok(key)
     }
 }
