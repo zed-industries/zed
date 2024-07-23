@@ -22,9 +22,9 @@ use futures::{
     SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, Global, HighlightStyle,
-    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
-    WhiteSpace, WindowContext,
+    point, AppContext, EventEmitter, FocusHandle, FocusableView, Global, HighlightStyle, Model,
+    ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
+    WindowContext,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
@@ -45,7 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 use util::RangeExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1461,7 +1461,7 @@ impl Render for PromptEditor {
                             })
                             .trigger(
                                 IconButton::new("context", IconName::Settings)
-                                    .size(ButtonSize::None)
+                                    .shape(IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip(move |cx| {
@@ -1473,7 +1473,7 @@ impl Render for PromptEditor {
                                                     .display_name()
                                             ),
                                             None,
-                                            "Click to Change Model",
+                                            "Change Model",
                                             cx,
                                         )
                                     }),
@@ -1864,12 +1864,8 @@ impl PromptEditor {
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
         EditorElement::new(
             &self.editor,

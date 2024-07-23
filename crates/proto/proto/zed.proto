@@ -1890,6 +1890,7 @@ message Diagnostic {
         Information = 3;
         Hint = 4;
     }
+    optional string data = 12;
 }
 
 message Operation {

@@ -12,7 +12,7 @@ use workspace::ModalView;
 
 pub struct SshConnectionModal {
     host: SharedString,
-    status: Option<SharedString>,
+    status_message: Option<SharedString>,
     prompt: Option<(SharedString, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
 }
@@ -22,12 +22,8 @@ impl SshConnectionModal {
         Self {
             host: host.into(),
             prompt: None,
-            status: None,
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
-                editor.set_redact_all(true, cx);
-                editor
-            }),
+            status_message: None,
+            editor: cx.new_view(|cx| Editor::single_line(cx)),
         }
     }
 
@@ -37,29 +33,35 @@ impl SshConnectionModal {
         tx: oneshot::Sender<Result<String>>,
         cx: &mut ViewContext<Self>,
     ) {
+        self.editor.update(cx, |editor, cx| {
+            if prompt.contains("yes/no") {
+                editor.set_redact_all(false, cx);
+            } else {
+                editor.set_redact_all(true, cx);
+            }
+        });
         self.prompt = Some((prompt.into(), tx));
-        self.status.take();
+        self.status_message.take();
         cx.focus_view(&self.editor);
         cx.notify();
     }
 
     pub fn set_status(&mut self, status: Option<String>, cx: &mut ViewContext<Self>) {
-        self.status = status.map(|s| s.into());
+        self.status_message = status.map(|s| s.into());
         cx.notify();
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        let text = self.editor.read(cx).text(cx);
         if let Some((_, tx)) = self.prompt.take() {
-            tx.send(Ok(text)).ok();
-        };
-        // cx.emit(DismissEvent)
+            self.editor.update(cx, |editor, cx| {
+                tx.send(Ok(editor.text(cx))).ok();
+                editor.clear(cx);
+            });
+        }
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        if self.prompt.is_some() {
-            cx.emit(DismissEvent)
-        }
+        cx.remove_window();
     }
 }
 
@@ -74,7 +76,7 @@ impl Render for SshConnectionModal {
             .on_action(cx.listener(Self::confirm))
             .w(px(400.))
             .child(Label::new(format!("SSH: {}", self.host)).size(ui::LabelSize::Large))
-            .when_some(self.status.as_ref(), |el, status| {
+            .when_some(self.status_message.as_ref(), |el, status| {
                 el.child(Label::new(status.clone()))
             })
             .when_some(self.prompt.as_ref(), |el, prompt| {

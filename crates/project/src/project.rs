@@ -4595,6 +4595,7 @@ impl Project {
                         is_primary: true,
                         is_disk_based,
                         is_unnecessary,
+                        data: diagnostic.data.clone(),
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -4612,6 +4613,7 @@ impl Project {
                                     is_primary: false,
                                     is_disk_based,
                                     is_unnecessary: false,
+                                    data: diagnostic.data.clone(),
                                 },
                             });
                         }

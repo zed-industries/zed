@@ -705,7 +705,7 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -742,6 +742,9 @@
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "Erlang": {
+      "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Go": {
       "code_actions_on_format": {
@@ -811,6 +814,9 @@
         "allowed": true,
         "plugins": ["prettier-plugin-sql"]
       }
+    },
+    "Starlark": {
+      "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
     "Svelte": {
       "prettier": {
@@ -882,6 +888,15 @@
     //             "command": "clippy" // rust-analyzer.check.command (default: "check")
     //         }
     //     }
+    // }
+  },
+  // Jupyter settings
+  "jupyter": {
+    "enabled": true
+    // Specify the language name as the key and the kernel name as the value.
+    // "kernel_selections": {
+    //    "python": "conda-base"
+    //    "typescript": "deno"
     // }
   },
   // Vim settings
