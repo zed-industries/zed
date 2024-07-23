@@ -18,7 +18,9 @@ use gpui::{
     TestAppContext, UpdateGlobal,
 };
 use language::{
-    language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
+    language_settings::{
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+    },
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -4409,10 +4411,13 @@ async fn test_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::External {
-                    command: "awk".into(),
-                    arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
-                });
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                    vec![Formatter::External {
+                        command: "awk".into(),
+                        arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                    }]
+                    .into(),
+                )));
             });
         });
     });
@@ -4493,7 +4498,7 @@ async fn test_prettier_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::Auto);
+                file.defaults.formatter = Some(SelectedFormatter::Auto);
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
@@ -4504,7 +4509,9 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::LanguageServer);
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                    vec![Formatter::LanguageServer { name: None }].into(),
+                )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
