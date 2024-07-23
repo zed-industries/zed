@@ -20,6 +20,8 @@ impl Global for FeatureFlags {}
 /// Feature flags are always enabled for members of Zed staff. To disable this behavior
 /// so you can test flags being disabled, set ZED_DISABLE_STAFF=1 in your environment,
 /// which will force Zed to treat the current user as non-staff.
+/// Feature flags can be overwritten by providing a comma-separated list
+/// via the environment variable ZED_FEATURE_FLAGS_OVERRIDE,
 pub trait FeatureFlag {
     const NAME: &'static str;
 }

@@ -194,8 +194,16 @@ impl UserStore {
                                     if let Some(info) = info {
                                         let disable_staff = std::env::var("ZED_DISABLE_STAFF")
                                             .map_or(false, |v| v != "" && v != "0");
+                                        let flags = std::env::var("ZED_FEATURE_FLAGS_OVERRIDE")
+                                            .map(|override_flags| {
+                                                override_flags
+                                                    .split(",")
+                                                    .map(str::to_string)
+                                                    .collect()
+                                            })
+                                            .unwrap_or(info.flags);
                                         let staff = info.staff && !disable_staff;
-                                        cx.update_flags(staff, info.flags);
+                                        cx.update_flags(staff, flags);
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
                                             staff,
