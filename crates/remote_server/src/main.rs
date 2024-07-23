@@ -20,7 +20,7 @@ fn main() {
     env_logger::builder()
         .format(|buf, record| {
             serde_json::to_writer(&mut *buf, &LogRecord::new(&record))?;
-            buf.write(b"\n")?;
+            buf.write_all(b"\n")?;
             Ok(())
         })
         .init();
