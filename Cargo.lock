@@ -11329,7 +11329,7 @@ dependencies = [
 [[package]]
 name = "tokio-socks"
 version = "0.5.2"
-source = "git+https://github.com/Congyuwang/tokio-socks?rev=9797594#9797594e26db7f5386d4c8a2e3d69a47763ec1ee"
+source = "git+https://github.com/Congyuwang/tokio-socks?rev=10131e4#10131e41e79139bec9212eb02e0ed910a562cb35"
 dependencies = [
  "either",
  "futures 0.3.28",
