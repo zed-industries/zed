@@ -8806,6 +8806,7 @@ dependencies = [
  "gpui",
  "http 0.1.0",
  "image",
+ "indoc",
  "language",
  "log",
  "multi_buffer",
