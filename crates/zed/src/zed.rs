@@ -3358,7 +3358,7 @@ mod tests {
         cx.update(|cx| {
             window
                 .update(cx, |_workspace, cx| {
-                    cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
+                    cx.emit(workspace::Event::SpawnTask(Box::new(spawn_in_terminal)));
                 })
                 .unwrap();
         });
