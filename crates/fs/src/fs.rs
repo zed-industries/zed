@@ -140,10 +140,7 @@ pub struct RealFs {
     git_binary_path: Option<PathBuf>,
 }
 
-pub struct RealWatcher {
-    #[cfg(target_os = "linux")]
-    fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
-}
+pub struct RealWatcher {}
 
 impl RealFs {
     pub fn new(
@@ -472,29 +469,29 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let root_path = path.to_path_buf();
 
-        let file_watcher = notify::recommended_watcher({
+        watcher::global(|g| {
             let tx = tx.clone();
             let pending_paths = pending_paths.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.log_err() {
-                    let mut paths = event.paths;
-                    paths.retain(|path| path.starts_with(&root_path));
-                    if !paths.is_empty() {
-                        paths.sort();
-                        let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
-                            tx.try_send(()).ok();
-                        }
-                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
+            g.add(move |event: &notify::Event| {
+                let mut paths = event
+                    .paths
+                    .iter()
+                    .filter(|path| path.starts_with(&root_path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !paths.is_empty() {
+                    paths.sort();
+                    let mut pending_paths = pending_paths.lock();
+                    if pending_paths.is_empty() {
+                        tx.try_send(()).ok();
                     }
+                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
                 }
-            }
+            })
         })
-        .expect("Could not start file watcher");
+        .log_err();
 
-        let watcher = Arc::new(RealWatcher {
-            fs_watcher: parking_lot::Mutex::new(file_watcher),
-        });
+        let watcher = Arc::new(RealWatcher {});
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
 
@@ -622,18 +619,16 @@ impl Watcher for RealWatcher {
 impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
-
-        self.fs_watcher
-            .lock()
-            .watch(path, notify::RecursiveMode::NonRecursive)?;
-        Ok(())
+        Ok(watcher::global(|w| {
+            w.inotify
+                .lock()
+                .watch(path, notify::RecursiveMode::NonRecursive)
+        })??)
     }
 
     fn remove(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
-
-        self.fs_watcher.lock().unwatch(path)?;
-        Ok(())
+        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
@@ -1793,5 +1788,51 @@ mod tests {
             fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
             "D",
         );
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub mod watcher {
+    use std::sync::OnceLock;
+
+    use parking_lot::Mutex;
+    use util::ResultExt;
+
+    pub struct GlobalWatcher {
+        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+        pub(super) inotify: Mutex<notify::INotifyWatcher>,
+        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
+    }
+
+    impl GlobalWatcher {
+        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
+            self.watchers.lock().push(Box::new(cb))
+        }
+    }
+
+    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
+        OnceLock::new();
+
+    fn handle_event(event: Result<notify::Event, notify::Error>) {
+        let Some(event) = event.log_err() else { return };
+        global::<()>(move |watcher| {
+            for f in watcher.watchers.lock().iter() {
+                f(&event)
+            }
+        })
+        .log_err();
+    }
+
+    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
+        let result = INOTIFY_INSTANCE.get_or_init(|| {
+            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
+                inotify: Mutex::new(file_watcher),
+                watchers: Default::default(),
+            })
+        });
+        match result {
+            Ok(g) => Ok(f(g)),
+            Err(e) => Err(anyhow::anyhow!("{}", e)),
+        }
     }
 }
