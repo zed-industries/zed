@@ -475,6 +475,8 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             {
                 if v == "on" {
                     Ok(Self::Value::On)
+                } else if v == "off" {
+                    Ok(Self::Value::Off)
                 } else if v == "language_server" {
                     Ok(Self::Value::List(FormatterList(
                         Formatter::LanguageServer { name: None }.into(),

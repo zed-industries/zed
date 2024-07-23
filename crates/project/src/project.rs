@@ -5091,7 +5091,7 @@ impl Project {
                                                 .await
                                             } else {
                                                 Self::perform_format(
-                                                    &Formatter::LanguageServer,
+                                                    &Formatter::LanguageServer { name: None },
                                                     server_and_buffer,
                                                     project.clone(),
                                                     buffer,
@@ -5182,7 +5182,7 @@ impl Project {
                                         .await
                                     } else {
                                         Self::perform_format(
-                                            &Formatter::LanguageServer,
+                                            &Formatter::LanguageServer { name: None },
                                             server_and_buffer,
                                             project.clone(),
                                             buffer,
@@ -5280,7 +5280,7 @@ impl Project {
     #[allow(clippy::too_many_arguments)]
     async fn perform_format(
         formatter: &Formatter,
-        server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
+        primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
         project: WeakModel<Project>,
         buffer: &Model<Buffer>,
         buffer_abs_path: &Option<PathBuf>,
@@ -5291,8 +5291,18 @@ impl Project {
         mut cx: &mut AsyncAppContext,
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
         let result = match formatter {
-            Formatter::LanguageServer => {
-                if let Some((language_server, buffer_abs_path)) = server_and_buffer {
+            Formatter::LanguageServer { name } => {
+                if let Some((language_server, buffer_abs_path)) = primary_server_and_buffer {
+                    let language_server = if let Some(name) = name {
+                        adapters_and_servers
+                            .iter()
+                            .find_map(|(adapter, server)| {
+                                adapter.name.0.as_ref().eq(name.as_str()).then_some(server)
+                            })
+                            .unwrap_or_else(|| language_server)
+                    } else {
+                        language_server
+                    };
                     Some(FormatOperation::Lsp(
                         Self::format_via_lsp(
                             &project,
