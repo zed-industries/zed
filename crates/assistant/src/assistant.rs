@@ -221,8 +221,12 @@ fn init_completion_provider(cx: &mut AppContext) {
     completion::init(cx);
     update_active_language_model_from_settings(cx);
 
-    cx.observe_global::<SettingsStore>(move |cx| update_active_language_model_from_settings(cx))
+    cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
         .detach();
+    cx.observe(&LanguageModelRegistry::global(cx), |_, cx| {
+        update_active_language_model_from_settings(cx)
+    })
+    .detach();
 }
 
 fn update_active_language_model_from_settings(cx: &mut AppContext) {

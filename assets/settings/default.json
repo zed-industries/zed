@@ -849,6 +849,8 @@
       }
     }
   },
+  // Different settings for specific language models.
+  "language_models": {},
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
