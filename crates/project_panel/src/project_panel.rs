@@ -2572,7 +2572,7 @@ impl Panel for ProjectPanel {
         settings::update_settings_file::<ProjectPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
+            move |settings, _| {
                 let dock = match position {
                     DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
                     DockPosition::Right => ProjectPanelDockPosition::Right,

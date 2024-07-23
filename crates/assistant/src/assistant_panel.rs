@@ -18,7 +18,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
-use completion::CompletionProvider;
+use completion::LanguageModelCompletionProvider;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
@@ -364,13 +364,12 @@ impl AssistantPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
             cx.subscribe(&context_editor_toolbar, Self::handle_toolbar_event),
             cx.subscribe(&model_summary_editor, Self::handle_summary_editor_event),
-            cx.observe_global::<CompletionProvider>({
-                let mut prev_settings_version = CompletionProvider::global(cx).settings_version();
-                move |this, cx| {
-                    this.completion_provider_changed(prev_settings_version, cx);
-                    prev_settings_version = CompletionProvider::global(cx).settings_version();
-                }
-            }),
+            cx.observe(
+                &LanguageModelCompletionProvider::global(cx),
+                |this, _, cx| {
+                    this.completion_provider_changed(cx);
+                },
+            ),
         ];
 
         Self {
@@ -483,37 +482,36 @@ impl AssistantPanel {
         }
     }
 
-    fn completion_provider_changed(
-        &mut self,
-        prev_settings_version: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if self.is_authenticated(cx) {
-            self.authentication_prompt = None;
-
-            match self.active_context_editor(cx) {
-                Some(editor) => {
-                    editor.update(cx, |active_context, cx| {
-                        active_context
-                            .context
-                            .update(cx, |context, cx| context.completion_provider_changed(cx))
-                    });
-                }
-                None => {
-                    self.new_context(cx);
-                }
-            }
-
-            cx.notify();
-        } else if self.authentication_prompt.is_none()
-            || prev_settings_version != CompletionProvider::global(cx).settings_version()
-        {
-            self.authentication_prompt =
-                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
-                    provider.authentication_prompt(cx)
-                }));
-            cx.notify();
+    fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(editor) = self.active_context_editor(cx) {
+            editor.update(cx, |active_context, cx| {
+                active_context
+                    .context
+                    .update(cx, |context, cx| context.completion_provider_changed(cx))
+            })
         }
+
+        if self.active_context_editor(cx).is_none() {
+            self.new_context(cx);
+        }
+
+        let authentication_prompt = Self::authentication_prompt(cx);
+        for context_editor in self.context_editors(cx) {
+            context_editor.update(cx, |editor, cx| {
+                editor.set_authentication_prompt(authentication_prompt.clone(), cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
+        if let Some(provider) = LanguageModelCompletionProvider::read_global(cx).active_provider() {
+            if !provider.is_authenticated(cx) {
+                return Some(provider.authentication_prompt(cx));
+            }
+        }
+        None
     }
 
     pub fn inline_assist(
@@ -774,13 +772,20 @@ impl AssistantPanel {
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        CompletionProvider::global(cx)
+        LanguageModelCompletionProvider::read_global(cx)
             .reset_credentials(cx)
             .detach_and_log_err(cx);
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx);
+    }
+
+    fn context_editors(&self, cx: &AppContext) -> Vec<View<ContextEditor>> {
+        self.pane
+            .read(cx)
+            .items_of_type::<ContextEditor>()
+            .collect()
     }
 
     fn active_context_editor(&self, cx: &AppContext) -> Option<View<ContextEditor>> {
@@ -904,11 +909,11 @@ impl AssistantPanel {
     }
 
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        CompletionProvider::global(cx).is_authenticated()
+        LanguageModelCompletionProvider::read_global(cx).is_authenticated(cx)
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
+        LanguageModelCompletionProvider::read_global(cx).authenticate(cx)
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -968,14 +973,18 @@ impl Panel for AssistantPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<AssistantSettings>(self.fs.clone(), cx, move |settings| {
-            let dock = match position {
-                DockPosition::Left => AssistantDockPosition::Left,
-                DockPosition::Bottom => AssistantDockPosition::Bottom,
-                DockPosition::Right => AssistantDockPosition::Right,
-            };
-            settings.set_dock(dock);
-        });
+        settings::update_settings_file::<AssistantSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => AssistantDockPosition::Left,
+                    DockPosition::Bottom => AssistantDockPosition::Bottom,
+                    DockPosition::Right => AssistantDockPosition::Right,
+                };
+                settings.set_dock(dock);
+            },
+        );
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
@@ -1074,6 +1083,7 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
+    authentication_prompt: Option<AnyView>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1131,6 +1141,7 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let mut this = Self {
             context,
+            authentication_prompt: None,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1148,6 +1159,15 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
         this
+    }
+
+    fn set_authentication_prompt(
+        &mut self,
+        authentication_prompt: Option<AnyView>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.authentication_prompt = authentication_prompt;
+        cx.notify();
     }
 
     fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
@@ -1176,6 +1196,10 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+        if self.authentication_prompt.is_some() {
+            return;
+        }
+
         if !self.apply_edit_step(cx) {
             self.send_to_model(cx);
         }
@@ -2203,19 +2227,26 @@ impl Render for ContextEditor {
             .size_full()
             .v_flex()
             .child(
-                div()
-                    .flex_grow()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(self.editor.clone())
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .absolute()
-                            .bottom_0()
-                            .p_4()
-                            .justify_end()
-                            .child(self.render_send_button(cx)),
-                    ),
+                if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
+                    div()
+                        .flex_grow()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(authentication_prompt.clone().into_any())
+                } else {
+                    div()
+                        .flex_grow()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(self.editor.clone())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .absolute()
+                                .bottom_0()
+                                .p_4()
+                                .justify_end()
+                                .child(self.render_send_button(cx)),
+                        )
+                },
             )
     }
 }
@@ -2543,7 +2574,7 @@ impl ContextEditorToolbarItem {
     }
 
     fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
         let context = &self
             .active_context_editor
             .as_ref()?

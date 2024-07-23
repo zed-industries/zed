@@ -164,6 +164,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
+    language_model::init(app_state.client.clone(), cx);
     snippet_provider::init(cx);
     supermaven::init(app_state.client.clone(), cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);

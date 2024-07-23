@@ -21,7 +21,7 @@ pub use settings_store::{
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut AppContext) {
-    let mut settings = SettingsStore::default();
+    let mut settings = SettingsStore::new(cx);
     settings
         .set_default_settings(&default_settings(), cx)
         .unwrap();
