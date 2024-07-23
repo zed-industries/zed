@@ -52,8 +52,9 @@ tiny_http = "0.8"
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
-async-socks5 = "0.6.0"
 async-compat = "0.2.4"
+tokio-socks = { git = "https://github.com/sticnarf/tokio-socks", rev = "f1eac4f" }
+tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

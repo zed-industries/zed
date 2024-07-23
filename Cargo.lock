@@ -795,16 +795,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-socks5"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8da2537846e16b96d2972ee52a3b355663872a1a687ce6d57a3b6f6b6a181c89"
-dependencies = [
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "async-std"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2381,7 +2371,6 @@ dependencies = [
  "async-compat",
  "async-native-tls 0.5.0",
  "async-recursion 0.3.2",
- "async-socks5",
  "async-tungstenite",
  "chrono",
  "clock",
@@ -2415,6 +2404,8 @@ dependencies = [
  "thiserror",
  "time",
  "tiny_http",
+ "tokio",
+ "tokio-socks",
  "url",
  "util",
  "windows 0.57.0",
@@ -11334,6 +11325,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-socks"
+version = "0.5.2"
+source = "git+https://github.com/sticnarf/tokio-socks?rev=f1eac4f#f1eac4fbdfdc1ad1b6f2f6592f73ae76d8955264"
+dependencies = [
+ "either",
+ "futures-util",
+ "thiserror",
  "tokio",
 ]
 

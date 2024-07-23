@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod socks;
 pub mod telemetry;
 pub mod user;
 
@@ -32,6 +33,7 @@ use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, Requ
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
+use socks::{get_socks_proxy, SocksStream, SocksVersion};
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -1184,32 +1186,29 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let socks_proxy = 'get_socks: {
-                let Some(proxy_uri) = proxy.to_uri() else {
-                    break 'get_socks None;
-                };
-                let Some(schema) = proxy_uri.scheme_str() else {
-                    break 'get_socks None;
-                };
-                if !schema.starts_with("socks") {
-                    break 'get_socks None;
-                }
-                if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
-                    Some((host.to_string(), port))
-                } else {
-                    None
-                }
-            };
+            let socks_proxy = get_socks_proxy(&proxy);
             let stream = match socks_proxy {
-                Some(socks_proxy) => {
-                    let mut stream =
+                Some((socks_proxy, SocksVersion::V4)) => {
+                    let stream =
                         CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
-                    async_socks5::connect(&mut stream, rpc_host, None)
-                        .await
-                        .map_err(|err| anyhow!("error connecting to socks {}", err))?;
-                    stream
+                    SocksStream::Socks4(
+                        tokio_socks::tcp::Socks4Stream::connect_with_socket(stream, rpc_host)
+                            .await
+                            .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                    )
                 }
-                None => CompatExt::compat(smol::net::TcpStream::connect(rpc_host).await?),
+                Some((socks_proxy, SocksVersion::V5)) => {
+                    let stream =
+                        CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
+                    SocksStream::Socks5(
+                        tokio_socks::tcp::Socks5Stream::connect_with_socket(stream, rpc_host)
+                            .await
+                            .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                    )
+                }
+                None => SocksStream::NoProxy(CompatExt::compat(
+                    smol::net::TcpStream::connect(rpc_host).await?,
+                )),
             };
             let stream = CompatExt::compat(stream);
 
