@@ -735,3 +735,155 @@ async fn open_workspace(
     }
     errored
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use cli::{
+        ipc::{self},
+        CliResponse,
+    };
+    use editor::Editor;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use util::paths::PathLikeWithPosition;
+    use workspace::{AppState, Workspace};
+
+    use crate::zed::{open_listener::open_workspace, tests::init_test};
+
+    #[gpui::test]
+    async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "dir1": {
+                        "file1.txt": "content1",
+                        "file2.txt": "content2",
+                    },
+                }),
+            )
+            .await;
+
+        assert_eq!(cx.windows().len(), 0);
+
+        // First open the workspace directory
+        open_workspace_file("/root/dir1", None, app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 1);
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
+        workspace
+            .update(cx, |workspace, cx| {
+                assert!(workspace.active_item_as::<Editor>(cx).is_none())
+            })
+            .unwrap();
+
+        // Now open a file inside that workspace
+        open_workspace_file("/root/dir1/file1.txt", None, app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 1);
+        workspace
+            .update(cx, |workspace, cx| {
+                assert!(workspace.active_item_as::<Editor>(cx).is_some());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_workspace_with_nonexistant_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "dir1": {
+                        "file1.txt": "content1",
+                        "file2.txt": "content2",
+                    },
+                    "dir2": {
+                        "file3.txt": "content3",
+                    },
+                    "file4.txt": "content4",
+                }),
+            )
+            .await;
+
+        assert_eq!(cx.windows().len(), 0);
+
+        // Test case 1: Open a single file that does not exist yet
+        open_workspace_file("/root/file5.txt", None, app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 1);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
+        workspace_1
+            .update(cx, |workspace, cx| {
+                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+            })
+            .unwrap();
+
+        // Test case 2: Open a single file that does not exist yet,
+        // but tell Zed to add it to the current workspace
+        open_workspace_file("/root/file6.txt", Some(false), app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 1);
+        workspace_1
+            .update(cx, |workspace, cx| {
+                let items = workspace.items(cx).collect::<Vec<_>>();
+                assert_eq!(items.len(), 2, "Workspace should have two items");
+            })
+            .unwrap();
+
+        // Test case 3: Open a single file that does not exist yet,
+        // but tell Zed to NOT add it to the current workspace
+        open_workspace_file("/root/file7.txt", Some(true), app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 2);
+        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        workspace_2
+            .update(cx, |workspace, cx| {
+                let items = workspace.items(cx).collect::<Vec<_>>();
+                assert_eq!(items.len(), 1, "Workspace should have two items");
+            })
+            .unwrap();
+    }
+
+    async fn open_workspace_file(
+        path: &str,
+        open_new_workspace: Option<bool>,
+        app_state: Arc<AppState>,
+        cx: &mut TestAppContext,
+    ) {
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+
+        let path_like = PathBuf::from(path);
+        let workspace_paths = vec![PathLikeWithPosition {
+            path_like,
+            row: None,
+            column: None,
+        }];
+
+        let errored = cx
+            .spawn(|mut cx| async move {
+                open_workspace(
+                    workspace_paths,
+                    open_new_workspace,
+                    false,
+                    &response_tx,
+                    &app_state,
+                    &mut cx,
+                )
+                .await
+            })
+            .await;
+
+        assert!(!errored);
+    }
+}

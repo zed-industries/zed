@@ -3386,7 +3386,7 @@ mod tests {
         .unwrap();
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+    pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
     }
 
