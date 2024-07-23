@@ -106,6 +106,7 @@ dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
+session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 sqlx = { version = "0.7", features = ["sqlite"] }
 theme.workspace = true
