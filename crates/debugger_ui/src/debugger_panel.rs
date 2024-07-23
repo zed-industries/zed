@@ -313,10 +313,9 @@ impl DebugPanel {
             return;
         };
 
-        let client_id = client_id.clone();
-        let client = this.debug_client_by_id(client_id.clone(), cx);
+        let client_id = *client_id;
+        let client = this.debug_client_by_id(client_id, cx);
 
-        let client_id = client_id.clone();
         cx.spawn({
             let event = event.clone();
             |this, mut cx| async move {
@@ -333,11 +332,11 @@ impl DebugPanel {
                     stack_trace_response.stack_frames.first().unwrap().clone();
                 let mut scope_tasks = Vec::new();
                 for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
-                    let frame_id = stack_frame.id.clone();
+                    let frame_id = stack_frame.id;
                     let client = client.clone();
                     scope_tasks.push(async move {
                         anyhow::Ok((
-                            frame_id.clone(),
+                            frame_id,
                             client
                                 .request::<Scopes>(ScopesArguments { frame_id })
                                 .await?,
@@ -353,11 +352,11 @@ impl DebugPanel {
                     scopes.insert(thread_id, response.scopes.clone());
 
                     for scope in response.scopes {
-                        let scope_reference = scope.variables_reference.clone();
+                        let scope_reference = scope.variables_reference;
                         let client = client.clone();
                         variable_tasks.push(async move {
                             anyhow::Ok((
-                                scope_reference.clone(),
+                                scope_reference,
                                 client
                                     .request::<Variables>(VariablesArguments {
                                         variables_reference: scope_reference,
@@ -383,7 +382,7 @@ impl DebugPanel {
                         .or_insert(ThreadState::default());
 
                     thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
-                    thread_state.stack_frames = stack_trace_response.stack_frames.clone();
+                    thread_state.stack_frames = stack_trace_response.stack_frames;
                     thread_state.scopes = scopes;
                     thread_state.variables = variables;
                     thread_state.status = ThreadStatus::Stopped;
@@ -453,7 +452,7 @@ impl DebugPanel {
                 .thread_states()
                 .insert(thread_id, ThreadState::default());
         } else {
-            client.update_thread_state_status(thread_id.clone(), ThreadStatus::Ended);
+            client.update_thread_state_status(thread_id, ThreadStatus::Ended);
 
             // TODO: we want to figure out for witch clients/threads we should remove the highlights
             cx.spawn({
