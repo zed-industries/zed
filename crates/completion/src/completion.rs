@@ -131,6 +131,26 @@ impl CompletionProvider {
         })
     }
 
+    pub fn stream_completion_bg(
+        // TODO consider unifying this with stream_completion, since they share so much code
+        // (design question: do we want to make a Spawn or perhaps Executor trait to abstract over bg and fg executors?)
+        &self,
+        request: LanguageModelRequest,
+        cx: &AppContext,
+    ) -> Task<Result<CompletionResponse>> {
+        let rate_limiter = self.request_limiter.clone();
+        let provider = self.provider.clone();
+        cx.background_executor().spawn(async move {
+            let lock = rate_limiter.acquire_arc().await;
+            let response = provider.read().stream_completion(request);
+            let response = response.await?;
+            Ok(CompletionResponse {
+                inner: response,
+                _lock: lock,
+            })
+        })
+    }
+
     pub fn complete(&self, request: LanguageModelRequest, cx: &AppContext) -> Task<Result<String>> {
         let response = self.stream_completion(request, cx);
         cx.foreground_executor().spawn(async move {

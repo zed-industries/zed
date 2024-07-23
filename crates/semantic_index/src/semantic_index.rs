@@ -16,7 +16,8 @@ use gpui::{
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, Role};
+use log;
 use parking_lot::Mutex;
 use project::{Entry, Project, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,13 @@ use util::ResultExt;
 use worktree::Snapshot;
 
 pub use project_index_debug_view::ProjectIndexDebugView;
+
+/// This model should be good for summarizing code - fast, low price, and good at outputting English.
+///
+/// It's called "preferred" because if the model isn't available (e.g. due to lacking the necessary API key),
+/// we fall back on the global CompletionProvider's selected model.
+const PREFERRED_SUMMARIZATION_MODEL: LanguageModel =
+    LanguageModel::OpenAi(open_ai::Model::FourOmniMini);
 
 pub struct SemanticIndex {
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -629,60 +637,52 @@ impl WorktreeIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let summarize = Self::summarize_updated_entries(cx, updated_entries.clone());
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+        // let summarize = Self::summarize_code(cx, &worktree, scan.updated_entries);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
-            futures::try_join!(scan.task, chunk.task, embed.task, summarize, persist)?;
+            futures::try_join!(scan.task, chunk.task, embed.task, /*summarize,*/ persist)?;
             Ok(())
         }
     }
 
-    fn summarize_updated_entries(
-        cx: &AppContext,
-        updated_entries: UpdatedEntriesSet,
-    ) -> Task<Result<()>> {
-        let prompt = "TODO prompt goes here".to_string();
+    fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<()>> {
+        let provider = CompletionProvider::global(cx);
+        let model = if provider
+            .available_models()
+            .contains(&PREFERRED_SUMMARIZATION_MODEL)
+        {
+            PREFERRED_SUMMARIZATION_MODEL
+        } else {
+            provider.model()
+        };
+        const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
+        let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
         let request = LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
+            model,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: prompt,
             }],
-            stop: vec![],
+            stop: Vec::new(),
             temperature: 1.0,
         };
 
-        let provider = CompletionProvider::global(cx);
-        let response = provider.stream_completion(request, cx);
+        let response = provider.stream_completion_bg(request, cx);
 
         cx.background_executor().spawn(async move {
-            match response.await {
-                Ok(mut chunks) => {
-                    let mut completion = String::new();
+            let mut chunks = response.await?;
+            let mut completion = String::new();
 
-                    while let Some(chunk) = chunks.next().await {
-                        match chunk {
-                            Ok(chunk) => {
-                                completion.push_str(&chunk);
-                            }
-                            Err(chunk_err) => {
-                                log::error!(
-                                    "Unable to get response chunk for summarization: {:?}",
-                                    chunk_err
-                                );
-                            }
-                        }
-                    }
-
-                    dbg!(&completion);
-                }
-                Err(err) => {
-                    log::error!("Unable to get response for summarization: {:?}", err);
-                }
+            while let Some(chunk) = chunks.next().await {
+                completion.push_str(chunk?.as_str());
             }
+
+            dbg!(&completion);
+
+            Ok(())
         })
     }
 
@@ -817,11 +817,14 @@ impl WorktreeIndex {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
+        let completion_provider = CompletionProvider::global(cx);
         let task = cx.spawn(|cx| async move {
             cx.background_executor()
-                .scoped(|cx| {
-                    for _ in 0..cx.num_cpus() {
-                        cx.spawn(async {
+                .scoped(|scope| {
+                    // TODO: `scope` was previously named `cx`, shadowing the one from cx.spawn. Is it ok to use that cx after doing scoped?
+                    // TODO: Shouldn't we max this out at (num_cpus - 1).max(1), since the render thread will always get its own cpu?
+                    for _ in 0..scope.num_cpus() {
+                        scope.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
                                 let Some(text) = fs
@@ -834,20 +837,44 @@ impl WorktreeIndex {
                                 else {
                                     continue;
                                 };
-                                let language = language_registry
-                                    .language_for_file_path(&entry.path)
-                                    .await
-                                    .ok();
-                                let chunked_file = ChunkedFile {
-                                    chunks: chunk_text(&text, language.as_ref(), &entry.path),
-                                    handle,
-                                    path: entry.path,
-                                    mtime: entry.mtime,
-                                    text,
+                                let chunk_file = async {
+                                    let language = language_registry
+                                        .language_for_file_path(&entry.path)
+                                        .await
+                                        .ok();
+                                    let chunked_file = ChunkedFile {
+                                        chunks: chunk_text(&text, language.as_ref(), &entry.path),
+                                        handle,
+                                        path: entry.path,
+                                        mtime: entry.mtime,
+                                        text,
+                                    };
+
+                                    if let Err(err) = chunked_files_tx.send(chunked_file).await {
+                                        log::error!(
+                                            "Error trying to send chunked file to channel: {:?}",
+                                            err
+                                        );
+                                    }
                                 };
 
-                                if chunked_files_tx.send(chunked_file).await.is_err() {
-                                    return;
+                                match cx.update(|cx| Self::summarize_code(&text, cx)) {
+                                    Ok(summarize) => {
+                                        if let Err(err) = futures::try_join!(summarize, async {
+                                            Ok(chunk_file.await)
+                                        }) {
+                                            // chunk_file can't return Err, so the error must have come from summarize.
+                                            log::error!("Error summarizing code: {:?}", err,);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::error!(
+                                            "Error getting AppContext for summarizing code: {:?}",
+                                            err,
+                                        );
+
+                                        chunk_file.await
+                                    }
                                 }
                             }
                         });
