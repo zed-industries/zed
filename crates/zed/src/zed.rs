@@ -140,6 +140,25 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
+        #[cfg(target_os = "linux")]
+        if let Err(e) = fs::watcher::global(|_| {}) {
+            let message = format!(db::indoc!{r#"
+                inotify_init returned {}
+
+                This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
+                "#}, e);
+            let prompt = cx.prompt(PromptLevel::Critical, "Could not start inotify", Some(&message),
+                &["Troubleshoot and Quit"]);
+            cx.spawn(|_, mut cx| async move {
+                if prompt.await == Ok(0) {
+                    cx.update(|cx| {
+                        cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
+                        cx.quit();
+                    }).ok();
+                }
+            }).detach()
+        }
+
         if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
