@@ -612,8 +612,10 @@ async fn open_workspaces(
         }
     } else {
         // If there are paths to open, open a workspace for each grouping of paths
+        let mut errored = false;
+
         for workspace_paths in grouped_paths {
-            let errored = open_workspace(
+            let workspace_failed_to_open = open_workspace(
                 workspace_paths,
                 open_new_workspace,
                 wait,
@@ -622,9 +624,14 @@ async fn open_workspaces(
                 &mut cx,
             )
             .await;
-            if errored {
-                return Err(anyhow!("could not open workspace"));
+
+            if workspace_failed_to_open {
+                errored = true
             }
+        }
+
+        if errored {
+            return Err(anyhow!("failed to open a workspace"));
         }
     }
 
