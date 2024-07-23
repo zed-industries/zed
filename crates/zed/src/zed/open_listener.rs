@@ -539,28 +539,8 @@ pub async fn handle_cli_connection(
                 )
                 .await;
 
-                let errored = if let Some(errored) = open_workspace_result {
-                    errored
-                } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-                    cx.update(|cx| show_welcome_view(app_state, cx).detach())
-                        .log_err();
-                    false
-                } else {
-                    cx.update(|cx| {
-                        workspace::open_new(app_state, cx, |workspace, cx| {
-                            Editor::new_file(workspace, &Default::default(), cx)
-                        })
-                        .detach();
-                    })
-                    .log_err();
-                    false
-                };
-
-                responses
-                    .send(CliResponse::Exit {
-                        status: i32::from(errored),
-                    })
-                    .log_err();
+                let status = if open_workspace_result.is_err() { 1 } else { 0 };
+                responses.send(CliResponse::Exit { status }).log_err();
             }
         }
     }
@@ -573,31 +553,36 @@ async fn open_workspaces(
     wait: bool,
     app_state: Arc<AppState>,
     mut cx: &mut AsyncAppContext,
-) -> Option<bool> {
-    let workspaces = if paths.is_empty() {
+) -> Result<()> {
+    let grouped_paths = if paths.is_empty() {
+        // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
-            None
+            Vec::new()
         } else {
             let locations = restorable_workspace_locations(&mut cx, &app_state).await;
-            locations.map(|locations| {
-                locations
-                    .into_iter()
-                    .map(|location| {
-                        location
-                            .paths()
-                            .iter()
-                            .map(|path| PathLikeWithPosition {
-                                path_like: path.clone(),
-                                row: None,
-                                column: None,
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>()
-            })
+            locations
+                .into_iter()
+                .flat_map(|locations| {
+                    locations
+                        .into_iter()
+                        .map(|location| {
+                            location
+                                .paths()
+                                .iter()
+                                .map(|path| PathLikeWithPosition {
+                                    path_like: path.clone(),
+                                    row: None,
+                                    column: None,
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect()
         }
     } else {
-        let workspace_location = paths
+        // If paths are provided, parse them (they include positions)
+        let paths_with_position = paths
             .into_iter()
             .map(|path_with_position_string| {
                 PathLikeWithPosition::parse_str(&path_with_position_string, |_, path_str| {
@@ -606,11 +591,28 @@ async fn open_workspaces(
                 .expect("Infallible")
             })
             .collect();
-        Some(vec![workspace_location])
+        vec![paths_with_position]
     };
 
-    if let Some(workspace_paths) = workspaces {
-        for workspace_paths in workspace_paths {
+    if grouped_paths.is_empty() {
+        // If we have no paths to open, show the welcome screen if this is the first launch
+        if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            cx.update(|cx| show_welcome_view(app_state, cx).detach())
+                .log_err();
+        }
+        // If not the first launch, show an empty window with empty editor
+        else {
+            cx.update(|cx| {
+                workspace::open_new(app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            })
+            .log_err();
+        }
+    } else {
+        // If there are paths to open, open a workspace for each grouping of paths
+        for workspace_paths in grouped_paths {
             let errored = open_workspace(
                 workspace_paths,
                 open_new_workspace,
@@ -621,13 +623,12 @@ async fn open_workspaces(
             )
             .await;
             if errored {
-                return Some(true);
+                return Err(anyhow!("could not open workspace"));
             }
         }
-        Some(false)
-    } else {
-        None
     }
+
+    Ok(())
 }
 
 async fn open_workspace(
