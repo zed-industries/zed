@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use futures::io::{AsyncRead, AsyncWrite};
-use http::proxy::Proxy;
+use http_client::proxy::Proxy;
 
 pub enum SocksVersion {
     V4,

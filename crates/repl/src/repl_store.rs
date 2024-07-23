@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
+use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
@@ -25,6 +26,8 @@ pub struct ReplStore {
 }
 
 impl ReplStore {
+    const NAMESPACE: &'static str = "repl";
+
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         let store = cx.new_model(move |cx| Self::new(fs, cx));
 
@@ -44,13 +47,15 @@ impl ReplStore {
             this.set_enabled(JupyterSettings::enabled(cx), cx);
         })];
 
-        Self {
+        let this = Self {
             fs,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
-        }
+        };
+        this.on_enabled_changed(cx);
+        this
     }
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
@@ -70,10 +75,28 @@ impl ReplStore {
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut ModelContext<Self>) {
-        if self.enabled != enabled {
-            self.enabled = enabled;
-            cx.notify();
+        if self.enabled == enabled {
+            return;
         }
+
+        self.enabled = enabled;
+        self.on_enabled_changed(cx);
+    }
+
+    fn on_enabled_changed(&self, cx: &mut ModelContext<Self>) {
+        if !self.enabled {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                filter.hide_namespace(Self::NAMESPACE);
+            });
+
+            return;
+        }
+
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.show_namespace(Self::NAMESPACE);
+        });
+
+        cx.notify();
     }
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {

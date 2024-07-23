@@ -61,11 +61,13 @@ impl TerminalOutput {
             .iter()
             .chain(Some(&self.handler.current_text_run))
             .map(|ansi_run| {
-                let color = terminal_view::terminal_element::convert_color(&ansi_run.fg, theme);
-                let background_color = Some(terminal_view::terminal_element::convert_color(
-                    &ansi_run.bg,
+                let color = terminal_view::terminal_element::convert_color(
+                    &ansi_run.fg.unwrap_or(Color::Named(NamedColor::Foreground)),
                     theme,
-                ));
+                );
+                let background_color = ansi_run
+                    .bg
+                    .map(|bg| terminal_view::terminal_element::convert_color(&bg, theme));
 
                 TextRun {
                     len: ansi_run.len,
@@ -99,21 +101,11 @@ impl LineHeight for TerminalOutput {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct AnsiTextRun {
     len: usize,
-    fg: alacritty_terminal::vte::ansi::Color,
-    bg: alacritty_terminal::vte::ansi::Color,
-}
-
-impl AnsiTextRun {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            fg: Color::Named(NamedColor::Foreground),
-            bg: Color::Named(NamedColor::Background),
-        }
-    }
+    fg: Option<alacritty_terminal::vte::ansi::Color>,
+    bg: Option<alacritty_terminal::vte::ansi::Color>,
 }
 
 struct TerminalHandler {
@@ -126,11 +118,7 @@ impl TerminalHandler {
     fn new() -> Self {
         Self {
             text_runs: Vec::new(),
-            current_text_run: AnsiTextRun {
-                len: 0,
-                fg: Color::Named(NamedColor::Foreground),
-                bg: Color::Named(NamedColor::Background),
-            },
+            current_text_run: AnsiTextRun::default(),
             buffer: String::new(),
         }
     }
@@ -159,15 +147,11 @@ impl TerminalHandler {
             self.text_runs.push(self.current_text_run.clone());
         }
 
-        let mut text_run = AnsiTextRun {
-            len: 0,
-            fg: self.current_text_run.fg,
-            bg: self.current_text_run.bg,
-        };
+        let mut text_run = AnsiTextRun::default();
 
         match attr {
-            Attr::Foreground(color) => text_run.fg = color,
-            Attr::Background(color) => text_run.bg = color,
+            Attr::Foreground(color) => text_run.fg = Some(color),
+            Attr::Background(color) => text_run.bg = Some(color),
             _ => {}
         }
 

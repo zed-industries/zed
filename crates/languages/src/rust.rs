@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
-use http::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lazy_static::lazy_static;

@@ -11,7 +11,7 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
 
-use http::Url;
+use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -1803,7 +1803,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             // Prevent dropping text from other programs.
                             if paths.is_empty() {
-                                data_offer.finish();
                                 data_offer.destroy();
                                 return;
                             }

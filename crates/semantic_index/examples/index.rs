@@ -1,7 +1,7 @@
 use client::Client;
 use futures::channel::oneshot;
 use gpui::App;
-use http::{proxy::Proxy, HttpClientWithUrl};
+use http_client::{proxy::Proxy, HttpClientWithUrl};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};

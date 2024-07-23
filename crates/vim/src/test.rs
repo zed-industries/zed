@@ -956,8 +956,6 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("g x");
     cx.assert_state("1234fooˇ56789", Mode::Normal);
 
-    cx.executor().allow_parking();
-
     // test command
     cx.update(|cx| {
         cx.bind_keys([KeyBinding::new(
@@ -1266,6 +1264,29 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
           two
           three
           "},
+        Mode::Normal,
+    );
+
+    // works with count
+    cx.simulate_keystrokes("g c 2 j");
+    cx.assert_state(
+        indoc! {"
+            // // ˇone
+            // two
+            // three
+            "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g c g g");
+    cx.assert_state(
+        indoc! {"
+            // one
+            two
+            three
+            ˇ"},
         Mode::Normal,
     );
 }

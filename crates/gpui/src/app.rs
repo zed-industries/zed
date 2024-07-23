@@ -18,7 +18,7 @@ use smol::future::FutureExt;
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
-use http::{self, proxy::Proxy, HttpClient};
+use http_client::{proxy::Proxy, HttpClient};
 pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -114,7 +114,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http::client(Proxy::no_proxy()),
+            http_client::client(Proxy::no_proxy()),
         ))
     }
 
@@ -125,7 +125,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http::client(Proxy::no_proxy()),
+            http_client::client(Proxy::no_proxy()),
         ))
     }
 

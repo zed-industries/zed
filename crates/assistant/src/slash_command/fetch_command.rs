@@ -10,7 +10,7 @@ use assistant_slash_command::{
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use workspace::Workspace;
