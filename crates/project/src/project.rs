@@ -1544,7 +1544,6 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
-        cx.emit(Event::DeletedEntry(entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
         })
@@ -7852,6 +7851,7 @@ impl Project {
                 worktree::Event::UpdatedGitRepositories(_) => {
                     cx.emit(Event::WorktreeUpdatedGitRepositories);
                 }
+                worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(*id)),
             }
         })
         .detach();
@@ -8674,12 +8674,8 @@ impl Project {
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let worktree = this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            this.worktree_for_id(worktree_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
-        })??;
-        Worktree::handle_create_entry(worktree, envelope.payload, cx).await
+        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
+        WorktreeStore::handle_create_project_entry(worktree_store, envelope, cx).await
     }
 
     async fn handle_rename_project_entry(
@@ -8687,12 +8683,8 @@ impl Project {
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
-        })??;
-        Worktree::handle_rename_entry(worktree, envelope.payload, cx).await
+        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
+        WorktreeStore::handle_rename_project_entry(worktree_store, envelope, cx).await
     }
 
     async fn handle_copy_project_entry(
@@ -8700,12 +8692,8 @@ impl Project {
         envelope: TypedEnvelope<proto::CopyProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
-        })??;
-        Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
+        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
+        WorktreeStore::handle_copy_project_entry(worktree_store, envelope, cx).await
     }
 
     async fn handle_delete_project_entry(
@@ -8713,13 +8701,8 @@ impl Project {
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
-        })??;
-        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
-        Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
+        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
+        WorktreeStore::handle_delete_project_entry(worktree_store, envelope, cx).await
     }
 
     async fn handle_expand_project_entry(
@@ -8727,11 +8710,8 @@ impl Project {
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandProjectEntryResponse> {
-        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this
-            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
-            .ok_or_else(|| anyhow!("invalid request"))?;
-        Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
+        let worktree_store = this.update(&mut cx, |this, _| this.worktree_store.clone())?;
+        WorktreeStore::handle_expand_project_entry(worktree_store, envelope, cx).await
     }
 
     async fn handle_update_diagnostic_summary(

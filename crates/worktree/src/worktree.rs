@@ -354,6 +354,7 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
+    DeletedEntry(ProjectEntryId),
 }
 
 static EMPTY_PATH: &str = "";
@@ -738,10 +739,12 @@ impl Worktree {
         trash: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<()>>> {
-        match self {
+        let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
-        }
+        }?;
+        cx.emit(Event::DeletedEntry(entry_id));
+        Some(task)
     }
 
     pub fn rename_entry(

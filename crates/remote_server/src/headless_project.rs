@@ -39,15 +39,35 @@ impl HeadlessProject {
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let this = cx.weak_model();
 
-        session.add_request_handler(this.clone(), Self::handle_add_worktree);
-        session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_update_buffer);
-        session.add_request_handler(this.clone(), Self::handle_save_buffer);
-
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
         let buffer_store = cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
+
+        session.add_request_handler(this.clone(), Self::handle_add_worktree);
+        session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
+        session.add_request_handler(this.clone(), Self::handle_update_buffer);
+        session.add_request_handler(this.clone(), Self::handle_save_buffer);
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_create_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_rename_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_copy_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_delete_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_expand_project_entry,
+        );
 
         HeadlessProject {
             session: session.into(),

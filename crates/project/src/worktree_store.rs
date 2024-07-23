@@ -1,7 +1,10 @@
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
-use rpc::proto::{self, AnyProtoClient};
+use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
+use rpc::{
+    proto::{self, AnyProtoClient},
+    TypedEnvelope,
+};
 use text::ReplicaId;
 use worktree::{ProjectEntryId, Worktree, WorktreeId};
 
@@ -225,6 +228,70 @@ impl WorktreeStore {
                 }
             }
         }
+    }
+
+    pub async fn handle_create_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CreateProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let worktree = this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            this.worktree_for_id(worktree_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })??;
+        Worktree::handle_create_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_rename_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })??;
+        Worktree::handle_rename_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_copy_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CopyProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })??;
+        Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_delete_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::DeleteProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })??;
+        Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_expand_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ExpandProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ExpandProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this
+            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
+            .ok_or_else(|| anyhow!("invalid request"))?;
+        Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }
 }
 

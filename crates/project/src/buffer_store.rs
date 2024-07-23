@@ -170,6 +170,7 @@ impl BufferStore {
                     worktree::Event::UpdatedGitRepositories(updated_repos) => {
                         this.local_worktree_git_repos_changed(worktree.clone(), updated_repos, cx)
                     }
+                    _ => {}
                 }
             }
         })
