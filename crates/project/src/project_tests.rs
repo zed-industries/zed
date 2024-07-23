@@ -80,7 +80,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
-        let tree = project.worktrees().next().unwrap().read(cx);
+        let tree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(tree.file_count(), 5);
         assert_eq!(
             tree.inode_for_path("fennel/grape"),
@@ -124,13 +124,13 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     .await;
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-    let worktree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let task_context = TaskContext::default();
 
     cx.executor().run_until_parked();
     let worktree_id = cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         })
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
@@ -734,7 +734,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     // Initially, we don't load ignored files because the language server has not explicitly asked us to watch them.
     project.update(cx, |project, cx| {
-        let worktree = project.worktrees().next().unwrap();
+        let worktree = project.worktrees(cx).next().unwrap();
         assert_eq!(
             worktree
                 .read(cx)
@@ -808,7 +808,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Now the language server has asked us to watch an ignored directory path,
     // so we recursively load it.
     project.update(cx, |project, cx| {
-        let worktree = project.worktrees().next().unwrap();
+        let worktree = project.worktrees(cx).next().unwrap();
         assert_eq!(
             worktree
                 .read(cx)
@@ -1132,7 +1132,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let worktree_id = project.update(cx, |p, cx| p.worktrees().next().unwrap().read(cx).id());
+    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
 
     // Cause worktree to start the fake language server
     let _buffer = project
@@ -2477,7 +2477,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     ) -> Vec<(&'a Path, bool)> {
         project
             .read(cx)
-            .worktrees()
+            .worktrees(cx)
             .map(|worktree| {
                 let worktree = worktree.read(cx);
                 (
@@ -2821,7 +2821,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     .await;
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-    let worktree = project.read_with(cx, |project, _| project.worktrees().next().unwrap());
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
@@ -2876,7 +2876,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-    let worktree = project.read_with(cx, |project, _| project.worktrees().next().unwrap());
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
@@ -2978,7 +2978,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     });
     project
         .update(cx, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             let path = ProjectPath {
                 worktree_id,
                 path: Arc::from(Path::new("file1.rs")),
@@ -3038,7 +3038,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     };
     let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         project.update(cx, |project, cx| {
-            let tree = project.worktrees().next().unwrap();
+            let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
                 .entry_for_path(path)
                 .unwrap_or_else(|| panic!("no entry for path {}", path))
@@ -3056,7 +3056,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     let file4_id = id_for_path("b/c/file4", cx);
 
     // Create a remote copy of this worktree.
-    let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
@@ -3173,12 +3173,12 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, [Path::new("/dir")], cx).await;
-    let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.update(cx, |tree, _| tree.id());
 
     let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         project.update(cx, |project, cx| {
-            let tree = project.worktrees().next().unwrap();
+            let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
                 .entry_for_path(path)
                 .unwrap_or_else(|| panic!("no entry for path {}", path))
@@ -4549,7 +4549,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/one/two/three".as_ref()], cx).await;
     project
         .update(cx, |project, cx| {
-            let id = project.worktrees().next().unwrap().read(cx).id();
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((id, "b.."), true, cx)
         })
         .unwrap()
@@ -4560,7 +4560,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     // Can't create paths outside the project
     let result = project
         .update(cx, |project, cx| {
-            let id = project.worktrees().next().unwrap().read(cx).id();
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((id, "../../boop"), true, cx)
         })
         .await;
@@ -4569,7 +4569,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     // Can't create paths with '..'
     let result = project
         .update(cx, |project, cx| {
-            let id = project.worktrees().next().unwrap().read(cx).id();
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((id, "four/../beep"), true, cx)
         })
         .await;
@@ -4592,7 +4592,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     // And we cannot open buffers with '..'
     let result = project
         .update(cx, |project, cx| {
-            let id = project.worktrees().next().unwrap().read(cx).id();
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((id, "../c.rs"), cx)
         })
         .await;

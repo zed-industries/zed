@@ -5,6 +5,7 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
+pub(crate) mod session;
 mod ssh_connection_modal;
 
 pub use app_menus::*;
@@ -3404,7 +3405,7 @@ mod tests {
         .unwrap();
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+    pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
     }
 
@@ -3435,6 +3436,7 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
+            language_model::init(app_state.client.clone(), cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(app_state.fs.clone(), cx);
             tasks_ui::init(cx);

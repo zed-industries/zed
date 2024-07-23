@@ -90,6 +90,7 @@ members = [
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
+    "crates/session",
     "crates/settings",
     "crates/settings_ui",
     "crates/snippet",
@@ -248,6 +249,7 @@ rpc = { path = "crates/rpc" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
+session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
@@ -362,7 +364,7 @@ runtimelib = { version = "0.12", default-features = false, features = [
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = "0.8"
+schemars = {version = "0.8", features = ["impl_json_schema"]}
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
