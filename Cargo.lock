@@ -9745,6 +9745,7 @@ dependencies = [
  "gpui",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -13818,6 +13819,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "settings_ui",
  "simplelog",
  "smol",
  "snippet_provider",

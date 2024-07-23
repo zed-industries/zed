@@ -86,6 +86,7 @@ search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+settings_ui.workspace = true
 simplelog.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
