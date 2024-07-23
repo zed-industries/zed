@@ -2,7 +2,7 @@
 
 ## Getting started
 
-Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The REPL integration for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built--in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
 <!-- TODO: Include GIF in action -->
 
