@@ -5,10 +5,12 @@ use serde::Deserialize;
 use zed_extension_api::{self as zed, serde_json, Result};
 
 const SERVER_PATH: &str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
-const SERVER_NAME: &str = "@astrojs/language-server";
-const TSDK_PATH: &str = "node_modules/typescript/lib";
-const TYPESCRIPT_PATH: &str = "node_modules/typescript/lib/tsserver.js";
-const TYPESCRIPT_NAME: &str = "typescript";
+const PACKAGE_NAME: &str = "@astrojs/language-server";
+
+const TYPESCRIPT_PACKAGE_NAME: &str = "typescript";
+
+/// The relative path to TypeScript's SDK.
+const TYPESCRIPT_TSDK_PATH: &str = "node_modules/typescript/lib";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,12 +23,12 @@ struct PackageJson {
 
 struct AstroExtension {
     did_find_server: bool,
-    tsdk_path: String,
+    typescript_tsdk_path: String,
 }
 
 impl AstroExtension {
-    fn file_path_exists(&self, path: &str) -> bool {
-        fs::metadata(path).map_or(false, |stat| stat.is_file())
+    fn server_exists(&self) -> bool {
+        fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
 
     fn server_script_path(
@@ -34,10 +36,9 @@ impl AstroExtension {
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<String> {
-        let server_exists = self.file_path_exists(SERVER_PATH);
-
+        let server_exists = self.server_exists();
         if self.did_find_server && server_exists {
-            self.ensure_typescript(language_server_id, worktree)?;
+            self.install_typescript_if_needed(worktree)?;
             return Ok(SERVER_PATH.to_string());
         }
 
@@ -45,37 +46,38 @@ impl AstroExtension {
             language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let server_version = zed::npm_package_latest_version(SERVER_NAME)?;
+        let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
         if !server_exists
-            || zed::npm_package_installed_version(SERVER_NAME)?.as_ref() != Some(&server_version)
+            || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
         {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
-            let server_result = zed::npm_install_package(SERVER_NAME, &server_version);
-            match server_result {
+            let result = zed::npm_install_package(PACKAGE_NAME, &version);
+            match result {
                 Ok(()) => {
-                    if !self.file_path_exists(SERVER_PATH) {
+                    if !self.server_exists() {
                         Err(format!(
-                            "installed package '{SERVER_NAME}' did not contain expected path '{SERVER_PATH}'",
+                            "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
                         ))?;
                     }
                 }
                 Err(error) => {
-                    if !self.file_path_exists(SERVER_PATH) {
+                    if !self.server_exists() {
                         Err(error)?;
                     }
                 }
             }
         }
 
-        self.ensure_typescript(language_server_id, worktree)?;
+        self.install_typescript_if_needed(worktree)?;
         self.did_find_server = true;
         Ok(SERVER_PATH.to_string())
     }
 
-    fn worktree_has_typescript(&self, worktree: &zed::Worktree) -> Result<bool> {
+    /// Returns whether a local copy of TypeScript exists in the worktree.
+    fn typescript_exists_for_worktree(&self, worktree: &zed::Worktree) -> Result<bool> {
         let package_json = worktree.read_text_file("package.json")?;
         let package_json: PackageJson = serde_json::from_str(&package_json)
             .map_err(|err| format!("failed to parse package.json: {err}"))?;
@@ -83,50 +85,36 @@ impl AstroExtension {
         let dev_dependencies = &package_json.dev_dependencies;
         let dependencies = &package_json.dependencies;
 
-        Ok(dev_dependencies.contains_key(TYPESCRIPT_NAME)
-            || dependencies.contains_key(TYPESCRIPT_NAME))
+        // Since the extension is not allowed to read the filesystem within the project
+        // except through the worktree (which does not contains `node_modules`), we check
+        // the `package.json` to see if `typescript` is listed in the dependencies.
+        Ok(dev_dependencies.contains_key(TYPESCRIPT_PACKAGE_NAME)
+            || dependencies.contains_key(TYPESCRIPT_PACKAGE_NAME))
     }
 
-    fn ensure_typescript(
-        &mut self,
-        language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<()> {
-        if self.worktree_has_typescript(worktree).unwrap_or_default() {
+    fn install_typescript_if_needed(&mut self, worktree: &zed::Worktree) -> Result<()> {
+        if self
+            .typescript_exists_for_worktree(worktree)
+            .unwrap_or_default()
+        {
+            println!("found local TypeScript installation at '{TYPESCRIPT_TSDK_PATH}'");
             return Ok(());
         }
-        zed::set_language_server_installation_status(
-            &language_server_id,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
-        );
-        let typescript_version = zed::npm_package_latest_version(TYPESCRIPT_NAME)?;
-        if zed::npm_package_installed_version(TYPESCRIPT_NAME)?.as_ref()
-            != Some(&typescript_version)
-        {
-            zed::set_language_server_installation_status(
-                &language_server_id,
-                &zed::LanguageServerInstallationStatus::Downloading,
-            );
-            let server_result = zed::npm_install_package(TYPESCRIPT_NAME, &typescript_version);
-            match server_result {
-                Ok(()) => {
-                    if !self.file_path_exists(TYPESCRIPT_PATH) {
-                        Err(format!(
-                            "installed package '{TYPESCRIPT_NAME}' did not contain expected path '{TYPESCRIPT_PATH}'",
-                        ))?;
-                    }
-                }
-                Err(error) => {
-                    if !self.file_path_exists(TYPESCRIPT_PATH) {
-                        Err(error)?;
-                    }
-                }
-            }
+
+        let installed_typescript_version =
+            zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
+        let latest_typescript_version = zed::npm_package_latest_version(TYPESCRIPT_PACKAGE_NAME)?;
+
+        if installed_typescript_version.as_ref() != Some(&latest_typescript_version) {
+            println!("installing {TYPESCRIPT_PACKAGE_NAME}@{latest_typescript_version}");
+            zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, &latest_typescript_version)?;
+        } else {
+            println!("typescript already installed");
         }
 
-        self.tsdk_path = env::current_dir()
+        self.typescript_tsdk_path = env::current_dir()
             .unwrap()
-            .join(TSDK_PATH)
+            .join(TYPESCRIPT_TSDK_PATH)
             .to_string_lossy()
             .to_string();
 
@@ -138,7 +126,7 @@ impl zed::Extension for AstroExtension {
     fn new() -> Self {
         Self {
             did_find_server: false,
-            tsdk_path: TSDK_PATH.to_string(),
+            typescript_tsdk_path: TYPESCRIPT_TSDK_PATH.to_owned(),
         }
     }
 
@@ -170,7 +158,7 @@ impl zed::Extension for AstroExtension {
         Ok(Some(serde_json::json!({
             "provideFormatter": true,
             "typescript": {
-                "tsdk": self.tsdk_path
+                "tsdk": self.typescript_tsdk_path
             }
         })))
     }
