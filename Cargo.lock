@@ -795,6 +795,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-socks5"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8da2537846e16b96d2972ee52a3b355663872a1a687ce6d57a3b6f6b6a181c89"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "async-std"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2368,8 +2378,10 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compat",
  "async-native-tls 0.5.0",
  "async-recursion 0.3.2",
+ "async-socks5",
  "async-tungstenite",
  "chrono",
  "clock",
@@ -2396,7 +2408,6 @@ dependencies = [
  "settings",
  "sha2 0.10.7",
  "smol",
- "socksv5",
  "sysinfo",
  "telemetry_events",
  "tempfile",
@@ -10063,16 +10074,6 @@ checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "socksv5"
-version = "0.3.1"
-source = "git+https://github.com/alexkirsz/socksv5?rev=0098637#00986376b790a4ad3be1df152b9d8ca329f81932"
-dependencies = [
- "byteorder",
- "futures 0.3.28",
- "thiserror",
 ]
 
 [[package]]

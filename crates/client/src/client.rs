@@ -5,6 +5,7 @@ pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context as _, Result};
+use async_compat::CompatExt;
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
@@ -31,7 +32,6 @@ use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, Requ
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
-use socksv5::SocksVersion;
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -1184,23 +1184,34 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-
-            let stream = match get_socks_proxy(&proxy) {
-                Some((.., SocksVersion::V4)) => {
-                    log::error!("socks4 not supported yet");
-                    smol::net::TcpStream::connect(rpc_host).await?
+            let socks_proxy = 'get_socks: {
+                let Some(proxy_uri) = proxy.to_uri() else {
+                    break 'get_socks None;
+                };
+                let Some(schema) = proxy_uri.scheme_str() else {
+                    break 'get_socks None;
+                };
+                if !schema.starts_with("socks") {
+                    break 'get_socks None;
                 }
-                Some((proxy_host, proxy_port, SocksVersion::V5)) => {
+                if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
+                    Some((host.to_string(), port))
+                } else {
+                    None
+                }
+            };
+            let stream = match socks_proxy {
+                Some(socks_proxy) => {
                     let mut stream =
-                        smol::net::TcpStream::connect((proxy_host, proxy_port)).await?;
-                    let (target_host, target_port) = rpc_host;
-                    socksv5::v5::request_connect(&mut stream, target_host, target_port)
+                        CompatExt::compat(smol::net::TcpStream::connect(socks_proxy).await?);
+                    async_socks5::connect(&mut stream, rpc_host, None)
                         .await
-                        .map_err(|e| anyhow!("socks5 error: {:?}", e))?;
+                        .map_err(|err| anyhow!("error connecting to socks {}", err))?;
                     stream
                 }
-                None => smol::net::TcpStream::connect(rpc_host).await?,
+                None => CompatExt::compat(smol::net::TcpStream::connect(rpc_host).await?),
             };
+            let stream = CompatExt::compat(stream);
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1798,27 +1809,6 @@ pub fn parse_zed_link<'a>(link: &'a str, cx: &AppContext) -> Option<&'a str> {
     }
 
     None
-}
-
-fn get_socks_proxy(proxy: &Proxy) -> Option<(String, u16, SocksVersion)> {
-    let Some(proxy_uri) = proxy.to_uri() else {
-        return None;
-    };
-    let Some(schema) = proxy_uri.scheme_str() else {
-        return None;
-    };
-    let socks_version = if schema.starts_with("socks4") {
-        socksv5::SocksVersion::V4
-    } else if schema.starts_with("socks4") {
-        socksv5::SocksVersion::V5
-    } else {
-        return None;
-    };
-    if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
-        Some((host.to_string(), port, socks_version))
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
