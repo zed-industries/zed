@@ -1000,7 +1000,7 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use task::{RevealStrategy, SpawnInTerminal};
+    use task::{HideStrategy, RevealStrategy, Shell, SpawnInTerminal};
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
@@ -3349,6 +3349,8 @@ mod tests {
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
+            hide: HideStrategy::Never,
+            shell: Shell::System,
         };
         let project = Project::test(app_state.fs.clone(), [project_root.path()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -3356,7 +3358,7 @@ mod tests {
         cx.update(|cx| {
             window
                 .update(cx, |_workspace, cx| {
-                    cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
+                    cx.emit(workspace::Event::SpawnTask(Box::new(spawn_in_terminal)));
                 })
                 .unwrap();
         });
