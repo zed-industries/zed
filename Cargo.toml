@@ -167,7 +167,6 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
-async-tungstenite = { version = "0.23" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
@@ -296,6 +295,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async-tungstenite = { version = "0.16" }
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
