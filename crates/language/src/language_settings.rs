@@ -397,14 +397,109 @@ pub enum SoftWrap {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
     List(FormatterList),
+}
+
+impl JsonSchema for SelectedFormatter {
+    fn schema_name() -> String {
+        "OnSaveFormatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let mut valid_raw_values = SchemaObject::default();
+        valid_raw_values.enum_values = Some(vec![
+            Value::String("on".into()),
+            Value::String("off".into()),
+            Value::String("prettier".into()),
+            Value::String("language_server".into()),
+        ]);
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for FormatOnSave {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::On => serializer.serialize_str("on"),
+            Self::Off => serializer.serialize_str("off"),
+            Self::List(list) => list.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FormatOnSave {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = FormatOnSave;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid on-save formatter kind")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "on" {
+                    Ok(Self::Value::On)
+                } else {
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(Self::Value::List)
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
 }
 
 /// Controls how whitespace should be displayedin the editor.
