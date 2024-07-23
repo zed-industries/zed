@@ -58,6 +58,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
+use session::Session;
 use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
@@ -536,6 +537,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
+    pub session: Session,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -569,6 +571,7 @@ impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
+        use session::Session;
         use settings::SettingsStore;
         use ui::Context as _;
 
@@ -582,6 +585,7 @@ impl AppState {
         let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = http::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
+        let session = Session::test();
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -597,6 +601,7 @@ impl AppState {
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
             build_window_options: |_, _| Default::default(),
+            session,
         })
     }
 }
@@ -664,6 +669,7 @@ pub enum Event {
     ZoomChanged,
 }
 
+#[derive(Debug)]
 pub enum OpenVisible {
     All,
     None,
@@ -730,6 +736,7 @@ pub struct Workspace {
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
+    session_id: Option<String>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -908,6 +915,8 @@ impl Workspace {
 
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
+        let session_id = app_state.session.id().to_owned();
+
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
@@ -1023,6 +1032,7 @@ impl Workspace {
             render_disconnected_overlay: None,
             serializable_items_tx,
             _items_serializer,
+            session_id: Some(session_id),
         }
     }
 
@@ -1654,10 +1664,20 @@ impl Workspace {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
-                this.save_all_internal(SaveIntent::Close, cx)
-            })?
-            .await
+            let save_result = this
+                .update(&mut cx, |this, cx| {
+                    this.save_all_internal(SaveIntent::Close, cx)
+                })?
+                .await;
+
+            // If we're not quitting, but closing, we remove the workspace from
+            // the current session.
+            if !quitting && save_result.as_ref().map_or(false, |&res| res) {
+                this.update(&mut cx, |this, cx| this.remove_from_session(cx))?
+                    .await;
+            }
+
+            save_result
         })
     }
 
@@ -3838,6 +3858,11 @@ impl Workspace {
         }
     }
 
+    fn remove_from_session(&mut self, cx: &mut WindowContext) -> Task<()> {
+        self.session_id.take();
+        self.serialize_workspace_internal(cx)
+    }
+
     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
         self.panes.retain(|p| p != pane);
         self.panes
@@ -3992,7 +4017,6 @@ impl Workspace {
             None
         };
 
-        // don't save workspace state for the empty workspace.
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
@@ -4005,6 +4029,7 @@ impl Workspace {
                 display: Default::default(),
                 docks,
                 centered_layout: self.centered_layout,
+                session_id: self.session_id.clone(),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
@@ -4258,6 +4283,7 @@ impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         use node_runtime::FakeNodeRuntime;
+        use session::Session;
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
@@ -4272,6 +4298,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
         let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
@@ -4871,6 +4898,11 @@ pub fn activate_workspace_for_project(
 
 pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
+}
+
+pub fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
+    DB.last_session_workspace_locations(last_session_id)
+        .log_err()
 }
 
 actions!(collab, [OpenChannelNotes]);
