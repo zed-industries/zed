@@ -1,0 +1,17 @@
+[package]
+name = "settings_ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/settings_ui.rs"
+
+[dependencies]
+gpui.workspace = true
+ui.workspace = true
+util.workspace = true
