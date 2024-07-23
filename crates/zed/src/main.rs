@@ -229,6 +229,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     feedback::init(cx);
     markdown_preview::init(cx);
     welcome::init(cx);
+    settings_ui::init(cx);
     extensions_ui::init(cx);
 
     // Initialize each completion provider. Settings are used for toggling between them.

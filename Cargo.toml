@@ -91,6 +91,7 @@ members = [
     "crates/semantic_index",
     "crates/semantic_version",
     "crates/settings",
+    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/sqlez",
@@ -165,7 +166,6 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
-async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
@@ -249,6 +249,7 @@ search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
+settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 sqlez = { path = "crates/sqlez" }
@@ -288,6 +289,7 @@ ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1" }
 async-fs = "1.6"
+async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
