@@ -534,9 +534,12 @@ impl SshClientState {
         }
 
         let mut server_binary_exists = false;
-        if let Ok(installed_version) = run_cmd(self.ssh_command(&dst_path).arg("version")).await {
-            if installed_version.trim() == version.to_string() {
-                server_binary_exists = true;
+        if cfg!(not(debug_assertions)) {
+            if let Ok(installed_version) = run_cmd(self.ssh_command(&dst_path).arg("version")).await
+            {
+                if installed_version.trim() == version.to_string() {
+                    server_binary_exists = true;
+                }
             }
         }
 

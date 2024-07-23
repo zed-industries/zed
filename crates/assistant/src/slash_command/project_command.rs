@@ -75,7 +75,7 @@ impl ProjectSlashCommand {
     }
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
-        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
         let path = ProjectPath {
