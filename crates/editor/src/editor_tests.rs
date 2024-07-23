@@ -6253,8 +6253,8 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let worktree = project.update(cx, |project, _| {
-        let mut worktrees = project.worktrees().collect::<Vec<_>>();
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
         worktrees.pop().unwrap()
     });
@@ -9319,7 +9319,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     let worktree_id = workspace
         .update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             })
         })
         .unwrap();

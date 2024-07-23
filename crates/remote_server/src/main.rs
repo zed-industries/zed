@@ -11,7 +11,6 @@ use std::{env, io, mem, process, sync::Arc};
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
-    env::set_var("RUST_LOG", "remote=trace");
 
     let subcommand = std::env::args().nth(1);
     match subcommand.as_deref() {
