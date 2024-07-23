@@ -9,7 +9,7 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
@@ -1675,7 +1675,7 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != this.completion_count);
-                        this.summarize(cx);
+                        this.summarize(false, cx);
                     })?;
 
                     anyhow::Ok(())
@@ -1968,8 +1968,8 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
-        if self.message_anchors.len() >= 2 && self.summary.is_none() {
+    pub(super) fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
             if !CompletionProvider::global(cx).is_authenticated() {
                 return;
             }
@@ -1993,13 +1993,18 @@ impl Context {
                 async move {
                     let mut messages = stream.await?;
 
+                    let mut replaced = !replace_old;
                     while let Some(message) = messages.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(Default::default());
+                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            if !replaced && replace_old {
+                                summary.text.clear();
+                                replaced = true;
+                            }
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -2142,34 +2147,51 @@ impl Context {
 
             if let Some(summary) = summary {
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
-                let path = if let Some(old_path) = old_path {
-                    old_path
-                } else {
-                    let mut discriminant = 1;
-                    let mut new_path;
-                    loop {
-                        new_path = contexts_dir().join(&format!(
-                            "{} - {}.zed.json",
-                            summary.trim(),
-                            discriminant
-                        ));
-                        if fs.is_file(&new_path).await {
-                            discriminant += 1;
-                        } else {
-                            break;
-                        }
+                let mut discriminant = 1;
+                let mut new_path;
+                loop {
+                    new_path = contexts_dir().join(&format!(
+                        "{} - {}.zed.json",
+                        summary.trim(),
+                        discriminant
+                    ));
+                    if fs.is_file(&new_path).await {
+                        discriminant += 1;
+                    } else {
+                        break;
                     }
-                    new_path
-                };
+                }
 
                 fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
+                fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path))?;
+                if let Some(old_path) = old_path {
+                    if new_path != old_path {
+                        fs.remove_file(
+                            &old_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+
+                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
         });
+    }
+
+    pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+        let timestamp = self.next_timestamp();
+        let summary = self.summary.get_or_insert(ContextSummary::default());
+        summary.timestamp = timestamp;
+        summary.done = true;
+        summary.text = custom_summary;
+        cx.emit(ContextEvent::SummaryChanged);
     }
 }
 
