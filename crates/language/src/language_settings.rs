@@ -406,7 +406,7 @@ pub enum FormatOnSave {
     List(FormatterList),
 }
 
-impl JsonSchema for SelectedFormatter {
+impl JsonSchema for FormatOnSave {
     fn schema_name() -> String {
         "OnSaveFormatter".into()
     }
@@ -475,6 +475,10 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             {
                 if v == "on" {
                     Ok(Self::Value::On)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
                 } else {
                     let ret: Result<FormatterList, _> =
                         Deserialize::deserialize(v.into_deserializer());
@@ -597,6 +601,10 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
                 } else {
                     let ret: Result<FormatterList, _> =
                         Deserialize::deserialize(v.into_deserializer());
@@ -642,7 +650,7 @@ impl AsRef<[Formatter]> for FormatterList {
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer,
+    LanguageServer { name: Option<String> },
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
