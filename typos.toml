@@ -15,6 +15,11 @@ extend-exclude = [
     "crates/editor/src/editor_tests.rs",
     # Clojure uses .edn filename extension, which is not a misspelling of "end"
     "extensions/clojure/languages/clojure/config.toml",
+    # There are some names in the test data that are incorrectly flagged as typos.
+    "crates/git/test_data/blame_incremental_complex",
+    "crates/git/test_data/golden/blame_incremental_complex.json",
+    # We have some base64-encoded data that is incorrectly being flagged.
+    "crates/rpc/src/auth.rs",
     # glsl isn't recognized by this tool
     "extensions/glsl/languages/glsl/",
     # Windows likes its abbreviations
