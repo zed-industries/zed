@@ -117,6 +117,9 @@ fn cell_content(row: &Value, field: &str) -> String {
     }
 }
 
+// Declare constant for the padding multiple on the line height
+const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
+
 impl TableView {
     pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
@@ -170,8 +173,6 @@ impl TableView {
             None => return div().into_any_element(),
         };
 
-        // todo!(): compute the width of each column by finding the widest cell in each column
-
         let mut headings = serde_json::Map::new();
         for field in &self.table.schema.fields {
             headings.insert(field.name.clone(), Value::String(field.name.clone()));
@@ -200,6 +201,8 @@ impl TableView {
     ) -> AnyElement {
         let theme = cx.theme();
 
+        let line_height = cx.line_height();
+
         let row_cells = schema
             .fields
             .iter()
@@ -227,11 +230,11 @@ impl TableView {
                     .w(*width + px(22.))
                     .child(value)
                     .px_2()
-                    .py_1()
+                    .py((TABLE_Y_PADDING_MULTIPLE / 2.0) * line_height)
                     .border_color(theme.colors().border);
 
                 if is_header {
-                    cell = cell.border_2().bg(theme.colors().border_focused)
+                    cell = cell.border_1().bg(theme.colors().border_focused)
                 } else {
                     cell = cell.border_1()
                 }
@@ -255,16 +258,15 @@ impl TableView {
 impl LineHeight for TableView {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
         let num_rows = match &self.table.data {
-            Some(data) => data.len(),
-            // We don't support Path based data sources
-            None => 0,
+            // Rows + header
+            Some(data) => data.len() + 1,
+            // We don't support Path based data sources, however we
+            // still render the header and padding
+            None => 1 + 1,
         };
 
-        // Given that each cell has both `py_1` and a border, we have to estimate
-        // a reasonable size to add on, then round up.
-        let row_heights = (num_rows as f32 * 1.2) + 1.0;
-
-        (row_heights as u8).saturating_add(2) // Header + spacing
+        let num_lines = num_rows as f32 * (1.0 + TABLE_Y_PADDING_MULTIPLE) + 1.0;
+        num_lines.ceil() as u8
     }
 }
 
