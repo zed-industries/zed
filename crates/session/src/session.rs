@@ -1,5 +1,4 @@
 use db::kvp::KEY_VALUE_STORE;
-use gpui::Global;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -8,8 +7,6 @@ pub struct Session {
     session_id: String,
     old_session_id: Option<String>,
 }
-
-impl Global for Session {}
 
 impl Session {
     pub async fn new() -> Self {

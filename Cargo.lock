@@ -9727,7 +9727,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
- "gpui",
  "util",
  "uuid",
 ]
