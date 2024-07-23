@@ -204,9 +204,9 @@ impl SettingsStore {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         Self {
             setting_values: Default::default(),
-            raw_default_settings: Default::default(),
-            raw_user_settings: Default::default(),
-            raw_extension_settings: Default::default(),
+            raw_default_settings: serde_json::json!({}),
+            raw_user_settings: serde_json::json!({}),
+            raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
