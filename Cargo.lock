@@ -9746,7 +9746,6 @@ dependencies = [
  "feature_flags",
  "gpui",
  "ui",
- "util",
  "workspace",
 ]
 

@@ -100,5 +100,8 @@ impl Render for SettingsPage {
             .p_4()
             .size_full()
             .child(Label::new("Settings").size(LabelSize::Large))
+            .child(Label::new(
+                "Nothing to see here yet. Feature-flagged for staff.",
+            ))
     }
 }
