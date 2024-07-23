@@ -707,7 +707,7 @@ mod tests {
     use project::{project_settings::ProjectSettings, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use workspace::{open_paths, AppState, LocalPaths};
+    use workspace::{open_paths, AppState};
 
     use super::*;
 
@@ -782,7 +782,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        LocalPaths::new(vec!["/test/path/"]).into(),
+                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
                     )]);
                 });
             })

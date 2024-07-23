@@ -257,10 +257,6 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn local_timezone(&self) -> time::UtcOffset {
-        time::UtcOffset::UTC
-    }
-
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {
         unimplemented!()
     }

@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
+use collections::HashSet;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
@@ -19,9 +20,10 @@ use language::{
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, ServerCapabilities,
+    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
+    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
+    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf,
+    ServerCapabilities,
 };
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
@@ -48,7 +50,7 @@ pub trait LspCommand: 'static + Sized + Send {
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
-    fn check_capabilities(&self, _: &lsp::ServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
         true
     }
 
@@ -173,8 +175,8 @@ impl LspCommand for PrepareRename {
     type LspRequest = lsp::request::PrepareRenameRequest;
     type ProtoRequest = proto::PrepareRename;
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        if let Some(lsp::OneOf::Right(rename)) = &capabilities.rename_provider {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        if let Some(lsp::OneOf::Right(rename)) = &capabilities.server_capabilities.rename_provider {
             rename.prepare_provider == Some(true)
         } else {
             false
@@ -611,8 +613,8 @@ impl LspCommand for GetTypeDefinition {
     type LspRequest = lsp::request::GotoTypeDefinition;
     type ProtoRequest = proto::GetTypeDefinition;
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        match &capabilities.type_definition_provider {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        match &capabilities.server_capabilities.type_definition_provider {
             None => false,
             Some(lsp::TypeDefinitionProviderCapability::Simple(false)) => false,
             _ => true,
@@ -914,8 +916,8 @@ impl LspCommand for GetReferences {
         return Some("Finding references...".to_owned());
     }
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        match &capabilities.references_provider {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        match &capabilities.server_capabilities.references_provider {
             Some(OneOf::Left(has_support)) => *has_support,
             Some(OneOf::Right(_)) => true,
             None => false,
@@ -1085,8 +1087,11 @@ impl LspCommand for GetDocumentHighlights {
     type LspRequest = lsp::request::DocumentHighlightRequest;
     type ProtoRequest = proto::GetDocumentHighlights;
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        capabilities.document_highlight_provider.is_some()
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .document_highlight_provider
+            .is_some()
     }
 
     fn to_lsp(
@@ -1236,8 +1241,11 @@ impl LspCommand for GetSignatureHelp {
     type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        capabilities.signature_help_provider.is_some()
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .signature_help_provider
+            .is_some()
     }
 
     fn to_lsp(
@@ -1345,6 +1353,14 @@ impl LspCommand for GetHover {
     type Response = Option<Hover>;
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        match capabilities.server_capabilities.hover_provider {
+            Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+            Some(lsp::HoverProviderCapability::Options(_)) => true,
+            None => false,
+        }
+    }
 
     fn to_lsp(
         &self,
@@ -1860,11 +1876,25 @@ impl LspCommand for GetCodeActions {
     type LspRequest = lsp::request::CodeActionRequest;
     type ProtoRequest = proto::GetCodeActions;
 
-    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        match &capabilities.code_action_provider {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        match &capabilities.server_capabilities.code_action_provider {
             None => false,
             Some(lsp::CodeActionProviderCapability::Simple(false)) => false,
-            _ => true,
+            _ => {
+                // If we do know that we want specific code actions AND we know that
+                // the server only supports specific code actions, then we want to filter
+                // down to the ones that are supported.
+                if let Some((requested, supported)) = self
+                    .kinds
+                    .as_ref()
+                    .zip(Self::supported_code_action_kinds(capabilities))
+                {
+                    let server_supported = supported.into_iter().collect::<HashSet<_>>();
+                    requested.iter().any(|kind| server_supported.contains(kind))
+                } else {
+                    true
+                }
+            }
         }
     }
 
@@ -1881,6 +1911,26 @@ impl LspCommand for GetCodeActions {
             .map(|entry| entry.to_lsp_diagnostic_stub())
             .collect::<Vec<_>>();
 
+        let supported =
+            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
+
+        let only = if let Some(requested) = &self.kinds {
+            if let Some(supported_kinds) = supported {
+                let server_supported = supported_kinds.into_iter().collect::<HashSet<_>>();
+
+                let filtered = requested
+                    .iter()
+                    .filter(|kind| server_supported.contains(kind))
+                    .cloned()
+                    .collect();
+                Some(filtered)
+            } else {
+                Some(requested.clone())
+            }
+        } else {
+            supported
+        };
+
         lsp::CodeActionParams {
             text_document: lsp::TextDocumentIdentifier::new(
                 lsp::Url::from_file_path(path).unwrap(),
@@ -1890,10 +1940,7 @@ impl LspCommand for GetCodeActions {
             partial_result_params: Default::default(),
             context: lsp::CodeActionContext {
                 diagnostics: relevant_diagnostics,
-                only: self
-                    .kinds
-                    .clone()
-                    .or_else(|| language_server.code_action_kinds()),
+                only,
                 ..lsp::CodeActionContext::default()
             },
         }
@@ -2001,6 +2048,18 @@ impl LspCommand for GetCodeActions {
 }
 
 impl GetCodeActions {
+    fn supported_code_action_kinds(
+        capabilities: AdapterServerCapabilities,
+    ) -> Option<Vec<CodeActionKind>> {
+        match capabilities.server_capabilities.code_action_provider {
+            Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
+                code_action_kinds: Some(supported_action_kinds),
+                ..
+            })) => Some(supported_action_kinds.clone()),
+            _ => capabilities.code_action_kinds,
+        }
+    }
+
     pub fn can_resolve_actions(capabilities: &ServerCapabilities) -> bool {
         capabilities
             .code_action_provider
@@ -2008,17 +2067,6 @@ impl GetCodeActions {
             .and_then(|options| match options {
                 lsp::CodeActionProviderCapability::Simple(_is_supported) => None,
                 lsp::CodeActionProviderCapability::Options(options) => options.resolve_provider,
-            })
-            .unwrap_or(false)
-    }
-
-    pub fn supports_code_actions(capabilities: &ServerCapabilities) -> bool {
-        capabilities
-            .code_action_provider
-            .as_ref()
-            .map(|options| match options {
-                lsp::CodeActionProviderCapability::Simple(is_supported) => *is_supported,
-                lsp::CodeActionProviderCapability::Options(_) => true,
             })
             .unwrap_or(false)
     }
@@ -2030,9 +2078,10 @@ impl LspCommand for OnTypeFormatting {
     type LspRequest = lsp::request::OnTypeFormatting;
     type ProtoRequest = proto::OnTypeFormatting;
 
-    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) =
-            &server_capabilities.document_on_type_formatting_provider
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &capabilities
+            .server_capabilities
+            .document_on_type_formatting_provider
         else {
             return false;
         };
@@ -2536,8 +2585,9 @@ impl LspCommand for InlayHints {
     type LspRequest = lsp::InlayHintRequest;
     type ProtoRequest = proto::InlayHints;
 
-    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
+        else {
             return false;
         };
         match inlay_hint_provider {
@@ -2693,8 +2743,10 @@ impl LspCommand for LinkedEditingRange {
     type LspRequest = lsp::request::LinkedEditingRange;
     type ProtoRequest = proto::LinkedEditingRange;
 
-    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
-        let Some(linked_editing_options) = &server_capabilities.linked_editing_range_provider
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        let Some(linked_editing_options) = &capabilities
+            .server_capabilities
+            .linked_editing_range_provider
         else {
             return false;
         };

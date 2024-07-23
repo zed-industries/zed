@@ -410,6 +410,7 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
 }
 
 pub fn delete(vim: &mut Vim, line_mode: bool, cx: &mut WindowContext) {
+    vim.store_visual_marks(cx);
     vim.update_active_editor(cx, |vim, editor, cx| {
         let mut original_columns: HashMap<_, _> = Default::default();
         let line_mode = line_mode || editor.selections.line_mode;
@@ -463,6 +464,7 @@ pub fn delete(vim: &mut Vim, line_mode: bool, cx: &mut WindowContext) {
 }
 
 pub fn yank(vim: &mut Vim, cx: &mut WindowContext) {
+    vim.store_visual_marks(cx);
     vim.update_active_editor(cx, |vim, editor, cx| {
         let line_mode = editor.selections.line_mode;
         yank_selections_content(vim, editor, line_mode, cx);
@@ -1348,6 +1350,16 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("4 g l escape escape g v");
+        cx.assert_state(
+            indoc! {"
+                «fishˇ» one
+                «fishˇ» two
+                «fishˇ» red
+                «fishˇ» blue
+            "},
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes("y g v");
         cx.assert_state(
             indoc! {"
                 «fishˇ» one

@@ -372,15 +372,16 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assets",
  "assistant_slash_command",
  "async-watch",
- "breadcrumbs",
  "cargo_toml",
  "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "completion",
  "ctor",
  "editor",
  "env_logger",
@@ -395,6 +396,7 @@ dependencies = [
  "indexed_docs",
  "indoc",
  "language",
+ "language_model",
  "log",
  "menu",
  "multi_buffer",
@@ -408,6 +410,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "roxmltree 0.20.0",
  "schemars",
  "search",
  "semantic_index",
@@ -416,14 +419,11 @@ dependencies = [
  "settings",
  "similar",
  "smol",
- "strsim 0.11.1",
- "strum",
  "telemetry_events",
  "terminal",
  "terminal_view",
  "text",
  "theme",
- "tiktoken-rs",
  "toml 0.8.10",
  "ui",
  "unindent",
@@ -983,6 +983,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
+ "paths",
  "release_channel",
  "schemars",
  "serde",
@@ -2244,7 +2245,7 @@ dependencies = [
  "bitflags 1.3.2",
  "clap_lex 0.2.4",
  "indexmap 1.9.3",
- "strsim 0.10.0",
+ "strsim",
  "termcolor",
  "textwrap",
 ]
@@ -2268,7 +2269,7 @@ dependencies = [
  "anstream",
  "anstyle",
  "clap_lex 0.5.1",
- "strsim 0.10.0",
+ "strsim",
 ]
 
 [[package]]
@@ -2489,6 +2490,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "completion",
  "ctor",
  "dashmap",
  "dev_server_projects",
@@ -2525,6 +2527,8 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "release_channel",
+ "remote",
+ "remote_server",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -2564,6 +2568,7 @@ dependencies = [
  "anyhow",
  "call",
  "channel",
+ "chrono",
  "client",
  "collections",
  "db",
@@ -2666,6 +2671,42 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+]
+
+[[package]]
+name = "completion"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "client",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "ollama",
+ "open_ai",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "strum",
+ "text",
+ "theme",
+ "tiktoken-rs",
+ "ui",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -3593,6 +3634,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "chrono",
  "client",
  "clock",
  "collections",
@@ -3970,6 +4012,7 @@ dependencies = [
  "env_logger",
  "extension",
  "fs",
+ "http 0.1.0",
  "language",
  "log",
  "rpc",
@@ -4270,7 +4313,7 @@ version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a595cb550439a117696039dfc69830492058211b771a2a165379f2a1a53d84d"
 dependencies = [
- "roxmltree",
+ "roxmltree 0.19.0",
 ]
 
 [[package]]
@@ -5272,6 +5315,7 @@ name = "http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "isahc",
@@ -5942,6 +5986,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "async-watch",
  "clock",
  "collections",
  "ctor",
@@ -5987,6 +6032,28 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+]
+
+[[package]]
+name = "language_model"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "ctor",
+ "editor",
+ "env_logger",
+ "language",
+ "log",
+ "ollama",
+ "open_ai",
+ "project",
+ "proto",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "strum",
+ "text",
+ "unindent",
 ]
 
 [[package]]
@@ -8063,6 +8130,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "release_channel",
+ "remote",
  "rpc",
  "schemars",
  "serde",
@@ -8096,6 +8164,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "futures 0.3.28",
  "git",
  "gpui",
  "language",
@@ -8660,6 +8729,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "log",
+ "parking_lot",
+ "prost",
+ "rpc",
+ "smol",
+ "tempfile",
+ "util",
+]
+
+[[package]]
+name = "remote_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_toml",
+ "client",
+ "clock",
+ "env_logger",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "log",
+ "node_runtime",
+ "project",
+ "remote",
+ "rpc",
+ "serde_json",
+ "settings",
+ "smol",
+ "toml 0.8.10",
+ "worktree",
+]
+
+[[package]]
 name = "rend"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8888,6 +9001,12 @@ name = "roxmltree"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cd14fd5e3b777a7422cca79358c57a8f6e3a703d9ac187448d0daf220c2407f"
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rpc"
@@ -9442,6 +9561,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "completion",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -10348,12 +10468,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
-name = "strsim"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
 name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10414,6 +10528,7 @@ dependencies = [
  "settings",
  "smol",
  "supermaven_api",
+ "text",
  "theme",
  "ui",
  "util",
@@ -11887,7 +12002,7 @@ dependencies = [
  "kurbo",
  "log",
  "pico-args",
- "roxmltree",
+ "roxmltree 0.19.0",
  "simplecss",
  "siphasher 1.0.1",
  "strict-num",
@@ -13686,6 +13801,7 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "remote",
  "repl",
  "rope",
  "search",
@@ -13706,6 +13822,7 @@ dependencies = [
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "ui",
+ "url",
  "urlencoding",
  "util",
  "uuid",
@@ -13726,9 +13843,10 @@ dependencies = [
 
 [[package]]
 name = "zed_astro"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "serde",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
@@ -13784,7 +13902,7 @@ dependencies = [
 name = "zed_erlang"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
@@ -13861,7 +13979,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13882,7 +14000,14 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.0.6"
+version = "0.0.8"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_ruff"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13932,8 +14057,9 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
+ "serde",
  "zed_extension_api 0.0.6",
 ]
 

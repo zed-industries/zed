@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
@@ -12,7 +12,7 @@ use gpui::{
     WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{prelude::*, Icon, IconName, Label};
+use ui::{prelude::*, Icon, IconName};
 
 pub enum Event {
     Close,
@@ -97,14 +97,8 @@ impl Item for SharedScreen {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> gpui::AnyElement {
-        Label::new(format!("{}'s screen", self.user.github_login))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some(format!("{}'s screen", self.user.github_login).into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

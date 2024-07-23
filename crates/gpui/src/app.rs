@@ -14,7 +14,6 @@ use derive_more::{Deref, DerefMut};
 use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use slotmap::SlotMap;
 use smol::future::FutureExt;
-use time::UtcOffset;
 
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -113,7 +112,18 @@ impl App {
         log::info!("GPUI was compiled in test mode");
 
         Self(AppContext::new(
-            current_platform(),
+            current_platform(false),
+            Arc::new(()),
+            http::client(None),
+        ))
+    }
+
+    /// Build an app in headless mode. This prevents opening windows,
+    /// but makes it possible to run an application in an context like
+    /// SSH, where GUI applications are not allowed.
+    pub fn headless() -> Self {
+        Self(AppContext::new(
+            current_platform(true),
             Arc::new(()),
             http::client(None),
         ))
@@ -647,11 +657,6 @@ impl AppContext {
         self.platform.restart(binary_path)
     }
 
-    /// Returns the local timezone at the platform level.
-    pub fn local_timezone(&self) -> UtcOffset {
-        self.platform.local_timezone()
-    }
-
     /// Updates the http client assigned to GPUI
     pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
@@ -1125,14 +1130,7 @@ impl AppContext {
         for window in self.windows() {
             window
                 .update(self, |_, cx| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
-                    cx.window
-                        .next_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
+                    cx.clear_pending_keystrokes();
                 })
                 .ok();
         }

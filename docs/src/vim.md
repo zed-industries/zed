@@ -138,7 +138,7 @@ that you can't live without. You can restore them to their defaults by copying t
   "context": "Editor && !menu",
   "bindings": {
     "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: increment
+    "ctrl-x": "editor::Cut",           // vim default: decrement
     "ctrl-v": "editor::Paste",         // vim default: visual block mode
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
@@ -261,6 +261,11 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "gutter": {
     // disable line numbers completely:
     "line_numbers": false
+  },
+  "command_aliases": {
+    "W": "w",
+    "Wq": "wq",
+    "Q": "q"
   }
 }
 ```

@@ -375,6 +375,7 @@ impl Asset for Image {
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
                         return Err(ImageCacheError::BadStatus {
+                            uri,
                             status: response.status(),
                             body: String::from_utf8_lossy(&body).into_owned(),
                         });
@@ -417,8 +418,10 @@ pub enum ImageCacheError {
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
     /// An error that occurred while processing an image.
-    #[error("unexpected http status: {status}, body: {body}")]
+    #[error("unexpected http status for {uri}: {status}, body: {body}")]
     BadStatus {
+        /// The URI of the image.
+        uri: SharedUri,
         /// The HTTP status code.
         status: http::StatusCode,
         /// The HTTP response body.

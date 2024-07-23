@@ -10,14 +10,62 @@ use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
 
+pub enum MenuPosition {
+    /// When the editor is scrolled, the context menu stays on the exact
+    /// same position on the screen, never disappearing.
+    PinnedToScreen(Point<Pixels>),
+    /// When the editor is scrolled, the context menu follows the position it is associated with.
+    /// Disappears when the position is no longer visible.
+    PinnedToEditor {
+        source: multi_buffer::Anchor,
+        offset_x: Pixels,
+        offset_y: Pixels,
+    },
+}
+
 pub struct MouseContextMenu {
-    pub(crate) position: Point<Pixels>,
+    pub(crate) position: MenuPosition,
     pub(crate) context_menu: View<ui::ContextMenu>,
     _subscription: Subscription,
 }
 
 impl MouseContextMenu {
-    pub(crate) fn new(
+    pub(crate) fn pinned_to_editor(
+        editor: &mut Editor,
+        source: multi_buffer::Anchor,
+        position: Point<Pixels>,
+        context_menu: View<ui::ContextMenu>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Self> {
+        let context_menu_focus = context_menu.focus_handle(cx);
+        cx.focus(&context_menu_focus);
+
+        let _subscription = cx.subscribe(
+            &context_menu,
+            move |editor, _, _event: &DismissEvent, cx| {
+                editor.mouse_context_menu.take();
+                if context_menu_focus.contains_focused(cx) {
+                    editor.focus(cx);
+                }
+            },
+        );
+
+        let editor_snapshot = editor.snapshot(cx);
+        let source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
+        let offset = position - source_point;
+
+        Some(Self {
+            position: MenuPosition::PinnedToEditor {
+                source,
+                offset_x: offset.x,
+                offset_y: offset.y,
+            },
+            context_menu,
+            _subscription,
+        })
+    }
+
+    pub(crate) fn pinned_to_screen(
         position: Point<Pixels>,
         context_menu: View<ui::ContextMenu>,
         cx: &mut ViewContext<Editor>,
@@ -25,16 +73,18 @@ impl MouseContextMenu {
         let context_menu_focus = context_menu.focus_handle(cx);
         cx.focus(&context_menu_focus);
 
-        let _subscription =
-            cx.subscribe(&context_menu, move |this, _, _event: &DismissEvent, cx| {
-                this.mouse_context_menu.take();
+        let _subscription = cx.subscribe(
+            &context_menu,
+            move |editor, _, _event: &DismissEvent, cx| {
+                editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(cx) {
-                    this.focus(cx);
+                    editor.focus(cx);
                 }
-            });
+            },
+        );
 
         Self {
-            position,
+            position: MenuPosition::PinnedToScreen(position),
             context_menu,
             _subscription,
         }
@@ -71,6 +121,8 @@ pub fn deploy_context_menu(
         return;
     }
 
+    let display_map = editor.selections.display_map(cx);
+    let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
         let menu = custom(editor, point, cx);
         editor.custom_context_menu = Some(custom);
@@ -98,6 +150,7 @@ pub fn deploy_context_menu(
         let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
+                .on_blur_subscription(Subscription::new(|| {}))
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
@@ -128,8 +181,9 @@ pub fn deploy_context_menu(
             }
         })
     };
-    let mouse_context_menu = MouseContextMenu::new(position, context_menu, cx);
-    editor.mouse_context_menu = Some(mouse_context_menu);
+
+    editor.mouse_context_menu =
+        MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx);
     cx.notify();
 }
 

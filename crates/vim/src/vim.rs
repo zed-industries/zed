@@ -391,6 +391,15 @@ impl Vim {
         self.stop_recording();
     }
 
+    // When handling an action, you must create visual marks if you will switch to normal
+    // mode without the default selection behaviour.
+    fn store_visual_marks(&mut self, cx: &mut WindowContext) {
+        let mode = self.state().mode;
+        if mode.is_visual() {
+            create_visual_marks(self, mode, cx);
+        }
+    }
+
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
         let state = self.state();
         let last_mode = state.mode;
@@ -400,6 +409,7 @@ impl Vim {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
+            state.selected_register.take();
             if mode == Mode::Normal || mode != last_mode {
                 state.current_tx.take();
                 state.current_anchor.take();
@@ -412,12 +422,12 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if !mode.is_visual() && last_mode.is_visual() {
-            create_visual_marks(self, last_mode, cx);
-        }
-
         if leave_selections {
             return;
+        }
+
+        if !mode.is_visual() && last_mode.is_visual() {
+            create_visual_marks(self, last_mode, cx);
         }
 
         // Adjust selections
@@ -667,6 +677,7 @@ impl Vim {
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
+                | Operator::ToggleComments
         ) {
             self.start_recording(cx)
         };
@@ -680,6 +691,9 @@ impl Vim {
                 | Operator::DeleteSurrounds
         ) {
             self.update_state(|state| state.operator_stack.clear());
+            if let Operator::AddSurrounds { target: None } = operator {
+                self.start_recording(cx);
+            }
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);

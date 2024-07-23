@@ -1,15 +1,14 @@
 use crate::LanguageModelCompletionProvider;
-use crate::{
-    assistant_settings::OllamaModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
-};
+use crate::{CompletionProvider, LanguageModel, LanguageModelRequest};
 use anyhow::Result;
 use futures::StreamExt as _;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
 use gpui::{AnyView, AppContext, Task};
 use http::HttpClient;
+use language_model::Role;
+use ollama::Model as OllamaModel;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    Role as OllamaRole,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +27,7 @@ pub struct OllamaCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for OllamaCompletionProvider {
-    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+    fn available_models(&self) -> Vec<LanguageModel> {
         self.available_models
             .iter()
             .map(|m| LanguageModel::Ollama(m.clone()))
@@ -91,7 +90,7 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
         async move { Ok(token_count) }.boxed()
     }
 
-    fn complete(
+    fn stream_completion(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -258,16 +257,6 @@ impl OllamaCompletionProvider {
                 temperature: Some(request.temperature),
                 ..Default::default()
             }),
-        }
-    }
-}
-
-impl From<Role> for ollama::Role {
-    fn from(val: Role) -> Self {
-        match val {
-            Role::User => OllamaRole::User,
-            Role::Assistant => OllamaRole::Assistant,
-            Role::System => OllamaRole::System,
         }
     }
 }

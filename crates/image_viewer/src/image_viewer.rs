@@ -80,11 +80,7 @@ impl Item for ImageView {
             .to_string();
         Label::new(title)
             .single_line()
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
+            .color(params.text_color())
             .italic(params.preview)
             .into_any_element()
     }

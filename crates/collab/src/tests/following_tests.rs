@@ -266,7 +266,7 @@ async fn test_basic_following(
 
     // When client A activates a different editor, client B does so as well.
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a1, cx)
+        workspace.activate_item(&editor_a1, true, true, cx)
     });
     executor.run_until_parked();
     workspace_b.update(cx_b, |workspace, cx| {
@@ -311,7 +311,7 @@ async fn test_basic_following(
         let editor = cx.new_view(|cx| {
             Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, cx)
         });
-        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
         editor
     });
     executor.run_until_parked();
@@ -401,7 +401,7 @@ async fn test_basic_following(
         workspace.unfollow(peer_id_a, cx).unwrap()
     });
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a2, cx)
+        workspace.activate_item(&editor_a2, true, true, cx)
     });
     executor.run_until_parked();
     assert_eq!(
@@ -466,7 +466,7 @@ async fn test_basic_following(
 
     // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.activate_item(&multibuffer_editor_b, cx)
+        workspace.activate_item(&multibuffer_editor_b, true, true, cx)
     });
     executor.run_until_parked();
     workspace_a.update(cx_a, |workspace, cx| {
