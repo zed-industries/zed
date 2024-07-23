@@ -379,7 +379,7 @@ impl TerminalPanel {
         }
         #[cfg(target_os = "windows")]
         {
-            use terminal::terminal_settings::WindowsShellType;
+            use crate::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
@@ -412,7 +412,7 @@ impl TerminalPanel {
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         #[cfg(target_os = "windows")]
         {
-            use terminal::terminal_settings::WindowsShellType;
+            use crate::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
@@ -882,4 +882,56 @@ fn to_windows_shell_type(shell: &str) -> WindowsShellType {
         // unix-like shell.
         WindowsShellType::Other
     }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_cmd_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("%{}%", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("%{}%", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_powershell_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("$env:{}", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("$env:{}", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsShellType {
+    Powershell,
+    Cmd,
+    Other,
 }

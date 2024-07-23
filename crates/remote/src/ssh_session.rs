@@ -412,11 +412,11 @@ impl ProtoClient for SshSession {
 impl SshClientState {
     #[cfg(not(unix))]
     async fn new(
-        user: String,
-        host: String,
-        port: u16,
-        delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        _user: String,
+        _host: String,
+        _port: u16,
+        _delegate: Arc<dyn SshClientDelegate>,
+        _cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         Err(anyhow!("ssh is not supported on this platform"))
     }
