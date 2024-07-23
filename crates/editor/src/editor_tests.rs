@@ -6560,7 +6560,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer]),
+            FormatterList(vec![Formatter::LanguageServer { name: None }]),
         ))
     });
 

@@ -625,7 +625,7 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
 /// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case", transparent)]
-pub struct FormatterList(SingleOrVec<Formatter>);
+pub struct FormatterList(pub SingleOrVec<Formatter>);
 
 impl AsRef<[Formatter]> for FormatterList {
     fn as_ref(&self) -> &[Formatter] {
