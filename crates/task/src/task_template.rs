@@ -45,7 +45,7 @@ pub struct TaskTemplate {
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     #[serde(default)]
     pub reveal: RevealStrategy,
-    /// What to do with the terminal pane and tab, after the command has finished:
+    /// What to do with the terminal pane and tab, after the command had finished:
     /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
     /// * `never` — do nothing when the command finishes
     #[serde(default)]
@@ -54,6 +54,7 @@ pub struct TaskTemplate {
     #[serde(default)]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
+    #[serde(default)]
     pub shell: Shell,
 }
 
@@ -213,6 +214,8 @@ impl TaskTemplate {
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
+                hide: self.hide,
+                shell: self.shell.clone(),
             }),
         })
     }

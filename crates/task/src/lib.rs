@@ -79,6 +79,10 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started.
     pub reveal: RevealStrategy,
+    /// What to do with the terminal pane and tab, after the command had finished.
+    pub hide: HideStrategy,
+    /// Which shell to use when spawning the task.
+    pub shell: Shell,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.

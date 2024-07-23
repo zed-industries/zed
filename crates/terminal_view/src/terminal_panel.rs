@@ -14,9 +14,9 @@ use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
+use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId, TerminalWorkDir};
 use terminal::{
-    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
+    terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
 };
 use ui::{
@@ -363,7 +363,7 @@ impl TerminalPanel {
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
-        let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
+        let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
             Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
