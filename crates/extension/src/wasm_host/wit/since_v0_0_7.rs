@@ -461,4 +461,8 @@ impl ExtensionImports for WasmState {
         #[cfg(not(unix))]
         Ok(Ok(()))
     }
+
+    async fn node_environment_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        super::latest::nodejs::Host::node_environment_path(self).await
+    }
 }

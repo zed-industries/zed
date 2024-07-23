@@ -76,12 +76,13 @@ impl zed::Extension for PurescriptExtension {
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(config)?;
-        let command = zed::node_binary_path()?;
-        let env = Vec::new();
+        let command = "powershell.exe".into();
+        let env = vec![("PATH".to_string(), zed::node_environment_path()?)];
+        println!("==> Env: {:?}", env);
         Ok(zed::Command {
             command,
             args: vec![
-                env::current_dir()
+                zed_extension_api::current_dir()
                     .unwrap()
                     .join(&server_path)
                     .to_string_lossy()

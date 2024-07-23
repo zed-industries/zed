@@ -68,9 +68,12 @@ impl LspAdapter for ExtensionLspAdapter {
                 })
                 .await?;
 
-            let path = self
-                .host
-                .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
+            let path = if command.command.as_str() == "powershell.exe" {
+                command.command.into()
+            } else {
+                self.host
+                    .path_from_extension(&self.extension.manifest.id, command.command.as_ref())
+            };
 
             // TODO: This should now be done via the `zed::make_file_executable` function in
             // Zed extension API, but we're leaving these existing usages in place temporarily

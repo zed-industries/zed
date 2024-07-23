@@ -137,4 +137,7 @@ world extension {
 
     /// Indexes the docs for the specified package.
     export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
+
+    /// Retrieve `PATH` environment variable with `npm` included.
+    import node-environment-path: func() -> result<string, string>;
 }
