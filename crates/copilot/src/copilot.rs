@@ -393,7 +393,7 @@ impl Copilot {
             Default::default(),
             cx.to_async(),
         );
-        let http = http::FakeHttpClient::create(|_| async { unreachable!() });
+        let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {
             server_id: LanguageServerId(0),

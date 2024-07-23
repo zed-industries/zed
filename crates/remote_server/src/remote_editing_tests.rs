@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context, Model, TestAppContext};
-use http::FakeHttpClient;
+use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use project::Project;

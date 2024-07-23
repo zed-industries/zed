@@ -1783,7 +1783,7 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;

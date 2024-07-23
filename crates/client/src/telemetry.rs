@@ -661,7 +661,7 @@ mod tests {
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
