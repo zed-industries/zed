@@ -1,12 +1,22 @@
+use std::any::TypeId;
+
+use command_palette_hooks::CommandPaletteFilter;
+use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
+pub struct SettingsUiFeatureFlag;
+
+impl FeatureFlag for SettingsUiFeatureFlag {
+    const NAME: &'static str = "settings-ui";
+}
+
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
         workspace.register_action(|workspace, _: &OpenSettingsEditor, cx| {
             let existing = workspace
                 .active_pane()
@@ -21,6 +31,25 @@ pub fn init(cx: &mut AppContext) {
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, cx)
             }
         });
+
+        let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];
+
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&settings_ui_actions);
+        });
+
+        cx.observe_flag::<SettingsUiFeatureFlag, _>(move |is_enabled, _view, cx| {
+            if is_enabled {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.show_action_types(settings_ui_actions.iter());
+                });
+            } else {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&settings_ui_actions);
+                });
+            }
+        })
+        .detach();
     })
     .detach();
 }
