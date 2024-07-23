@@ -485,7 +485,7 @@
   {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
-      "ctrl-enter": "repl::Run"
+      "ctrl-shift-enter": "repl::Run"
     }
   },
   {
