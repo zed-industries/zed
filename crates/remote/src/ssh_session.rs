@@ -120,6 +120,8 @@ impl SshSession {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
+        run_cmd(client_state.ssh_command(&remote_binary_path).arg("version")).await?;
+
         let mut remote_server_child = client_state
             .ssh_command(&format!(
                 "RUST_LOG={} {:?} run",
