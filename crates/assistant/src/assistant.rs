@@ -166,13 +166,14 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     AssistantSettings::register(cx);
 
     // TODO: remove this when 0.148.0 is released.
-    // TODO: check if we need to upgrade first, only then call update_settings_file
-    update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-        let fs = fs.clone();
-        |content, cx| {
-            content.update_file(fs, cx);
-        }
-    });
+    if AssistantSettings::get_global(cx).using_outdated_settings_version {
+        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+            let fs = fs.clone();
+            |content, cx| {
+                content.update_file(fs, cx);
+            }
+        });
+    }
 
     cx.spawn(|mut cx| {
         let client = client.clone();

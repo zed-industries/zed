@@ -53,6 +53,7 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: AssistantDefaultModel,
+    pub using_outdated_settings_version: bool,
 }
 
 /// Assistant panel settings
@@ -84,6 +85,16 @@ impl Default for AssistantSettingsContent {
 }
 
 impl AssistantSettingsContent {
+    pub fn is_version_outdated(&self) -> bool {
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V1(_) => true,
+                VersionedAssistantSettingsContent::V2(_) => false,
+            },
+            AssistantSettingsContent::Legacy(_) => true,
+        }
+    }
+
     pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &AppContext) {
         if let AssistantSettingsContent::Versioned(settings) = self {
             if let VersionedAssistantSettingsContent::V1(settings) = settings {
@@ -441,6 +452,10 @@ impl Settings for AssistantSettings {
         let mut settings = AssistantSettings::default();
 
         for value in sources.defaults_and_customizations() {
+            if value.is_version_outdated() {
+                settings.using_outdated_settings_version = true;
+            }
+
             let value = value.upgrade();
             merge(&mut settings.enabled, value.enabled);
             merge(&mut settings.button, value.button);
