@@ -20,7 +20,7 @@ test-support = ["sqlite"]
 [dependencies]
 anthropic.workspace = true
 anyhow.workspace = true
-async-tungstenite = "0.16"
+async-tungstenite = "0.23"
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.6", features = ["json", "headers", "ws"] }
