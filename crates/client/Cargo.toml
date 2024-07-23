@@ -52,8 +52,7 @@ tiny_http = "0.8"
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
-async-socks5 = "0.6.0"
-async-compat = "0.2.4"
+socksv5 = { git = "https://github.com/alexkirsz/socksv5", rev = "0098637" }
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
