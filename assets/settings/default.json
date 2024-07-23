@@ -82,7 +82,7 @@
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
-  "restore_on_startup": "last_workspace",
+  "restore_on_startup": "last_session",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
