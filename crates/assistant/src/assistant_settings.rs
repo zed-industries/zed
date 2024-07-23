@@ -370,8 +370,22 @@ pub struct AssistantSettingsContentV2 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct AssistantDefaultModel {
+    #[schemars(schema_with = "providers_schema")]
     pub provider: String,
     pub model: String,
+}
+
+fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    schemars::schema::SchemaObject {
+        enum_values: Some(vec![
+            "anthropic".into(),
+            "ollama".into(),
+            "openai".into(),
+            "zed.dev".into(),
+        ]),
+        ..Default::default()
+    }
+    .into()
 }
 
 impl Default for AssistantDefaultModel {
