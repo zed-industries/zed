@@ -216,7 +216,7 @@ impl DebugAdapterClient {
             _process: process,
             capabilities: None,
             server_tx: server_tx.clone(),
-            request_count: AtomicU64::new(0),
+            request_count: AtomicU64::new(1),
             thread_states: Arc::new(Mutex::new(HashMap::new())),
         };
 
