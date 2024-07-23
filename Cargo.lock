@@ -11571,7 +11571,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-gowork"
 version = "0.0.1"
-source = "git+https://github.com/SomeoneToIgnore/tree-sitter-go-work?rev=7e9d2de03e69dd8d9724b1feb7a9b7586c179f40#7e9d2de03e69dd8d9724b1feb7a9b7586c179f40"
+source = "git+https://github.com/d1y/tree-sitter-go-work?rev=dcbabff454703c3a4bc98a23cf8778d4be46fd22#dcbabff454703c3a4bc98a23cf8778d4be46fd22"
 dependencies = [
  "cc",
  "tree-sitter",
