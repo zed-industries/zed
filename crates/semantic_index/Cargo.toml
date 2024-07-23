@@ -19,6 +19,7 @@ crate-type = ["bin"]
 
 [dependencies]
 anyhow.workspace = true
+arrayvec.workspace = true
 blake3.workspace = true
 client.workspace = true
 clock.workspace = true

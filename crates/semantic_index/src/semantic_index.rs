@@ -3,6 +3,7 @@ mod embedding;
 mod project_index_debug_view;
 
 use anyhow::{anyhow, Context as _, Result};
+use arrayvec::ArrayString;
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap, HashSet};
 use completion::CompletionProvider;
@@ -495,7 +496,8 @@ struct WorktreeIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
     embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-    summary_db: heed::Database<Str, Str>, // Key: BLAKE3 hash of source code. Val: LLM summary of that code.
+    file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
+    summary_db: heed::Database<Str, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -516,7 +518,7 @@ impl WorktreeIndex {
     ) -> Task<Result<Model<Self>>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
         cx.spawn(|mut cx| async move {
-            let (db, summary_db) = cx
+            let (db, file_digest_db, summary_db) = cx
                 .background_executor()
                 .spawn({
                     let db_connection = db_connection.clone();
@@ -524,6 +526,14 @@ impl WorktreeIndex {
                         let mut txn = db_connection.write_txn()?;
                         let db = {
                             let db_name = worktree_abs_path.to_string_lossy();
+                            db_connection.create_database(&mut txn, Some(&db_name))?
+                        };
+                        let file_digest_db = {
+                            let db_name =
+                                // Prepend something that wouldn't be found at the beginning of an
+                                // absolute path, so we don't get db key namespace conflicts with
+                                // embeddings, which use the abs path as a key.
+                                format!("digests-{}", worktree_abs_path.to_string_lossy());
                             db_connection.create_database(&mut txn, Some(&db_name))?
                         };
                         let summary_db = {
@@ -535,15 +545,17 @@ impl WorktreeIndex {
                             db_connection.create_database(&mut txn, Some(&db_name))?
                         };
                         txn.commit()?;
-                        anyhow::Ok((db, summary_db))
+                        anyhow::Ok((db, file_digest_db, summary_db))
                     }
                 })
                 .await?;
+
             cx.new_model(|cx| {
                 Self::new(
                     worktree,
                     db_connection,
                     db,
+                    file_digest_db,
                     summary_db,
                     status_tx,
                     language_registry,
@@ -560,6 +572,7 @@ impl WorktreeIndex {
         worktree: Model<Worktree>,
         db_connection: heed::Env,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
         summary_db: heed::Database<Str, Str>,
         status: channel::Sender<()>,
         language_registry: Arc<LanguageRegistry>,
@@ -582,6 +595,7 @@ impl WorktreeIndex {
             db_connection,
             embedding_db,
             summary_db,
+            file_digest_db,
             worktree,
             language_registry,
             fs,
@@ -664,15 +678,9 @@ impl WorktreeIndex {
     }
 
     fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
+        let start = std::time::Instant::now();
         let provider = CompletionProvider::global(cx);
-        let model = if provider
-            .available_models()
-            .contains(&PREFERRED_SUMMARIZATION_MODEL)
-        {
-            PREFERRED_SUMMARIZATION_MODEL
-        } else {
-            provider.model()
-        };
+        let model = PREFERRED_SUMMARIZATION_MODEL;
         const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
         let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
 
@@ -702,6 +710,7 @@ impl WorktreeIndex {
                 answer.push_str(chunk?.as_str());
             }
 
+            log::info!("Code summarization took {:?}", start.elapsed());
             Ok(answer)
         })
     }
@@ -1206,6 +1215,16 @@ struct EmbeddedFile {
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
+}
+
+/// This is what blake3's to_hex() method returns - see https://docs.rs/blake3/1.5.3/src/blake3/lib.rs.html#246
+type Blake3Digest = ArrayString<{ blake3::OUT_LEN * 2 }>;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FileDigest {
+    path: Arc<Path>,
+    mtime: Option<SystemTime>,
+    digest: Blake3Digest,
 }
 
 struct SummarizeFiles {
