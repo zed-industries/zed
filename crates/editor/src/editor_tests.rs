@@ -6560,7 +6560,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }]),
+            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
         ))
     });
 
@@ -9726,7 +9726,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
 async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::Prettier]),
+            FormatterList(vec![Formatter::Prettier].into()),
         ))
     });
 
