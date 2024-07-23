@@ -27,7 +27,7 @@ pub struct HeadlessProject {
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::default());
+        cx.set_global(SettingsStore::new(cx));
         WorktreeSettings::register(cx);
     }
 

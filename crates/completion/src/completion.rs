@@ -1,31 +1,37 @@
-mod anthropic;
-mod cloud;
-#[cfg(any(test, feature = "test-support"))]
-mod fake;
-mod ollama;
-mod open_ai;
-
-pub use anthropic::*;
-use anyhow::Result;
-use client::Client;
-pub use cloud::*;
-#[cfg(any(test, feature = "test-support"))]
-pub use fake::*;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
-use gpui::{AnyView, AppContext, Task, WindowContext};
-use language_model::{LanguageModel, LanguageModelRequest};
-pub use ollama::*;
-pub use open_ai::*;
-use parking_lot::RwLock;
+use anyhow::{anyhow, Result};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{AppContext, Global, Model, ModelContext, Task};
+use language_model::{
+    LanguageModel, LanguageModelProvider, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest,
+};
 use smol::lock::{Semaphore, SemaphoreGuardArc};
-use std::{any::Any, pin::Pin, sync::Arc, task::Poll};
+use std::{pin::Pin, sync::Arc, task::Poll};
+use ui::Context;
 
-pub struct CompletionResponse {
-    inner: BoxStream<'static, Result<String>>,
+pub fn init(cx: &mut AppContext) {
+    let completion_provider = cx.new_model(|cx| LanguageModelCompletionProvider::new(cx));
+    cx.set_global(GlobalLanguageModelCompletionProvider(completion_provider));
+}
+
+struct GlobalLanguageModelCompletionProvider(Model<LanguageModelCompletionProvider>);
+
+impl Global for GlobalLanguageModelCompletionProvider {}
+
+pub struct LanguageModelCompletionProvider {
+    active_provider: Option<Arc<dyn LanguageModelProvider>>,
+    active_model: Option<Arc<dyn LanguageModel>>,
+    request_limiter: Arc<Semaphore>,
+}
+
+const MAX_CONCURRENT_COMPLETION_REQUESTS: usize = 4;
+
+pub struct LanguageModelCompletionResponse {
+    pub inner: BoxStream<'static, Result<String>>,
     _lock: SemaphoreGuardArc,
 }
 
-impl futures::Stream for CompletionResponse {
+impl futures::Stream for LanguageModelCompletionResponse {
     type Item = Result<String>;
 
     fn poll_next(
@@ -36,73 +42,96 @@ impl futures::Stream for CompletionResponse {
     }
 }
 
-pub trait LanguageModelCompletionProvider: Send + Sync {
-    fn available_models(&self) -> Vec<LanguageModel>;
-    fn settings_version(&self) -> usize;
-    fn is_authenticated(&self) -> bool;
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>>;
-    fn model(&self) -> LanguageModel;
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AppContext,
-    ) -> BoxFuture<'static, Result<usize>>;
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+impl LanguageModelCompletionProvider {
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<GlobalLanguageModelCompletionProvider>()
+            .0
+            .clone()
+    }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
+    pub fn read_global(cx: &AppContext) -> &Self {
+        cx.global::<GlobalLanguageModelCompletionProvider>()
+            .0
+            .read(cx)
+    }
 
-const MAX_CONCURRENT_COMPLETION_REQUESTS: usize = 4;
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &mut AppContext) {
+        let provider = cx.new_model(|cx| {
+            let mut this = Self::new(cx);
+            let available_model = LanguageModelRegistry::read_global(cx)
+                .available_models(cx)
+                .first()
+                .unwrap()
+                .clone();
+            this.set_active_model(available_model, cx);
+            this
+        });
+        cx.set_global(GlobalLanguageModelCompletionProvider(provider));
+    }
 
-pub struct CompletionProvider {
-    provider: Arc<RwLock<dyn LanguageModelCompletionProvider>>,
-    client: Option<Arc<Client>>,
-    request_limiter: Arc<Semaphore>,
-}
+    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+        cx.observe(&LanguageModelRegistry::global(cx), |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
 
-impl CompletionProvider {
-    pub fn new(
-        provider: Arc<RwLock<dyn LanguageModelCompletionProvider>>,
-        client: Option<Arc<Client>>,
-    ) -> Self {
         Self {
-            provider,
-            client,
+            active_provider: None,
+            active_model: None,
             request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_COMPLETION_REQUESTS)),
         }
     }
 
-    pub fn available_models(&self) -> Vec<LanguageModel> {
-        self.provider.read().available_models()
+    pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.active_provider.clone()
     }
 
-    pub fn settings_version(&self) -> usize {
-        self.provider.read().settings_version()
+    pub fn set_active_provider(
+        &mut self,
+        provider_name: LanguageModelProviderName,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_name);
+        self.active_model = None;
+        cx.notify();
     }
 
-    pub fn is_authenticated(&self) -> bool {
-        self.provider.read().is_authenticated()
+    pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
+        self.active_model.clone()
+    }
+
+    pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+        if self.active_model.as_ref().map_or(false, |m| {
+            m.id() == model.id() && m.provider_name() == model.provider_name()
+        }) {
+            return;
+        }
+
+        self.active_provider =
+            LanguageModelRegistry::read_global(cx).provider(&model.provider_name());
+        self.active_model = Some(model);
+        cx.notify();
+    }
+
+    pub fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.active_provider
+            .as_ref()
+            .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.provider.read().authenticate(cx)
-    }
-
-    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        self.provider.read().authentication_prompt(cx)
+        self.active_provider
+            .as_ref()
+            .map_or(Task::ready(Ok(())), |provider| provider.authenticate(cx))
     }
 
     pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.provider.read().reset_credentials(cx)
-    }
-
-    pub fn model(&self) -> LanguageModel {
-        self.provider.read().model()
+        self.active_provider
+            .as_ref()
+            .map_or(Task::ready(Ok(())), |provider| {
+                provider.reset_credentials(cx)
+            })
     }
 
     pub fn count_tokens(
@@ -110,25 +139,31 @@ impl CompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        self.provider.read().count_tokens(request, cx)
+        if let Some(model) = self.active_model() {
+            model.count_tokens(request, cx)
+        } else {
+            std::future::ready(Err(anyhow!("No active model set"))).boxed()
+        }
     }
 
     pub fn stream_completion(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
-    ) -> Task<Result<CompletionResponse>> {
-        let rate_limiter = self.request_limiter.clone();
-        let provider = self.provider.clone();
-        cx.foreground_executor().spawn(async move {
-            let lock = rate_limiter.acquire_arc().await;
-            let response = provider.read().stream_completion(request);
-            let response = response.await?;
-            Ok(CompletionResponse {
-                inner: response,
-                _lock: lock,
+    ) -> Task<Result<LanguageModelCompletionResponse>> {
+        if let Some(language_model) = self.active_model() {
+            let rate_limiter = self.request_limiter.clone();
+            cx.spawn(|cx| async move {
+                let lock = rate_limiter.acquire_arc().await;
+                let response = language_model.stream_completion(request, &cx).await?;
+                Ok(LanguageModelCompletionResponse {
+                    inner: response,
+                    _lock: lock,
+                })
             })
-        })
+        } else {
+            Task::ready(Err(anyhow!("No active model set")))
+        }
     }
 
     pub fn complete(&self, request: LanguageModelRequest, cx: &AppContext) -> Task<Result<String>> {
@@ -143,63 +178,43 @@ impl CompletionProvider {
             Ok(completion)
         })
     }
-
-    pub fn update_provider(
-        &mut self,
-        get_provider: impl FnOnce(Arc<Client>) -> Arc<RwLock<dyn LanguageModelCompletionProvider>>,
-    ) {
-        if let Some(client) = &self.client {
-            self.provider = get_provider(Arc::clone(client));
-        } else {
-            log::warn!("completion provider cannot be updated because its client was not set");
-        }
-    }
-}
-
-impl gpui::Global for CompletionProvider {}
-
-impl CompletionProvider {
-    pub fn global(cx: &AppContext) -> &Self {
-        cx.global::<Self>()
-    }
-
-    pub fn update_current_as<R, T: LanguageModelCompletionProvider + 'static>(
-        &mut self,
-        update: impl FnOnce(&mut T) -> R,
-    ) -> Option<R> {
-        let mut provider = self.provider.write();
-        if let Some(provider) = provider.as_any_mut().downcast_mut::<T>() {
-            Some(update(provider))
-        } else {
-            None
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use futures::StreamExt;
     use gpui::AppContext;
-    use parking_lot::RwLock;
     use settings::SettingsStore;
-    use smol::stream::StreamExt;
+    use ui::Context;
 
     use crate::{
-        CompletionProvider, FakeCompletionProvider, LanguageModelRequest,
-        MAX_CONCURRENT_COMPLETION_REQUESTS,
+        LanguageModelCompletionProvider, LanguageModelRequest, MAX_CONCURRENT_COMPLETION_REQUESTS,
     };
+
+    use language_model::LanguageModelRegistry;
 
     #[gpui::test]
     fn test_rate_limiting(cx: &mut AppContext) {
         SettingsStore::test(cx);
-        let fake_provider = FakeCompletionProvider::setup_test(cx);
+        let fake_provider = LanguageModelRegistry::test(cx);
 
-        let provider = CompletionProvider::new(Arc::new(RwLock::new(fake_provider.clone())), None);
+        let model = LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .first()
+            .cloned()
+            .unwrap();
+
+        let provider = cx.new_model(|cx| {
+            let mut provider = LanguageModelCompletionProvider::new(cx);
+            provider.set_active_model(model.clone(), cx);
+            provider
+        });
+
+        let fake_model = fake_provider.test_model();
 
         // Enqueue some requests
         for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {
-            let response = provider.stream_completion(
+            let response = provider.read(cx).stream_completion(
                 LanguageModelRequest {
                     temperature: i as f32 / 10.0,
                     ..Default::default()
@@ -216,23 +231,18 @@ mod tests {
                 .detach();
         }
         cx.background_executor().run_until_parked();
-
         assert_eq!(
-            fake_provider.completion_count(),
+            fake_model.completion_count(),
             MAX_CONCURRENT_COMPLETION_REQUESTS
         );
 
         // Get the first completion request that is in flight and mark it as completed.
-        let completion = fake_provider
-            .pending_completions()
-            .into_iter()
-            .next()
-            .unwrap();
-        fake_provider.finish_completion(&completion);
+        let completion = fake_model.pending_completions().into_iter().next().unwrap();
+        fake_model.finish_completion(&completion);
 
         // Ensure that the number of in-flight completion requests is reduced.
         assert_eq!(
-            fake_provider.completion_count(),
+            fake_model.completion_count(),
             MAX_CONCURRENT_COMPLETION_REQUESTS - 1
         );
 
@@ -240,32 +250,32 @@ mod tests {
 
         // Ensure that another completion request was allowed to acquire the lock.
         assert_eq!(
-            fake_provider.completion_count(),
+            fake_model.completion_count(),
             MAX_CONCURRENT_COMPLETION_REQUESTS
         );
 
         // Mark all completion requests as finished that are in flight.
-        for request in fake_provider.pending_completions() {
-            fake_provider.finish_completion(&request);
+        for request in fake_model.pending_completions() {
+            fake_model.finish_completion(&request);
         }
 
-        assert_eq!(fake_provider.completion_count(), 0);
+        assert_eq!(fake_model.completion_count(), 0);
 
         // Wait until the background tasks acquire the lock again.
         cx.background_executor().run_until_parked();
 
         assert_eq!(
-            fake_provider.completion_count(),
+            fake_model.completion_count(),
             MAX_CONCURRENT_COMPLETION_REQUESTS - 1
         );
 
         // Finish all remaining completion requests.
-        for request in fake_provider.pending_completions() {
-            fake_provider.finish_completion(&request);
+        for request in fake_model.pending_completions() {
+            fake_model.finish_completion(&request);
         }
 
         cx.background_executor().run_until_parked();
 
-        assert_eq!(fake_provider.completion_count(), 0);
+        assert_eq!(fake_model.completion_count(), 0);
     }
 }

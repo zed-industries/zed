@@ -22,12 +22,27 @@ test-support = [
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http.workspace = true
+menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+proto = { workspace = true, features = ["test-support"] }
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
 strum.workspace = true
-proto = { workspace = true, features = ["test-support"] }
+theme.workspace = true
+tiktoken-rs.workspace = true
+ui.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
