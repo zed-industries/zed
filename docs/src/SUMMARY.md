@@ -12,6 +12,7 @@
 
 - [Configuring Zed](./configuring-zed.md)
 - [Key bindings](./key-bindings.md)
+- [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Vim](./vim.md)
 
