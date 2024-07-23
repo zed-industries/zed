@@ -98,7 +98,7 @@ core-text = "20.1"
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
-metal = "0.25"
+metal = "0.29"
 objc = "0.2"
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
