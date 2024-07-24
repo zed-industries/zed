@@ -557,33 +557,35 @@ impl<'a> Cursor<'a> {
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
+    offset: usize,
     reversed: bool,
 }
 
 impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor();
-        if reversed {
+        let offset = if reversed {
             chunks.seek(&range.end, Bias::Left, &());
+            range.end
         } else {
             chunks.seek(&range.start, Bias::Right, &());
-        }
+            range.start
+        };
         Self {
             chunks,
             range,
+            offset,
             reversed,
         }
     }
 
     pub fn offset(&self) -> usize {
-        if self.reversed {
-            self.range.end.min(self.chunks.end(&()))
-        } else {
-            self.range.start.max(*self.chunks.start())
-        }
+        self.offset
     }
 
-    pub fn seek(&mut self, offset: usize) {
+    pub fn seek(&mut self, mut offset: usize) {
+        offset = offset.clamp(self.range.start, self.range.end);
+
         let bias = if self.reversed {
             Bias::Left
         } else {
@@ -596,26 +598,59 @@ impl<'a> Chunks<'a> {
             self.chunks.seek(&offset, bias, &());
         }
 
-        if self.reversed {
-            self.range.end = offset;
-        } else {
-            self.range.start = offset;
+        self.offset = offset;
+    }
+
+    pub fn seek_to_next_line(&mut self) -> bool {
+        // todo! What do we do when the chunks iterator is reversed?
+        let mut found = false;
+        if let Some(chunk) = self.peek() {
+            if let Some(newline_ix) = chunk.find('\n') {
+                self.offset += newline_ix + 1;
+                found = true;
+            } else {
+                self.chunks
+                    .search_forward(|summary| summary.text.lines.row > 0, &());
+                self.offset = *self.chunks.start();
+                if let Some(chunk) = self.peek() {
+                    let newline_ix = chunk.find('\n').unwrap();
+                    self.offset += newline_ix + 1;
+                    found = true;
+                }
+            }
+
+            if self.offset == self.chunks.end(&()) {
+                self.next();
+            }
         }
+
+        found
     }
 
     pub fn peek(&self) -> Option<&'a str> {
-        let chunk = self.chunks.item()?;
-        if self.reversed && self.range.start >= self.chunks.end(&()) {
-            return None;
-        }
-        let chunk_start = *self.chunks.start();
-        if self.range.end <= chunk_start {
-            return None;
+        if self.reversed {
+            if self.offset <= self.range.start {
+                return None;
+            }
+        } else {
+            if self.offset >= self.range.end {
+                return None;
+            }
         }
 
-        let start = self.range.start.saturating_sub(chunk_start);
-        let end = self.range.end - chunk_start;
-        Some(&chunk.0[start..chunk.0.len().min(end)])
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        let slice_range = if self.reversed {
+            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
+            let slice_end = self.offset - chunk_start;
+            slice_start..slice_end
+        } else {
+            let slice_start = self.offset - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(&()), self.range.end) - chunk_start;
+            slice_start..slice_end
+        };
+
+        Some(&chunk.0[slice_range])
     }
 
     pub fn lines(self) -> Lines<'a> {
@@ -633,15 +668,16 @@ impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.peek();
-        if result.is_some() {
-            if self.reversed {
-                self.chunks.prev(&());
-            } else {
-                self.chunks.next(&());
-            }
+        let chunk = self.peek()?;
+        if self.reversed {
+            self.chunks.prev(&());
+            self.offset -= chunk.len();
+        } else {
+            self.chunks.next(&());
+            self.offset += chunk.len();
         }
-        result
+
+        Some(chunk)
     }
 }
 
@@ -1353,6 +1389,41 @@ mod tests {
             rope.clip_offset_utf16(OffsetUtf16(3), Bias::Right),
             OffsetUtf16(2)
         );
+    }
+
+    #[test]
+    fn test_seek_to_lines() {
+        let rope = Rope::from("abc\ndef\nghi\njkl");
+
+        let mut chunks = rope.chunks();
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+
+        chunks.seek_to_next_line();
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
+
+        chunks.seek_to_next_line();
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
+
+        chunks.seek_to_next_line();
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
+
+        chunks.seek_to_next_line();
+        assert_eq!(chunks.peek(), None);
+
+        // chunks.seek_to_prev_line();
+        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
+
+        // chunks.seek_to_prev_line();
+        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
+
+        // chunks.seek_to_prev_line();
+        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
+
+        // chunks.seek_to_prev_line();
+        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+
+        // chunks.seek_to_prev_line();
+        // assert_eq!(chunks.peek(), None);
     }
 
     #[test]
