@@ -178,7 +178,7 @@ fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<
 
     let jupytext_prefixes = comment_prefixes
         .iter()
-        .map(|comment| format!("{comment} %%"))
+        .map(|comment_prefix| format!("{comment_prefix}%%"))
         .collect::<Vec<_>>();
 
     let mut snippet_start_row = None;
@@ -262,7 +262,7 @@ mod tests {
         let test_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TestLang".into(),
-                line_comments: vec!["#".into()],
+                line_comments: vec!["# ".into()],
                 ..Default::default()
             },
             None,
@@ -327,7 +327,7 @@ mod tests {
         let test_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TestLang".into(),
-                line_comments: vec!["#".into()],
+                line_comments: vec!["# ".into()],
                 ..Default::default()
             },
             None,
