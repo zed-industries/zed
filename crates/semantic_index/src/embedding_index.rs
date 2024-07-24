@@ -1,15 +1,20 @@
-use crate::chunking::Chunk;
-use crate::embedding::*;
+use crate::{
+    chunking::{self, Chunk},
+    embedding::{Embedding, EmbeddingProvider, TextToEmbed},
+    indexing::{IndexingEntryHandle, IndexingEntrySet},
+};
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
+use fs::Fs;
 use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
+use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
-use smol::channel::{self, Sender};
+use smol::channel;
 use std::{
     cmp::Ordering,
     future::Future,
@@ -21,96 +26,82 @@ use std::{
 use util::ResultExt;
 use worktree::Snapshot;
 
-fn db_key_for_path(path: &Arc<Path>) -> String {
-    path.to_string_lossy().replace('/', "\0")
-}
-
 pub struct EmbeddingIndex {
+    worktree: Model<Worktree>,
     db_connection: heed::Env,
-    embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct EmbeddedFile {
-    pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
-    pub chunks: Vec<EmbeddedChunk>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct EmbeddedChunk {
-    pub chunk: Chunk,
-    pub embedding: Embedding,
-}
-
-struct ChunkedFile {
-    pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
-    pub handle: IndexingEntryHandle,
-    pub text: String,
-    pub chunks: Vec<Chunk>,
-}
-
-struct EmbedFiles {
-    files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
-    task: Task<Result<()>>,
+    entry_ids_being_indexed: Arc<IndexingEntrySet>,
 }
 
 impl EmbeddingIndex {
     pub fn new(
+        worktree: Model<Worktree>,
+        fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
         language_registry: Arc<LanguageRegistry>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
+        entry_ids_being_indexed: Arc<IndexingEntrySet>,
     ) -> Self {
         Self {
+            worktree,
+            fs,
             db_connection,
-            embedding_db,
+            db: embedding_db,
             language_registry,
             embedding_provider,
+            entry_ids_being_indexed,
         }
-    }
-
-    pub async fn read_chunks<'a, Id: Send + Sync + Clone + 'a>(
-        &'a self,
-        tx: Sender<(Id, Arc<Path>, EmbeddedChunk)>,
-        id: Id,
-    ) -> Result<()> {
-        let db_connection = self.db_connection.clone();
-        let db = self.embedding_db;
-        let txn = db_connection
-            .read_txn()
-            .context("failed to create read transaction")?;
-        let db_entries = db.iter(&txn).context("failed to iterate database")?;
-        for db_entry in db_entries {
-            let (_key, db_embedded_file) = db_entry?;
-            for chunk in db_embedded_file.chunks {
-                let path = Arc::clone(&db_embedded_file.path);
-
-                tx.send((id, path, chunk)).await?;
-            }
-        }
-        anyhow::Ok(())
     }
 
     pub fn db(&self) -> &heed::Database<Str, SerdeBincode<EmbeddedFile>> {
-        &self.embedding_db
+        &self.db
     }
 
-    pub fn scan_entries(
+    pub fn index_entries_changed_on_disk(
         &self,
-        db_conn: heed::Env,
-        worktree: Snapshot,
         cx: &AppContext,
-    ) -> ScanEntries {
+    ) -> impl Future<Output = Result<()>> {
+        let worktree = self.worktree.read(cx).snapshot();
+        let worktree_abs_path = worktree.abs_path().clone();
+        let scan = self.scan_entries(worktree, cx);
+        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        async move {
+            futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
+            Ok(())
+        }
+    }
+
+    pub fn index_updated_entries(
+        &self,
+        updated_entries: UpdatedEntriesSet,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<()>> {
+        let worktree = self.worktree.read(cx).snapshot();
+        let worktree_abs_path = worktree.abs_path().clone();
+        let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
+        async move {
+            futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
+            Ok(())
+        }
+    }
+
+    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
-        let db = self.embedding_db;
+        let db_connection = self.db_connection.clone();
+        let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
-            let txn = db_conn
+            let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
             let mut db_entries = db
@@ -181,7 +172,110 @@ impl EmbeddingIndex {
         }
     }
 
-    fn embed_files(
+    fn scan_updated_entries(
+        &self,
+        worktree: Snapshot,
+        updated_entries: UpdatedEntriesSet,
+        cx: &AppContext,
+    ) -> ScanEntries {
+        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let entries_being_indexed = self.entry_ids_being_indexed.clone();
+        let task = cx.background_executor().spawn(async move {
+            for (path, entry_id, status) in updated_entries.iter() {
+                match status {
+                    project::PathChange::Added
+                    | project::PathChange::Updated
+                    | project::PathChange::AddedOrUpdated => {
+                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
+                            if entry.is_file() {
+                                let handle = entries_being_indexed.insert(entry.id);
+                                updated_entries_tx.send((entry.clone(), handle)).await?;
+                            }
+                        }
+                    }
+                    project::PathChange::Removed => {
+                        let db_path = db_key_for_path(path);
+                        deleted_entry_ranges_tx
+                            .send((Bound::Included(db_path.clone()), Bound::Included(db_path)))
+                            .await?;
+                    }
+                    project::PathChange::Loaded => {
+                        // Do nothing.
+                    }
+                }
+            }
+
+            Ok(())
+        });
+
+        ScanEntries {
+            updated_entries: updated_entries_rx,
+            deleted_entry_ranges: deleted_entry_ranges_rx,
+            task,
+        }
+    }
+
+    fn chunk_files(
+        &self,
+        worktree_abs_path: Arc<Path>,
+        entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
+        cx: &AppContext,
+    ) -> ChunkFiles {
+        let language_registry = self.language_registry.clone();
+        let fs = self.fs.clone();
+        let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
+        let task = cx.spawn(|cx| async move {
+            cx.background_executor()
+                .scoped(|cx| {
+                    for _ in 0..cx.num_cpus() {
+                        cx.spawn(async {
+                            while let Ok((entry, handle)) = entries.recv().await {
+                                let entry_abs_path = worktree_abs_path.join(&entry.path);
+                                let Some(text) = fs
+                                    .load(&entry_abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("failed to read path {entry_abs_path:?}")
+                                    })
+                                    .log_err()
+                                else {
+                                    continue;
+                                };
+                                let language = language_registry
+                                    .language_for_file_path(&entry.path)
+                                    .await
+                                    .ok();
+                                let chunked_file = ChunkedFile {
+                                    chunks: chunking::chunk_text(
+                                        &text,
+                                        language.as_ref(),
+                                        &entry.path,
+                                    ),
+                                    handle,
+                                    path: entry.path,
+                                    mtime: entry.mtime,
+                                    text,
+                                };
+
+                                if chunked_files_tx.send(chunked_file).await.is_err() {
+                                    return;
+                                }
+                            }
+                        });
+                    }
+                })
+                .await;
+            Ok(())
+        });
+
+        ChunkFiles {
+            files: chunked_files_rx,
+            task,
+        }
+    }
+
+    pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &AppContext,
@@ -269,7 +363,7 @@ impl EmbeddingIndex {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let db = self.embedding_db;
+        let db = self.db;
         cx.background_executor().spawn(async move {
             while let Some(deletion_range) = deleted_entry_ranges.next().await {
                 let mut txn = db_connection.write_txn()?;
@@ -291,20 +385,36 @@ impl EmbeddingIndex {
                 txn.commit()?;
 
                 drop(embedded_files);
-                log::debug!("committed embeddings");
+                log::debug!("committed");
             }
 
             Ok(())
         })
     }
 
-    fn chunks_for_path(
+    pub fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
+        let connection = self.db_connection.clone();
+        let db = self.db;
+        cx.background_executor().spawn(async move {
+            let tx = connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+            let result = db
+                .iter(&tx)?
+                .map(|entry| Ok(entry?.1.path.clone()))
+                .collect::<Result<Vec<Arc<Path>>>>();
+            drop(tx);
+            result
+        })
+    }
+
+    pub fn chunks_for_path(
         &self,
         path: Arc<Path>,
         cx: &AppContext,
     ) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
-        let db = self.embedding_db;
+        let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -316,241 +426,45 @@ impl EmbeddingIndex {
                 .clone())
         })
     }
-
-    #[cfg(test)]
-    fn path_count(&self) -> Result<u64> {
-        let txn = self
-            .db_connection
-            .read_txn()
-            .context("failed to create read transaction")?;
-        Ok(self.embedding_db.len(&txn)?)
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::worktree_index::WorktreeIndex;
+struct ScanEntries {
+    updated_entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
+    deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+    task: Task<Result<()>>,
+}
 
-    use super::*;
-    use futures::{future::BoxFuture, FutureExt};
-    use gpui::TestAppContext;
-    use language::language_settings::AllLanguageSettings;
-    use project::Project;
-    use settings::SettingsStore;
-    use std::{future, path::Path, sync::Arc};
+struct ChunkFiles {
+    files: channel::Receiver<ChunkedFile>,
+    task: Task<Result<()>>,
+}
 
-    fn init_test(cx: &mut TestAppContext) {
-        _ = cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            language::init(cx);
-            Project::init_settings(cx);
-            SettingsStore::update(cx, |store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-            });
-        });
-    }
+pub struct ChunkedFile {
+    pub path: Arc<Path>,
+    pub mtime: Option<SystemTime>,
+    pub handle: IndexingEntryHandle,
+    pub text: String,
+    pub chunks: Vec<Chunk>,
+}
 
-    pub struct TestEmbeddingProvider {
-        batch_size: usize,
-        compute_embedding: Box<dyn Fn(&str) -> Result<Embedding> + Send + Sync>,
-    }
+pub struct EmbedFiles {
+    pub files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+    pub task: Task<Result<()>>,
+}
 
-    impl TestEmbeddingProvider {
-        pub fn new(
-            batch_size: usize,
-            compute_embedding: impl 'static + Fn(&str) -> Result<Embedding> + Send + Sync,
-        ) -> Self {
-            return Self {
-                batch_size,
-                compute_embedding: Box::new(compute_embedding),
-            };
-        }
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmbeddedFile {
+    pub path: Arc<Path>,
+    pub mtime: Option<SystemTime>,
+    pub chunks: Vec<EmbeddedChunk>,
+}
 
-    impl EmbeddingProvider for TestEmbeddingProvider {
-        fn embed<'a>(
-            &'a self,
-            texts: &'a [TextToEmbed<'a>],
-        ) -> BoxFuture<'a, Result<Vec<Embedding>>> {
-            let embeddings = texts
-                .iter()
-                .map(|to_embed| (self.compute_embedding)(to_embed.text))
-                .collect();
-            future::ready(embeddings).boxed()
-        }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EmbeddedChunk {
+    pub chunk: Chunk,
+    pub embedding: Embedding,
+}
 
-        fn batch_size(&self) -> usize {
-            self.batch_size
-        }
-    }
-
-    #[gpui::test]
-    async fn test_search(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        init_test(cx);
-
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut semantic_index = SemanticIndex::new(
-            temp_dir.path().into(),
-            Arc::new(TestEmbeddingProvider::new(16, |text| {
-                let mut embedding = vec![0f32; 2];
-                // if the text contains garbage, give it a 1 in the first dimension
-                if text.contains("garbage in") {
-                    embedding[0] = 0.9;
-                } else {
-                    embedding[0] = -0.9;
-                }
-
-                if text.contains("garbage out") {
-                    embedding[1] = 0.9;
-                } else {
-                    embedding[1] = -0.9;
-                }
-
-                Ok(Embedding::new(embedding))
-            })),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        let project_path = Path::new("./fixture");
-
-        let project = cx
-            .spawn(|mut cx| async move { Project::example([project_path], &mut cx).await })
-            .await;
-
-        cx.update(|cx| {
-            let language_registry = project.read(cx).languages().clone();
-            let node_runtime = project.read(cx).node_runtime().unwrap().clone();
-            languages::init(language_registry, node_runtime, cx);
-        });
-
-        let project_index = cx.update(|cx| semantic_index.project_index(project.clone(), cx));
-
-        while project_index
-            .read_with(cx, |index, cx| index.path_count(cx))
-            .unwrap()
-            == 0
-        {
-            project_index.next_event(cx).await;
-        }
-
-        let results = cx
-            .update(|cx| {
-                let project_index = project_index.read(cx);
-                let query = "garbage in, garbage out";
-                project_index.search(query.into(), 4, cx)
-            })
-            .await
-            .unwrap();
-
-        assert!(results.len() > 1, "should have found some results");
-
-        for result in &results {
-            println!("result: {:?}", result.path);
-            println!("score: {:?}", result.score);
-        }
-
-        // Find result that is greater than 0.5
-        let search_result = results.iter().find(|result| result.score > 0.9).unwrap();
-
-        assert_eq!(search_result.path.to_string_lossy(), "needle.md");
-
-        let content = cx
-            .update(|cx| {
-                let worktree = search_result.worktree.read(cx);
-                let entry_abs_path = worktree.abs_path().join(&search_result.path);
-                let fs = project.read(cx).fs().clone();
-                cx.background_executor()
-                    .spawn(async move { fs.load(&entry_abs_path).await.unwrap() })
-            })
-            .await;
-
-        let range = search_result.range.clone();
-        let content = content[range.clone()].to_owned();
-
-        assert!(content.contains("garbage in, garbage out"));
-    }
-
-    #[gpui::test]
-    async fn test_embed_files(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let provider = Arc::new(TestEmbeddingProvider::new(3, |text| {
-            if text.contains('g') {
-                Err(anyhow!("cannot embed text containing a 'g' character"))
-            } else {
-                Ok(Embedding::new(
-                    ('a'..'z')
-                        .map(|char| text.chars().filter(|c| *c == char).count() as f32)
-                        .collect(),
-                ))
-            }
-        }));
-
-        let (indexing_progress_tx, _) = channel::unbounded();
-        let indexing_entries = Arc::new(IndexingEntrySet::new(indexing_progress_tx));
-
-        let (chunked_files_tx, chunked_files_rx) = channel::unbounded::<ChunkedFile>();
-        chunked_files_tx
-            .send_blocking(ChunkedFile {
-                path: Path::new("test1.md").into(),
-                mtime: None,
-                handle: indexing_entries.insert(ProjectEntryId::from_proto(0)),
-                text: "abcdefghijklmnop".to_string(),
-                chunks: [0..4, 4..8, 8..12, 12..16]
-                    .into_iter()
-                    .map(|range| Chunk {
-                        range,
-                        digest: Default::default(),
-                    })
-                    .collect(),
-            })
-            .unwrap();
-        chunked_files_tx
-            .send_blocking(ChunkedFile {
-                path: Path::new("test2.md").into(),
-                mtime: None,
-                handle: indexing_entries.insert(ProjectEntryId::from_proto(1)),
-                text: "qrstuvwxyz".to_string(),
-                chunks: [0..4, 4..8, 8..10]
-                    .into_iter()
-                    .map(|range| Chunk {
-                        range,
-                        digest: Default::default(),
-                    })
-                    .collect(),
-            })
-            .unwrap();
-        chunked_files_tx.close();
-
-        let embed_files_task =
-            cx.update(|cx| WorktreeIndex::embed_files(provider.clone(), chunked_files_rx, cx));
-        embed_files_task.task.await.unwrap();
-
-        let mut embedded_files_rx = embed_files_task.files;
-        let mut embedded_files = Vec::new();
-        while let Some((embedded_file, _)) = embedded_files_rx.next().await {
-            embedded_files.push(embedded_file);
-        }
-
-        assert_eq!(embedded_files.len(), 1);
-        assert_eq!(embedded_files[0].path.as_ref(), Path::new("test2.md"));
-        assert_eq!(
-            embedded_files[0]
-                .chunks
-                .iter()
-                .map(|embedded_chunk| { embedded_chunk.embedding.clone() })
-                .collect::<Vec<Embedding>>(),
-            vec![
-                (provider.compute_embedding)("qrst").unwrap(),
-                (provider.compute_embedding)("uvwx").unwrap(),
-                (provider.compute_embedding)("yz").unwrap(),
-            ],
-        );
-    }
+fn db_key_for_path(path: &Arc<Path>) -> String {
+    path.to_string_lossy().replace('/', "\0")
 }

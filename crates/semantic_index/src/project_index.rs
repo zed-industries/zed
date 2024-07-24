@@ -1,9 +1,11 @@
-use crate::embedding::*;
-use crate::worktree_index::{WorktreeIndex, WorktreeIndexHandle};
+use crate::{
+    embedding::{EmbeddingProvider, TextToEmbed},
+    worktree_index::{WorktreeIndex, WorktreeIndexHandle},
+};
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use fs::Fs;
-use futures::{stream::StreamExt, FutureExt, TryFutureExt};
+use futures::{stream::StreamExt, FutureExt};
 use gpui::{
     AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel,
 };
@@ -13,6 +15,7 @@ use project::{Project, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{cmp::Ordering, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
+use util::ResultExt;
 
 pub struct SearchResult {
     pub worktree: Model<Worktree>,
@@ -336,6 +339,17 @@ impl ProjectIndex {
                 search_results
             })
         })
+    }
+
+    #[cfg(test)]
+    pub fn path_count(&self, cx: &AppContext) -> Result<u64> {
+        let mut result = 0;
+        for worktree_index in self.worktree_indices.values() {
+            if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+                result += index.read(cx).path_count()?;
+            }
+        }
+        Ok(result)
     }
 
     pub(crate) fn worktree_index(
