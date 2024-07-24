@@ -2789,8 +2789,9 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.set_global(cx.update(SettingsStore::test));
-        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.update(language_settings::init);
 
         let text = indoc! {"
