@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use editor::{Anchor, Editor, MultiBuffer, RangeToAnchorExt};
 use gpui::{prelude::*, AppContext, Entity, Model, View, WeakView, WindowContext};
 use language::{Buffer, BufferSnapshot, Language, Point, ToOffset};
@@ -21,77 +21,69 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         return Ok(());
     }
 
-    let range = editor
-        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))?
-        .range();
-
     let editor = editor.upgrade().context("editor was dropped")?;
-
+    let selected_range = editor
+        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))
+        .range();
     let multibuffer = editor.read(cx).buffer().clone();
-    // todo!("don't return a reference for the excerpt id")
+    let Some(buffer) = multibuffer.read(cx).as_singleton() else {
+        return Ok(());
+    };
 
-    let (excerpt_id, snapshot) =
-        if let Some((excerpt_id, _, snapshot)) = multibuffer.read(cx).read(cx).as_singleton() {
-            (*excerpt_id, snapshot.clone())
-        } else {
-            return Ok(());
+    for range in snippet_ranges(&buffer.read(cx).snapshot(), selected_range) {
+        let Some(language) = multibuffer.read(cx).language_at(range.start, cx) else {
+            continue;
         };
 
-    // todo!("FIX THIS!")
-    // for range in snippet_ranges(&snapshot, range) {
-    //     let start = multibuffer
-    //         .read(cx)
-    //         .read(cx)
-    //         .anchor_in_excerpt(excerpt_id, anchor_range.start)
-    //         .unwrap();
-    //     let end = multibuffer
-    //         .read(cx)
-    //         .read(cx)
-    //         .anchor_in_excerpt(excerpt_id, anchor_range.end)
-    //         .unwrap();
-    //     let anchor_range = start..end;
-    //     let entity_id = editor.entity_id();
+        let kernel_specification = store.update(cx, |store, cx| {
+            store
+                .kernelspec(&language, cx)
+                .with_context(|| format!("No kernel found for language: {}", language.name()))
+        })?;
 
-    //     let kernel_specification = store.update(cx, |store, cx| {
-    //         store
-    //             .kernelspec(&language, cx)
-    //             .with_context(|| format!("No kernel found for language: {}", language.name()))
-    //     })?;
+        let fs = store.read(cx).fs().clone();
+        let session = if let Some(session) = store.read(cx).get_session(editor.entity_id()).cloned()
+        {
+            session
+        } else {
+            let weak_editor = editor.downgrade();
+            let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
 
-    //     let fs = store.read(cx).fs().clone();
-    //     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
-    //         session
-    //     } else {
-    //         let weak_editor = editor.downgrade();
-    //         let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
+            editor.update(cx, |_editor, cx| {
+                cx.notify();
 
-    //         editor.update(cx, |_editor, cx| {
-    //             cx.notify();
+                cx.subscribe(&session, {
+                    let store = store.clone();
+                    move |_this, _session, event, cx| match event {
+                        SessionEvent::Shutdown(shutdown_event) => {
+                            store.update(cx, |store, _cx| {
+                                store.remove_session(shutdown_event.entity_id());
+                            });
+                        }
+                    }
+                })
+                .detach();
+            });
 
-    //             cx.subscribe(&session, {
-    //                 let store = store.clone();
-    //                 move |_this, _session, event, cx| match event {
-    //                     SessionEvent::Shutdown(shutdown_event) => {
-    //                         store.update(cx, |store, _cx| {
-    //                             store.remove_session(shutdown_event.entity_id());
-    //                         });
-    //                     }
-    //                 }
-    //             })
-    //             .detach();
-    //         });
+            store.update(cx, |store, _cx| {
+                store.insert_session(editor.entity_id(), session.clone());
+            });
 
-    //         store.update(cx, |store, _cx| {
-    //             store.insert_session(entity_id, session.clone());
-    //         });
+            session
+        };
 
-    //         session
-    //     };
+        let selected_text;
+        let anchor_range;
+        {
+            let snapshot = multibuffer.read(cx).read(cx);
+            selected_text = snapshot.text_for_range(range.clone()).collect::<String>();
+            anchor_range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+        }
 
-    //     session.update(cx, |session, cx| {
-    //         session.execute(&selected_text, anchor_range, cx);
-    //     });
-    // }
+        session.update(cx, |session, cx| {
+            session.execute(selected_text, anchor_range, cx);
+        });
+    }
 
     anyhow::Ok(())
 }
