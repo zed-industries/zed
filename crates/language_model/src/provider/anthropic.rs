@@ -1,6 +1,5 @@
 use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
@@ -9,7 +8,7 @@ use gpui::{
 };
 use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -17,11 +16,12 @@ use util::ResultExt;
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 
-const PROVIDER_NAME: &str = "anthropic";
+const PROVIDER_ID: &str = "anthropic";
+const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -37,7 +37,6 @@ pub struct AnthropicLanguageModelProvider {
 
 struct State {
     api_key: Option<String>,
-    settings: AnthropicSettings,
     _subscription: Subscription,
 }
 
@@ -45,9 +44,7 @@ impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
-            settings: AnthropicSettings::default(),
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.settings = AllLanguageModelSettings::get_global(cx).anthropic.clone();
+            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
         });
@@ -64,12 +61,16 @@ impl LanguageModelProviderState for AnthropicLanguageModelProvider {
 }
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = HashMap::default();
+        let mut models = BTreeMap::default();
 
         // Add base models from anthropic::Model::iter()
         for model in anthropic::Model::iter() {
@@ -79,7 +80,11 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &self.state.read(cx).settings.available_models {
+        for model in AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .available_models
+            .iter()
+        {
             models.insert(model.id().to_string(), model.clone());
         }
 
@@ -104,7 +109,10 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
-            let api_url = self.state.read(cx).settings.api_url.clone();
+            let api_url = AllLanguageModelSettings::get_global(cx)
+                .anthropic
+                .api_url
+                .clone();
             let state = self.state.clone();
             cx.spawn(|mut cx| async move {
                 let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
@@ -132,7 +140,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         let state = self.state.clone();
-        let delete_credentials = cx.delete_credentials(&self.state.read(cx).settings.api_url);
+        let delete_credentials =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             state.update(&mut cx, |this, cx| {
@@ -221,6 +230,10 @@ impl LanguageModel for AnthropicModel {
         LanguageModelName::from(self.model.display_name().to_string())
     }
 
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
@@ -249,11 +262,13 @@ impl LanguageModel for AnthropicModel {
         let request = self.to_anthropic_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
+
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
             (
                 state.api_key.clone(),
-                state.settings.api_url.clone(),
-                state.settings.low_speed_timeout,
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
             )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
@@ -365,7 +380,10 @@ impl AuthenticationPrompt {
         }
 
         let write_credentials = cx.write_credentials(
-            &self.state.read(cx).settings.api_url,
+            AllLanguageModelSettings::get_global(cx)
+                .anthropic
+                .api_url
+                .as_str(),
             "Bearer",
             api_key.as_bytes(),
         );

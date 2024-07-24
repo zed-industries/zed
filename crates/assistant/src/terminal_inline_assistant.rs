@@ -565,7 +565,7 @@ impl Render for PromptEditor {
                                             {
                                                 let model_name = available_model.name().0.clone();
                                                 let provider =
-                                                    available_model.provider_name().0.clone();
+                                                    available_model.provider_id().0.clone();
                                                 move |_| {
                                                     h_flex()
                                                         .w_full()
