@@ -69,7 +69,11 @@ impl LspAdapter for ExtensionLspAdapter {
                 .await?;
 
             let path = match command.command {
-                crate::wit::CommandType::Shell(shell) => shell.into(),
+                crate::wit::CommandType::Shell(shell) => match shell {
+                    crate::wit::WindowsShell::Powershell => "powershell.exe",
+                    crate::wit::WindowsShell::Cmd => "cmd.exe",
+                }
+                .into(),
                 crate::wit::CommandType::Other(other) => self
                     .host
                     .path_from_extension(&self.extension.manifest.id, other.as_ref()),

@@ -29,7 +29,7 @@ pub use wit::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, CommandType, DownloadedFileType,
-    EnvVars, KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
+    EnvVars, KeyValueStore, LanguageServerInstallationStatus, Range, WindowsShell, Worktree,
 };
 
 // Undocumented WIT re-exports.
