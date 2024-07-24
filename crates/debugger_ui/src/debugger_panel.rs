@@ -136,11 +136,11 @@ impl DebugPanel {
     ) {
         match event {
             Events::Initialized(event) => Self::handle_initialized_event(client, event, cx),
-            Events::Stopped(event) => Self::handle_stopped_event(this, client, event, cx),
-            Events::Continued(event) => Self::handle_continued_event(this, client, event, cx),
-            Events::Exited(event) => Self::handle_exited_event(this, client, event, cx),
+            Events::Stopped(event) => Self::handle_stopped_event(client, event, cx),
+            Events::Continued(event) => Self::handle_continued_event(client, event, cx),
+            Events::Exited(event) => Self::handle_exited_event(client, event, cx),
             Events::Terminated(event) => Self::handle_terminated_event(this, client, event, cx),
-            Events::Thread(event) => Self::handle_thread_event(this, client, event, cx),
+            Events::Thread(event) => Self::handle_thread_event(client, event, cx),
             Events::Output(_) => {}
             Events::Breakpoint(_) => {}
             Events::Module(_) => {}
@@ -299,7 +299,6 @@ impl DebugPanel {
     }
 
     fn handle_continued_event(
-        this: &mut Self,
         client: Arc<DebugAdapterClient>,
         event: &ContinuedEvent,
         cx: &mut ViewContext<Self>,
@@ -318,7 +317,6 @@ impl DebugPanel {
     }
 
     fn handle_stopped_event(
-        this: &mut Self,
         client: Arc<DebugAdapterClient>,
         event: &StoppedEvent,
         cx: &mut ViewContext<Self>,
@@ -451,7 +449,6 @@ impl DebugPanel {
     }
 
     fn handle_thread_event(
-        this: &mut Self,
         client: Arc<DebugAdapterClient>,
         event: &ThreadEvent,
         cx: &mut ViewContext<Self>,
@@ -483,7 +480,6 @@ impl DebugPanel {
     }
 
     fn handle_exited_event(
-        this: &mut Self,
         client: Arc<DebugAdapterClient>,
         _: &ExitedEvent,
         cx: &mut ViewContext<Self>,
