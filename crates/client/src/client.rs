@@ -1410,7 +1410,7 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
-    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+    pub fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
         let connection_id = self.connection_id()?;
         self.peer.send_dynamic(connection_id, envelope)
     }
