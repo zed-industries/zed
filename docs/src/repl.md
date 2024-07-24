@@ -27,6 +27,24 @@ The `repl: run` command will be executed on your selection(s), and the result wi
 
 Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
 
+### Notebooks as code
+
+Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
+
+The `repl: run` command will run each block of code between the `# %%` markers as a separate cell.
+
+```python
+# %% Cell 1
+import time
+import numpy as np
+
+# %% Cell 2
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+from matplotlib import style
+style.use('ggplot')
+```
+
 ## Language specific instructions
 
 ### Python {#python}
