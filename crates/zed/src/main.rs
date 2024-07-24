@@ -697,27 +697,27 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncAppContext,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<workspace::LocalPaths>> {
-    let mut restore_behaviour = cx
+    let mut restore_behavior = cx
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;
 
     let last_session_id = app_state.session.last_session_id();
     if last_session_id.is_none()
         && matches!(
-            restore_behaviour,
-            workspace::RestoreOnStartupBehaviour::LastSession
+            restore_behavior,
+            workspace::RestoreOnStartupBehavior::LastSession
         )
     {
-        restore_behaviour = workspace::RestoreOnStartupBehaviour::LastWorkspace;
+        restore_behavior = workspace::RestoreOnStartupBehavior::LastWorkspace;
     }
 
-    match restore_behaviour {
-        workspace::RestoreOnStartupBehaviour::LastWorkspace => {
+    match restore_behavior {
+        workspace::RestoreOnStartupBehavior::LastWorkspace => {
             workspace::last_opened_workspace_paths()
                 .await
                 .map(|location| vec![location])
         }
-        workspace::RestoreOnStartupBehaviour::LastSession => {
+        workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
                 workspace::last_session_workspace_locations(last_session_id)
                     .filter(|locations| !locations.is_empty())
