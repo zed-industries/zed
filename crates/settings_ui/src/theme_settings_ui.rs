@@ -4,7 +4,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, NumericStepper};
 
 #[derive(IntoElement)]
-pub struct UiFontSizeSetting(Pixels);
+pub struct UiFontSizeSetting;
 
 impl EditableSettingControl for UiFontSizeSetting {
     type Value = Pixels;
@@ -14,10 +14,9 @@ impl EditableSettingControl for UiFontSizeSetting {
         "UI Font Size".into()
     }
 
-    fn new(cx: &AppContext) -> Self {
+    fn read(cx: &AppContext) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
-
-        Self(settings.ui_font_size)
+        settings.ui_font_size
     }
 
     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
@@ -26,14 +25,14 @@ impl EditableSettingControl for UiFontSizeSetting {
 }
 
 impl RenderOnce for UiFontSizeSetting {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let value = self.0;
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
 
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FontSize))
             .child(NumericStepper::new(
-                self.0.to_string(),
+                value.to_string(),
                 move |_, cx| {
                     Self::write(value - px(1.), cx);
                 },

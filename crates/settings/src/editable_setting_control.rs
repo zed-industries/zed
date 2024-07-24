@@ -14,8 +14,8 @@ pub trait EditableSettingControl: RenderOnce {
     /// Returns the name of this setting.
     fn name(&self) -> SharedString;
 
-    /// Returns a new instance of this setting.
-    fn new(cx: &AppContext) -> Self;
+    /// Reads the setting value from the settings.
+    fn read(cx: &AppContext) -> Self::Value;
 
     /// Applies the given setting file to the settings file contents.
     ///

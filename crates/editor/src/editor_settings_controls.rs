@@ -14,16 +14,16 @@ impl EditorSettingsControls {
 }
 
 impl RenderOnce for EditorSettingsControls {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         v_flex()
             .gap_1()
-            .child(BufferFontSizeControl::new(cx))
-            .child(InlineGitBlameControl::new(cx))
+            .child(BufferFontSizeControl)
+            .child(InlineGitBlameControl)
     }
 }
 
 #[derive(IntoElement)]
-struct BufferFontSizeControl(Pixels);
+struct BufferFontSizeControl;
 
 impl EditableSettingControl for BufferFontSizeControl {
     type Value = Pixels;
@@ -33,10 +33,9 @@ impl EditableSettingControl for BufferFontSizeControl {
         "Buffer Font Size".into()
     }
 
-    fn new(cx: &AppContext) -> Self {
+    fn read(cx: &AppContext) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
-
-        Self(settings.buffer_font_size)
+        settings.buffer_font_size
     }
 
     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
@@ -45,14 +44,14 @@ impl EditableSettingControl for BufferFontSizeControl {
 }
 
 impl RenderOnce for BufferFontSizeControl {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let value = self.0;
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
 
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FontSize))
             .child(NumericStepper::new(
-                self.0.to_string(),
+                value.to_string(),
                 move |_, cx| {
                     Self::write(value - px(1.), cx);
                 },
@@ -64,7 +63,7 @@ impl RenderOnce for BufferFontSizeControl {
 }
 
 #[derive(IntoElement)]
-struct InlineGitBlameControl(bool);
+struct InlineGitBlameControl;
 
 impl EditableSettingControl for InlineGitBlameControl {
     type Value = bool;
@@ -74,9 +73,9 @@ impl EditableSettingControl for InlineGitBlameControl {
         "Inline Git Blame".into()
     }
 
-    fn new(cx: &AppContext) -> Self {
+    fn read(cx: &AppContext) -> Self::Value {
         let settings = ProjectSettings::get_global(cx);
-        Self(settings.git.inline_blame_enabled())
+        settings.git.inline_blame_enabled()
     }
 
     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
@@ -92,8 +91,8 @@ impl EditableSettingControl for InlineGitBlameControl {
 }
 
 impl RenderOnce for InlineGitBlameControl {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let value = self.0;
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
 
         CheckboxWithLabel::new(
             "inline-git-blame",

@@ -6,7 +6,6 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
-use settings::EditableSettingControl;
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
@@ -101,7 +100,7 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
@@ -109,7 +108,7 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
-            .child(UiFontSizeSetting::new(cx))
+            .child(UiFontSizeSetting)
             .child(EditorSettingsControls::new())
     }
 }
