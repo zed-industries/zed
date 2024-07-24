@@ -1,7 +1,10 @@
 use gpui::{AppContext, FontWeight};
 use settings::{EditableSettingControl, Settings};
-use theme::{SystemAppearance, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup};
+use theme::{SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
+use ui::{
+    prelude::*, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
+    ToggleButton,
+};
 
 #[derive(IntoElement)]
 pub struct AppearanceSettingsControls {}
@@ -15,7 +18,15 @@ impl AppearanceSettingsControls {
 impl RenderOnce for AppearanceSettingsControls {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         SettingsContainer::new()
-            .child(SettingsGroup::new("Theme").child(ThemeControl))
+            .child(
+                SettingsGroup::new("Theme").child(
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(ThemeControl)
+                        .child(ThemeModeControl),
+                ),
+            )
             .child(
                 SettingsGroup::new("Font")
                     .child(UiFontSizeControl)
@@ -42,7 +53,7 @@ impl EditableSettingControl for ThemeControl {
             .theme_selection
             .as_ref()
             .map(|selection| selection.theme(appearance.0).to_string())
-            .unwrap_or("One Dark".to_string())
+            .unwrap_or_else(|| ThemeSettings::default_theme(*appearance).to_string())
     }
 
     fn apply(
@@ -83,6 +94,68 @@ impl RenderOnce for ThemeControl {
                 menu
             }),
         )
+        .full_width(true)
+    }
+}
+
+#[derive(IntoElement)]
+struct ThemeModeControl;
+
+impl EditableSettingControl for ThemeModeControl {
+    type Value = ThemeMode;
+    type Settings = ThemeSettings;
+
+    fn name(&self) -> SharedString {
+        "Theme Mode".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = ThemeSettings::get_global(cx);
+        settings
+            .theme_selection
+            .as_ref()
+            .and_then(|selection| selection.mode())
+            .unwrap_or_default()
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        settings.set_mode(value);
+    }
+}
+
+impl RenderOnce for ThemeModeControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        h_flex()
+            .child(
+                ToggleButton::new("light", "Light")
+                    .style(ButtonStyle::Filled)
+                    .size(ButtonSize::Large)
+                    .selected(value == ThemeMode::Light)
+                    .on_click(|_, cx| Self::write(ThemeMode::Light, cx))
+                    .first(),
+            )
+            .child(
+                ToggleButton::new("system", "System")
+                    .style(ButtonStyle::Filled)
+                    .size(ButtonSize::Large)
+                    .selected(value == ThemeMode::System)
+                    .on_click(|_, cx| Self::write(ThemeMode::System, cx))
+                    .middle(),
+            )
+            .child(
+                ToggleButton::new("dark", "Dark")
+                    .style(ButtonStyle::Filled)
+                    .size(ButtonSize::Large)
+                    .selected(value == ThemeMode::Dark)
+                    .on_click(|_, cx| Self::write(ThemeMode::Dark, cx))
+                    .last(),
+            )
     }
 }
 
