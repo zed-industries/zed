@@ -281,14 +281,14 @@ impl ErrorView {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let colors = cx.theme().colors();
+        let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
                 .w_full()
-                .bg(colors.background)
-                .py(cx.line_height() / 2.)
-                .border_l_1()
+                .px(padding)
+                .py(padding)
+                .border_1()
                 .border_color(theme.status().error_border)
                 .child(
                     h_flex()
