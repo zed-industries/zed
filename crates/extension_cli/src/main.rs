@@ -7,13 +7,13 @@ use std::{
 };
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
+use ::http_client::HttpClientWithProxy;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
-use http::HttpClientWithProxy;
 use language::LanguageConfig;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};

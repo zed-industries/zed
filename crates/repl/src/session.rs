@@ -377,7 +377,12 @@ impl Session {
         self.blocks.clear();
     }
 
-    pub fn execute(&mut self, code: &str, anchor_range: Range<Anchor>, cx: &mut ViewContext<Self>) {
+    pub fn execute(
+        &mut self,
+        code: String,
+        anchor_range: Range<Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
         };
@@ -387,7 +392,7 @@ impl Session {
         }
 
         let execute_request = ExecuteRequest {
-            code: code.to_string(),
+            code,
             ..ExecuteRequest::default()
         };
 
