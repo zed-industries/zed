@@ -4,7 +4,6 @@
 pub mod settings;
 
 use core::fmt;
-use std::path::PathBuf;
 
 use wit::*;
 
@@ -57,22 +56,6 @@ pub fn set_language_server_installation_status(
     status: &LanguageServerInstallationStatus,
 ) {
     wit::set_language_server_installation_status(&language_server_id.0, status)
-}
-
-/// Properly retrieve the current dir
-pub fn current_dir() -> std::io::Result<PathBuf> {
-    let (platform, _) = current_platform();
-    match platform {
-        Os::Windows => {
-            let dir_string = std::env::current_dir()?.to_string_lossy().to_string();
-            if let Some(result) = dir_string.strip_prefix('/') {
-                Ok(result.into())
-            } else {
-                Ok(dir_string.into())
-            }
-        }
-        _ => std::env::current_dir(),
-    }
 }
 
 /// A Zed extension.
