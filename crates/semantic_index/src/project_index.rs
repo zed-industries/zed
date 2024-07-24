@@ -228,7 +228,7 @@ impl ProjectIndex {
                     .read_with(&cx, |index, cx| {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
-                        let db = index.embedding_index().db();
+                        let db = index.embedding_index().db().clone();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
