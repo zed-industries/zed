@@ -75,12 +75,12 @@ impl OllamaLanguageModelProvider {
                 http_client,
                 available_models: Default::default(),
                 _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                    this.fetch_models(cx).detach_and_log_err(cx);
+                    this.fetch_models(cx).detach();
                     cx.notify();
                 }),
             }),
         };
-        this.fetch_models(cx).detach_and_log_err(cx);
+        this.fetch_models(cx).detach();
         this
     }
 

@@ -1,5 +1,6 @@
 use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
+use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
@@ -8,7 +9,7 @@ use gpui::{
 };
 use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
