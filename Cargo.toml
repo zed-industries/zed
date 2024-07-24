@@ -161,6 +161,7 @@ resolver = "2"
 
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
+aho-corasick = "1.1"
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
@@ -360,6 +361,7 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+rsa = "0.9.6"
 runtimelib = { version = "0.12", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }

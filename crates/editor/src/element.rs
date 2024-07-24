@@ -2805,6 +2805,9 @@ impl EditorElement {
         em_width: Pixels,
         cx: &mut WindowContext,
     ) {
+        if !self.editor.focus_handle(cx).is_focused(cx) {
+            return;
+        }
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };

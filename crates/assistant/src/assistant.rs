@@ -23,7 +23,7 @@ use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelResponseMessage,
+    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
@@ -231,7 +231,7 @@ fn init_completion_provider(cx: &mut AppContext) {
 
 fn update_active_language_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
-    let provider_name = LanguageModelProviderName::from(settings.default_model.provider.clone());
+    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
 
     let Some(provider) = LanguageModelRegistry::global(cx)

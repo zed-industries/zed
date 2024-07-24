@@ -545,7 +545,7 @@ impl HoverState {
     pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            for markdown_view in &info_popover.parsed_content {
+            if let Some(markdown_view) = &info_popover.parsed_content {
                 if markdown_view.focus_handle(cx).is_focused(cx) {
                     hover_popover_is_focused = true;
                 }
