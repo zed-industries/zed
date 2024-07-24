@@ -1,7 +1,8 @@
 use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
-    LanguageModelName, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest,
 };
 use anyhow::Result;
 use client::Client;
@@ -17,6 +18,7 @@ use crate::LanguageModelProvider;
 
 use super::anthropic::{count_anthropic_tokens, preprocess_anthropic_request};
 
+pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "zed.dev";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -52,7 +54,7 @@ impl CloudLanguageModelProvider {
         let state = cx.new_model(|cx| State {
             client: client.clone(),
             status,
-            settings: ZedDotDevSettings::default(),
+            settings: AllLanguageModelSettings::get_global(cx).zed_dot_dev.clone(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 this.settings = AllLanguageModelSettings::get_global(cx).zed_dot_dev.clone();
                 cx.notify();
@@ -90,6 +92,10 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 }
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
@@ -154,6 +160,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {

@@ -17,11 +17,12 @@ use util::ResultExt;
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 
-const PROVIDER_NAME: &str = "anthropic";
+const PROVIDER_ID: &str = "anthropic";
+const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -45,7 +46,7 @@ impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
-            settings: AnthropicSettings::default(),
+            settings: AllLanguageModelSettings::get_global(cx).anthropic.clone(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 this.settings = AllLanguageModelSettings::get_global(cx).anthropic.clone();
                 cx.notify();
@@ -64,6 +65,10 @@ impl LanguageModelProviderState for AnthropicLanguageModelProvider {
 }
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
@@ -219,6 +224,10 @@ impl LanguageModel for AnthropicModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {

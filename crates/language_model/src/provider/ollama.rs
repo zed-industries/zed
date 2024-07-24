@@ -2,21 +2,24 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http::HttpClient;
-use ollama::{get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest};
+use ollama::{
+    get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
+};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, Role,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, Role,
 };
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 
-const PROVIDER_NAME: &str = "ollama";
+const PROVIDER_ID: &str = "ollama";
+const PROVIDER_NAME: &str = "Ollama";
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -37,7 +40,7 @@ struct State {
 }
 
 impl State {
-    fn fetch_models(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn fetch_models(&self, cx: &ModelContext<Self>) -> Task<Result<()>> {
         let http_client = self.http_client.clone();
         let api_url = self.settings.api_url.clone();
 
@@ -71,9 +74,10 @@ impl OllamaLanguageModelProvider {
             state: cx.new_model(|cx| State {
                 http_client,
                 available_models: Default::default(),
-                settings: OllamaSettings::default(),
+                settings: AllLanguageModelSettings::get_global(cx).ollama.clone(),
                 _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                     this.settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
+                    this.fetch_models(cx).detach_and_log_err(cx);
                     cx.notify();
                 }),
             }),
@@ -83,14 +87,17 @@ impl OllamaLanguageModelProvider {
     }
 
     fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
+        dbg!();
         let http_client = self.http_client.clone();
         let api_url = self.state.read(cx).settings.api_url.clone();
 
         let state = self.state.clone();
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(|mut cx| async move {
+            dbg!();
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
+            dbg!();
             let mut models: Vec<ollama::Model> = models
                 .into_iter()
                 // Since there is no metadata from the Ollama API
@@ -100,10 +107,13 @@ impl OllamaLanguageModelProvider {
                 .map(|model| ollama::Model::new(&model.name))
                 .collect();
 
+            dbg!();
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
+            dbg!();
             state.update(&mut cx, |this, cx| {
                 this.available_models = models;
+                dbg!();
                 cx.notify();
             })
         })
@@ -119,6 +129,10 @@ impl LanguageModelProviderState for OllamaLanguageModelProvider {
 }
 
 impl LanguageModelProvider for OllamaLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
@@ -137,6 +151,14 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
+    }
+
+    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &AppContext) {
+        let http_client = self.http_client.clone();
+        let api_url = self.state.read(cx).settings.api_url.clone();
+        let id = model.id().0.to_string();
+        cx.spawn(|_| async move { preload_model(http_client, &api_url, &id).await })
+            .detach_and_log_err(cx);
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
@@ -213,16 +235,20 @@ impl LanguageModel for OllamaLanguageModel {
         LanguageModelName::from(self.model.display_name().to_string())
     }
 
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }
 
     fn telemetry_id(&self) -> String {
         format!("ollama/{}", self.model.id())
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
     fn count_tokens(

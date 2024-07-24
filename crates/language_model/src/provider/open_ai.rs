@@ -17,11 +17,12 @@ use util::ResultExt;
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, Role,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, Role,
 };
 
-const PROVIDER_NAME: &str = "openai";
+const PROVIDER_ID: &str = "openai";
+const PROVIDER_NAME: &str = "OpenAI";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
@@ -45,7 +46,7 @@ impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
-            settings: OpenAiSettings::default(),
+            settings: AllLanguageModelSettings::get_global(cx).open_ai.clone(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 this.settings = AllLanguageModelSettings::get_global(cx).open_ai.clone();
                 cx.notify();
@@ -65,6 +66,10 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
 }
 
 impl LanguageModelProvider for OpenAiLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
@@ -186,6 +191,10 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
