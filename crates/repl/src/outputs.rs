@@ -281,14 +281,14 @@ impl ErrorView {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let colors = cx.theme().colors();
+        let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
                 .w_full()
-                .bg(colors.background)
-                .py(cx.line_height() / 2.)
-                .border_l_1()
+                .px(padding)
+                .py(padding)
+                .border_1()
                 .border_color(theme.status().error_border)
                 .child(
                     h_flex()
@@ -429,13 +429,17 @@ impl ExecutionView {
                             self.outputs.push(output);
                         }
 
-                        // Comments from @rgbkrk, reach out with questions
+                        // There are other payloads that could be handled here, such as updating the input.
+                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
 
                         // Set next input adds text to the next cell. Not required to support.
                         // However, this could be implemented by adding text to the buffer.
+                        // Trigger in python using `get_ipython().set_next_input("text")`
+                        //
                         // runtimelib::Payload::SetNextInput { text, replace } => {},
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
+                        // Python users can trigger this with the `%edit` magic command
                         // runtimelib::Payload::EditMagic { filename, line_number } => {},
 
                         // Ask the user if they want to exit the kernel. Not required to support.
