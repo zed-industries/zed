@@ -2,7 +2,7 @@ use gpui::AppContext;
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, NumericStepper};
+use ui::{prelude::*, CheckboxWithLabel, NumericStepper, SettingsGroup};
 
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
@@ -15,8 +15,7 @@ impl EditorSettingsControls {
 
 impl RenderOnce for EditorSettingsControls {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        v_flex()
-            .gap_1()
+        SettingsGroup::new("Editor")
             .child(BufferFontSizeControl)
             .child(InlineGitBlameControl)
     }

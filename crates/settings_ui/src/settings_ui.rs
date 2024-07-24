@@ -6,7 +6,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
-use ui::prelude::*;
+use ui::{prelude::*, SettingsGroup};
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
@@ -108,7 +108,7 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
-            .child(UiFontSizeSetting)
+            .child(SettingsGroup::new("UI Font").child(UiFontSizeSetting))
             .child(EditorSettingsControls::new())
     }
 }
