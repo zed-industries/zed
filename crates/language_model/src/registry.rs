@@ -148,7 +148,7 @@ mod tests {
 
         let providers = registry.read(cx).providers().collect::<Vec<_>>();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].0, &crate::provider::fake::provider_id());
+        assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
             registry.unregister_provider(&crate::provider::fake::provider_id(), cx);
