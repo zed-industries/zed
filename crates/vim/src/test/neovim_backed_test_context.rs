@@ -35,7 +35,7 @@ impl SharedState {
     pub fn assert_matches(&self) {
         if self.neovim != self.editor || self.neovim_mode != self.editor_mode {
             panic!(
-                indoc! {"Test failed (zed does not match nvim behaviour)
+                indoc! {"Test failed (zed does not match nvim behavior)
                     # initial state:
                     {}
                     # keystrokes:
@@ -67,7 +67,7 @@ impl SharedState {
         let message = if self.neovim != marked_text {
             "Test is incorrect (currently expected != neovim_state)"
         } else {
-            "Editor does not match nvim behaviour"
+            "Editor does not match nvim behavior"
         };
         panic!(
             indoc! {"{}
@@ -110,7 +110,7 @@ impl SharedClipboard {
         let message = if expected == self.neovim {
             "Test is incorrect (currently expected != neovim_state)"
         } else {
-            "Editor does not match nvim behaviour"
+            "Editor does not match nvim behavior"
         };
 
         panic!(
