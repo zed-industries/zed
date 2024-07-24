@@ -40,7 +40,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                 for (index, provider) in LanguageModelRegistry::global(cx)
                     .read(cx)
                     .providers()
-                    .into_iter()
                     .enumerate()
                 {
                     if index > 0 {
