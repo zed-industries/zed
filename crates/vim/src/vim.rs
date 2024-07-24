@@ -491,11 +491,25 @@ impl Vim {
     fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
         if self.active_operator().is_some() {
             self.update_state(|state| {
-                state.post_count = Some(state.post_count.unwrap_or(0) * 10 + number)
+                let post_count = state.post_count.unwrap_or(0);
+
+                state.post_count = Some(
+                    post_count
+                        .checked_mul(10)
+                        .and_then(|post_count| post_count.checked_add(number))
+                        .unwrap_or(post_count),
+                )
             })
         } else {
             self.update_state(|state| {
-                state.pre_count = Some(state.pre_count.unwrap_or(0) * 10 + number)
+                let pre_count = state.pre_count.unwrap_or(0);
+
+                state.pre_count = Some(
+                    pre_count
+                        .checked_mul(10)
+                        .and_then(|pre_count| pre_count.checked_add(number))
+                        .unwrap_or(pre_count),
+                )
             })
         }
         // update the keymap so that 0 works
