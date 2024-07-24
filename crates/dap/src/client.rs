@@ -110,6 +110,7 @@ impl DebugAdapterClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_tcp_client<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -233,6 +234,7 @@ impl DebugAdapterClient {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_transport<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -284,7 +286,9 @@ impl DebugAdapterClient {
         while let Ok(payload) = client_rx.recv().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
-                _ => unreachable!(),
+                e => {
+                    dbg!(&e);
+                }
             })?;
         }
 
