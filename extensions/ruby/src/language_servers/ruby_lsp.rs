@@ -1,8 +1,10 @@
-use zed::{
+use zed_extension_api::{
     lsp::{Completion, CompletionKind, Symbol, SymbolKind},
-    CodeLabel, CodeLabelSpan,
+    settings::LspSettings,
+    CodeLabel, CodeLabelSpan, Result, Worktree,
 };
-use zed_extension_api::{self as zed, Result};
+
+use crate::RubyLanguageServerCommand;
 
 pub struct RubyLsp {}
 
@@ -13,13 +15,35 @@ impl RubyLsp {
         Self {}
     }
 
-    pub fn server_script_path(&mut self, worktree: &zed::Worktree) -> Result<String> {
-        let path = worktree.which("ruby-lsp").ok_or_else(|| {
-            "ruby-lsp must be installed manually. Install it with `gem install ruby-lsp`."
-                .to_string()
-        })?;
+    pub fn language_server_command(
+        &self,
+        worktree: &Worktree,
+    ) -> Result<RubyLanguageServerCommand> {
+        let mut binary = None;
+        let mut args = None;
 
-        Ok(path)
+        if let Some(binary_settings) =
+            LspSettings::for_worktree(RubyLsp::LANGUAGE_SERVER_ID, worktree)
+                .ok()
+                .and_then(|lsp_settings| lsp_settings.binary)
+        {
+            if let Some(bin_path) = binary_settings.path {
+                binary = Some(bin_path);
+            }
+            if let Some(bin_args) = binary_settings.arguments {
+                args = Some(bin_args);
+            }
+        }
+        let command = if let Some(binary) = binary {
+            binary
+        } else {
+            worktree
+                .which("ruby-lsp")
+                .ok_or_else(|| "ruby-lsp must be installed manually".to_string())?
+        };
+        let args = args.unwrap_or_else(|| vec![]);
+
+        Ok(RubyLanguageServerCommand { command, args })
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
