@@ -25,6 +25,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
+    fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
 
@@ -44,8 +45,10 @@ pub trait LanguageModel: Send + Sync {
 }
 
 pub trait LanguageModelProvider: 'static {
+    fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
+    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
@@ -56,13 +59,16 @@ pub trait LanguageModelProviderState: 'static {
     fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription>;
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelId(pub SharedString);
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelName(pub SharedString);
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+pub struct LanguageModelProviderId(pub SharedString);
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
 
 impl From<String> for LanguageModelId {
@@ -72,6 +78,12 @@ impl From<String> for LanguageModelId {
 }
 
 impl From<String> for LanguageModelName {
+    fn from(value: String) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<String> for LanguageModelProviderId {
     fn from(value: String) -> Self {
         Self(SharedString::from(value))
     }

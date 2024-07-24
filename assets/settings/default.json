@@ -853,7 +853,17 @@
     }
   },
   // Different settings for specific language models.
-  "language_models": {},
+  "language_models": {
+    "anthropic": {
+      "api_url": "https://api.anthropic.com"
+    },
+    "openai": {
+      "api_url": "https://api.openai.com/v1"
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434"
+    }
+  },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.

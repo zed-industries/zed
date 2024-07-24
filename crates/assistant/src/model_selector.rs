@@ -4,10 +4,7 @@ use crate::{
     assistant_settings::AssistantSettings, LanguageModelCompletionProvider, ToggleModelSelector,
 };
 use fs::Fs;
-use language_model::{
-    provider::{anthropic, ollama, open_ai},
-    LanguageModelRegistry,
-};
+use language_model::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -29,24 +26,18 @@ impl RenderOnce for ModelSelector {
             .with_handle(self.handle)
             .menu(move |cx| {
                 ContextMenu::build(cx, |mut menu, cx| {
-                    for (index, (provider, available_models)) in LanguageModelRegistry::global(cx)
+                    for (index, provider) in LanguageModelRegistry::global(cx)
                         .read(cx)
-                        .available_models_grouped_by_provider(cx)
+                        .providers()
                         .into_iter()
                         .enumerate()
                     {
                         if index > 0 {
                             menu = menu.separator();
                         }
+                        menu = menu.header(provider.name().0);
 
-                        let provider_name = match provider.0.as_ref() {
-                            anthropic::PROVIDER_NAME => "Anthropic".into(),
-                            ollama::PROVIDER_NAME => "Ollama".into(),
-                            open_ai::PROVIDER_NAME => "OpenAI".into(),
-                            _ => provider.0.clone(),
-                        };
-                        menu = menu.header(provider_name);
-
+                        let available_models = provider.provided_models(cx);
                         if available_models.is_empty() {
                             menu = menu.custom_entry(
                                 {
@@ -60,7 +51,7 @@ impl RenderOnce for ModelSelector {
                                     }
                                 },
                                 {
-                                    let provider = provider.clone();
+                                    let provider = provider.id();
                                     move |cx| {
                                         LanguageModelCompletionProvider::global(cx).update(
                                             cx,
