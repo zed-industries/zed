@@ -1,5 +1,5 @@
 use fs::Fs;
-use gpui::{AppContext, CursorStyle};
+use gpui::AppContext;
 use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
 use ui::{prelude::*, NumericStepper};
@@ -10,6 +10,11 @@ pub trait EditableSetting: RenderOnce {
 
     /// Returns the name of this setting.
     fn name(&self) -> SharedString;
+
+    /// Returns the icon to be displayed in place of the setting name.
+    fn icon(&self) -> Option<IconName> {
+        None
+    }
 
     fn new(settings: &Self::Settings) -> Self;
 
@@ -36,6 +41,10 @@ impl EditableSetting for UiFontSizeSetting {
         "UI Font Size".into()
     }
 
+    fn icon(&self) -> Option<IconName> {
+        Some(IconName::FontSize)
+    }
+
     fn new(settings: &Self::Settings) -> Self {
         Self(settings.ui_font_size)
     }
@@ -51,10 +60,13 @@ impl RenderOnce for UiFontSizeSetting {
 
         h_flex()
             .gap_2()
-            .w_full()
-            .justify_between()
-            .cursor(CursorStyle::Arrow)
-            .child(Label::new(self.name()))
+            .map(|el| {
+                if let Some(icon) = self.icon() {
+                    el.child(Icon::new(icon))
+                } else {
+                    el.child(Label::new(self.name()))
+                }
+            })
             .child(NumericStepper::new(
                 self.0.to_string(),
                 move |_, cx| {
@@ -78,6 +90,10 @@ impl EditableSetting for BufferFontSizeSetting {
         "Buffer Font Size".into()
     }
 
+    fn icon(&self) -> Option<IconName> {
+        Some(IconName::FontSize)
+    }
+
     fn new(settings: &Self::Settings) -> Self {
         Self(settings.buffer_font_size)
     }
@@ -93,10 +109,13 @@ impl RenderOnce for BufferFontSizeSetting {
 
         h_flex()
             .gap_2()
-            .w_full()
-            .justify_between()
-            .cursor(CursorStyle::Arrow)
-            .child(Label::new(self.name()))
+            .map(|el| {
+                if let Some(icon) = self.icon() {
+                    el.child(Icon::new(icon))
+                } else {
+                    el.child(Label::new(self.name()))
+                }
+            })
             .child(NumericStepper::new(
                 self.0.to_string(),
                 move |_, cx| {
