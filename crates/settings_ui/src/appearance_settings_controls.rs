@@ -1,6 +1,6 @@
 use gpui::{AppContext, FontWeight};
 use settings::{EditableSettingControl, Settings};
-use theme::{SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
+use theme::{FontFamilyCache, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
 use ui::{
     prelude::*, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
     ToggleButton,
@@ -29,8 +29,14 @@ impl RenderOnce for AppearanceSettingsControls {
             )
             .child(
                 SettingsGroup::new("Font")
-                    .child(UiFontSizeControl)
-                    .child(UiFontWeightControl),
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(UiFontFamilyControl)
+                            .child(UiFontWeightControl),
+                    )
+                    .child(UiFontSizeControl),
             )
     }
 }
@@ -156,6 +162,65 @@ impl RenderOnce for ThemeModeControl {
                     .on_click(|_, cx| Self::write(ThemeMode::Dark, cx))
                     .last(),
             )
+    }
+}
+
+#[derive(IntoElement)]
+struct UiFontFamilyControl;
+
+impl EditableSettingControl for UiFontFamilyControl {
+    type Value = SharedString;
+    type Settings = ThemeSettings;
+
+    fn name(&self) -> SharedString {
+        "UI Font Family".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = ThemeSettings::get_global(cx);
+        settings.ui_font.family.clone()
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        settings.ui_font_family = Some(value.to_string());
+    }
+}
+
+impl RenderOnce for UiFontFamilyControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        h_flex()
+            .gap_2()
+            .child(Icon::new(IconName::Font))
+            .child(DropdownMenu::new(
+                "ui-font-family",
+                value.clone(),
+                ContextMenu::build(cx, |mut menu, cx| {
+                    let font_family_cache = FontFamilyCache::global(cx);
+
+                    for font_name in font_family_cache.list_font_families(cx) {
+                        menu = menu.custom_entry(
+                            {
+                                let font_name = font_name.clone();
+                                move |_cx| Label::new(font_name.clone()).into_any_element()
+                            },
+                            {
+                                let font_name = font_name.clone();
+                                move |cx| {
+                                    Self::write(font_name.clone(), cx);
+                                }
+                            },
+                        )
+                    }
+
+                    menu
+                }),
+            ))
     }
 }
 
