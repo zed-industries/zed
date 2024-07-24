@@ -122,7 +122,7 @@ pub fn deploy_context_menu(
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine))
-                .action("Copy File:Line", Box::new(CopyFileLocatin));
+                .action("Copy File:Line", Box::new(CopyFileLocation));
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
