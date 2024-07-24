@@ -342,11 +342,13 @@ impl Render for LegacySettingsMenu {
             .max_w_96()
             .max_h_2_3()
             .px_2()
-            .when_else(
-                is_empty,
-                |empty| empty.py_1(),
-                |not_empty| not_empty.pt_0().pb_1(),
-            )
+            .map(|el| {
+                if is_empty {
+                    el.py_1()
+                } else {
+                    el.pt_0().pb_1()
+                }
+            })
             .gap_1()
             .when(is_empty, |this| {
                 this.child(Label::new("No settings found").color(Color::Muted))
