@@ -8,8 +8,8 @@ use settings::{Settings, SettingsSources};
 
 use crate::{
     provider::{
-        anthropic::AnthropicSettings, cloud::ZedDotDevSettings, ollama::OllamaSettings,
-        open_ai::OpenAiSettings,
+        anthropic::AnthropicSettings, cloud::ZedDotDevSettings, copilot_chat::CopilotChatSettings,
+        ollama::OllamaSettings, open_ai::OpenAiSettings,
     },
     CloudModel,
 };
@@ -25,6 +25,7 @@ pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub ollama: OllamaSettings,
     pub zed_dot_dev: ZedDotDevSettings,
+    pub copilot_chat: CopilotChatSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -34,6 +35,7 @@ pub struct AllLanguageModelSettingsContent {
     pub open_ai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
+    pub copilot_chat: Option<CopilotChatSettingsContent>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -59,6 +61,11 @@ pub struct OpenAiSettingsContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
     available_models: Option<Vec<CloudModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct CopilotChatSettingsContent {
+    low_speed_timeout_in_seconds: Option<u64>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {
@@ -136,6 +143,15 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
+
+            if let Some(low_speed_timeout) = value
+                .copilot_chat
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.copilot_chat.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout));
+            }
         }
 
         Ok(settings)

@@ -187,6 +187,10 @@ impl Status {
     pub fn is_authorized(&self) -> bool {
         matches!(self, Status::Authorized)
     }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Status::Disabled)
+    }
 }
 
 struct RegisteredBuffer {
@@ -303,6 +307,8 @@ pub struct Copilot {
 
 pub enum Event {
     CopilotLanguageServerStarted,
+    CopilotAuthSignedIn,
+    CopilotAuthSignedOut,
 }
 
 impl EventEmitter<Event> for Copilot {}
@@ -930,6 +936,7 @@ impl Copilot {
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
+                    cx.emit(Event::CopilotAuthSignedIn);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -944,6 +951,7 @@ impl Copilot {
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
+                    cx.emit(Event::CopilotAuthSignedOut);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }

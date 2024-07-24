@@ -3,14 +3,15 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::EnumIter;
 
-pub const COPILOT_CHAT_API_URL: &'static str = "https://api.githubcopilot.com";
-pub const COPILOT_CHAT_AUTH_URL: &'static str = "https://api.github.com";
+pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
+    "https://api.githubcopilot.com/chat/completions";
+pub const COPILOT_CHAT_AUTH_URL: &'static str = "https://api.github.com/copilot_internal/v2/token";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -113,15 +114,12 @@ pub struct ResponseDelta {
 
 pub async fn request_api_token(
     oauth_token: &str,
-    api_url: &str,
     client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
 ) -> Result<(String, NaiveDateTime), anyhow::Error> {
-    let uri = format!("{api_url}/copilot_internal/v2/token");
-
     let mut request_builder = HttpRequest::builder()
         .method(Method::GET)
-        .uri(uri)
+        .uri(COPILOT_CHAT_AUTH_URL)
         .header("Authorization", format!("token {}", oauth_token))
         .header("Accept", "application/json");
 
@@ -176,15 +174,13 @@ pub async fn fetch_copilot_oauth_token() -> Result<String, anyhow::Error> {
 
 pub async fn stream_completion(
     client: Arc<dyn HttpClient>,
-    api_url: String,
     api_key: String,
     request: Request,
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-    let uri = format!("{api_url}/chat/completions");
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(COPILOT_CHAT_COMPLETION_URL)
         .header(
             "Editor-Version",
             format!(

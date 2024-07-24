@@ -7,7 +7,8 @@ use ui::Context;
 use crate::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
-        ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
+        copilot_chat::CopilotChatLanguageModelProvider, ollama::OllamaLanguageModelProvider,
+        open_ai::OpenAiLanguageModelProvider,
     },
     LanguageModel, LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
 };
@@ -38,6 +39,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         OllamaLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        CopilotChatLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
 
