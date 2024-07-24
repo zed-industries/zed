@@ -73,6 +73,15 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
+        let titlebar_color = if cfg!(target_os = "linux") {
+            if cx.is_window_active() {
+                cx.theme().colors().title_bar_background
+            } else {
+                cx.theme().colors().title_bar_inactive_background
+            }
+        } else {
+            cx.theme().colors().title_bar_background
+        };
 
         h_flex()
             .id("titlebar")
@@ -99,9 +108,9 @@ impl Render for TitleBar {
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .border(px(1.))
-                    .border_color(cx.theme().colors().title_bar_background),
+                    .border_color(titlebar_color),
             })
-            .bg(cx.theme().colors().title_bar_background)
+            .bg(titlebar_color)
             .content_stretch()
             .child(
                 div()

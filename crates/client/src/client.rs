@@ -13,16 +13,18 @@ use async_tungstenite::tungstenite::{
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
+use proto::ProtoClient;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -231,7 +233,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    Http(#[from] http_client::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -1349,7 +1351,7 @@ impl Client {
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
-        let request = Request::get(url.as_str())
+        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
 
@@ -1406,6 +1408,11 @@ impl Client {
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
         log::debug!("rpc send. client_id:{}, name:{}", self.id(), T::NAME);
         self.peer.send(self.connection_id()?, message)
+    }
+
+    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
     }
 
     pub fn request<T: RequestMessage>(
@@ -1606,6 +1613,20 @@ impl Client {
     }
 }
 
+impl ProtoClient for Client {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+        self.send_dynamic(envelope)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct DevelopmentCredentials {
     user_id: u64,
@@ -1762,7 +1783,7 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;

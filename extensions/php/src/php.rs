@@ -1,84 +1,60 @@
-use std::{env, fs};
-use zed_extension_api::{self as zed, Result};
+mod language_servers;
 
-const SERVER_PATH: &str = "node_modules/intelephense/lib/intelephense.js";
-const PACKAGE_NAME: &str = "intelephense";
+use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};
+
+use crate::language_servers::{Intelephense, Phpactor};
 
 struct PhpExtension {
-    did_find_server: bool,
-}
-
-impl PhpExtension {
-    fn server_exists(&self) -> bool {
-        fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
-    }
-
-    fn server_script_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
-        let server_exists = self.server_exists();
-        if self.did_find_server && server_exists {
-            return Ok(SERVER_PATH.to_string());
-        }
-
-        zed::set_language_server_installation_status(
-            &config.name,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
-        );
-        let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
-
-        if !server_exists
-            || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
-        {
-            zed::set_language_server_installation_status(
-                &config.name,
-                &zed::LanguageServerInstallationStatus::Downloading,
-            );
-            let result = zed::npm_install_package(PACKAGE_NAME, &version);
-            match result {
-                Ok(()) => {
-                    if !self.server_exists() {
-                        Err(format!(
-                            "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
-                        ))?;
-                    }
-                }
-                Err(error) => {
-                    if !self.server_exists() {
-                        Err(error)?;
-                    }
-                }
-            }
-        }
-
-        self.did_find_server = true;
-        Ok(SERVER_PATH.to_string())
-    }
+    intelephense: Option<Intelephense>,
+    phpactor: Option<Phpactor>,
 }
 
 impl zed::Extension for PhpExtension {
     fn new() -> Self {
         Self {
-            did_find_server: false,
+            intelephense: None,
+            phpactor: None,
         }
     }
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
-        _worktree: &zed::Worktree,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = self.server_script_path(config)?;
-        Ok(zed::Command {
-            command: zed::node_binary_path()?,
-            args: vec![
-                env::current_dir()
-                    .unwrap()
-                    .join(&server_path)
-                    .to_string_lossy()
-                    .to_string(),
-                "--stdio".to_string(),
-            ],
-            env: Default::default(),
-        })
+        match language_server_id.as_ref() {
+            Intelephense::LANGUAGE_SERVER_ID => {
+                let intelephense = self.intelephense.get_or_insert_with(|| Intelephense::new());
+                intelephense.language_server_command(language_server_id, worktree)
+            }
+            Phpactor::LANGUAGE_SERVER_ID => {
+                let phpactor = self.phpactor.get_or_insert_with(|| Phpactor::new());
+
+                Ok(zed::Command {
+                    command: phpactor.language_server_binary_path(language_server_id, worktree)?,
+                    args: vec!["language-server".into()],
+                    env: Default::default(),
+                })
+            }
+            language_server_id => Err(format!("unknown language server: {language_server_id}")),
+        }
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        match language_server_id.as_ref() {
+            Intelephense::LANGUAGE_SERVER_ID => {
+                if let Some(intelephense) = self.intelephense.as_mut() {
+                    return intelephense.language_server_workspace_configuration(worktree);
+                }
+            }
+            _ => (),
+        }
+
+        Ok(None)
     }
 }
 

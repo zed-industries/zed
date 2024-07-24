@@ -12,17 +12,20 @@
 
 - [Configuring Zed](./configuring-zed.md)
 - [Key bindings](./key-bindings.md)
+- [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Vim](./vim.md)
 
 # Using Zed
 
-- [Assistant Panel](./assistant-panel.md)
+- [Multibuffers](./multibuffers.md)
+- [Language model integration](./language-model-integration.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
+- [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
-- [Repl](./repl.md)
+- [REPL](./repl.md)
 
 # Language Support
 
@@ -51,6 +54,7 @@
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
+- [R](./languages/r.md)
 - [Racket](./languages/racket.md)
 - [Ruby](./languages/ruby.md)
 - [Rust](./languages/rust.md)

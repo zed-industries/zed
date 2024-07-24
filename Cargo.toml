@@ -19,6 +19,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/completion",
     "crates/copilot",
     "crates/dap",
     "crates/debugger_ui",
@@ -45,13 +46,14 @@ members = [
     "crates/gpui_macros",
     "crates/headless",
     "crates/html_to_markdown",
-    "crates/http",
+    "crates/http_client",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
+    "crates/language_model",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -81,6 +83,8 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/remote",
+    "crates/remote_server",
     "crates/repl",
     "crates/rich_text",
     "crates/rope",
@@ -88,7 +92,9 @@ members = [
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
+    "crates/session",
     "crates/settings",
+    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/sqlez",
@@ -139,6 +145,7 @@ members = [
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
+    "extensions/ruff",
     "extensions/ruby",
     "extensions/snippets",
     "extensions/svelte",
@@ -156,6 +163,7 @@ resolver = "2"
 
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
+aho-corasick = "1.1"
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
@@ -175,6 +183,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+completion = { path = "crates/completion" }
 copilot = { path = "crates/copilot" }
 dap = { path = "crates/dap" }
 db = { path = "crates/db" }
@@ -199,13 +208,14 @@ gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
-http = { path = "crates/http" }
+http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
+language_model = { path = "crates/language_model" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
@@ -235,6 +245,8 @@ proto = { path = "crates/proto" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
+remote = { path = "crates/remote" }
+remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
@@ -242,7 +254,9 @@ rpc = { path = "crates/rpc" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
+session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 sqlez = { path = "crates/sqlez" }
@@ -278,20 +292,22 @@ zed_actions = { path = "crates/zed_actions" }
 alacritty_terminal = "0.23"
 any_vec = "0.13"
 anyhow = "1.0.57"
-ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", rev = "29f2e1a" }
+ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1" }
 async-fs = "1.6"
+async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async-tungstenite = { version = "0.16" }
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -305,7 +321,7 @@ dashmap = "5.5.3"
 derive_more = "0.99.17"
 dirs = "4.0"
 emojis = "0.6.1"
-env_logger = "0.9"
+env_logger = "0.10"
 exec = "0.3.1"
 fork = "0.1.23"
 futures = "0.3"
@@ -328,7 +344,7 @@ itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
@@ -349,12 +365,13 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+rsa = "0.9.6"
 runtimelib = { version = "0.12", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = "0.8"
+schemars = {version = "0.8", features = ["impl_json_schema"]}
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -385,6 +402,7 @@ time = { version = "0.3", features = [
     "serde-well-known",
     "formatting",
 ] }
+tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
@@ -418,14 +436,14 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
-wasmtime = { version = "19.0.0", default-features = false, features = [
+wasmtime = { version = "19.0.2", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "19.0.0"
+wasmtime-wasi = "19.0.2"
 which = "6.0.0"
 wit-component = "0.201"
 sys-locale = "0.3.1"
@@ -456,11 +474,11 @@ features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
-    "Win32_System_Time",
     "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
@@ -472,8 +490,6 @@ features = [
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
-# Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968e819c0d9b015437ffc694511e175801a17c7" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

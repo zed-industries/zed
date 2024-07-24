@@ -376,7 +376,7 @@ impl WindowTextSystem {
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
-        let mut runs = runs.iter().cloned().peekable();
+        let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
@@ -444,7 +444,7 @@ impl WindowTextSystem {
             // Skip `\n` character.
             line_start = line_end + 1;
             if let Some(run) = runs.peek_mut() {
-                run.len = run.len.saturating_sub(1);
+                run.len -= 1;
                 if run.len == 0 {
                     runs.next();
                 }
