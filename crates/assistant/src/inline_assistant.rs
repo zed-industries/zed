@@ -26,7 +26,7 @@ use gpui::{
     ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
     WindowContext,
 };
-use language::{Buffer, Point, Selection, TransactionId};
+use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -2087,11 +2087,25 @@ impl Codegen {
             .collect::<Rope>();
 
         let selection_start = range.start.to_point(&snapshot);
-        let suggested_line_indent = snapshot
-            .suggested_indents(selection_start.row..selection_start.row + 1, cx)
+
+        // Start with the indentation of the first line in the selection
+        let mut suggested_line_indent = snapshot
+            .suggested_indents(selection_start.row..=selection_start.row, cx)
             .into_values()
             .next()
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
+
+        // If the first line in the selection does not have indentation, check the following lines
+        if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
+            for row in selection_start.row..=range.end.to_point(&snapshot).row {
+                let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
+                // Prefer tabs if a line in the selection uses tabs as indentation
+                if line_indent.kind == IndentKind::Tab {
+                    suggested_line_indent.kind = IndentKind::Tab;
+                    break;
+                }
+            }
+        }
 
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
@@ -2771,6 +2785,61 @@ mod tests {
                     while x < 10 {
                         x += 1;
                     }
+                }
+            "}
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
+        cx.update(language_settings::init);
+
+        let text = indoc! {"
+            func main() {
+            \tx := 0
+            \tfor i := 0; i < 10; i++ {
+            \t\tx++
+            \t}
+            }
+        "};
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
+        });
+        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.start(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                cx,
+            )
+        });
+
+        let new_text = concat!(
+            "func main() {\n",
+            "\tx := 0\n",
+            "\tfor x < 10 {\n",
+            "\t\tx++\n",
+            "\t}", //
+        );
+        chunks_tx.unbounded_send(new_text.to_string()).unwrap();
+        drop(chunks_tx);
+        cx.background_executor.run_until_parked();
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            indoc! {"
+                func main() {
+                \tx := 0
+                \tfor x < 10 {
+                \t\tx++
+                \t}
                 }
             "}
         );
