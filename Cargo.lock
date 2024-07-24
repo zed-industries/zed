@@ -9586,7 +9586,11 @@ version = "0.1.0"
 dependencies = [
  "command_palette_hooks",
  "feature_flags",
+ "fs",
  "gpui",
+ "project",
+ "settings",
+ "theme",
  "ui",
  "workspace",
 ]
