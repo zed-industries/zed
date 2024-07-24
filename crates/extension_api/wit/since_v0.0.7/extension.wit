@@ -65,9 +65,9 @@ world extension {
         cmd,
     }
 
-    /// The executable to run the command.
+    /// The executable used to run the command.
     variant command-type {
-        /// Only used by Windows for now, use powershell or cmd to execute the command.
+        /// Used only on Windows for now, use either powershell or cmd to execute the command.
         shell(windows-shell),
         /// The path to the executable.
         other(string),
