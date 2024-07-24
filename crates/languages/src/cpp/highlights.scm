@@ -69,6 +69,7 @@
   "else"
   "enum"
   "explicit"
+  "extern"
   "final"
   "for"
   "friend"
