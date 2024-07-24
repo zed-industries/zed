@@ -1,4 +1,7 @@
-use gpui::{AppContext, FontWeight};
+use std::time::Instant;
+
+use gpui::{AppContext, FontWeight, Global, ReadGlobal};
+use parking_lot::RwLock;
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::ThemeSettings;
@@ -21,10 +24,119 @@ impl RenderOnce for EditorSettingsControls {
         SettingsContainer::new()
             .child(
                 SettingsGroup::new("Font")
-                    .child(BufferFontSizeControl)
-                    .child(BufferFontWeightControl),
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(BufferFontFamilyControl)
+                            .child(BufferFontWeightControl),
+                    )
+                    .child(BufferFontSizeControl),
             )
             .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
+    }
+}
+
+#[derive(Default)]
+struct FontFamilyCacheState {
+    loaded_at: Option<Instant>,
+    font_families: Vec<SharedString>,
+}
+
+/// A cache for the list of font families.
+///
+/// Listing the available font families from the text system is expensive,
+/// so we do it once and then use the cached values each render.
+#[derive(Default)]
+struct FontFamilyCache {
+    state: RwLock<FontFamilyCacheState>,
+}
+
+impl Global for FontFamilyCache {}
+
+impl FontFamilyCache {
+    fn list_font_families(&self, cx: &AppContext) -> Vec<SharedString> {
+        if self.state.read().loaded_at.is_some() {
+            return self.state.read().font_families.clone();
+        }
+
+        let mut lock = self.state.write();
+        lock.font_families = cx
+            .text_system()
+            .all_font_names()
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
+        lock.loaded_at = Some(Instant::now());
+
+        lock.font_families.clone()
+    }
+}
+
+#[derive(IntoElement)]
+struct BufferFontFamilyControl;
+
+impl EditableSettingControl for BufferFontFamilyControl {
+    type Value = SharedString;
+    type Settings = ThemeSettings;
+
+    fn name(&self) -> SharedString {
+        "Buffer Font Family".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = ThemeSettings::get_global(cx);
+        settings.buffer_font.family.clone()
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        settings.buffer_font_family = Some(value.to_string());
+    }
+}
+
+impl RenderOnce for BufferFontFamilyControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        h_flex()
+            .gap_2()
+            .child(Icon::new(IconName::Font))
+            .child(DropdownMenu::new(
+                "buffer-font-family",
+                value.clone(),
+                ContextMenu::build(cx, |mut menu, cx| {
+                    cx.default_global::<FontFamilyCache>();
+                    let font_family_cache = FontFamilyCache::global(cx);
+
+                    use std::time::Instant;
+                    let start = Instant::now();
+                    let font_names = font_family_cache.list_font_families(cx);
+                    let duration = start.elapsed();
+                    println!("Time taken to get all font names: {:?}", duration);
+                    dbg!("Number of fonts: {}", font_names.len());
+
+                    for font_name in font_names {
+                        menu = menu.custom_entry(
+                            {
+                                let font_name = font_name.clone();
+                                move |_cx| Label::new(font_name.clone()).into_any_element()
+                            },
+                            {
+                                let font_name = font_name.clone();
+                                move |cx| {
+                                    Self::write(font_name.clone(), cx);
+                                }
+                            },
+                        )
+                    }
+
+                    menu
+                }),
+            ))
     }
 }
 
