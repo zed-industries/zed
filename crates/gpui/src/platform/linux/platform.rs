@@ -724,7 +724,7 @@ impl Keystroke {
             // we only include the shift for upper-case letters by convention,
             // so don't include for numbers and symbols, but do include for
             // tab/enter, etc.
-            if key.chars().count() == 1 && key_utf8 == key {
+            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
                 modifiers.shift = false;
             }
         }
