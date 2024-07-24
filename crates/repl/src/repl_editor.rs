@@ -301,7 +301,6 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-
         let snippets = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0))
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -314,8 +313,6 @@ mod tests {
 
                 print(4 + 4)"# }]
         );
-
-        // TODO: test multi-language selection
     }
 
     #[gpui::test]
