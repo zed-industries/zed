@@ -1640,7 +1640,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=9cd21915128da8fa68eee6aca21785470f23f766#9cd21915128da8fa68eee6aca21785470f23f766"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "ash",
  "ash-window",
@@ -1670,7 +1670,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=9cd21915128da8fa68eee6aca21785470f23f766#9cd21915128da8fa68eee6aca21785470f23f766"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1680,7 +1680,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=9cd21915128da8fa68eee6aca21785470f23f766#9cd21915128da8fa68eee6aca21785470f23f766"
+source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
 dependencies = [
  "blade-graphics",
  "bytemuck",
