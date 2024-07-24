@@ -3,13 +3,10 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
-use editor::{Anchor, Editor, MultiBuffer, RangeToAnchorExt};
-use gpui::{prelude::*, AppContext, Entity, Model, View, WeakView, WindowContext};
-use language::{Buffer, BufferSnapshot, Language, Point, ToOffset};
-use multi_buffer::MultiBufferRow;
-use runtimelib::dirs::ask_jupyter;
-use util::ResultExt;
+use anyhow::{Context, Result};
+use editor::Editor;
+use gpui::{prelude::*, AppContext, Entity, View, WeakView, WindowContext};
+use language::{BufferSnapshot, Language, Point};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
