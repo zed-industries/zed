@@ -5,13 +5,12 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
+use settings::EditableSettingControl;
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_ui::{
-    BufferFontSizeSetting, EditableSettingControl, InlineGitBlameSetting, UiFontSizeSetting,
-};
+use crate::theme_settings_ui::{BufferFontSizeSetting, InlineGitBlameSetting, UiFontSizeSetting};
 
 pub struct SettingsUiFeatureFlag;
 
