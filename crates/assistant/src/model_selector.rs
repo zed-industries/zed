@@ -4,7 +4,10 @@ use crate::{
     assistant_settings::AssistantSettings, LanguageModelCompletionProvider, ToggleModelSelector,
 };
 use fs::Fs;
-use language_model::LanguageModelRegistry;
+use language_model::{
+    provider::{anthropic, ollama, open_ai},
+    LanguageModelRegistry,
+};
 use settings::update_settings_file;
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -36,7 +39,13 @@ impl RenderOnce for ModelSelector {
                             menu = menu.separator();
                         }
 
-                        menu = menu.header(provider.0.clone());
+                        let provider_name = match provider.0.as_ref() {
+                            anthropic::PROVIDER_NAME => "Anthropic".into(),
+                            ollama::PROVIDER_NAME => "Ollama".into(),
+                            open_ai::PROVIDER_NAME => "OpenAI".into(),
+                            _ => provider.0.clone(),
+                        };
+                        menu = menu.header(provider_name);
 
                         if available_models.is_empty() {
                             menu = menu.custom_entry(

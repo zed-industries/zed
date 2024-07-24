@@ -21,7 +21,7 @@ use crate::{
     LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 
-const PROVIDER_NAME: &str = "Anthropic";
+pub const PROVIDER_NAME: &str = "anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {

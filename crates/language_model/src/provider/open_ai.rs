@@ -21,7 +21,7 @@ use crate::{
     LanguageModelRequest, Role,
 };
 
-const PROVIDER_NAME: &str = "OpenAI";
+pub const PROVIDER_NAME: &str = "openai";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
