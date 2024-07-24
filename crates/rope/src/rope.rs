@@ -579,6 +579,20 @@ impl<'a> Chunks<'a> {
         }
     }
 
+    fn offset_is_valid(&self) -> bool {
+        if self.reversed {
+            if self.offset <= self.range.start {
+                return false;
+            }
+        } else {
+            if self.offset >= self.range.end {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -601,41 +615,94 @@ impl<'a> Chunks<'a> {
         self.offset = offset;
     }
 
-    pub fn seek_to_next_line(&mut self) -> bool {
-        // todo! What do we do when the chunks iterator is reversed?
+    /// Moves this cursor to the start of the next line in the rope.
+    ///
+    /// This method advances the cursor to the beginning of the next line.
+    /// If the cursor is already at the end of the rope, this method does nothing.
+    ///
+    /// Returns `true` if the cursor was successfully moved to the next line start,
+    /// or `false` if the cursor was already at the end of the rope.
+    pub fn next_line(&mut self) -> bool {
+        assert!(!self.reversed);
+
         let mut found = false;
         if let Some(chunk) = self.peek() {
             if let Some(newline_ix) = chunk.find('\n') {
                 self.offset += newline_ix + 1;
-                found = true;
+                found = self.offset_is_valid();
             } else {
                 self.chunks
                     .search_forward(|summary| summary.text.lines.row > 0, &());
                 self.offset = *self.chunks.start();
+
                 if let Some(chunk) = self.peek() {
                     let newline_ix = chunk.find('\n').unwrap();
                     self.offset += newline_ix + 1;
-                    found = true;
+                    found = self.offset_is_valid();
                 }
             }
 
             if self.offset == self.chunks.end(&()) {
                 self.next();
             }
+
+            self.offset = self.offset.clamp(self.range.start, self.range.end);
         }
 
         found
     }
 
+    /// Move this cursor to the preceding position in the rope that starts a new line.
+    ///
+    /// If this cursor is not on the start of a line, it will be moved to the start of
+    /// its current line. Otherwise it will be moved to the start of the previous line.
+    /// It updates the cursor's position and returns true if a previous line was found,
+    /// or false if the cursor was already at the start of the rope.
+    pub fn prev_line(&mut self) -> bool {
+        assert!(!self.reversed);
+
+        let initial_offset = self.offset;
+
+        if self.offset == *self.chunks.start() {
+            self.chunks.prev(&());
+        }
+
+        if let Some(chunk) = self.chunks.item() {
+            if let Some(newline_ix) = chunk.0[..self.offset - *self.chunks.start() - 1].rfind('\n')
+            {
+                self.offset = *self.chunks.start() + newline_ix + 1;
+                if self.offset_is_valid() {
+                    return true;
+                }
+            }
+        }
+
+        self.chunks
+            .search_backward(|summary| summary.text.lines.row > 0, &());
+        self.offset = *self.chunks.start();
+        if let Some(chunk) = self.chunks.item() {
+            if let Some(newline_ix) = chunk.0.rfind('\n') {
+                self.offset += newline_ix + 1;
+                if self.offset_is_valid() {
+                    if self.offset == self.chunks.end(&()) {
+                        self.chunks.next(&());
+                    }
+                    return true;
+                }
+            }
+        }
+
+        if !self.offset_is_valid() || self.chunks.item().is_none() {
+            self.offset = self.range.start;
+            self.chunks.seek(&self.offset, Bias::Right, &());
+        }
+
+        self.offset < initial_offset
+    }
+
     pub fn peek(&self) -> Option<&'a str> {
-        if self.reversed {
-            if self.offset <= self.range.start {
-                return None;
-            }
-        } else {
-            if self.offset >= self.range.end {
-                return None;
-            }
+        if !self.offset_is_valid() {
+            return None;
         }
 
         let chunk = self.chunks.item()?;
@@ -1392,38 +1459,38 @@ mod tests {
     }
 
     #[test]
-    fn test_seek_to_lines() {
+    fn test_prev_next_line() {
         let rope = Rope::from("abc\ndef\nghi\njkl");
 
         let mut chunks = rope.chunks();
         assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
 
-        chunks.seek_to_next_line();
+        assert!(chunks.next_line());
         assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
 
-        chunks.seek_to_next_line();
+        assert!(chunks.next_line());
         assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
 
-        chunks.seek_to_next_line();
+        assert!(chunks.next_line());
         assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
 
-        chunks.seek_to_next_line();
+        assert!(!chunks.next_line());
         assert_eq!(chunks.peek(), None);
 
-        // chunks.seek_to_prev_line();
-        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
 
-        // chunks.seek_to_prev_line();
-        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
 
-        // chunks.seek_to_prev_line();
-        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
 
-        // chunks.seek_to_prev_line();
-        // assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
 
-        // chunks.seek_to_prev_line();
-        // assert_eq!(chunks.peek(), None);
+        assert!(!chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
     }
 
     #[test]

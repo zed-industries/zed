@@ -178,11 +178,11 @@ where
 
     #[track_caller]
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.prev_until(|_| true, cx)
+        self.search_backward(|_| true, cx)
     }
 
     #[track_caller]
-    pub fn prev_until<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    pub fn search_backward<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: FnMut(&T::Summary) -> bool,
     {
@@ -662,7 +662,7 @@ where
     }
 
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.prev_until(&mut self.filter_node, cx);
+        self.cursor.search_backward(&mut self.filter_node, cx);
     }
 }
 
