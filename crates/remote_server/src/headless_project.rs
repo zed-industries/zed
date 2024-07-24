@@ -47,8 +47,8 @@ impl HeadlessProject {
 
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_blame_buffer);
 
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
 
@@ -114,15 +114,6 @@ impl HeadlessProject {
                 }
             })
         })
-    }
-
-    pub async fn handle_blame_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::BlameBuffer>,
-        cx: AsyncAppContext,
-    ) -> Result<proto::BlameBufferResponse> {
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_blame_buffer(buffer_store, envelope, None, cx).await
     }
 
     pub async fn handle_open_buffer_by_path(

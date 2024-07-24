@@ -76,10 +76,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
-use rpc::{
-    proto::{AddWorktree, AnyProtoClient},
-    ErrorCode,
-};
+use rpc::{proto::AddWorktree, ErrorCode};
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
@@ -728,7 +725,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
-        client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
         client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_request_handler(Self::handle_task_context_for_location);
@@ -746,6 +742,7 @@ impl Project {
         client.add_model_message_handler(BufferStore::handle_update_buffer_file);
         client.add_model_message_handler(BufferStore::handle_update_diff_base);
         client.add_model_request_handler(BufferStore::handle_save_buffer);
+        client.add_model_request_handler(BufferStore::handle_blame_buffer);
     }
 
     pub fn local(
@@ -1322,16 +1319,6 @@ impl Project {
 
     pub fn client(&self) -> Arc<Client> {
         self.client.clone()
-    }
-
-    fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
-        if let Some(ssh) = &self.ssh_session {
-            Some((ssh.clone().into(), 0))
-        } else if self.is_remote() {
-            Some((self.client.clone().into(), self.remote_id().unwrap()))
-        } else {
-            None
-        }
     }
 
     pub fn user_store(&self) -> Model<UserStore> {
@@ -8406,23 +8393,10 @@ impl Project {
         version: Option<clock::Global>,
         cx: &AppContext,
     ) -> Task<Result<Blame>> {
-        self.buffer_store
-            .read(cx)
-            .blame_buffer(buffer, version, self.upstream_client(), cx)
+        self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
     // RPC message handlers
-
-    async fn handle_blame_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::BlameBuffer>,
-        cx: AsyncAppContext,
-    ) -> Result<proto::BlameBufferResponse> {
-        let (buffer_store, client) = this.read_with(&cx, |this, _| {
-            (this.buffer_store.clone(), this.upstream_client())
-        })?;
-        BufferStore::handle_blame_buffer(buffer_store, envelope, client, cx).await
-    }
 
     async fn handle_multi_lsp_query(
         project: Model<Self>,

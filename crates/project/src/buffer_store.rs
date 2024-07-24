@@ -546,7 +546,6 @@ impl BufferStore {
         &self,
         buffer: &Model<Buffer>,
         version: Option<clock::Global>,
-        upstream_client: Option<(AnyProtoClient, u64)>,
         cx: &AppContext,
     ) -> Task<Result<Blame>> {
         let buffer = buffer.read(cx);
@@ -554,52 +553,51 @@ impl BufferStore {
             return Task::ready(Err(anyhow!("buffer has no file")));
         };
 
-        let worktree = file.worktree.clone();
+        match file.worktree.clone().read(cx) {
+            Worktree::Local(worktree) => {
+                let worktree = worktree.snapshot();
+                let blame_params = maybe!({
+                    let (repo_entry, local_repo_entry) = match worktree.repo_for_path(&file.path) {
+                        Some(repo_for_path) => repo_for_path,
+                        None => anyhow::bail!(NoRepositoryError {}),
+                    };
 
-        if worktree.read(cx).is_local() {
-            let worktree = worktree.read(cx).as_local().unwrap().snapshot();
-            let blame_params = maybe!({
-                let (repo_entry, local_repo_entry) = match worktree.repo_for_path(&file.path) {
-                    Some(repo_for_path) => repo_for_path,
-                    None => anyhow::bail!(NoRepositoryError {}),
-                };
+                    let relative_path = repo_entry
+                        .relativize(&worktree, &file.path)
+                        .context("failed to relativize buffer path")?;
 
-                let relative_path = repo_entry
-                    .relativize(&worktree, &file.path)
-                    .context("failed to relativize buffer path")?;
+                    let repo = local_repo_entry.repo().clone();
 
-                let repo = local_repo_entry.repo().clone();
+                    let content = match version {
+                        Some(version) => buffer.rope_for_version(&version).clone(),
+                        None => buffer.as_rope().clone(),
+                    };
 
-                let content = match version {
-                    Some(version) => buffer.rope_for_version(&version).clone(),
-                    None => buffer.as_rope().clone(),
-                };
+                    anyhow::Ok((repo, relative_path, content))
+                });
 
-                anyhow::Ok((repo, relative_path, content))
-            });
-
-            cx.background_executor().spawn(async move {
-                let (repo, relative_path, content) = blame_params?;
-                repo.blame(&relative_path, content)
-                    .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-            })
-        } else if let Some((client, remote_id)) = upstream_client {
-            let buffer_id = buffer.remote_id();
-            let version = buffer.version();
-
-            cx.spawn(|_| async move {
-                let response = client
-                    .request(proto::BlameBuffer {
-                        project_id: remote_id,
-                        buffer_id: buffer_id.into(),
-                        version: serialize_version(&version),
-                    })
-                    .await?;
-
-                Ok(deserialize_blame_buffer_response(response))
-            })
-        } else {
-            Task::ready(Err(anyhow!("buffer is remote but no client provided")))
+                cx.background_executor().spawn(async move {
+                    let (repo, relative_path, content) = blame_params?;
+                    repo.blame(&relative_path, content)
+                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let buffer_id = buffer.remote_id();
+                let version = buffer.version();
+                let project_id = worktree.project_id();
+                let client = worktree.client();
+                cx.spawn(|_| async move {
+                    let response = client
+                        .request(proto::BlameBuffer {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            version: serialize_version(&version),
+                        })
+                        .await?;
+                    Ok(deserialize_blame_buffer_response(response))
+                })
+            }
         }
     }
 
@@ -1240,7 +1238,6 @@ impl BufferStore {
     pub async fn handle_blame_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BlameBuffer>,
-        upstream_client: Option<(AnyProtoClient, u64)>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BlameBufferResponse> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -1253,7 +1250,7 @@ impl BufferStore {
             .await?;
         let blame = this
             .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), upstream_client, cx)
+                this.blame_buffer(&buffer, Some(version), cx)
             })?
             .await?;
         Ok(serialize_blame_buffer_response(blame))
