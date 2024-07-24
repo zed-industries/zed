@@ -2,7 +2,7 @@
 
 ## Getting started
 
-Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built--in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
 <!-- TODO: Include GIF in action -->
 
@@ -21,7 +21,7 @@ Once installed, you can start using the REPL in the respective language files, o
 
 ## Using the REPL
 
-To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to CMD + Enter on macOS). You can also click on the REPL icon in the toolbar.
+To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to `ctrl-shift-enter` on macOS). You can also click on the REPL icon in the toolbar.
 
 The `repl: run` command will be executed on your selection(s), and the result will be displayed below the selection.
 
