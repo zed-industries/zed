@@ -313,12 +313,12 @@ impl RenderOnce for SettingsItem {
     }
 }
 
-pub struct SettingsMenu {
+pub struct LegacySettingsMenu {
     name: SharedString,
     groups: Vec<LegacySettingsGroup>,
 }
 
-impl SettingsMenu {
+impl LegacySettingsMenu {
     pub fn new(name: impl Into<SharedString>) -> Self {
         Self {
             name: name.into(),
@@ -332,7 +332,7 @@ impl SettingsMenu {
     }
 }
 
-impl Render for SettingsMenu {
+impl Render for LegacySettingsMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_empty = self.groups.is_empty();
         v_flex()

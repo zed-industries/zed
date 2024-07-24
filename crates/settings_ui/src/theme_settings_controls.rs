@@ -1,12 +1,27 @@
 use gpui::AppContext;
 use settings::{EditableSettingControl, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, NumericStepper};
+use ui::{prelude::*, NumericStepper, SettingsContainer, SettingsGroup};
 
 #[derive(IntoElement)]
-pub struct UiFontSizeSetting;
+pub struct ThemeSettingsControls {}
 
-impl EditableSettingControl for UiFontSizeSetting {
+impl ThemeSettingsControls {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl RenderOnce for ThemeSettingsControls {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        SettingsContainer::new().child(SettingsGroup::new("Font").child(UiFontSizeControl))
+    }
+}
+
+#[derive(IntoElement)]
+struct UiFontSizeControl;
+
+impl EditableSettingControl for UiFontSizeControl {
     type Value = Pixels;
     type Settings = ThemeSettings;
 
@@ -24,7 +39,7 @@ impl EditableSettingControl for UiFontSizeSetting {
     }
 }
 
-impl RenderOnce for UiFontSizeSetting {
+impl RenderOnce for UiFontSizeControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let value = Self::read(cx);
 

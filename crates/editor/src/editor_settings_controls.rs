@@ -2,7 +2,10 @@ use gpui::{AppContext, FontWeight};
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsGroup};
+use ui::{
+    prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
+    SettingsGroup,
+};
 
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
@@ -15,10 +18,13 @@ impl EditorSettingsControls {
 
 impl RenderOnce for EditorSettingsControls {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        SettingsGroup::new("Editor")
-            .child(BufferFontSizeControl)
-            .child(BufferFontWeightControl)
-            .child(InlineGitBlameControl)
+        SettingsContainer::new()
+            .child(
+                SettingsGroup::new("Font")
+                    .child(BufferFontSizeControl)
+                    .child(BufferFontWeightControl),
+            )
+            .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
     }
 }
 

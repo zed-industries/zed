@@ -3,12 +3,12 @@ use gpui::View;
 use crate::prelude::*;
 
 use crate::{
-    LegacySettingsGroup, SecondarySettingType, SettingLayout, SettingType, SettingsItem,
-    SettingsMenu, ToggleType,
+    LegacySettingsGroup, LegacySettingsMenu, SecondarySettingType, SettingLayout, SettingType,
+    SettingsItem, ToggleType,
 };
 
 pub struct SettingStory {
-    menus: Vec<(SharedString, View<SettingsMenu>)>,
+    menus: Vec<(SharedString, View<LegacySettingsMenu>)>,
 }
 
 impl SettingStory {
@@ -27,7 +27,7 @@ impl SettingStory {
 
 impl SettingStory {
     pub fn empty_menu(&mut self, cx: &mut ViewContext<Self>) {
-        let menu = cx.new_view(|_cx| SettingsMenu::new("Empty Menu"));
+        let menu = cx.new_view(|_cx| LegacySettingsMenu::new("Empty Menu"));
 
         self.menus.push(("Empty Menu".into(), menu));
     }
@@ -60,7 +60,7 @@ impl SettingStory {
             .add_setting(appearance_setting)
             .add_setting(high_contrast_setting);
 
-        let menu = cx.new_view(|_cx| SettingsMenu::new("Appearance").add_group(group));
+        let menu = cx.new_view(|_cx| LegacySettingsMenu::new("Appearance").add_group(group));
 
         self.menus.push(("Single Group".into(), menu));
     }
@@ -198,7 +198,7 @@ impl SettingStory {
             );
 
         let menu = cx.new_view(|_cx| {
-            SettingsMenu::new("Editor")
+            LegacySettingsMenu::new("Editor")
                 .add_group(font_group)
                 .add_group(editor_group)
                 .add_group(gutter_group)

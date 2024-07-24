@@ -1,4 +1,4 @@
-mod theme_settings_ui;
+mod theme_settings_controls;
 
 use std::any::TypeId;
 
@@ -6,11 +6,11 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
-use ui::{prelude::*, SettingsGroup};
+use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_ui::UiFontSizeSetting;
+use crate::theme_settings_controls::ThemeSettingsControls;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -104,11 +104,19 @@ impl Render for SettingsPage {
         v_flex()
             .p_4()
             .size_full()
+            .gap_4()
             .child(Label::new("Settings").size(LabelSize::Large))
-            .child(Label::new(
-                "Nothing to see here yet. Feature-flagged for staff.",
-            ))
-            .child(SettingsGroup::new("UI Font").child(UiFontSizeSetting))
-            .child(EditorSettingsControls::new())
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(Label::new("Appearance"))
+                    .child(ThemeSettingsControls::new()),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(Label::new("Editor"))
+                    .child(EditorSettingsControls::new()),
+            )
     }
 }
