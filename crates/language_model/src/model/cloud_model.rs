@@ -1,4 +1,5 @@
 pub use anthropic::Model as AnthropicModel;
+use anyhow::{anyhow, Result};
 pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 use schemars::JsonSchema;
@@ -38,6 +39,23 @@ pub enum CloudModel {
 }
 
 impl CloudModel {
+    pub fn from_id(value: &str) -> Result<Self> {
+        match value {
+            "gpt-3.5-turbo" => Ok(Self::Gpt3Point5Turbo),
+            "gpt-4" => Ok(Self::Gpt4),
+            "gpt-4-turbo-preview" => Ok(Self::Gpt4Turbo),
+            "gpt-4o" => Ok(Self::Gpt4Omni),
+            "gpt-4o-mini" => Ok(Self::Gpt4OmniMini),
+            "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+            "claude-3-opus" => Ok(Self::Claude3Opus),
+            "claude-3-sonnet" => Ok(Self::Claude3Sonnet),
+            "claude-3-haiku" => Ok(Self::Claude3Haiku),
+            "gemini-1.5-pro" => Ok(Self::Gemini15Pro),
+            "gemini-1.5-flash" => Ok(Self::Gemini15Flash),
+            _ => Err(anyhow!("invalid model id")),
+        }
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",

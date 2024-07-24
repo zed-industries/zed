@@ -11,7 +11,7 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
-use http::{FakeHttpClient, Response};
+use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;

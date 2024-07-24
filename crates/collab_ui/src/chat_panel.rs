@@ -1107,9 +1107,11 @@ impl Panel for ChatPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<ChatPanelSettings>(self.fs.clone(), cx, move |settings| {
-            settings.dock = Some(position)
-        });
+        settings::update_settings_file::<ChatPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| settings.dock = Some(position),
+        );
     }
 
     fn size(&self, cx: &gpui::WindowContext) -> Pixels {

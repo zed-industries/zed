@@ -23,7 +23,7 @@ util.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
-criterion = { version = "0.4", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "rope_benchmark"

@@ -10384,7 +10384,7 @@ impl Editor {
         };
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
-        update_settings_file::<TabBarSettings>(fs, cx, move |setting| {
+        update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
             setting.show = Some(!current_show);
         });
     }

@@ -27,7 +27,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
-use http::HttpClient;
+use http_client::HttpClient;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;

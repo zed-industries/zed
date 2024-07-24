@@ -2229,7 +2229,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
-                let has_worktrees = self.project.read(cx).worktrees().next().is_some();
+                let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()
