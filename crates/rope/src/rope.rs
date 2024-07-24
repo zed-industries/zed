@@ -618,7 +618,6 @@ impl<'a> Chunks<'a> {
         Some(&chunk.0[start..chunk.0.len().min(end)])
     }
 
-    // todo!("remove this method")
     pub fn lines(self) -> Lines<'a> {
         let reversed = self.reversed;
         Lines {

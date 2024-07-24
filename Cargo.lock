@@ -8653,7 +8653,6 @@ dependencies = [
 name = "repl"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "alacritty_terminal 0.23.0",
  "anyhow",
  "async-dispatcher",
