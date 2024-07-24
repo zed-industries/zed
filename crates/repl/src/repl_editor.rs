@@ -138,12 +138,14 @@ fn snippet(
     editor: WeakView<Editor>,
     cx: &mut WindowContext,
 ) -> Option<(String, Arc<Language>, Range<Anchor>)> {
+    let selection = editor
+        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))
+        .ok()?;
+
     let editor = editor.upgrade()?;
     let editor = editor.read(cx);
 
     let buffer = editor.buffer().read(cx).snapshot(cx);
-
-    let selection = editor.selections.newest::<Point>(cx);
     let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
     let range = if selection.is_empty() {

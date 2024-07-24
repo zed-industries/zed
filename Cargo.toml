@@ -44,7 +44,7 @@ members = [
     "crates/gpui_macros",
     "crates/headless",
     "crates/html_to_markdown",
-    "crates/http",
+    "crates/http_client",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion_button",
@@ -203,7 +203,7 @@ gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
-http = { path = "crates/http" }
+http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
@@ -295,13 +295,14 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async-tungstenite = { version = "0.16" }
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -315,7 +316,7 @@ dashmap = "5.5.3"
 derive_more = "0.99.17"
 dirs = "4.0"
 emojis = "0.6.1"
-env_logger = "0.9"
+env_logger = "0.10"
 exec = "0.3.1"
 fork = "0.1.23"
 futures = "0.3"
@@ -338,7 +339,7 @@ itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
@@ -359,12 +360,13 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+rsa = "0.9.6"
 runtimelib = { version = "0.12", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = "0.8"
+schemars = {version = "0.8", features = ["impl_json_schema"]}
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -429,14 +431,14 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
-wasmtime = { version = "19.0.0", default-features = false, features = [
+wasmtime = { version = "19.0.2", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "19.0.0"
+wasmtime-wasi = "19.0.2"
 which = "6.0.0"
 wit-component = "0.201"
 sys-locale = "0.3.1"
@@ -483,8 +485,6 @@ features = [
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
-# Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968e819c0d9b015437ffc694511e175801a17c7" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

@@ -6,7 +6,7 @@ use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
     WhiteSpace,
 };
-use http::HttpClient;
+use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;

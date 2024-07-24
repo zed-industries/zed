@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::{AsyncReadExt, FutureExt};
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 
 use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 

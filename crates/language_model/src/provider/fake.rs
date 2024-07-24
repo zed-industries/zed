@@ -9,7 +9,7 @@ use crate::{
     LanguageModelRequest,
 };
 use gpui::{AnyView, AppContext, AsyncAppContext, Task};
-use http::Result;
+use http_client::Result;
 use ui::WindowContext;
 
 pub fn language_model_id() -> LanguageModelId {

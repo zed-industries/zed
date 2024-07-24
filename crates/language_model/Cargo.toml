@@ -29,7 +29,7 @@ editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }

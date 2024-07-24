@@ -13,7 +13,7 @@ use futures::{
     Future, FutureExt, StreamExt as _,
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;

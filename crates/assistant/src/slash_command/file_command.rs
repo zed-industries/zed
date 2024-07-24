@@ -188,7 +188,7 @@ fn collect_files(
     let project_handle = project.downgrade();
     let snapshots = project
         .read(cx)
-        .worktrees()
+        .worktrees(cx)
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
     cx.spawn(|mut cx| async move {

@@ -20,6 +20,7 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
+use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use task::TerminalWorkDir;
@@ -1170,7 +1171,7 @@ pub async fn spawn_ssh_task(
         "-x".to_string(),
         "-c".to_string(),
         format!(
-            r#"~/.local/bin/zed -v >/dev/stderr || (curl -f https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | sh && ~/.local/bin/zed --dev-server-token {}"#,
+            r#"~/.local/bin/zed -v >/dev/stderr || (curl -f https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | sh && ZED_HEADLESS=1 ~/.local/bin/zed --dev-server-token {}"#,
             access_token
         ),
     ];
@@ -1191,10 +1192,12 @@ pub async fn spawn_ssh_task(
                         ssh_command: ssh_connection_string,
                         path: None,
                     }),
-                    env: Default::default(),
                     use_new_terminal: true,
                     allow_concurrent_runs: false,
                     reveal: RevealStrategy::Always,
+                    hide: HideStrategy::Never,
+                    env: Default::default(),
+                    shell: Default::default(),
                 },
                 cx,
             )
