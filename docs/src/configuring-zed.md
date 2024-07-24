@@ -1571,7 +1571,15 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "button": true,
   "dock": "left",
   "git_status": true,
-  "default_width": "N/A - width in pixels"
+  "default_width": "N/A - width in pixels",
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": false,
+  "file_icons": true,
+  "folder_icons": true,
+  "indent_size" : 20,
+  "scrollbar": {
+    "show": "always"
+  }
 },
 ```
 
@@ -1605,6 +1613,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `git_status`
 - Default: `true`
 
+**Options**
+
 1. Default enable git status
 
 ```json
@@ -1630,6 +1640,91 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 `boolean` values
+
+### Auto Reveal Entries
+
+- Description: Whether to reveal it in the project panel automatically, when a corresponding project entry becomes active. Gitignored entries are never auto revealed.
+- Setting: `auto_reveal_entries`
+- Default: `true`
+
+**Options**
+
+1. Enable auto reveal entries
+   
+```json
+{
+    "auto_reveal_entries": true,
+}
+```
+
+2. Disable auto reveal entries
+   
+```json
+{
+    "auto_reveal_entries": false,
+}
+```
+
+### Auto Fold Dirs
+
+- Description: Whether to fold directories automatically when directory has only one directory inside.
+- Setting: `auto_fold_dirs`
+- Default: `false`
+
+**Options**
+
+1. Enable auto fold dirs
+   
+```json
+{
+    "auto_fold_dirs": true,
+}
+```
+
+2. Disable auto fold dirs
+   
+```json
+{
+    "auto_fold_dirs": false,
+}
+```
+
+### Indent Size
+
+- Description: Amount of indentation (in pixels) for nested items.
+- Setting: `indent_size`
+- Default: `20`
+
+### Scrollbar
+
+- Description: Scrollbar related settings. Possible values: "always", "never".
+- Setting: `scrollbar`
+- Default: ```json
+    "scrollbar": {
+        "show": "always"
+    }```
+
+**Options**
+
+1. Show scrollbar in project panel
+   
+```json
+{
+    "scrollbar": {
+        "show": "always"
+    }
+}
+```
+
+2. Hide scrollbar in project panel
+   
+```json
+{
+    "scrollbar": {
+        "show": "never"
+    }
+}
+```
 
 ## Calls
 
