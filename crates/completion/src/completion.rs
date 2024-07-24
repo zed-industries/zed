@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
 use language_model::{
-    LanguageModel, LanguageModelProvider, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest,
 };
 use smol::lock::{Semaphore, SemaphoreGuardArc};
@@ -89,7 +89,7 @@ impl LanguageModelCompletionProvider {
 
     pub fn set_active_provider(
         &mut self,
-        provider_name: LanguageModelProviderName,
+        provider_name: LanguageModelProviderId,
         cx: &mut ModelContext<Self>,
     ) {
         self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_name);
@@ -103,14 +103,19 @@ impl LanguageModelCompletionProvider {
 
     pub fn set_active_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
         if self.active_model.as_ref().map_or(false, |m| {
-            m.id() == model.id() && m.provider_name() == model.provider_name()
+            m.id() == model.id() && m.provider_id() == model.provider_id()
         }) {
             return;
         }
 
         self.active_provider =
-            LanguageModelRegistry::read_global(cx).provider(&model.provider_name());
-        self.active_model = Some(model);
+            LanguageModelRegistry::read_global(cx).provider(&model.provider_id());
+        self.active_model = Some(model.clone());
+
+        if let Some(provider) = self.active_provider.as_ref() {
+            provider.load_model(model, cx);
+        }
+
         cx.notify();
     }
 

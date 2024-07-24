@@ -5,7 +5,8 @@ use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, St
 
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest,
 };
 use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use http_client::Result;
@@ -19,8 +20,12 @@ pub fn language_model_name() -> LanguageModelName {
     LanguageModelName::from("Fake".to_string())
 }
 
+pub fn provider_id() -> LanguageModelProviderId {
+    LanguageModelProviderId::from("fake".to_string())
+}
+
 pub fn provider_name() -> LanguageModelProviderName {
-    LanguageModelProviderName::from("fake".to_string())
+    LanguageModelProviderName::from("Fake".to_string())
 }
 
 #[derive(Clone, Default)]
@@ -35,6 +40,10 @@ impl LanguageModelProviderState for FakeLanguageModelProvider {
 }
 
 impl LanguageModelProvider for FakeLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        provider_id()
+    }
+
     fn name(&self) -> LanguageModelProviderName {
         provider_name()
     }
@@ -123,6 +132,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         language_model_name()
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        provider_id()
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
