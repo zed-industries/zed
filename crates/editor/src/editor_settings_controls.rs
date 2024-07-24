@@ -44,7 +44,11 @@ impl EditableSettingControl for BufferFontSizeControl {
         settings.buffer_font_size
     }
 
-    fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
         settings.buffer_font_size = Some(value.into());
     }
 }
@@ -84,7 +88,11 @@ impl EditableSettingControl for BufferFontWeightControl {
         settings.buffer_font.weight
     }
 
-    fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
         settings.buffer_font_weight = Some(value.0);
     }
 }
@@ -133,7 +141,11 @@ impl EditableSettingControl for InlineGitBlameControl {
         settings.git.inline_blame_enabled()
     }
 
-    fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
         if let Some(inline_blame) = settings.git.inline_blame.as_mut() {
             inline_blame.enabled = value;
         } else {

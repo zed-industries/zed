@@ -94,6 +94,17 @@ pub struct ThemeSettings {
 }
 
 impl ThemeSettings {
+    const DEFAULT_LIGHT_THEME: &'static str = "One Light";
+    const DEFAULT_DARK_THEME: &'static str = "One Dark";
+
+    /// Returns the name of the default theme for the given [`Appearance`].
+    pub fn default_theme(appearance: Appearance) -> &'static str {
+        match appearance {
+            Appearance::Light => Self::DEFAULT_LIGHT_THEME,
+            Appearance::Dark => Self::DEFAULT_DARK_THEME,
+        }
+    }
+
     /// Reloads the current theme.
     ///
     /// Reads the [`ThemeSettings`] to know which theme should be loaded,
@@ -109,10 +120,7 @@ impl ThemeSettings {
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
             if theme_registry.get(theme_name).ok().is_none() {
-                theme_name = match *system_appearance {
-                    Appearance::Light => "One Light",
-                    Appearance::Dark => "One Dark",
-                };
+                theme_name = Self::default_theme(*system_appearance);
             };
 
             if let Some(_theme) = theme_settings.switch_theme(theme_name, cx) {
@@ -190,7 +198,7 @@ fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
     Schema::new_ref("#/definitions/ThemeName".into())
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     /// Use the specified `light` theme.
@@ -216,6 +224,13 @@ impl ThemeSelection {
                     Appearance::Dark => dark,
                 },
             },
+        }
+    }
+
+    pub fn mode(&self) -> Option<ThemeMode> {
+        match self {
+            ThemeSelection::Static(_) => None,
+            ThemeSelection::Dynamic { mode, .. } => Some(*mode),
         }
     }
 }
@@ -265,6 +280,56 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+}
+
+impl ThemeSettingsContent {
+    /// Sets the theme for the given appearance to the theme with the specified name.
+    pub fn set_theme(&mut self, theme_name: String, appearance: Appearance) {
+        if let Some(selection) = self.theme.as_mut() {
+            let theme_to_update = match selection {
+                ThemeSelection::Static(theme) => theme,
+                ThemeSelection::Dynamic { mode, light, dark } => match mode {
+                    ThemeMode::Light => light,
+                    ThemeMode::Dark => dark,
+                    ThemeMode::System => match appearance {
+                        Appearance::Light => light,
+                        Appearance::Dark => dark,
+                    },
+                },
+            };
+
+            *theme_to_update = theme_name.to_string();
+        } else {
+            self.theme = Some(ThemeSelection::Static(theme_name.to_string()));
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: ThemeMode) {
+        if let Some(selection) = self.theme.as_mut() {
+            match selection {
+                ThemeSelection::Static(theme) => {
+                    // If the theme was previously set to a single static theme,
+                    // we don't know whether it was a light or dark theme, so we
+                    // just use it for both.
+                    self.theme = Some(ThemeSelection::Dynamic {
+                        mode,
+                        light: theme.clone(),
+                        dark: theme.clone(),
+                    });
+                }
+                ThemeSelection::Dynamic {
+                    mode: mode_to_update,
+                    ..
+                } => *mode_to_update = mode,
+            }
+        } else {
+            self.theme = Some(ThemeSelection::Dynamic {
+                mode,
+                light: ThemeSettings::DEFAULT_LIGHT_THEME.into(),
+                dark: ThemeSettings::DEFAULT_DARK_THEME.into(),
+            });
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]

@@ -1,4 +1,4 @@
-mod theme_settings_controls;
+mod appearance_settings_controls;
 
 use std::any::TypeId;
 
@@ -10,7 +10,7 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_controls::ThemeSettingsControls;
+use crate::appearance_settings_controls::AppearanceSettingsControls;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -110,7 +110,7 @@ impl Render for SettingsPage {
                 v_flex()
                     .gap_1()
                     .child(Label::new("Appearance"))
-                    .child(ThemeSettingsControls::new()),
+                    .child(AppearanceSettingsControls::new()),
             )
             .child(
                 v_flex()
