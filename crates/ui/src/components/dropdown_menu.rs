@@ -42,8 +42,9 @@ impl Disableable for DropdownMenu {
 impl RenderOnce for DropdownMenu {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         PopoverMenu::new(self.id)
+            .full_width(self.full_width)
             .menu(move |_cx| Some(self.menu.clone()))
-            .trigger(DropdownMenuTrigger::new(self.label))
+            .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
     }
 }
 
@@ -67,6 +68,11 @@ impl DropdownMenuTrigger {
             cursor_style: CursorStyle::default(),
             on_click: None,
         }
+    }
+
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
+        self
     }
 }
 
