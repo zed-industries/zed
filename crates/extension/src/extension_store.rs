@@ -33,7 +33,7 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
     WeakModel,
 };
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
@@ -44,6 +44,7 @@ use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use snippet_provider::SnippetRegistry;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -115,6 +116,7 @@ pub struct ExtensionStore {
     theme_registry: Arc<ThemeRegistry>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
+    snippet_registry: Arc<SnippetRegistry>,
     modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
     wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
@@ -193,6 +195,7 @@ pub fn init(
             theme_registry,
             SlashCommandRegistry::global(cx),
             IndexedDocsRegistry::global(cx),
+            SnippetRegistry::global(cx),
             cx,
         )
     });
@@ -227,6 +230,7 @@ impl ExtensionStore {
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
+        snippet_registry: Arc<SnippetRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -239,7 +243,10 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(build_dir)),
+            builder: Arc::new(ExtensionBuilder::new(
+                ::http_client::client(http_client.proxy().cloned()),
+                build_dir,
+            )),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -259,6 +266,7 @@ impl ExtensionStore {
             theme_registry,
             slash_command_registry,
             indexed_docs_registry,
+            snippet_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -451,9 +459,9 @@ impl ExtensionStore {
         let extension_ids = self
             .extension_index
             .extensions
-            .keys()
-            .map(|id| id.as_ref())
-            .filter(|id| extension_settings.should_auto_update(id))
+            .iter()
+            .filter(|(id, entry)| !entry.dev && extension_settings.should_auto_update(id))
+            .map(|(id, _)| id.as_ref())
             .collect::<Vec<_>>()
             .join(",");
         let task = self.fetch_extensions_from_api(
@@ -1045,6 +1053,7 @@ impl ExtensionStore {
             .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
+        let mut snippets_to_add = Vec::new();
         for extension_id in &extensions_to_load {
             let Some(extension) = new_index.extensions.get(extension_id) else {
                 continue;
@@ -1060,6 +1069,11 @@ impl ExtensionStore {
             themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
                 let mut path = self.installed_dir.clone();
                 path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path
+            }));
+            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
+                let mut path = self.installed_dir.clone();
+                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
                 path
             }));
         }
@@ -1097,6 +1111,7 @@ impl ExtensionStore {
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
         let theme_registry = self.theme_registry.clone();
+        let snippet_registry = self.snippet_registry.clone();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1116,6 +1131,15 @@ impl ExtensionStore {
                                 .load_user_theme(&theme_path, fs.clone())
                                 .await
                                 .log_err();
+                        }
+
+                        for snippets_path in &snippets_to_add {
+                            if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
+                            {
+                                snippet_registry
+                                    .register_snippets(snippets_path, &snippets_contents)
+                                    .log_err();
+                            }
                         }
                     }
                 })

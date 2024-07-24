@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ExtensionApiManifest {
     pub name: String,
     pub version: Arc<str>,
@@ -13,7 +13,7 @@ pub struct ExtensionApiManifest {
     pub wasm_api_version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ExtensionMetadata {
     pub id: Arc<str>,
     #[serde(flatten)]

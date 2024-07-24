@@ -1,9 +1,9 @@
 use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
+    LanguageModelCompletionProvider,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandRegistry;
+use assets::Assets;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -13,12 +13,13 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, transparent_black, AppContext, BackgroundExecutor, Bounds, EventEmitter,
-    Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    actions, point, size, transparent_black, AppContext, AssetSource, BackgroundExecutor, Bounds,
+    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
     TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
@@ -269,7 +270,7 @@ impl PickerDelegate for PromptPickerDelegate {
             .flex_none()
             .py_1()
             .px_2()
-            .mx_2()
+            .mx_1()
             .child(editor.clone())
     }
 }
@@ -448,7 +449,6 @@ impl PromptLibrary {
             self.set_active_prompt(Some(prompt_id), cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
-            let commands = SlashCommandRegistry::global(cx);
             let prompt = self.store.load(prompt_id);
             self.pending_load = cx.spawn(|this, mut cx| async move {
                 let prompt = prompt.await;
@@ -477,7 +477,7 @@ impl PromptLibrary {
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
-                                SlashCommandCompletionProvider::new(commands, None, None),
+                                SlashCommandCompletionProvider::new(None, None),
                             ));
                             if focus {
                                 editor.focus(cx);
@@ -629,17 +629,18 @@ impl PromptLibrary {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
-    pub fn inline_assist(&mut self, _: &InlineAssist, cx: &mut ViewContext<Self>) {
+    pub fn inline_assist(&mut self, action: &InlineAssist, cx: &mut ViewContext<Self>) {
         let Some(active_prompt_id) = self.active_prompt_id else {
             cx.propagate();
             return;
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let provider = CompletionProvider::global(cx);
-        if provider.is_authenticated() {
+        let provider = LanguageModelCompletionProvider::read_global(cx);
+        let initial_prompt = action.prompt.clone();
+        if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, None, cx)
+                assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
             })
         } else {
             for window in cx.windows() {
@@ -735,11 +736,8 @@ impl PromptLibrary {
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
                         .update(|cx| {
-                            let provider = CompletionProvider::global(cx);
-                            let model = provider.model();
-                            provider.count_tokens(
+                            LanguageModelCompletionProvider::read_global(cx).count_tokens(
                                 LanguageModelRequest {
-                                    model,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: body.to_string(),
@@ -768,6 +766,7 @@ impl PromptLibrary {
             .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
+            .px_1()
             .w_1_3()
             .overflow_x_hidden()
             .child(
@@ -804,7 +803,7 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let current_model = CompletionProvider::global(cx).model();
+                let current_model = LanguageModelCompletionProvider::read_global(cx).active_model();
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -915,7 +914,11 @@ impl PromptLibrary {
                                                                     format!(
                                                                         "Model: {}",
                                                                         current_model
-                                                                            .display_name()
+                                                                            .as_ref()
+                                                                            .map(|model| model
+                                                                                .name()
+                                                                                .0)
+                                                                            .unwrap_or_default()
                                                                     ),
                                                                     cx,
                                                                 )
@@ -1296,6 +1299,17 @@ impl PromptStore {
 
     fn first(&self) -> Option<PromptMetadata> {
         self.metadata_cache.read().metadata.first().cloned()
+    }
+
+    pub fn operations_prompt(&self) -> String {
+        String::from_utf8(
+            Assets
+                .load("prompts/operations.md")
+                .unwrap()
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
     }
 }
 

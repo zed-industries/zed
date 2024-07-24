@@ -42,7 +42,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http::IsahcHttpClient;
+use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -431,11 +431,13 @@ impl Server {
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(rejoin_dev_server_projects))
             .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(update_dev_server_project))
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(regenerate_dev_server_token))
             .add_request_handler(user_handler(rename_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
+            .add_request_handler(user_handler(list_remote_directory))
             .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_request_handler(dev_server_handler(reconnect_dev_server))
@@ -595,6 +597,14 @@ impl Server {
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
             .add_request_handler(user_handler(get_supermaven_api_key))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::OpenContext>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::SynchronizeContexts>,
+            ))
+            .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
+            .add_message_handler(update_context)
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -2305,6 +2315,69 @@ async fn join_hosted_project(
     join_project_internal(response, session, &mut project, &replica_id)
 }
 
+async fn list_remote_directory(
+    request: proto::ListRemoteDirectory,
+    response: Response<proto::ListRemoteDirectory>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+
+    session
+        .db()
+        .await
+        .get_dev_server_for_user(dev_server_id, session.user_id())
+        .await?;
+
+    response.send(
+        session
+            .peer
+            .forward_request(session.connection_id, dev_server_connection_id, request)
+            .await?,
+    )?;
+    Ok(())
+}
+
+async fn update_dev_server_project(
+    request: proto::UpdateDevServerProject,
+    response: Response<proto::UpdateDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+
+    let (dev_server_project, update) = session
+        .db()
+        .await
+        .update_dev_server_project(dev_server_project_id, &request.paths, session.user_id())
+        .await?;
+
+    let projects = session
+        .db()
+        .await
+        .get_projects_for_dev_server(dev_server_project.dev_server_id)
+        .await?;
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id_supporting(
+            dev_server_project.dev_server_id,
+            ZedVersion::with_list_directory(),
+        )?;
+
+    session.peer.send(
+        dev_server_connection_id,
+        proto::DevServerInstructions { projects },
+    )?;
+
+    send_dev_server_projects_update(session.user_id(), update, &session).await;
+
+    response.send(proto::Ack {})
+}
+
 async fn create_dev_server_project(
     request: proto::CreateDevServerProject,
     response: Response<proto::CreateDevServerProject>,
@@ -3053,6 +3126,53 @@ async fn update_buffer(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_context(message: proto::UpdateContext, session: Session) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+
+    let operation = message.operation.as_ref().context("invalid operation")?;
+    let capability = match operation.variant.as_ref() {
+        Some(proto::context_operation::Variant::BufferOperation(buffer_op)) => {
+            if let Some(buffer_op) = buffer_op.operation.as_ref() {
+                match buffer_op.variant {
+                    None | Some(proto::operation::Variant::UpdateSelections(_)) => {
+                        Capability::ReadOnly
+                    }
+                    _ => Capability::ReadWrite,
+                }
+            } else {
+                Capability::ReadWrite
+            }
+        }
+        Some(_) => Capability::ReadWrite,
+        None => Capability::ReadOnly,
+    };
+
+    let guard = session
+        .db()
+        .await
+        .connections_for_buffer_update(
+            project_id,
+            session.principal_id(),
+            session.connection_id,
+            capability,
+        )
+        .await?;
+
+    let (host, guests) = &*guard;
+
+    broadcast(
+        Some(session.connection_id),
+        guests.iter().chain([host]).copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, message.clone())
+        },
+    );
+
     Ok(())
 }
 
@@ -4394,7 +4514,7 @@ impl RateLimit for CompleteWithLanguageModelRateLimit {
 }
 
 async fn complete_with_language_model(
-    request: proto::CompleteWithLanguageModel,
+    mut request: proto::CompleteWithLanguageModel,
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
     session: Session,
     open_ai_api_key: Option<Arc<str>>,
@@ -4410,18 +4530,43 @@ async fn complete_with_language_model(
         .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
         .await?;
 
-    if request.model.starts_with("gpt") {
-        let api_key =
-            open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
-        complete_with_open_ai(request, response, session, api_key).await?;
-    } else if request.model.starts_with("gemini") {
-        let api_key = google_ai_api_key
-            .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
-        complete_with_google_ai(request, response, session, api_key).await?;
-    } else if request.model.starts_with("claude") {
-        let api_key = anthropic_api_key
-            .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
-        complete_with_anthropic(request, response, session, api_key).await?;
+    let mut provider_and_model = request.model.split('/');
+    let (provider, model) = match (
+        provider_and_model.next().unwrap(),
+        provider_and_model.next(),
+    ) {
+        (provider, Some(model)) => (provider, model),
+        (model, None) => {
+            if model.starts_with("gpt") {
+                ("openai", model)
+            } else if model.starts_with("gemini") {
+                ("google", model)
+            } else if model.starts_with("claude") {
+                ("anthropic", model)
+            } else {
+                ("unknown", model)
+            }
+        }
+    };
+    let provider = provider.to_string();
+    request.model = model.to_string();
+
+    match provider.as_str() {
+        "openai" => {
+            let api_key = open_ai_api_key.context("no OpenAI API key configured on the server")?;
+            complete_with_open_ai(request, response, session, api_key).await?;
+        }
+        "anthropic" => {
+            let api_key =
+                anthropic_api_key.context("no Anthropic AI API key configured on the server")?;
+            complete_with_anthropic(request, response, session, api_key).await?;
+        }
+        "google" => {
+            let api_key =
+                google_ai_api_key.context("no Google AI API key configured on the server")?;
+            complete_with_google_ai(request, response, session, api_key).await?;
+        }
+        provider => return Err(anyhow!("unknown provider {:?}", provider))?,
     }
 
     Ok(())

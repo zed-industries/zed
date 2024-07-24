@@ -1,4 +1,5 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use ::http_client::AsyncBody;
 use ::settings::Settings;
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -6,7 +7,6 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use futures::{io::BufReader, FutureExt as _};
-use http::AsyncBody;
 use indexed_docs::IndexedDocsDatabase;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
@@ -209,8 +209,8 @@ impl nodejs::Host for WasmState {
 #[async_trait]
 impl lsp::Host for WasmState {}
 
-impl From<http::github::GithubRelease> for github::GithubRelease {
-    fn from(value: http::github::GithubRelease) -> Self {
+impl From<::http_client::github::GithubRelease> for github::GithubRelease {
+    fn from(value: ::http_client::github::GithubRelease) -> Self {
         Self {
             version: value.tag_name,
             assets: value.assets.into_iter().map(Into::into).collect(),
@@ -218,8 +218,8 @@ impl From<http::github::GithubRelease> for github::GithubRelease {
     }
 }
 
-impl From<http::github::GithubReleaseAsset> for github::GithubReleaseAsset {
-    fn from(value: http::github::GithubReleaseAsset) -> Self {
+impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
         Self {
             name: value.name,
             download_url: value.browser_download_url,
@@ -235,7 +235,7 @@ impl github::Host for WasmState {
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = http::github::latest_github_release(
+            let release = ::http_client::github::latest_github_release(
                 &repo,
                 options.require_assets,
                 options.pre_release,
@@ -254,9 +254,12 @@ impl github::Host for WasmState {
         tag: String,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release =
-                http::github::get_release_by_tag_name(&repo, &tag, self.host.http_client.clone())
-                    .await?;
+            let release = ::http_client::github::get_release_by_tag_name(
+                &repo,
+                &tag,
+                self.host.http_client.clone(),
+            )
+            .await?;
             Ok(release.into())
         })
         .await
@@ -421,27 +424,10 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::Zip => {
-                    let file_name = destination_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid download path"))?
-                        .to_string_lossy();
-                    let zip_filename = format!("{file_name}.zip");
-                    let mut zip_path = destination_path.clone();
-                    zip_path.set_file_name(zip_filename);
-
                     futures::pin_mut!(body);
-                    self.host.fs.create_file_with(&zip_path, body).await?;
-
-                    let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&extension_work_dir)
-                        .arg("-d")
-                        .arg(&destination_path)
-                        .arg(&zip_path)
-                        .output()?
-                        .status;
-                    if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
-                    }
+                    node_runtime::extract_zip(&destination_path, body)
+                        .await
+                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
                 }
             }
 

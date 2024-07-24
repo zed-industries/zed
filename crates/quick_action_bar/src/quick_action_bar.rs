@@ -14,14 +14,17 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonSize, ButtonStyle, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize, Tooltip,
 };
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
+mod repl_menu;
+
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
+    repl_menu: Option<View<ContextMenu>>,
     toggle_settings_menu: Option<View<ContextMenu>>,
     toggle_selections_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
@@ -40,6 +43,7 @@ impl QuickActionBar {
             buffer_search_bar,
             toggle_settings_menu: None,
             toggle_selections_menu: None,
+            repl_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -98,18 +102,21 @@ impl Render for QuickActionBar {
             inlay_hints_enabled,
             supports_inlay_hints,
             git_blame_inline_enabled,
+            auto_signature_help_enabled,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
             let supports_inlay_hints = editor.supports_inlay_hints(cx);
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+            let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
 
             (
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
                 git_blame_inline_enabled,
+                auto_signature_help_enabled,
             )
         };
 
@@ -135,14 +142,14 @@ impl Render for QuickActionBar {
             "toggle inline assistant",
             IconName::MagicWand,
             false,
-            Box::new(InlineAssist),
+            Box::new(InlineAssist::default()),
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
                 move |_, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
+                            AssistantPanel::inline_assist(workspace, &InlineAssist::default(), cx);
                         });
                     }
                 }
@@ -151,7 +158,7 @@ impl Render for QuickActionBar {
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_selections_menu.is_some())
@@ -200,7 +207,7 @@ impl Render for QuickActionBar {
 
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_settings_menu.is_some())
@@ -261,6 +268,23 @@ impl Render for QuickActionBar {
                                 },
                             );
 
+                            menu = menu.toggleable_entry(
+                                "Auto Signature Help",
+                                auto_signature_help_enabled,
+                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_auto_signature_help_menu(
+                                                &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            );
+
                             menu
                         });
                         cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
@@ -276,11 +300,11 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(Spacing::XLarge.rems(cx))
+            .gap(Spacing::Large.rems(cx))
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(search_button)
+                    .children(self.render_repl_menu(cx))
                     .when(
                         AssistantSettings::get_global(cx).enabled
                             && AssistantSettings::get_global(cx).button,
@@ -290,9 +314,17 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
+                    .children(search_button),
+            )
+            .child(
+                h_flex()
+                    .gap(Spacing::Medium.rems(cx))
                     .children(editor_selections_dropdown)
                     .child(editor_settings_dropdown),
             )
+            .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
+                el.child(Self::render_menu_overlay(repl_menu))
+            })
             .when_some(
                 self.toggle_settings_menu.as_ref(),
                 |el, toggle_settings_menu| {
@@ -346,7 +378,7 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .size(ButtonSize::Compact)
+            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)

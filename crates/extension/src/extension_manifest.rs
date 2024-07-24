@@ -78,6 +78,8 @@ pub struct ExtensionManifest {
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
+    #[serde(default)]
+    pub snippets: Option<PathBuf>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -206,5 +208,6 @@ fn manifest_from_old_manifest(
         language_servers: Default::default(),
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
+        snippets: None,
     }
 }

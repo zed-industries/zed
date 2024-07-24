@@ -1,6 +1,6 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -75,9 +75,35 @@ impl IconSize {
             IconSize::Medium => rems_from_px(16.),
         }
     }
+
+    /// Returns the individual components of the square that contains this [`IconSize`].
+    ///
+    /// The returned tuple contains:
+    ///   1. The length of one side of the square
+    ///   2. The padding of one side of the square
+    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
+        let icon_size = self.rems() * cx.rem_size();
+        let padding = match self {
+            IconSize::Indicator => Spacing::None.px(cx),
+            IconSize::XSmall => Spacing::XSmall.px(cx),
+            IconSize::Small => Spacing::XSmall.px(cx),
+            IconSize::Medium => Spacing::XSmall.px(cx),
+        };
+
+        (icon_size, padding)
+    }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let (icon_size, padding) = self.square_components(cx);
+
+        icon_size + padding * 2.
+    }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
@@ -103,6 +129,8 @@ pub enum IconName {
     CaseSensitive,
     Check,
     ChevronDown,
+    /// This chevron indicates a popover menu.
+    ChevronDownSmall,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
@@ -179,6 +207,7 @@ pub enum IconName {
     PullRequest,
     Quote,
     Regex,
+    ReplNeutral,
     Replace,
     ReplaceAll,
     ReplaceNext,
@@ -199,6 +228,7 @@ pub enum IconName {
     Snip,
     Space,
     Sparkle,
+    SparkleAlt,
     SparkleFilled,
     Spinner,
     Split,
@@ -251,6 +281,7 @@ impl IconName {
             IconName::CaseSensitive => "icons/case_insensitive.svg",
             IconName::Check => "icons/check.svg",
             IconName::ChevronDown => "icons/chevron_down.svg",
+            IconName::ChevronDownSmall => "icons/chevron_down_small.svg",
             IconName::ChevronLeft => "icons/chevron_left.svg",
             IconName::ChevronRight => "icons/chevron_right.svg",
             IconName::ChevronUp => "icons/chevron_up.svg",
@@ -327,6 +358,7 @@ impl IconName {
             IconName::PullRequest => "icons/pull_request.svg",
             IconName::Quote => "icons/quote.svg",
             IconName::Regex => "icons/regex.svg",
+            IconName::ReplNeutral => "icons/repl_neutral.svg",
             IconName::Replace => "icons/replace.svg",
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",
@@ -347,6 +379,7 @@ impl IconName {
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
             IconName::Sparkle => "icons/sparkle.svg",
+            IconName::SparkleAlt => "icons/sparkle_alt.svg",
             IconName::SparkleFilled => "icons/sparkle_filled.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",

@@ -13,9 +13,9 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use task::{SpawnInTerminal, TerminalWorkDir};
+use task::{Shell, SpawnInTerminal, TerminalWorkDir};
 use terminal::{
-    terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
+    terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
@@ -55,7 +55,9 @@ impl Project {
         } else {
             projects_store
                 .dev_server_project(dev_server_project_id)?
-                .path
+                .paths
+                .get(0)
+                .unwrap()
                 .to_string()
         };
 
@@ -81,8 +83,8 @@ impl Project {
                 .and_then(|cwd| cwd.local_path());
 
             terminal_cwd
-                .and_then(|terminal_cwd| self.find_local_worktree(&terminal_cwd, cx))
-                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(&spawn_cwd, cx)))
+                .and_then(|terminal_cwd| self.find_worktree(&terminal_cwd, cx))
+                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_worktree(&spawn_cwd, cx)))
         };
 
         let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {
@@ -129,6 +131,7 @@ impl Project {
                         full_label: spawn_task.full_label,
                         label: spawn_task.label,
                         command_label: spawn_task.command_label,
+                        hide: spawn_task.hide,
                         status: TaskStatus::Running,
                         completion_rx,
                     }),
@@ -153,6 +156,7 @@ impl Project {
                             full_label: spawn_task.full_label,
                             label: spawn_task.label,
                             command_label: spawn_task.command_label,
+                            hide: spawn_task.hide,
                             status: TaskStatus::Running,
                             completion_rx,
                         }),
@@ -180,6 +184,7 @@ impl Project {
             settings.max_scroll_history_lines,
             window,
             completion_tx,
+            cx,
         )
         .map(|builder| {
             let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));

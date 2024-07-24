@@ -7,7 +7,7 @@ use git::{
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
 use project::{Item, Project};

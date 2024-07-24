@@ -9,6 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
+use task::Shell;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -254,18 +255,6 @@ pub enum TerminalBlink {
     TerminalControlled,
     /// Always blink the cursor, ignoring the terminal mode.
     On,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    /// Use the system's default terminal configuration in /etc/passwd
-    System,
-    Program(String),
-    WithArguments {
-        program: String,
-        args: Vec<String>,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

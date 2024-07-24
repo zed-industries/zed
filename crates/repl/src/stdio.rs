@@ -55,17 +55,19 @@ impl TerminalOutput {
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let theme = cx.theme();
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        let mut text_runs = self.handler.text_runs.clone();
-        text_runs.push(self.handler.current_text_run.clone());
-
-        let runs = text_runs
+        let runs = self
+            .handler
+            .text_runs
             .iter()
+            .chain(Some(&self.handler.current_text_run))
             .map(|ansi_run| {
-                let color = terminal_view::terminal_element::convert_color(&ansi_run.fg, theme);
-                let background_color = Some(terminal_view::terminal_element::convert_color(
-                    &ansi_run.bg,
+                let color = terminal_view::terminal_element::convert_color(
+                    &ansi_run.fg.unwrap_or(Color::Named(NamedColor::Foreground)),
                     theme,
-                ));
+                );
+                let background_color = ansi_run
+                    .bg
+                    .map(|bg| terminal_view::terminal_element::convert_color(&bg, theme));
 
                 TextRun {
                     len: ansi_run.len,
@@ -78,7 +80,14 @@ impl TerminalOutput {
             })
             .collect::<Vec<TextRun>>();
 
-        let text = StyledText::new(self.handler.buffer.trim_end().to_string()).with_runs(runs);
+        // Trim the last trailing newline for visual appeal
+        let trimmed = self
+            .handler
+            .buffer
+            .strip_suffix('\n')
+            .unwrap_or(&self.handler.buffer);
+
+        let text = StyledText::new(trimmed.to_string()).with_runs(runs);
         div()
             .font_family(buffer_font)
             .child(text)
@@ -88,26 +97,15 @@ impl TerminalOutput {
 
 impl LineHeight for TerminalOutput {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        // todo!(): Track this over time with our parser and just return it when needed
-        self.handler.buffer.lines().count() as u8
+        self.handler.buffer.lines().count().max(1) as u8
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct AnsiTextRun {
-    pub len: usize,
-    pub fg: alacritty_terminal::vte::ansi::Color,
-    pub bg: alacritty_terminal::vte::ansi::Color,
-}
-
-impl AnsiTextRun {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            fg: Color::Named(NamedColor::Foreground),
-            bg: Color::Named(NamedColor::Background),
-        }
-    }
+    len: usize,
+    fg: Option<alacritty_terminal::vte::ansi::Color>,
+    bg: Option<alacritty_terminal::vte::ansi::Color>,
 }
 
 struct TerminalHandler {
@@ -120,11 +118,7 @@ impl TerminalHandler {
     fn new() -> Self {
         Self {
             text_runs: Vec::new(),
-            current_text_run: AnsiTextRun {
-                len: 0,
-                fg: Color::Named(NamedColor::Foreground),
-                bg: Color::Named(NamedColor::Background),
-            },
+            current_text_run: AnsiTextRun::default(),
             buffer: String::new(),
         }
     }
@@ -153,15 +147,11 @@ impl TerminalHandler {
             self.text_runs.push(self.current_text_run.clone());
         }
 
-        let mut text_run = AnsiTextRun {
-            len: 0,
-            fg: self.current_text_run.fg,
-            bg: self.current_text_run.bg,
-        };
+        let mut text_run = AnsiTextRun::default();
 
         match attr {
-            Attr::Foreground(color) => text_run.fg = color,
-            Attr::Background(color) => text_run.bg = color,
+            Attr::Foreground(color) => text_run.fg = Some(color),
+            Attr::Background(color) => text_run.bg = Some(color),
             _ => {}
         }
 
@@ -213,7 +203,7 @@ impl Perform for TerminalHandler {
             }
             _ => {
                 // Format as hex
-                println!("[execute] byte={:02x}", byte);
+                // println!("[execute] byte={:02x}", byte);
             }
         }
     }

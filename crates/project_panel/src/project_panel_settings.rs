@@ -60,7 +60,7 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub button: Option<bool>,
-    /// Customise default width (in pixels) taken by project panel
+    /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
     pub default_width: Option<f32>,

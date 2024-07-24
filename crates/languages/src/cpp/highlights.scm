@@ -92,12 +92,12 @@
   "typename"
   "union"
   "using"
-  "virtual"
   "while"
   (primitive_type)
   (sized_type_specifier)
   (storage_class_specifier)
   (type_qualifier)
+  (virtual)
 ] @keyword
 
 [

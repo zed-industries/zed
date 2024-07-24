@@ -28,8 +28,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
-    BlockMap, BlockPoint, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
+    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
+    BlockMap, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -269,7 +269,7 @@ impl DisplayMap {
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut ModelContext<Self>,
-    ) -> Vec<BlockId> {
+    ) -> Vec<CustomBlockId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -285,7 +285,7 @@ impl DisplayMap {
 
     pub fn replace_blocks(
         &mut self,
-        heights_and_renderers: HashMap<BlockId, (Option<u8>, RenderBlock)>,
+        heights_and_renderers: HashMap<CustomBlockId, (Option<u8>, RenderBlock)>,
         cx: &mut ModelContext<Self>,
     ) {
         //
@@ -306,8 +306,8 @@ impl DisplayMap {
         // directly and the new behavior separately.
         //
         //
-        let mut only_renderers = HashMap::<BlockId, RenderBlock>::default();
-        let mut full_replace = HashMap::<BlockId, (u8, RenderBlock)>::default();
+        let mut only_renderers = HashMap::<CustomBlockId, RenderBlock>::default();
+        let mut full_replace = HashMap::<CustomBlockId, (u8, RenderBlock)>::default();
         for (id, (height, render)) in heights_and_renderers {
             if let Some(height) = height {
                 full_replace.insert(id, (height, render));
@@ -334,7 +334,7 @@ impl DisplayMap {
         block_map.replace(full_replace);
     }
 
-    pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
+    pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -350,7 +350,7 @@ impl DisplayMap {
 
     pub fn row_for_block(
         &mut self,
-        block_id: BlockId,
+        block_id: CustomBlockId,
         cx: &mut ModelContext<Self>,
     ) -> Option<DisplayRow> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -561,7 +561,7 @@ impl DisplaySnapshot {
         }
     }
 
-    // used by line_mode selections and tries to match vim behaviour
+    // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = if range.start.row == 0 {
             MultiBufferPoint::new(0, 0)
@@ -885,10 +885,14 @@ impl DisplaySnapshot {
     pub fn blocks_in_range(
         &self,
         rows: Range<DisplayRow>,
-    ) -> impl Iterator<Item = (DisplayRow, &TransformBlock)> {
+    ) -> impl Iterator<Item = (DisplayRow, &Block)> {
         self.block_snapshot
             .blocks_in_range(rows.start.0..rows.end.0)
             .map(|(row, block)| (DisplayRow(row), block))
+    }
+
+    pub fn block_for_id(&self, id: BlockId) -> Option<Block> {
+        self.block_snapshot.block_for_id(id)
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {

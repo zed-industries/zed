@@ -6,7 +6,7 @@ use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http::{self, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -227,7 +227,7 @@ impl Telemetry {
                 let state = state.clone();
                 async move {
                     if let Some(tempfile) =
-                        NamedTempFile::new_in(paths::config_dir().as_path()).log_err()
+                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
                     {
                         state.lock().log_file = Some(tempfile);
                     }
@@ -632,7 +632,7 @@ impl Telemetry {
 
                     let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
-                    let request = http::Request::builder()
+                    let request = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(
                             this.http_client
@@ -661,7 +661,7 @@ mod tests {
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {

@@ -24,8 +24,8 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
-    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
@@ -60,16 +60,20 @@ pub(crate) use mac::*;
 pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
-use time::UtcOffset;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new())
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless))
 }
+
 #[cfg(target_os = "linux")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    if headless {
+        return Rc::new(HeadlessClient::new());
+    }
+
     match guess_compositor() {
         "Wayland" => Rc::new(WaylandClient::new()),
         "X11" => Rc::new(X11Client::new()),
@@ -83,6 +87,9 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn guess_compositor() -> &'static str {
+    if std::env::var_os("ZED_HEADLESS").is_some() {
+        return "Headless";
+    }
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
     let x11_display = std::env::var_os("DISPLAY");
 
@@ -100,7 +107,7 @@ pub fn guess_compositor() -> &'static str {
 
 // todo("windows")
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
 }
 
@@ -137,8 +144,8 @@ pub(crate) trait Platform: 'static {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn reveal_path(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
@@ -159,7 +166,6 @@ pub(crate) trait Platform: 'static {
         ""
     }
     fn app_path(&self) -> Result<PathBuf>;
-    fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
@@ -281,6 +287,16 @@ pub struct Tiling {
 }
 
 impl Tiling {
+    /// Initializes a [`Tiling`] type with all sides tiled
+    pub fn tiled() -> Self {
+        Self {
+            top: true,
+            left: true,
+            right: true,
+            bottom: true,
+        }
+    }
+
     /// Whether any edge is tiled
     pub fn is_tiled(&self) -> bool {
         self.top || self.left || self.right || self.bottom
@@ -308,6 +324,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn is_active(&self) -> bool;
+    fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
@@ -317,6 +334,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
@@ -351,6 +369,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         }
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    fn gpu_specs(&self) -> Option<GPUSpecs>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -394,6 +413,8 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    #[cfg(target_os = "windows")]
+    fn destroy(&self);
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
