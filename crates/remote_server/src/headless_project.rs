@@ -83,10 +83,11 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        let path = shellexpand::tilde(&message.payload.path).to_string();
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&message.payload.path),
+                    Path::new(&path),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),

@@ -1,6 +1,8 @@
 mod dev_servers;
 pub mod disconnected_overlay;
+mod ssh_connection_modal;
 mod ssh_remotes;
+pub use ssh_connection_modal::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
