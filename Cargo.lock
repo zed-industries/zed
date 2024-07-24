@@ -8449,6 +8449,7 @@ dependencies = [
  "picker",
  "project",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "settings",

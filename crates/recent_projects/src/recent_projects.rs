@@ -1,5 +1,6 @@
 mod dev_servers;
 pub mod disconnected_overlay;
+mod ssh_remotes;
 
 use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
@@ -17,6 +18,7 @@ use picker::{
 };
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -44,6 +46,7 @@ gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
+    ssh_remotes::SshSettings::register(cx);
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(DevServerProjects::register).detach();
     cx.observe_new_views(DisconnectedOverlay::register).detach();

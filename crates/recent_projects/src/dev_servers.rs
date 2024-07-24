@@ -20,6 +20,8 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
+use settings::update_settings_file;
+use settings::Settings;
 use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
@@ -37,6 +39,9 @@ use workspace::notifications::NotifyResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::open_dev_server_project;
+use crate::ssh_remotes::SshConnection;
+use crate::ssh_remotes::SshProject;
+use crate::ssh_remotes::SshSettings;
 use crate::OpenRemote;
 
 pub struct DevServerProjects {
@@ -652,6 +657,129 @@ impl DevServerProjects {
             )
     }
 
+    fn render_ssh_connection(
+        &mut self,
+        ix: usize,
+        ssh_connection: &SshConnection,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .child(
+                h_flex().group("ssh-server").justify_between().child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id(("status", ix))
+                                .relative()
+                                .child(Icon::new(IconName::Server).size(IconSize::Small)),
+                        )
+                        .child(
+                            div()
+                                .max_w(rems(26.))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(Label::new(ssh_connection.host.clone())),
+                        )
+                        .child(h_flex().visible_on_hover("ssh-server").gap_1().child({
+                            IconButton::new("remove-dev-server", IconName::Trash)
+                                .on_click(
+                                    cx.listener(move |this, _, cx| this.delete_ssh_server(ix, cx)),
+                                )
+                                .tooltip(|cx| Tooltip::text("Remove dev server", cx))
+                        })),
+                ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .bg(cx.theme().colors().background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .rounded_md()
+                    .my_1()
+                    .py_0p5()
+                    .px_3()
+                    .child(
+                        List::new()
+                            .empty_message("No projects.")
+                            .children(
+                                ssh_connection
+                                    .projects
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(pix, p)| self.render_ssh_project(ix, pix, p, cx)),
+                            )
+                            .child(
+                                ListItem::new("new-remote_project")
+                                    .start_slot(Icon::new(IconName::Plus))
+                                    .child(Label::new("Open folder…"))
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        todo!();
+                                    })),
+                            ),
+                    ),
+            )
+    }
+
+    fn render_ssh_project(
+        &self,
+        server: usize,
+        ix: usize,
+        project: &SshProject,
+        cx: &ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new(("remote-project", ix))
+            .start_slot(Icon::new(IconName::FileTree))
+            .child(Label::new(project.paths.join(", ")))
+            .on_click(cx.listener(move |_, _, cx| todo!()))
+            .end_hover_slot::<AnyElement>(Some(
+                IconButton::new("remove-remote-project", IconName::Trash)
+                    .on_click(
+                        cx.listener(move |this, _, cx| this.delete_ssh_project(server, ix, cx)),
+                    )
+                    .tooltip(|cx| Tooltip::text("Delete remote project", cx))
+                    .into_any_element(),
+            ))
+    }
+
+    fn delete_ssh_server(&mut self, server: usize, cx: &mut ViewContext<Self>) {
+        let Some(fs) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.app_state().fs.clone())
+            .log_err()
+        else {
+            return;
+        };
+
+        update_settings_file::<SshSettings>(fs, cx, move |setting, _| {
+            if let Some(connections) = setting.ssh_connections.as_mut() {
+                connections.remove(server);
+            }
+        });
+    }
+
+    fn delete_ssh_project(&mut self, server: usize, project: usize, cx: &mut ViewContext<Self>) {
+        let Some(fs) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.app_state().fs.clone())
+            .log_err()
+        else {
+            return;
+        };
+
+        update_settings_file::<SshSettings>(fs, cx, move |setting, _| {
+            if let Some(server) = setting
+                .ssh_connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server))
+            {
+                server.projects.remove(project);
+            }
+        });
+    }
+
     fn render_create_new_project(
         &mut self,
         creating: bool,
@@ -941,6 +1069,7 @@ impl DevServerProjects {
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
+        let ssh_connections = SshSettings::get_global(cx).ssh_connections.clone();
 
         let Mode::Default(create_dev_server_project) = &self.mode else {
             unreachable!()
@@ -1024,6 +1153,10 @@ impl DevServerProjects {
                                             })),
                                     ),
                                 ))
+                                .children(ssh_connections.iter().enumerate().map(|(ix, connection)| {
+                                    self.render_ssh_connection(ix, connection, cx)
+                                        .into_any_element()
+                                }))
                                 .children(dev_servers.iter().map(|dev_server| {
                                     let creating = if creating_dev_server == Some(dev_server.id) {
                                         is_creating
