@@ -1,7 +1,6 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count,
-    prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    LanguageModelCompletionProvider,
+    humanize_token_count, prompts::generate_terminal_assistant_prompt, AssistantPanel,
+    AssistantPanelEvent, LanguageModelCompletionProvider, ModelSelector,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -17,10 +16,8 @@ use gpui::{
     Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
-use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
-use settings::{update_settings_file, Settings};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use settings::Settings;
 use std::{
     cmp,
     sync::Arc,
@@ -29,7 +26,7 @@ use std::{
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -450,8 +447,6 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let fs = self.fs.clone();
-
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 vec![
@@ -554,74 +549,27 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(
-                        PopoverMenu::new("model-switcher")
-                            .menu(move |cx| {
-                                ContextMenu::build(cx, |mut menu, cx| {
-                                    for available_model in
-                                        LanguageModelRegistry::read_global(cx).available_models(cx)
-                                    {
-                                        menu = menu.custom_entry(
-                                            {
-                                                let model_name = available_model.name().0.clone();
-                                                let provider =
-                                                    available_model.provider_id().0.clone();
-                                                move |_| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .justify_between()
-                                                        .child(Label::new(model_name.clone()))
-                                                        .child(
-                                                            div().ml_4().child(
-                                                                Label::new(provider.clone())
-                                                                    .color(Color::Muted),
-                                                            ),
-                                                        )
-                                                        .into_any()
-                                                }
-                                            },
-                                            {
-                                                let fs = fs.clone();
-                                                let model = available_model.clone();
-                                                move |cx| {
-                                                    let model = model.clone();
-                                                    update_settings_file::<AssistantSettings>(
-                                                        fs.clone(),
-                                                        cx,
-                                                        move |settings, _| {
-                                                            settings.set_model(model)
-                                                        },
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    }
-                                    menu
-                                })
-                                .into()
-                            })
-                            .trigger(
-                                IconButton::new("context", IconName::Settings)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            format!(
-                                                "Using {}",
-                                                LanguageModelCompletionProvider::read_global(cx)
-                                                    .active_model()
-                                                    .map(|model| model.name().0)
-                                                    .unwrap_or_else(|| "No model selected".into())
-                                            ),
-                                            None,
-                                            "Change Model",
-                                            cx,
-                                        )
-                                    }),
-                            )
-                            .anchor(gpui::AnchorCorner::BottomRight),
-                    )
+                    .child(ModelSelector::new(
+                        self.fs.clone(),
+                        IconButton::new("context", IconName::Settings)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    format!(
+                                        "Using {}",
+                                        LanguageModelCompletionProvider::read_global(cx)
+                                            .active_model()
+                                            .map(|model| model.name().0)
+                                            .unwrap_or_else(|| "No model selected".into()),
+                                    ),
+                                    None,
+                                    "Change Model",
+                                    cx,
+                                )
+                            }),
+                    ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
