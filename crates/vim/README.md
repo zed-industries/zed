@@ -8,7 +8,7 @@ The backlog is maintained in the `#vim` channel notes.
 
 If you are making a change to make Zed's behavior more closely match vim/nvim, you can create a test using the `NeovimBackedTestContext`.
 
-For example, the following test checks that Zed and Neovim have the same behaviur when running `*` in visual mode:
+For example, the following test checks that Zed and Neovim have the same behavior when running `*` in visual mode:
 
 ```rust
 #[gpui::test]
