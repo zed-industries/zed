@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use collections::HashMap;
+use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
@@ -38,7 +38,6 @@ pub struct OpenAiLanguageModelProvider {
 
 struct State {
     api_key: Option<String>,
-    settings: OpenAiSettings,
     _subscription: Subscription,
 }
 
@@ -46,9 +45,7 @@ impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
-            settings: AllLanguageModelSettings::get_global(cx).open_ai.clone(),
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.settings = AllLanguageModelSettings::get_global(cx).open_ai.clone();
+            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
                 cx.notify();
             }),
         });
@@ -75,7 +72,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = HashMap::default();
+        let mut models = BTreeMap::default();
 
         // Add base models from open_ai::Model::iter()
         for model in open_ai::Model::iter() {
@@ -85,7 +82,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &self.state.read(cx).settings.available_models {
+        for model in &AllLanguageModelSettings::get_global(cx)
+            .open_ai
+            .available_models
+        {
             models.insert(model.id().to_string(), model.clone());
         }
 
@@ -110,7 +110,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
-            let api_url = self.state.read(cx).settings.api_url.clone();
+            let api_url = AllLanguageModelSettings::get_global(cx)
+                .open_ai
+                .api_url
+                .clone();
             let state = self.state.clone();
             cx.spawn(|mut cx| async move {
                 let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
@@ -136,7 +139,8 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let delete_credentials = cx.delete_credentials(&self.state.read(cx).settings.api_url);
+        let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
+        let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
@@ -225,11 +229,12 @@ impl LanguageModel for OpenAiLanguageModel {
         let request = self.to_open_ai_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
             (
                 state.api_key.clone(),
-                state.settings.api_url.clone(),
-                state.settings.low_speed_timeout,
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
             )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
@@ -316,11 +321,9 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let write_credentials = cx.write_credentials(
-            &self.state.read(cx).settings.api_url,
-            "Bearer",
-            api_key.as_bytes(),
-        );
+        let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
+        let write_credentials =
+            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;

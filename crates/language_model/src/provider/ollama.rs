@@ -35,14 +35,14 @@ pub struct OllamaLanguageModelProvider {
 struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<ollama::Model>,
-    settings: OllamaSettings,
     _subscription: Subscription,
 }
 
 impl State {
     fn fetch_models(&self, cx: &ModelContext<Self>) -> Task<Result<()>> {
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = self.http_client.clone();
-        let api_url = self.settings.api_url.clone();
+        let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(|this, mut cx| async move {
@@ -74,9 +74,7 @@ impl OllamaLanguageModelProvider {
             state: cx.new_model(|cx| State {
                 http_client,
                 available_models: Default::default(),
-                settings: AllLanguageModelSettings::get_global(cx).ollama.clone(),
                 _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                    this.settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
                     this.fetch_models(cx).detach_and_log_err(cx);
                     cx.notify();
                 }),
@@ -87,17 +85,15 @@ impl OllamaLanguageModelProvider {
     }
 
     fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
-        dbg!();
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = self.http_client.clone();
-        let api_url = self.state.read(cx).settings.api_url.clone();
+        let api_url = settings.api_url.clone();
 
         let state = self.state.clone();
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(|mut cx| async move {
-            dbg!();
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
-            dbg!();
             let mut models: Vec<ollama::Model> = models
                 .into_iter()
                 // Since there is no metadata from the Ollama API
@@ -107,13 +103,10 @@ impl OllamaLanguageModelProvider {
                 .map(|model| ollama::Model::new(&model.name))
                 .collect();
 
-            dbg!();
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            dbg!();
             state.update(&mut cx, |this, cx| {
                 this.available_models = models;
-                dbg!();
                 cx.notify();
             })
         })
@@ -147,15 +140,15 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     id: LanguageModelId::from(model.name.clone()),
                     model: model.clone(),
                     http_client: self.http_client.clone(),
-                    state: self.state.clone(),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
     }
 
     fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &AppContext) {
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = self.http_client.clone();
-        let api_url = self.state.read(cx).settings.api_url.clone();
+        let api_url = settings.api_url.clone();
         let id = model.id().0.to_string();
         cx.spawn(|_| async move { preload_model(http_client, &api_url, &id).await })
             .detach_and_log_err(cx);
@@ -191,7 +184,6 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 pub struct OllamaLanguageModel {
     id: LanguageModelId,
     model: ollama::Model,
-    state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
 }
 
@@ -276,11 +268,9 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
-            (
-                state.settings.api_url.clone(),
-                state.settings.low_speed_timeout,
-            )
+        let Ok((api_url, low_speed_timeout)) = cx.update(|cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            (settings.api_url.clone(), settings.low_speed_timeout)
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };

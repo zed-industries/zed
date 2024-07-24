@@ -6,11 +6,10 @@ use crate::{
 };
 use anyhow::Result;
 use client::Client;
-use collections::HashMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -35,7 +34,6 @@ pub struct CloudLanguageModelProvider {
 struct State {
     client: Arc<Client>,
     status: client::Status,
-    settings: ZedDotDevSettings,
     _subscription: Subscription,
 }
 
@@ -54,9 +52,7 @@ impl CloudLanguageModelProvider {
         let state = cx.new_model(|cx| State {
             client: client.clone(),
             status,
-            settings: AllLanguageModelSettings::get_global(cx).zed_dot_dev.clone(),
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.settings = AllLanguageModelSettings::get_global(cx).zed_dot_dev.clone();
+            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
         });
@@ -101,7 +97,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = HashMap::default();
+        let mut models = BTreeMap::default();
 
         // Add base models from CloudModel::iter()
         for model in CloudModel::iter() {
@@ -111,7 +107,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &self.state.read(cx).settings.available_models {
+        for model in &AllLanguageModelSettings::get_global(cx)
+            .zed_dot_dev
+            .available_models
+        {
             models.insert(model.id().to_string(), model.clone());
         }
 

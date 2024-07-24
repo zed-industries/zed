@@ -76,8 +76,6 @@ impl settings::Settings for AllLanguageModelSettings {
         let mut settings = AllLanguageModelSettings::default();
 
         for value in sources.defaults_and_customizations() {
-            dbg!(&value.ollama);
-
             merge(
                 &mut settings.anthropic.api_url,
                 value.anthropic.as_ref().and_then(|s| s.api_url.clone()),
