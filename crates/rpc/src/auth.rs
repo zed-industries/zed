@@ -20,7 +20,7 @@ pub enum EncryptionFormat {
     /// See [here](https://people.redhat.com/~hkario/marvin/) for more details.
     V0,
 
-    /// The new encryption key format using OAEP padding with a SHA-256 digest.
+    /// The new encryption key format using Optimal Asymmetric Encryption Padding (OAEP) with a SHA-256 digest.
     V1,
 }
 
