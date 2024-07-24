@@ -196,6 +196,9 @@ impl LanguageModel for CloudLanguageModel {
             | CloudModel::Claude3Opus
             | CloudModel::Claude3Sonnet
             | CloudModel::Claude3Haiku => count_anthropic_tokens(request, cx),
+            CloudModel::Custom { name, .. } if name.starts_with("anthropic/") => {
+                count_anthropic_tokens(request, cx)
+            }
             _ => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
                     model: self.model.id().to_string(),
