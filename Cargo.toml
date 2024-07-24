@@ -161,6 +161,7 @@ resolver = "2"
 
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
+aho-corasick = "1.1"
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
