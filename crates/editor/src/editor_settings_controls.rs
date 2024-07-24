@@ -74,9 +74,8 @@ impl EditableSettingControl for BufferFontWeightControl {
     }
 
     fn read(cx: &AppContext) -> Self::Value {
-        let _settings = ThemeSettings::get_global(cx);
-        // TODO: Read the value from the settings.
-        FontWeight::NORMAL
+        let settings = ThemeSettings::get_global(cx);
+        settings.buffer_font.weight
     }
 
     fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
