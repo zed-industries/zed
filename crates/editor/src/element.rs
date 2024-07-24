@@ -5568,15 +5568,15 @@ impl Element for EditorElement {
 
                     self.paint_text(layout, cx);
 
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_gutter_highlights(layout, cx);
+                        self.paint_gutter_indicators(layout, cx);
+                    }
+
                     if !layout.blocks.is_empty() {
                         cx.with_element_namespace("blocks", |cx| {
                             self.paint_blocks(layout, cx);
                         });
-                    }
-
-                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                        self.paint_gutter_highlights(layout, cx);
-                        self.paint_gutter_indicators(layout, cx);
                     }
 
                     self.paint_scrollbar(layout, cx);
