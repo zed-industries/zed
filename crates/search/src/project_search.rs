@@ -215,6 +215,20 @@ impl ProjectSearch {
             project
                 .search_history_mut()
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
+            let included = query.as_inner().files_to_include().sources();
+            if included.len() > 0 {
+                project.search_included_history_mut().add(
+                    &mut self.search_included_history_cursor,
+                    included[0].clone(),
+                );
+            }
+            let excluded = query.as_inner().files_to_exclude().sources();
+            if excluded.len() > 0 {
+                project.search_excluded_history_mut().add(
+                    &mut self.search_excluded_history_cursor,
+                    excluded[0].clone(),
+                );
+            }
             project.search(query.clone(), cx)
         });
         self.last_search_query_text = Some(query.as_str().to_string());
