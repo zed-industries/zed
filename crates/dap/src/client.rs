@@ -1,4 +1,4 @@
-use crate::transport::{self, Events, Payload, Request, Transport};
+use crate::transport::{Events, Payload, Request, Response, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
@@ -12,14 +12,12 @@ use dap_types::{
     SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
     StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
-use futures::{
-    channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
-    AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
-};
+use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
+    channel::{bounded, unbounded, Receiver, Sender},
     io::BufReader,
     net::{TcpListener, TcpStream},
     process::{self, Child},
@@ -63,42 +61,68 @@ pub struct ThreadState {
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     _process: Option<Child>,
-    server_tx: UnboundedSender<Payload>,
+    server_tx: Sender<Payload>,
     request_count: AtomicU64,
-    capabilities: Option<dap_types::Capabilities>,
+    capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
     config: DebugAdapterConfig,
-    client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
 }
 
 impl DebugAdapterClient {
-    pub async fn new(
+    pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
+        event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>>
+    where
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         match config.connection.clone() {
             DebugConnectionType::TCP(host) => {
-                Self::create_tcp_client(id, config, host, command, args, project_path, cx).await
+                Self::create_tcp_client(
+                    id,
+                    config,
+                    host,
+                    command,
+                    args,
+                    project_path,
+                    event_handler,
+                    cx,
+                )
+                .await
             }
             DebugConnectionType::STDIO => {
-                Self::create_stdio_client(id, config, command, args, project_path, cx).await
+                Self::create_stdio_client(
+                    id,
+                    config,
+                    command,
+                    args,
+                    project_path,
+                    event_handler,
+                    cx,
+                )
+                .await
             }
         }
     }
 
-    async fn create_tcp_client(
+    async fn create_tcp_client<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         host: TCPHost,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
+        event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>>
+    where
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         let mut port = host.port;
         if port.is_none() {
             port = Self::get_port().await;
@@ -139,6 +163,7 @@ impl DebugAdapterClient {
             Box::new(tx),
             None,
             Some(process),
+            event_handler,
             cx,
         )
     }
@@ -154,14 +179,18 @@ impl DebugAdapterClient {
         )
     }
 
-    async fn create_stdio_client(
+    async fn create_stdio_client<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
+        event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>>
+    where
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         let mut command = process::Command::new(command);
         command
             .current_dir(project_path)
@@ -192,49 +221,67 @@ impl DebugAdapterClient {
         let stdout = Box::new(BufReader::new(stdout));
         let stderr = Box::new(BufReader::new(stderr));
 
-        Self::handle_transport(id, config, stdout, stdin, Some(stderr), Some(process), cx)
+        Self::handle_transport(
+            id,
+            config,
+            stdout,
+            stdin,
+            Some(stderr),
+            Some(process),
+            event_handler,
+            cx,
+        )
     }
 
-    pub fn handle_transport(
+    pub fn handle_transport<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
+        event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>>
+    where
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client_rx = Arc::new(smol::lock::Mutex::new(client_rx));
-
-        let client = Self {
+        let client = Arc::new(Self {
             id,
             config,
-            client_rx,
+            server_tx,
             _process: process,
-            capabilities: None,
-            server_tx: server_tx.clone(),
             request_count: AtomicU64::new(1),
+            capabilities: Default::default(),
             thread_states: Arc::new(Mutex::new(HashMap::new())),
-        };
+        });
 
-        cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
-            .detach();
+        cx.update(|cx| {
+            cx.background_executor()
+                .spawn(Self::handle_recv(server_rx, client_tx))
+                .detach_and_log_err(cx);
+
+            cx.spawn(|mut cx| async move {
+                Self::handle_events(client_rx, event_handler, &mut cx).await
+            })
+            .detach_and_log_err(cx);
+        })?;
 
         Ok(client)
     }
 
     pub async fn handle_events<F>(
-        client: Arc<Self>,
+        client_rx: Receiver<Payload>,
         mut event_handler: F,
-        cx: AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<()>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        while let Some(payload) = client.client_rx.lock().await.next().await {
+        while let Ok(payload) = client_rx.recv().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
                 _ => unreachable!(),
@@ -244,18 +291,16 @@ impl DebugAdapterClient {
         anyhow::Ok(())
     }
 
-    async fn handle_recv(
-        mut server_rx: UnboundedReceiver<Payload>,
-        mut server_tx: UnboundedSender<Payload>,
-        mut client_tx: UnboundedSender<Payload>,
-    ) {
-        while let Some(payload) = server_rx.next().await {
+    async fn handle_recv(server_rx: Receiver<Payload>, client_tx: Sender<Payload>) -> Result<()> {
+        while let Ok(payload) = server_rx.recv().await {
             match payload {
-                Payload::Event(ev) => client_tx.send(Payload::Event(ev)).await.log_err(),
-                Payload::Response(res) => server_tx.send(Payload::Response(res)).await.log_err(),
-                Payload::Request(req) => client_tx.send(Payload::Request(req)).await.log_err(),
+                Payload::Event(ev) => client_tx.send(Payload::Event(ev)).await?,
+                Payload::Response(_) => unreachable!(),
+                Payload::Request(req) => client_tx.send(Payload::Request(req)).await?,
             };
         }
+
+        anyhow::Ok(())
     }
 
     pub async fn request<R: dap_types::requests::Request>(
@@ -264,7 +309,7 @@ impl DebugAdapterClient {
     ) -> Result<R::Response> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
-        let (callback_tx, mut callback_rx) = channel::<Result<transport::Response>>(1);
+        let (callback_tx, callback_rx) = bounded::<Result<Response>>(1);
 
         let request = Request {
             back_ch: Some(callback_tx),
@@ -273,12 +318,9 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
 
-        self.server_tx
-            .clone()
-            .send(Payload::Request(request))
-            .await?;
+        self.server_tx.send(Payload::Request(request)).await?;
 
-        let response = callback_rx.next().await.ok_or(anyhow!("no response"))??;
+        let response = callback_rx.recv().await??;
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
@@ -299,7 +341,7 @@ impl DebugAdapterClient {
     }
 
     pub fn capabilities(&self) -> dap_types::Capabilities {
-        self.capabilities.clone().unwrap()
+        self.capabilities.lock().clone().unwrap_or_default()
     }
 
     pub fn next_request_id(&self) -> u64 {
@@ -320,7 +362,7 @@ impl DebugAdapterClient {
         self.thread_states.lock().get(&thread_id).cloned().unwrap()
     }
 
-    pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
+    pub async fn initialize(&self) -> Result<dap_types::Capabilities> {
         let args = dap_types::InitializeRequestArguments {
             client_id: Some("zed".to_owned()),
             client_name: Some("Zed".to_owned()),
@@ -342,7 +384,7 @@ impl DebugAdapterClient {
 
         let capabilities = self.request::<Initialize>(args).await?;
 
-        self.capabilities = Some(capabilities.clone());
+        *self.capabilities.lock() = Some(capabilities.clone());
 
         Ok(capabilities)
     }

@@ -113,7 +113,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    DebugRequestType, RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -1148,30 +1148,29 @@ impl Project {
 
         let command = debug_template.command.clone();
         let args = debug_template.args.clone();
-        let request_args = adapter_config.clone().request_args.map(|a| a.args);
 
         let task = cx.spawn(|this, mut cx| async move {
-            let mut client = DebugAdapterClient::new(
+            let project = this.clone();
+            let client = DebugAdapterClient::new(
                 id,
                 adapter_config.clone(),
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
                 cwd.into(),
+                move |event, cx| {
+                    project
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                event,
+                            })
+                        })
+                        .log_err();
+                },
                 &mut cx,
             )
             .await
             .log_err()?;
-
-            // initialize request
-            client.initialize().await.log_err()?;
-
-            // send correct request based on adapter config
-            match adapter_config.request {
-                DebugRequestType::Launch => client.launch(request_args).await.log_err()?,
-                DebugRequestType::Attach => client.attach(request_args).await.log_err()?,
-            };
-
-            let client = Arc::new(client);
 
             this.update(&mut cx, |this, cx| {
                 let handle = this
@@ -1181,28 +1180,6 @@ impl Project {
                 *handle = DebugAdapterClientState::Running(client.clone());
 
                 cx.emit(Event::DebugClientStarted(id));
-
-                // call handle events
-                cx.spawn({
-                    let client = client.clone();
-                    move |project, cx| {
-                        DebugAdapterClient::handle_events(
-                            client,
-                            move |event, cx| {
-                                project
-                                    .update(cx, |_, cx| {
-                                        cx.emit(Event::DebugClientEvent {
-                                            client_id: id,
-                                            event,
-                                        })
-                                    })
-                                    .log_err();
-                            },
-                            cx,
-                        )
-                    }
-                })
-                .detach_and_log_err(cx);
 
                 anyhow::Ok(())
             })
