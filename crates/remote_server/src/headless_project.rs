@@ -180,7 +180,9 @@ impl HeadlessProject {
     ) {
         match event {
             BufferStoreEvent::MessageToReplicas(message) => {
-                self.session.send_dynamic(message.clone()).log_err();
+                self.session
+                    .send_dynamic(message.as_ref().clone())
+                    .log_err();
             }
             _ => {}
         }

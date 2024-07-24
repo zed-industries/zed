@@ -2407,7 +2407,7 @@ impl Project {
                 self.register_buffer_with_language_servers(&buffer, cx);
             }
             BufferStoreEvent::MessageToReplicas(message) => {
-                self.client.send_dynamic(message.clone()).log_err();
+                self.client.send_dynamic(message.as_ref().clone()).log_err();
             }
         }
     }

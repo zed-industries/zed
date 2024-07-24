@@ -54,7 +54,7 @@ pub enum BufferStoreEvent {
         buffer: Model<Buffer>,
         old_file: Option<Arc<File>>,
     },
-    MessageToReplicas(proto::Envelope),
+    MessageToReplicas(Box<proto::Envelope>),
 }
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
@@ -271,14 +271,14 @@ impl BufferStore {
                         buffer.remote_id().to_proto()
                     });
                     if let Some(project_id) = this.remote_id {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(
+                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
                             proto::UpdateDiffBase {
                                 project_id,
                                 buffer_id,
                                 diff_base,
                             }
                             .into_envelope(0, None, None),
-                        ))
+                        )))
                     }
                 }
             })
@@ -481,16 +481,16 @@ impl BufferStore {
             this.update(&mut cx, |this, cx| {
                 if let Some(project_id) = this.remote_id {
                     if has_changed_file {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(
+                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
                             proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.to_proto(),
                                 file: Some(language::File::to_proto(&*new_file, cx)),
                             }
                             .into_envelope(0, None, None),
-                        ));
+                        )));
                     }
-                    cx.emit(BufferStoreEvent::MessageToReplicas(
+                    cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
                         proto::BufferSaved {
                             project_id,
                             buffer_id: buffer_id.to_proto(),
@@ -498,7 +498,7 @@ impl BufferStore {
                             mtime: mtime.map(|time| time.into()),
                         }
                         .into_envelope(0, None, None),
-                    ));
+                    )));
                 }
             })?;
             buffer_handle.update(&mut cx, |buffer, cx| {
@@ -838,14 +838,14 @@ impl BufferStore {
         }
 
         if let Some(project_id) = self.remote_id {
-            cx.emit(BufferStoreEvent::MessageToReplicas(
+            cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
                 proto::UpdateBufferFile {
                     project_id,
                     buffer_id: buffer_id.to_proto(),
                     file: Some(language::File::to_proto(&*new_file, cx)),
                 }
                 .into_envelope(0, None, None),
-            ));
+            )));
         }
 
         None
