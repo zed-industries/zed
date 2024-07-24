@@ -3,6 +3,7 @@ mod theme_settings_ui;
 use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
+use editor::EditorSettingsUi;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use settings::EditableSettingControl;
@@ -10,7 +11,7 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_ui::{BufferFontSizeSetting, InlineGitBlameSetting, UiFontSizeSetting};
+use crate::theme_settings_ui::UiFontSizeSetting;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -109,7 +110,6 @@ impl Render for SettingsPage {
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
             .child(UiFontSizeSetting::new(cx))
-            .child(BufferFontSizeSetting::new(cx))
-            .child(InlineGitBlameSetting::new(cx))
+            .child(EditorSettingsUi::new())
     }
 }
