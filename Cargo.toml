@@ -301,9 +301,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "9cd21915128da8fa68eee6aca21785470f23f766" }
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
