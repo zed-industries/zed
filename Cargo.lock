@@ -9588,7 +9588,6 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
- "project",
  "settings",
  "theme",
  "ui",
