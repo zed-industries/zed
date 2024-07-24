@@ -111,10 +111,13 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
-        None => match language.name().as_ref() {
-            "TypeScript" | "Python" => SessionSupport::RequiresSetup(language.name()),
-            _ => SessionSupport::Unsupported,
-        },
+        None => {
+            if language_supported(&language) {
+                SessionSupport::RequiresSetup(language.name())
+            } else {
+                SessionSupport::Unsupported
+            }
+        }
     }
 }
 
@@ -162,6 +165,22 @@ fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range
         snippet_end_row -= 1;
     }
     Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
+}
+
+fn code_block_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
+    let mut snippet_end_row = end_row;
+    while (buffer.is_line_blank(snippet_end_row) || line_is_fence(buffer, snippet_end_row))
+        && snippet_end_row > start_row
+    {
+        snippet_end_row -= 1;
+    }
+    Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
+}
+
+fn line_is_fence(buffer: &BufferSnapshot, row: u32) -> bool {
+    buffer
+        .text_for_range(Point::new(row, 0)..Point::new(row, buffer.line_len(row)))
+        .all(|chunk| chunk.trim().chars().all(|c| c == '`'))
 }
 
 // Returns the ranges of the snippets in the buffer and the next range for moving the cursor to
@@ -234,6 +253,11 @@ fn snippet_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
+    if let Some(language) = buffer.language() {
+        if language.name().as_ref() == "Markdown" {
+            return markdown_code_blocks(buffer, range.clone());
+        }
+    }
     let (jupytext_snippets, next_cursor) = jupytext_snippets(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return (jupytext_snippets, next_cursor);
@@ -243,13 +267,34 @@ fn snippet_ranges(
     let start_language = buffer.language_at(snippet_range.start);
     let end_language = buffer.language_at(snippet_range.end);
 
-    if let Some((start, end)) = start_language.zip(end_language) {
-        if start == end {
-            return (vec![snippet_range], None);
-        }
+    if start_language
+        .zip(end_language)
+        .map_or(false, |(start, end)| start == end)
+    {
+        (vec![snippet_range], None)
+    } else {
+        (Vec::new(), None)
     }
+}
 
-    (Vec::new(), None)
+fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+    buffer
+        .injections_intersecting_range(range)
+        .filter(|(_, language)| language_supported(language))
+        .map(|(content_range, _)| {
+            let content_range = buffer.offset_to_point(content_range.start)
+                ..buffer.offset_to_point(content_range.end);
+
+            code_block_range(buffer, content_range.start.row, content_range.end.row)
+        })
+        .collect()
+}
+
+fn language_supported(language: &Arc<Language>) -> bool {
+    match language.name().as_ref() {
+        "TypeScript" | "Python" => true,
+        _ => false,
+    }
 }
 
 fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
@@ -262,9 +307,9 @@ fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Lan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Context;
+    use gpui::{Context, Task};
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig};
+    use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut AppContext) {
@@ -407,6 +452,138 @@ mod tests {
                     print(5 + 5)"#
                 }
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_markdown_code_blocks(cx: &mut AppContext) {
+        let markdown = languages::language("markdown", tree_sitter_markdown::language());
+        let typescript =
+            languages::language("typescript", tree_sitter_typescript::language_typescript());
+        let python = languages::language("python", tree_sitter_python::language());
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+        language_registry.add(markdown.clone());
+        language_registry.add(typescript.clone());
+        language_registry.add(python.clone());
+
+        // Two code blocks intersecting with selection
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```typescript
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    ```
+
+                    ```typescript
+                    console.log("foo")
+                    ```
+                "# },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let snippets = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    let foo = 999;
+                    console.log(foo + 1999);"#
+                },
+                r#"console.log("foo")"#,
+            ]
+        );
+
+        // Three code blocks intersecting with selection
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```typescript
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    ```
+
+                    ```ts
+                    console.log("foo")
+                    ```
+
+                    ```typescript
+                    console.log("another code block")
+                    ```
+                "# },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let snippets = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    let foo = 999;
+                    console.log(foo + 1999);"#
+                },
+                r#"console.log("foo")"#,
+                r#"console.log("another code block")"#,
+            ]
+        );
+
+        // Python code block
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```python
+                    print("hello there")
+                    print("hello there")
+                    print("hello there")
+                    ```
+                "# },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let snippets = snippet_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                print("hello there")
+                print("hello there")
+                print("hello there")"#
+            },]
         );
     }
 }
