@@ -1328,15 +1328,14 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
-                    IconButton::new("start", IconName::Sparkle)
+                    IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
@@ -1347,15 +1346,14 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| {
                             Tooltip::with_meta(
                                 "Interrupt Transformation",
@@ -1373,7 +1371,7 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
@@ -1381,8 +1379,7 @@ impl Render for PromptEditor {
                     if self.edited_since_done {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
-                            .icon_size(IconSize::XSmall)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
                                 Tooltip::with_meta(
                                     "Restart Transformation",
@@ -1397,7 +1394,7 @@ impl Render for PromptEditor {
                     } else {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
@@ -1466,7 +1463,7 @@ impl Render for PromptEditor {
             .child(
                 h_flex()
                     .gap_2()
-                    .pr_4()
+                    .pr_6()
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
