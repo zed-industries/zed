@@ -267,6 +267,29 @@ pub struct ThemeSettingsContent {
     pub theme_overrides: Option<ThemeStyleContent>,
 }
 
+impl ThemeSettingsContent {
+    /// Sets the theme for the given appearance to the theme with the specified name.
+    pub fn set_theme(&mut self, theme_name: String, appearance: Appearance) {
+        if let Some(selection) = self.theme.as_mut() {
+            let theme_to_update = match selection {
+                ThemeSelection::Static(theme) => theme,
+                ThemeSelection::Dynamic { mode, light, dark } => match mode {
+                    ThemeMode::Light => light,
+                    ThemeMode::Dark => dark,
+                    ThemeMode::System => match appearance {
+                        Appearance::Light => light,
+                        Appearance::Dark => dark,
+                    },
+                },
+            };
+
+            *theme_to_update = theme_name.to_string();
+        } else {
+            self.theme = Some(ThemeSelection::Static(theme_name.to_string()));
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {

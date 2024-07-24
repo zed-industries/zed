@@ -20,14 +20,18 @@ pub trait EditableSettingControl: RenderOnce {
     /// Applies the given setting file to the settings file contents.
     ///
     /// This will be called when writing the setting value back to the settings file.
-    fn apply(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value);
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        cx: &AppContext,
+    );
 
     /// Writes the given setting value to the settings files.
     fn write(value: Self::Value, cx: &AppContext) {
         let fs = <dyn Fs>::global(cx);
 
-        update_settings_file::<Self::Settings>(fs, cx, move |settings, _cx| {
-            Self::apply(settings, value);
+        update_settings_file::<Self::Settings>(fs, cx, move |settings, cx| {
+            Self::apply(settings, value, cx);
         });
     }
 }
