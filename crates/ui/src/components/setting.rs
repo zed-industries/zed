@@ -42,12 +42,12 @@ pub enum SettingType {
 }
 
 #[derive(Debug, Clone, IntoElement)]
-pub struct SettingsGroup {
+pub struct LegacySettingsGroup {
     pub name: String,
     settings: Vec<SettingsItem>,
 }
 
-impl SettingsGroup {
+impl LegacySettingsGroup {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -61,7 +61,7 @@ impl SettingsGroup {
     }
 }
 
-impl RenderOnce for SettingsGroup {
+impl RenderOnce for LegacySettingsGroup {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let empty_message = format!("No settings available for {}", self.name);
 
@@ -310,7 +310,7 @@ impl RenderOnce for SettingsItem {
 
 pub struct SettingsMenu {
     name: SharedString,
-    groups: Vec<SettingsGroup>,
+    groups: Vec<LegacySettingsGroup>,
 }
 
 impl SettingsMenu {
@@ -321,7 +321,7 @@ impl SettingsMenu {
         }
     }
 
-    pub fn add_group(mut self, group: SettingsGroup) -> Self {
+    pub fn add_group(mut self, group: LegacySettingsGroup) -> Self {
         self.groups.push(group);
         self
     }

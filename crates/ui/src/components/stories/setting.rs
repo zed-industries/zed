@@ -3,8 +3,8 @@ use gpui::View;
 use crate::prelude::*;
 
 use crate::{
-    SecondarySettingType, SettingLayout, SettingType, SettingsGroup, SettingsItem, SettingsMenu,
-    ToggleType,
+    LegacySettingsGroup, SecondarySettingType, SettingLayout, SettingType, SettingsItem,
+    SettingsMenu, ToggleType,
 };
 
 pub struct SettingStory {
@@ -55,7 +55,7 @@ impl SettingStory {
         )
         .layout(SettingLayout::FullLineJustified);
 
-        let group = SettingsGroup::new("Appearance")
+        let group = LegacySettingsGroup::new("Appearance")
             .add_setting(theme_setting)
             .add_setting(appearance_setting)
             .add_setting(high_contrast_setting);
@@ -66,7 +66,7 @@ impl SettingStory {
     }
 
     pub fn editor_example(&mut self, cx: &mut ViewContext<Self>) {
-        let font_group = SettingsGroup::new("Font")
+        let font_group = LegacySettingsGroup::new("Font")
             .add_setting(
                 SettingsItem::new(
                     "font-family",
@@ -117,7 +117,7 @@ impl SettingStory {
                 .toggled(true),
             );
 
-        let editor_group = SettingsGroup::new("Editor")
+        let editor_group = LegacySettingsGroup::new("Editor")
             .add_setting(
                 SettingsItem::new(
                     "show-indent-guides",
@@ -137,7 +137,7 @@ impl SettingStory {
                 .toggled(false),
             );
 
-        let gutter_group = SettingsGroup::new("Gutter")
+        let gutter_group = LegacySettingsGroup::new("Gutter")
             .add_setting(
                 SettingsItem::new(
                     "enable-git-hunks",
@@ -158,7 +158,7 @@ impl SettingStory {
                 .layout(SettingLayout::FullLineJustified),
             );
 
-        let scrollbar_group = SettingsGroup::new("Scrollbar")
+        let scrollbar_group = LegacySettingsGroup::new("Scrollbar")
             .add_setting(
                 SettingsItem::new(
                     "scrollbar-visibility",
