@@ -392,7 +392,7 @@ impl Vim {
     }
 
     // When handling an action, you must create visual marks if you will switch to normal
-    // mode without the default selection behaviour.
+    // mode without the default selection behavior.
     fn store_visual_marks(&mut self, cx: &mut WindowContext) {
         let mode = self.state().mode;
         if mode.is_visual() {
