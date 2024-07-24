@@ -1951,16 +1951,20 @@ impl EditorElement {
                             .x_for_index(align_to.column() as usize)
                     };
 
-                block.render(&mut BlockContext {
-                    context: cx,
-                    anchor_x,
-                    gutter_dimensions,
-                    line_height,
-                    em_width,
-                    block_id,
-                    max_width: text_hitbox.size.width.max(*scroll_width),
-                    editor_style: &self.style,
-                })
+                div()
+                    .size_full()
+                    .child(block.render(&mut BlockContext {
+                        context: cx,
+                        anchor_x,
+                        gutter_dimensions,
+                        line_height,
+                        em_width,
+                        block_id,
+                        max_width: text_hitbox.size.width.max(*scroll_width),
+                        editor_style: &self.style,
+                    }))
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .into_any_element()
             }
 
             Block::ExcerptHeader {
