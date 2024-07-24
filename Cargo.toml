@@ -366,6 +366,7 @@ runtimelib = { version = "0.12", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
+rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = {version = "0.8", features = ["impl_json_schema"]}
 semver = "1.0"
@@ -402,29 +403,28 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.20", features = ["wasm"] }
-tree-sitter-bash = "0.20.5"
-tree-sitter-c = "0.20.1"
-tree-sitter-cpp = "0.20.5"
-tree-sitter-css = "0.20"
-tree-sitter-elixir = "0.1.1"
+tree-sitter = { version = "0.22", features = ["wasm"] }
+tree-sitter-bash = "0.21"
+tree-sitter-c = "0.21"
+tree-sitter-cpp = "0.22"
+tree-sitter-css = "0.21"
+tree-sitter-elixir = "0.2"
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "b82ab803d887002a0af11f6ce63d72884580bf33" }
-tree-sitter-gomod = "1.0.1"
-tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-rustc-demangle = "0.1.23"
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
-tree-sitter-html = "0.19.0"
-tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", rev = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
-tree-sitter-json = "0.20.2"
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-python = "0.20.2"
-tree-sitter-regex = "0.20.0"
-tree-sitter-ruby = "0.20.0"
-tree-sitter-rust = "0.20.3"
-tree-sitter-typescript = "0.20.5"
-tree-sitter-yaml = "0.0.1"
+tree-sitter-go = "0.21"
+tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod"}
+tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work", rev = "dcbabff454703c3a4bc98a23cf8778d4be46fd22" }
+tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
+tree-sitter-html = "0.20"
+tree-sitter-jsdoc = "0.21"
+tree-sitter-json = "0.21"
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "e3855e37f8f2c71aa7513c18a9c95fb7461b1b10" }
+protols-tree-sitter-proto = "0.2"
+tree-sitter-python = "0.21"
+tree-sitter-regex = "0.21"
+tree-sitter-ruby = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-typescript = "0.21"
+tree-sitter-yaml = "0.6"
 unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
@@ -483,9 +483,6 @@ features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-[patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
