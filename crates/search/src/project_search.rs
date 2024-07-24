@@ -124,6 +124,8 @@ struct ProjectSearch {
     no_results: Option<bool>,
     limit_reached: bool,
     search_history_cursor: SearchHistoryCursor,
+    search_included_history_cursor: SearchHistoryCursor,
+    search_excluded_history_cursor: SearchHistoryCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -177,6 +179,8 @@ impl ProjectSearch {
             no_results: None,
             limit_reached: false,
             search_history_cursor: Default::default(),
+            search_included_history_cursor: Default::default(),
+            search_excluded_history_cursor: Default::default(),
         }
     }
 
@@ -194,6 +198,8 @@ impl ProjectSearch {
             no_results: self.no_results,
             limit_reached: self.limit_reached,
             search_history_cursor: self.search_history_cursor.clone(),
+            search_included_history_cursor: self.search_included_history_cursor.clone(),
+            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
         })
     }
 
@@ -988,6 +994,20 @@ impl ProjectSearchView {
             .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
     }
 
+    fn set_search_included(&mut self, included: &str, cx: &mut ViewContext<Self>) {
+        self.included_files_editor
+            .update(cx, |included_editor, cx| {
+                included_editor.set_text(included, cx)
+            });
+    }
+
+    fn set_search_excluded(&mut self, excluded: &str, cx: &mut ViewContext<Self>) {
+        self.excluded_files_editor
+            .update(cx, |excluded_editor, cx| {
+                excluded_editor.set_text(excluded, cx)
+            });
+    }
+
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
@@ -1282,13 +1302,39 @@ impl ProjectSearchBar {
                     .focus_handle(cx)
                     .is_focused(cx)
                 {
-                    println!("-------todo--------include---------");
+                    let new_included = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_included) = model.project.update(cx, |project, _| {
+                            project
+                                .search_included_history_mut()
+                                .next(&mut model.search_included_history_cursor)
+                                .map(str::to_string)
+                        }) {
+                            new_included
+                        } else {
+                            model.search_included_history_cursor.reset();
+                            String::new()
+                        }
+                    });
+                    search_view.set_search_included(&new_included, cx);
                 } else if search_view
                     .excluded_files_editor
                     .focus_handle(cx)
                     .is_focused(cx)
                 {
-                    println!("-------todo--------exclude---------");
+                    let new_excluded = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_excluded) = model.project.update(cx, |project, _| {
+                            project
+                                .search_excluded_history_mut()
+                                .next(&mut model.search_excluded_history_cursor)
+                                .map(str::to_string)
+                        }) {
+                            new_excluded
+                        } else {
+                            model.search_excluded_history_cursor.reset();
+                            String::new()
+                        }
+                    });
+                    search_view.set_search_excluded(&new_excluded, cx);
                 }
             });
         }
@@ -1328,13 +1374,71 @@ impl ProjectSearchBar {
                     .focus_handle(cx)
                     .is_focused(cx)
                 {
-                    println!("-------todo--------include---------");
+                    if search_view
+                        .included_files_editor
+                        .read(cx)
+                        .text(cx)
+                        .is_empty()
+                    {
+                        if let Some(new_included) = search_view
+                            .model
+                            .read(cx)
+                            .project
+                            .read(cx)
+                            .search_included_history()
+                            .current(&search_view.model.read(cx).search_included_history_cursor)
+                            .map(str::to_string)
+                        {
+                            search_view.set_query(&new_included, cx);
+                            return;
+                        }
+                    }
+
+                    if let Some(new_included) = search_view.model.update(cx, |model, cx| {
+                        model.project.update(cx, |project, _| {
+                            project
+                                .search_included_history_mut()
+                                .previous(&mut model.search_included_history_cursor)
+                                .map(str::to_string)
+                        })
+                    }) {
+                        search_view.set_query(&new_included, cx);
+                    }
                 } else if search_view
                     .excluded_files_editor
                     .focus_handle(cx)
                     .is_focused(cx)
                 {
-                    println!("-------todo--------exclude---------");
+                    if search_view
+                        .excluded_files_editor
+                        .read(cx)
+                        .text(cx)
+                        .is_empty()
+                    {
+                        if let Some(new_excluded) = search_view
+                            .model
+                            .read(cx)
+                            .project
+                            .read(cx)
+                            .search_excluded_history()
+                            .current(&search_view.model.read(cx).search_excluded_history_cursor)
+                            .map(str::to_string)
+                        {
+                            search_view.set_search_excluded(&new_excluded, cx);
+                            return;
+                        }
+                    }
+
+                    if let Some(new_excluded) = search_view.model.update(cx, |model, cx| {
+                        model.project.update(cx, |project, _| {
+                            project
+                                .search_excluded_history_mut()
+                                .previous(&mut model.search_excluded_history_cursor)
+                                .map(str::to_string)
+                        })
+                    }) {
+                        search_view.set_search_excluded(&new_excluded, cx);
+                    }
                 }
             });
         }
