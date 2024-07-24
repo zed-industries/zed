@@ -74,6 +74,7 @@
   "for"
   "friend"
   "if"
+  "inline"
   "namespace"
   "new"
   "noexcept"
