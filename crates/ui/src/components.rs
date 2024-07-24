@@ -34,7 +34,7 @@ pub use checkbox::*;
 pub use context_menu::*;
 pub use disclosure::*;
 pub use divider::*;
-use dropdown_menu::*;
+pub use dropdown_menu::*;
 pub use facepile::*;
 pub use icon::*;
 pub use indicator::*;

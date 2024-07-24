@@ -2,7 +2,7 @@ use gpui::{AppContext, FontWeight};
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, NumericStepper, PopoverMenu, SettingsGroup};
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsGroup};
 
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
@@ -91,39 +91,36 @@ impl RenderOnce for BufferFontWeightControl {
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FontWeight))
-            .child(
-                PopoverMenu::new("buffer-font-weight")
-                    .menu(move |cx| {
-                        ContextMenu::build(cx, |mut menu, _cx| {
-                            let font_weights = vec![
-                                FontWeight::THIN,
-                                FontWeight::EXTRA_LIGHT,
-                                FontWeight::LIGHT,
-                                FontWeight::NORMAL,
-                                FontWeight::MEDIUM,
-                                FontWeight::SEMIBOLD,
-                                FontWeight::BOLD,
-                                FontWeight::EXTRA_BOLD,
-                                FontWeight::BLACK,
-                            ];
+            .child(DropdownMenu::new(
+                "buffer-font-weight",
+                value.0.to_string(),
+                ContextMenu::build(cx, |mut menu, _cx| {
+                    let font_weights = vec![
+                        FontWeight::THIN,
+                        FontWeight::EXTRA_LIGHT,
+                        FontWeight::LIGHT,
+                        FontWeight::NORMAL,
+                        FontWeight::MEDIUM,
+                        FontWeight::SEMIBOLD,
+                        FontWeight::BOLD,
+                        FontWeight::EXTRA_BOLD,
+                        FontWeight::BLACK,
+                    ];
 
-                            for weight in font_weights {
-                                menu = menu.custom_entry(
-                                    move |_cx| Label::new(weight.0.to_string()).into_any_element(),
-                                    {
-                                        move |cx| {
-                                            Self::write(weight, cx);
-                                        }
-                                    },
-                                )
-                            }
+                    for weight in font_weights {
+                        menu = menu.custom_entry(
+                            move |_cx| Label::new(weight.0.to_string()).into_any_element(),
+                            {
+                                move |cx| {
+                                    Self::write(weight, cx);
+                                }
+                            },
+                        )
+                    }
 
-                            menu
-                        })
-                        .into()
-                    })
-                    .trigger(Button::new("buffer-font-weight", value.0.to_string())),
-            )
+                    menu
+                }),
+            ))
     }
 }
 

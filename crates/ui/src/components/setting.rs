@@ -1,4 +1,4 @@
-use crate::{prelude::*, Checkbox, ListHeader};
+use crate::{prelude::*, Checkbox, ContextMenu, ListHeader};
 
 use super::DropdownMenu;
 
@@ -207,7 +207,7 @@ impl RenderOnce for SettingsItem {
         let id: ElementId = self.id.clone().into();
 
         // When the setting is disabled or toggled off, we don't want any secondary elements to be interactable
-        let secondary_element_disabled = self.disabled || self.toggled == Some(false);
+        let _secondary_element_disabled = self.disabled || self.toggled == Some(false);
 
         let full_width = match self.layout {
             SettingLayout::FullLine | SettingLayout::FullLineJustified => true,
@@ -239,10 +239,12 @@ impl RenderOnce for SettingsItem {
             SettingType::Toggle(_) => None,
             SettingType::ToggleAnd(secondary_setting_type) => match secondary_setting_type {
                 SecondarySettingType::Dropdown => Some(
-                    DropdownMenu::new(id.clone(), &cx)
-                        .current_item(current_string)
-                        .disabled(secondary_element_disabled)
-                        .into_any_element(),
+                    DropdownMenu::new(
+                        id.clone(),
+                        current_string.unwrap_or_default(),
+                        ContextMenu::build(cx, |menu, _cx| menu.into()),
+                    )
+                    .into_any_element(),
                 ),
             },
             SettingType::Input(input_type) => match input_type {
@@ -250,10 +252,13 @@ impl RenderOnce for SettingsItem {
                 InputType::Number => Some(div().child("number").into_any_element()),
             },
             SettingType::Dropdown => Some(
-                DropdownMenu::new(id.clone(), &cx)
-                    .current_item(current_string)
-                    .full_width(true)
-                    .into_any_element(),
+                DropdownMenu::new(
+                    id.clone(),
+                    current_string.unwrap_or_default(),
+                    ContextMenu::build(cx, |menu, _cx| menu.into()),
+                )
+                .full_width(true)
+                .into_any_element(),
             ),
             SettingType::Range => Some(div().child("range").into_any_element()),
             SettingType::Unsupported => None,
