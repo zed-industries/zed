@@ -66,7 +66,7 @@ impl State {
 
 impl OllamaLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        Self {
+        let this = Self {
             http_client: http_client.clone(),
             state: cx.new_model(|cx| State {
                 http_client,
@@ -77,7 +77,9 @@ impl OllamaLanguageModelProvider {
                     cx.notify();
                 }),
             }),
-        }
+        };
+        this.fetch_models(cx).detach_and_log_err(cx);
+        this
     }
 
     fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
