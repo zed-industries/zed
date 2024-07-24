@@ -4,15 +4,15 @@ use theme::ThemeSettings;
 use ui::{prelude::*, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup};
 
 #[derive(IntoElement)]
-pub struct ThemeSettingsControls {}
+pub struct AppearanceSettingsControls {}
 
-impl ThemeSettingsControls {
+impl AppearanceSettingsControls {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl RenderOnce for ThemeSettingsControls {
+impl RenderOnce for AppearanceSettingsControls {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         SettingsContainer::new().child(
             SettingsGroup::new("Font")
