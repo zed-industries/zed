@@ -39,7 +39,7 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
-use http::{HttpClient, Url};
+use http::HttpClient;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -76,7 +76,10 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
-use rpc::{proto::AddWorktree, ErrorCode};
+use rpc::{
+    proto::{AddWorktree, AnyProtoClient},
+    ErrorCode,
+};
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
@@ -101,7 +104,7 @@ use std::{
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
-    str::{self, FromStr},
+    str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -1319,6 +1322,16 @@ impl Project {
 
     pub fn client(&self) -> Arc<Client> {
         self.client.clone()
+    }
+
+    fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
+        if let Some(ssh) = &self.ssh_session {
+            Some((ssh.clone().into(), 0))
+        } else if self.is_remote() {
+            Some((self.client.clone().into(), self.remote_id().unwrap()))
+        } else {
+            None
+        }
     }
 
     pub fn user_store(&self) -> Model<UserStore> {
@@ -8393,65 +8406,9 @@ impl Project {
         version: Option<clock::Global>,
         cx: &AppContext,
     ) -> Task<Result<Blame>> {
-        if self.is_local() {
-            let blame_params = maybe!({
-                let buffer = buffer.read(cx);
-                let buffer_project_path = buffer
-                    .project_path(cx)
-                    .context("failed to get buffer project path")?;
-
-                let worktree = self
-                    .worktree_for_id(buffer_project_path.worktree_id, cx)
-                    .context("failed to get worktree")?
-                    .read(cx)
-                    .as_local()
-                    .context("worktree was not local")?
-                    .snapshot();
-
-                let (repo_entry, local_repo_entry) =
-                    match worktree.repo_for_path(&buffer_project_path.path) {
-                        Some(repo_for_path) => repo_for_path,
-                        None => anyhow::bail!(NoRepositoryError {}),
-                    };
-
-                let relative_path = repo_entry
-                    .relativize(&worktree, &buffer_project_path.path)
-                    .context("failed to relativize buffer path")?;
-
-                let repo = local_repo_entry.repo().clone();
-
-                let content = match version {
-                    Some(version) => buffer.rope_for_version(&version).clone(),
-                    None => buffer.as_rope().clone(),
-                };
-
-                anyhow::Ok((repo, relative_path, content))
-            });
-
-            cx.background_executor().spawn(async move {
-                let (repo, relative_path, content) = blame_params?;
-                repo.blame(&relative_path, content)
-                    .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-            })
-        } else {
-            let project_id = self.remote_id();
-            let buffer_id = buffer.read(cx).remote_id();
-            let client = self.client.clone();
-            let version = buffer.read(cx).version();
-
-            cx.spawn(|_| async move {
-                let project_id = project_id.context("unable to get project id for buffer")?;
-                let response = client
-                    .request(proto::BlameBuffer {
-                        project_id,
-                        buffer_id: buffer_id.into(),
-                        version: serialize_version(&version),
-                    })
-                    .await?;
-
-                Ok(deserialize_blame_buffer_response(response))
-            })
-        }
+        self.buffer_store
+            .read(cx)
+            .blame_buffer(buffer, version, self.upstream_client(), cx)
     }
 
     // RPC message handlers
@@ -8459,28 +8416,12 @@ impl Project {
     async fn handle_blame_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BlameBuffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<proto::BlameBufferResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let version = deserialize_version(&envelope.payload.version);
-
-        let buffer = this.update(&mut cx, |this, cx| {
-            this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
-
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(version.clone())
-            })?
-            .await?;
-
-        let blame = this
-            .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), cx)
-            })?
-            .await?;
-
-        Ok(serialize_blame_buffer_response(blame))
+        let (buffer_store, client) = this.read_with(&cx, |this, _| {
+            (this.buffer_store.clone(), this.upstream_client())
+        })?;
+        BufferStore::handle_blame_buffer(buffer_store, envelope, client, cx).await
     }
 
     async fn handle_multi_lsp_query(
@@ -11323,104 +11264,6 @@ async fn load_shell_environment(
     });
 
     Ok(parsed_env)
-}
-
-fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBufferResponse {
-    let entries = blame
-        .entries
-        .into_iter()
-        .map(|entry| proto::BlameEntry {
-            sha: entry.sha.as_bytes().into(),
-            start_line: entry.range.start,
-            end_line: entry.range.end,
-            original_line_number: entry.original_line_number,
-            author: entry.author.clone(),
-            author_mail: entry.author_mail.clone(),
-            author_time: entry.author_time,
-            author_tz: entry.author_tz.clone(),
-            committer: entry.committer.clone(),
-            committer_mail: entry.committer_mail.clone(),
-            committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz.clone(),
-            summary: entry.summary.clone(),
-            previous: entry.previous.clone(),
-            filename: entry.filename.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    let messages = blame
-        .messages
-        .into_iter()
-        .map(|(oid, message)| proto::CommitMessage {
-            oid: oid.as_bytes().into(),
-            message,
-        })
-        .collect::<Vec<_>>();
-
-    let permalinks = blame
-        .permalinks
-        .into_iter()
-        .map(|(oid, url)| proto::CommitPermalink {
-            oid: oid.as_bytes().into(),
-            permalink: url.to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    proto::BlameBufferResponse {
-        entries,
-        messages,
-        permalinks,
-        remote_url: blame.remote_url,
-    }
-}
-
-fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> git::blame::Blame {
-    let entries = response
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            Some(git::blame::BlameEntry {
-                sha: git::Oid::from_bytes(&entry.sha).ok()?,
-                range: entry.start_line..entry.end_line,
-                original_line_number: entry.original_line_number,
-                committer: entry.committer,
-                committer_time: entry.committer_time,
-                committer_tz: entry.committer_tz,
-                committer_mail: entry.committer_mail,
-                author: entry.author,
-                author_mail: entry.author_mail,
-                author_time: entry.author_time,
-                author_tz: entry.author_tz,
-                summary: entry.summary,
-                previous: entry.previous,
-                filename: entry.filename,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let messages = response
-        .messages
-        .into_iter()
-        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
-        .collect::<HashMap<_, _>>();
-
-    let permalinks = response
-        .permalinks
-        .into_iter()
-        .filter_map(|permalink| {
-            Some((
-                git::Oid::from_bytes(&permalink.oid).ok()?,
-                Url::from_str(&permalink.permalink).ok()?,
-            ))
-        })
-        .collect::<HashMap<_, _>>();
-
-    Blame {
-        entries,
-        permalinks,
-        messages,
-        remote_url: response.remote_url,
-    }
 }
 
 fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
