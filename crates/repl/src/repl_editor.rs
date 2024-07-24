@@ -21,6 +21,10 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         return Ok(());
     }
 
+    let range = editor
+        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))?
+        .range();
+
     let editor = editor.upgrade().context("editor was dropped")?;
 
     let multibuffer = editor.read(cx).buffer().clone();
@@ -33,10 +37,8 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
             return Ok(());
         };
 
-    let range = editor.read(cx).selections.newest::<Point>(cx).range();
-
     // todo!("FIX THIS!")
-    // for (selected_text, language, anchor_range) in snippets(&snapshot, range) {
+    // for range in snippet_ranges(&snapshot, range) {
     //     let start = multibuffer
     //         .read(cx)
     //         .read(cx)
@@ -161,22 +163,15 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
-    fn push_snippet(
-        snippets: &mut Vec<Range<Point>>,
-        buffer: &BufferSnapshot,
-        start_row: u32,
-        end_row: u32,
-    ) {
-        let mut snippet_end_row = end_row;
-        while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {
-            snippet_end_row -= 1;
-        }
-        snippets.push(
-            Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row)),
-        );
+fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
+    let mut snippet_end_row = end_row;
+    while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {
+        snippet_end_row -= 1;
     }
+    Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
+}
 
+fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
     let mut current_row = range.start.row;
 
     let Some(language) = buffer.language() else {
@@ -216,7 +211,7 @@ fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<
                 .iter()
                 .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
             {
-                push_snippet(&mut snippets, buffer, snippet_start_row, current_row - 1);
+                snippets.push(snippet_range(buffer, snippet_start_row, current_row - 1));
 
                 if current_row <= range.end.row {
                     snippet_start_row = current_row;
@@ -226,40 +221,33 @@ fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<
             }
         }
 
-        push_snippet(
-            &mut snippets,
+        snippets.push(snippet_range(
             buffer,
             snippet_start_row,
             buffer.max_point().row,
-        );
+        ));
     }
 
     snippets
 }
 
 fn snippet_ranges(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
-    // let buffer = buffer.read(cx);
-    //
-    let jupytext_snippets = jupytext_snippets(buffer, range);
+    let jupytext_snippets = jupytext_snippets(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return jupytext_snippets;
     }
 
-    todo!()
-    // let anchor_range = range.to_anchors(&multi_buffer_snapshot);
+    let snippet_range = snippet_range(buffer, range.start.row, range.end.row);
+    let start_language = buffer.language_at(snippet_range.start);
+    let end_language = buffer.language_at(snippet_range.end);
 
-    // let selected_text = buffer
-    //     .text_for_range(anchor_range.clone())
-    //     .collect::<String>();
+    if let Some((start, end)) = start_language.zip(end_language) {
+        if start == end {
+            return vec![snippet_range];
+        }
+    }
 
-    // let start_language = buffer.language_at(anchor_range.start);
-    // let end_language = buffer.language_at(anchor_range.end);
-    // match start_language.zip(end_language) {
-    //     Some((start, end)) if start == end => vec![(selected_text, start.clone(), anchor_range)],
-    //     _ => Vec::new(),
-    // }
-
-    // vec![(selected_text, start_language.clone(), anchor_range)]
+    Vec::new()
 }
 
 fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
@@ -278,6 +266,71 @@ mod tests {
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut AppContext) {
+        // Create a test language
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["#".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+                    print(2 + 2)
+
+                    print(4 + 4)
+
+
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Single-point selection
+        let snippets = snippet_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets, vec!["print(1 + 1)"]);
+
+        // Multi-line selection
+        let snippets = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                print(1 + 1)
+                print(2 + 2)"# }]
+        );
+
+        // Trimming multiple trailing blank lines
+
+        let snippets = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                print(1 + 1)
+                print(2 + 2)
+
+                print(4 + 4)"# }]
+        );
+
+        // TODO: test multi-language selection
+    }
+
+    #[gpui::test]
+    fn test_jupytext_snippet_ranges(cx: &mut AppContext) {
         // Create a test language
         let test_language = Arc::new(Language::new(
             LanguageConfig {
