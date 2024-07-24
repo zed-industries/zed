@@ -9,6 +9,7 @@ use git::blame::Blame;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
+use http_client::Url;
 use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
     Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
@@ -1375,7 +1376,7 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         .filter_map(|permalink| {
             Some((
                 git::Oid::from_bytes(&permalink.oid).ok()?,
-                http::Url::from_str(&permalink.permalink).ok()?,
+                Url::from_str(&permalink.permalink).ok()?,
             ))
         })
         .collect::<HashMap<_, _>>();

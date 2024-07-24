@@ -399,7 +399,6 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
-    // Remote development
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
@@ -519,7 +518,6 @@ request_messages!(
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
-    // Remote development
     (AddWorktree, AddWorktreeResponse),
 );
 

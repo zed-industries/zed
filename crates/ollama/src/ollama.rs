@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, time::Duration};
+use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -243,7 +243,7 @@ pub async fn get_models(
 }
 
 /// Sends an empty request to Ollama to trigger loading the model
-pub async fn preload_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<()> {
+pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
     let uri = format!("{api_url}/api/generate");
     let request = HttpRequest::builder()
         .method(Method::POST)

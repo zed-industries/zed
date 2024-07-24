@@ -11,13 +11,14 @@
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
 mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
+mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -57,6 +58,7 @@ use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -10857,17 +10859,6 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
-        // this is to try and catch a panic sooner
-        for range in ranges {
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.start);
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.end);
-        }
-
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;

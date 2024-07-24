@@ -21,7 +21,7 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 6. On your laptop you can now open folders on the remote machine.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-## Toubleshooting
+## Troubleshooting
 
 ### UI is not showing up
 

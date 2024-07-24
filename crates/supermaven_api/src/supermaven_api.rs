@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures::io::BufReader;
 use futures::{AsyncReadExt, Future};
-use http::{AsyncBody, HttpClient, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};

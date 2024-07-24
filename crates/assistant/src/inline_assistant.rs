@@ -1,6 +1,6 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, AssistantPanelEvent, Hunk, LanguageModelCompletionProvider, StreamingDiff,
+    humanize_token_count, prompts::generate_content_prompt, AssistantPanel, AssistantPanelEvent,
+    Hunk, LanguageModelCompletionProvider, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -26,14 +26,12 @@ use gpui::{
     ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
     WindowContext,
 };
-use language::{Buffer, Point, Selection, TransactionId};
-use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
+use language::{Buffer, IndentKind, Point, Selection, TransactionId};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
-use settings::{update_settings_file, Settings};
+use settings::Settings;
 use similar::TextDiff;
 use smol::future::FutureExt;
 use std::{
@@ -47,7 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::RangeExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1325,22 +1323,19 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let fs = self.fs.clone();
-
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
-                    IconButton::new("start", IconName::Sparkle)
+                    IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
@@ -1351,15 +1346,14 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| {
                             Tooltip::with_meta(
                                 "Interrupt Transformation",
@@ -1377,7 +1371,7 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
@@ -1385,8 +1379,7 @@ impl Render for PromptEditor {
                     if self.edited_since_done {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
-                            .icon_size(IconSize::XSmall)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
                                 Tooltip::with_meta(
                                     "Restart Transformation",
@@ -1401,7 +1394,7 @@ impl Render for PromptEditor {
                     } else {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
@@ -1427,74 +1420,27 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(
-                        PopoverMenu::new("model-switcher")
-                            .menu(move |cx| {
-                                ContextMenu::build(cx, |mut menu, cx| {
-                                    for available_model in
-                                        LanguageModelRegistry::read_global(cx).available_models(cx)
-                                    {
-                                        menu = menu.custom_entry(
-                                            {
-                                                let model_name = available_model.name().0.clone();
-                                                let provider =
-                                                    available_model.provider_name().0.clone();
-                                                move |_| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .justify_between()
-                                                        .child(Label::new(model_name.clone()))
-                                                        .child(
-                                                            div().ml_4().child(
-                                                                Label::new(provider.clone())
-                                                                    .color(Color::Muted),
-                                                            ),
-                                                        )
-                                                        .into_any()
-                                                }
-                                            },
-                                            {
-                                                let fs = fs.clone();
-                                                let model = available_model.clone();
-                                                move |cx| {
-                                                    let model = model.clone();
-                                                    update_settings_file::<AssistantSettings>(
-                                                        fs.clone(),
-                                                        cx,
-                                                        move |settings, _| {
-                                                            settings.set_model(model)
-                                                        },
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    }
-                                    menu
-                                })
-                                .into()
-                            })
-                            .trigger(
-                                IconButton::new("context", IconName::Settings)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            format!(
-                                                "Using {}",
-                                                LanguageModelCompletionProvider::read_global(cx)
-                                                    .active_model()
-                                                    .map(|model| model.name().0)
-                                                    .unwrap_or_else(|| "No model selected".into()),
-                                            ),
-                                            None,
-                                            "Change Model",
-                                            cx,
-                                        )
-                                    }),
-                            )
-                            .anchor(gpui::AnchorCorner::BottomRight),
-                    )
+                    .child(ModelSelector::new(
+                        self.fs.clone(),
+                        IconButton::new("context", IconName::Settings)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    format!(
+                                        "Using {}",
+                                        LanguageModelCompletionProvider::read_global(cx)
+                                            .active_model()
+                                            .map(|model| model.name().0)
+                                            .unwrap_or_else(|| "No model selected".into()),
+                                    ),
+                                    None,
+                                    "Change Model",
+                                    cx,
+                                )
+                            }),
+                    ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
@@ -1517,7 +1463,7 @@ impl Render for PromptEditor {
             .child(
                 h_flex()
                     .gap_2()
-                    .pr_4()
+                    .pr_6()
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
@@ -2138,11 +2084,25 @@ impl Codegen {
             .collect::<Rope>();
 
         let selection_start = range.start.to_point(&snapshot);
-        let suggested_line_indent = snapshot
-            .suggested_indents(selection_start.row..selection_start.row + 1, cx)
+
+        // Start with the indentation of the first line in the selection
+        let mut suggested_line_indent = snapshot
+            .suggested_indents(selection_start.row..=selection_start.row, cx)
             .into_values()
             .next()
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
+
+        // If the first line in the selection does not have indentation, check the following lines
+        if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
+            for row in selection_start.row..=range.end.to_point(&snapshot).row {
+                let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
+                // Prefer tabs if a line in the selection uses tabs as indentation
+                if line_indent.kind == IndentKind::Tab {
+                    suggested_line_indent.kind = IndentKind::Tab;
+                    break;
+                }
+            }
+        }
 
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
@@ -2625,6 +2585,7 @@ mod tests {
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
         Point,
     };
+    use language_model::LanguageModelRegistry;
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
@@ -2821,6 +2782,62 @@ mod tests {
                     while x < 10 {
                         x += 1;
                     }
+                }
+            "}
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(language_settings::init);
+
+        let text = indoc! {"
+            func main() {
+            \tx := 0
+            \tfor i := 0; i < 10; i++ {
+            \t\tx++
+            \t}
+            }
+        "};
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
+        });
+        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.start(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                cx,
+            )
+        });
+
+        let new_text = concat!(
+            "func main() {\n",
+            "\tx := 0\n",
+            "\tfor x < 10 {\n",
+            "\t\tx++\n",
+            "\t}", //
+        );
+        chunks_tx.unbounded_send(new_text.to_string()).unwrap();
+        drop(chunks_tx);
+        cx.background_executor.run_until_parked();
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            indoc! {"
+                func main() {
+                \tx := 0
+                \tfor x < 10 {
+                \t\tx++
+                \t}
                 }
             "}
         );

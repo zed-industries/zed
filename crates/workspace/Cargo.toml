@@ -17,7 +17,7 @@ no-webrtc = ["call/no-webrtc"]
 test-support = [
     "call/test-support",
     "client/test-support",
-    "http/test-support",
+    "http_client/test-support",
     "db/test-support",
     "project/test-support",
     "session/test-support",
@@ -40,7 +40,7 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
@@ -73,4 +73,4 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-http =  { workspace = true, features = ["test-support"] }
+http_client =  { workspace = true, features = ["test-support"] }
