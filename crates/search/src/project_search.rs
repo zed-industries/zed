@@ -1389,7 +1389,7 @@ impl ProjectSearchBar {
                             .current(&search_view.model.read(cx).search_included_history_cursor)
                             .map(str::to_string)
                         {
-                            search_view.set_query(&new_included, cx);
+                            search_view.set_search_included(&new_included, cx);
                             return;
                         }
                     }
@@ -1402,7 +1402,7 @@ impl ProjectSearchBar {
                                 .map(str::to_string)
                         })
                     }) {
-                        search_view.set_query(&new_included, cx);
+                        search_view.set_search_included(&new_included, cx);
                     }
                 } else if search_view
                     .excluded_files_editor
