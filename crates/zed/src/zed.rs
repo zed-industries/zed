@@ -3326,6 +3326,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
+        env_logger::builder().is_test(true).try_init().ok();
         let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
@@ -3490,7 +3491,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_markdown::language()),
+            Some(tree_sitter_md::language()),
         ))
     }
 

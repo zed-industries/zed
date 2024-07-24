@@ -87,12 +87,12 @@
   "typename"
   "union"
   "using"
-  "virtual"
   "volatile"
   "while"
   (primitive_type)
   (sized_type_specifier)
   (type_qualifier)
+  (virtual)
 ] @keyword
 
 [
