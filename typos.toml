@@ -39,5 +39,7 @@ extend-ignore-re = [
     # crates/collab/src/api/events.rs
     "rename = \"sesssion_id\"",
     "doas",
+    # ProtoLS crate with tree-sitter Protobuf grammar.
+    "protols"
 ]
 check-filename = true

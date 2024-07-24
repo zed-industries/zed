@@ -62,6 +62,7 @@ pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContex
     editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
 }
 
+#[track_caller]
 pub fn assert_text_with_selections(
     editor: &mut Editor,
     marked_text: &str,
