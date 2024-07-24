@@ -10,7 +10,7 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Event as BufferEvent, Language, Operation,
+    Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
 };
 use rpc::{
     proto::{self, AnyProtoClient, EnvelopedMessage, PeerId},
@@ -52,7 +52,7 @@ pub enum BufferStoreEvent {
     BufferAdded(Model<Buffer>),
     BufferChangedFilePath {
         buffer: Model<Buffer>,
-        old_file: Option<Arc<File>>,
+        old_file: Option<Arc<dyn language::File>>,
     },
     MessageToReplicas(Box<proto::Envelope>),
 }
@@ -434,9 +434,7 @@ impl BufferStore {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
 
-        let old_file = File::from_dyn(buffer.read(cx).file())
-            .cloned()
-            .map(Arc::new);
+        let old_file = buffer.read(cx).file().cloned();
 
         let task = match worktree.read(cx) {
             Worktree::Local(_) => {
@@ -758,8 +756,9 @@ impl BufferStore {
             return None;
         };
 
-        let (old_file, new_file) = buffer.update(cx, |buffer, cx| {
-            let old_file = File::from_dyn(buffer.file())?;
+        let events = buffer.update(cx, |buffer, cx| {
+            let file = buffer.file()?;
+            let old_file = File::from_dyn(Some(file))?;
             if old_file.worktree != *worktree {
                 return None;
             }
@@ -803,49 +802,52 @@ impl BufferStore {
                 return None;
             }
 
-            let old_file = Arc::new(old_file.clone());
-            let new_file = Arc::new(new_file);
-            buffer.file_updated(new_file.clone(), cx);
-            Some((old_file, new_file))
+            let mut events = Vec::new();
+            if new_file.path != old_file.path {
+                self.local_buffer_ids_by_path.remove(&ProjectPath {
+                    path: old_file.path.clone(),
+                    worktree_id: old_file.worktree_id(cx),
+                });
+                self.local_buffer_ids_by_path.insert(
+                    ProjectPath {
+                        worktree_id: new_file.worktree_id(cx),
+                        path: new_file.path.clone(),
+                    },
+                    buffer_id,
+                );
+                events.push(BufferStoreEvent::BufferChangedFilePath {
+                    buffer: cx.handle(),
+                    old_file: buffer.file().cloned(),
+                });
+            }
+
+            if new_file.entry_id != old_file.entry_id {
+                if let Some(entry_id) = old_file.entry_id {
+                    self.local_buffer_ids_by_entry_id.remove(&entry_id);
+                }
+                if let Some(entry_id) = new_file.entry_id {
+                    self.local_buffer_ids_by_entry_id
+                        .insert(entry_id, buffer_id);
+                }
+            }
+
+            if let Some(project_id) = self.remote_id {
+                events.push(BufferStoreEvent::MessageToReplicas(Box::new(
+                    proto::UpdateBufferFile {
+                        project_id,
+                        buffer_id: buffer_id.to_proto(),
+                        file: Some(new_file.to_proto(cx)),
+                    }
+                    .into_envelope(0, None, None),
+                )))
+            }
+
+            buffer.file_updated(Arc::new(new_file), cx);
+            Some(events)
         })?;
 
-        if new_file.path != old_file.path {
-            self.local_buffer_ids_by_path.remove(&ProjectPath {
-                path: old_file.path.clone(),
-                worktree_id: old_file.worktree_id(cx),
-            });
-            self.local_buffer_ids_by_path.insert(
-                ProjectPath {
-                    worktree_id: new_file.worktree_id(cx),
-                    path: new_file.path.clone(),
-                },
-                buffer_id,
-            );
-            cx.emit(BufferStoreEvent::BufferChangedFilePath {
-                buffer: buffer.clone(),
-                old_file: Some(old_file.clone()),
-            });
-        }
-
-        if new_file.entry_id != old_file.entry_id {
-            if let Some(entry_id) = old_file.entry_id {
-                self.local_buffer_ids_by_entry_id.remove(&entry_id);
-            }
-            if let Some(entry_id) = new_file.entry_id {
-                self.local_buffer_ids_by_entry_id
-                    .insert(entry_id, buffer_id);
-            }
-        }
-
-        if let Some(project_id) = self.remote_id {
-            cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                proto::UpdateBufferFile {
-                    project_id,
-                    buffer_id: buffer_id.to_proto(),
-                    file: Some(language::File::to_proto(&*new_file, cx)),
-                }
-                .into_envelope(0, None, None),
-            )));
+        for event in events {
+            cx.emit(event);
         }
 
         None
@@ -958,7 +960,6 @@ impl BufferStore {
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        mut worktrees: impl Iterator<Item = Model<Worktree>>,
         replica_id: u16,
         capability: Capability,
         cx: &mut ModelContext<Self>,
@@ -975,8 +976,10 @@ impl BufferStore {
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
                         let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
-                        let worktree = worktrees
-                            .find(|worktree| worktree.read(cx).id() == worktree_id)
+                        let worktree = self
+                            .worktree_store
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)
                             .ok_or_else(|| {
                                 anyhow!("no worktree found for id {}", file.worktree_id)
                             })?;
@@ -1057,9 +1060,22 @@ impl BufferStore {
                     .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
                     .ok_or_else(|| anyhow!("no such worktree"))?;
                 let file = File::from_proto(file, worktree, cx)?;
-                buffer.update(cx, |buffer, cx| {
+                let old_file = buffer.update(cx, |buffer, cx| {
+                    let old_file = buffer.file().cloned();
+                    let new_path = file.path.clone();
                     buffer.file_updated(Arc::new(file), cx);
+                    if old_file
+                        .as_ref()
+                        .map_or(true, |old| *old.path() != new_path)
+                    {
+                        Some(old_file)
+                    } else {
+                        None
+                    }
                 });
+                if let Some(old_file) = old_file {
+                    cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
+                }
             }
             Ok(())
         })?

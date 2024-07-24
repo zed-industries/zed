@@ -2399,7 +2399,7 @@ impl Project {
                 self.register_buffer(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
-                if let Some(old_file) = &old_file {
+                if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
                     self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
                 }
 
@@ -2600,10 +2600,6 @@ impl Project {
                 for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
                     self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
                 }
-            }
-
-            BufferEvent::FileHandleChanged => {
-                self.detect_language_for_buffer(&buffer, cx);
             }
 
             _ => {}
@@ -8956,7 +8952,6 @@ impl Project {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.handle_create_buffer_for_peer(
                     envelope,
-                    this.worktrees(cx).collect::<Vec<_>>().into_iter(),
                     this.replica_id(),
                     this.capability(),
                     cx,
