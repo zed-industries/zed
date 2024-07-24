@@ -11783,14 +11783,23 @@ pub fn compare_paths(
                 let b_is_file = components_b.peek().is_none() && b_is_file;
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
                     let maybe_numeric_ordering = maybe!({
-                        let num_and_remainder_a = Path::new(component_a.as_os_str())
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-                        let num_and_remainder_b = Path::new(component_b.as_os_str())
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                        let path_a = Path::new(component_a.as_os_str());
+                        let num_and_remainder_a = if a_is_file {
+                            path_a.file_stem()
+                        } else {
+                            path_a.file_name()
+                        }
+                        .and_then(|s| s.to_str())
+                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+
+                        let path_b = Path::new(component_b.as_os_str());
+                        let num_and_remainder_b = if b_is_file {
+                            path_b.file_stem()
+                        } else {
+                            path_b.file_name()
+                        }
+                        .and_then(|s| s.to_str())
+                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
 
                         num_and_remainder_a.partial_cmp(&num_and_remainder_b)
                     });
@@ -11810,5 +11819,36 @@ pub fn compare_paths(
             (None, Some(_)) => break cmp::Ordering::Less,
             (None, None) => break cmp::Ordering::Equal,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_paths_with_dots() {
+        let mut paths = vec![
+            (Path::new("test_dirs"), false),
+            (Path::new("test_dirs/1.46"), false),
+            (Path::new("test_dirs/1.46/bar_1"), true),
+            (Path::new("test_dirs/1.46/bar_2"), true),
+            (Path::new("test_dirs/1.45"), false),
+            (Path::new("test_dirs/1.45/foo_2"), true),
+            (Path::new("test_dirs/1.45/foo_1"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/1.45"), false),
+                (Path::new("test_dirs/1.45/foo_1"), true),
+                (Path::new("test_dirs/1.45/foo_2"), true),
+                (Path::new("test_dirs/1.46"), false),
+                (Path::new("test_dirs/1.46/bar_1"), true),
+                (Path::new("test_dirs/1.46/bar_2"), true),
+            ]
+        );
     }
 }
