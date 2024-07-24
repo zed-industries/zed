@@ -690,14 +690,11 @@ impl Project {
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
-        client.add_model_message_handler(Self::handle_buffer_reloaded);
-        client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
-        client.add_model_message_handler(Self::handle_update_buffer_file);
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
@@ -727,8 +724,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_request_handler(Self::handle_save_buffer);
-        client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
@@ -742,6 +737,12 @@ impl Project {
         client.add_model_request_handler(WorktreeStore::handle_copy_project_entry);
         client.add_model_request_handler(WorktreeStore::handle_delete_project_entry);
         client.add_model_request_handler(WorktreeStore::handle_expand_project_entry);
+
+        client.add_model_message_handler(BufferStore::handle_buffer_reloaded);
+        client.add_model_message_handler(BufferStore::handle_buffer_saved);
+        client.add_model_message_handler(BufferStore::handle_update_buffer_file);
+        client.add_model_message_handler(BufferStore::handle_update_diff_base);
+        client.add_model_request_handler(BufferStore::handle_save_buffer);
     }
 
     pub fn local(
@@ -831,7 +832,7 @@ impl Project {
     }
 
     pub fn ssh(
-        ssh_session: Arc<SshSession>,
+        ssh: Arc<SshSession>,
         client: Arc<Client>,
         node: Arc<dyn NodeRuntime>,
         user_store: Model<UserStore>,
@@ -841,11 +842,14 @@ impl Project {
     ) -> Model<Self> {
         let this = Self::local(client, node, user_store, languages, fs, cx);
         this.update(cx, |this, cx| {
-            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
-            ssh_session.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
-            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_buffer_file);
-            ssh_session.add_message_handler(cx.weak_model(), Self::handle_update_diff_base);
-            this.ssh_session = Some(ssh_session);
+            let buffer_store = this.buffer_store.downgrade();
+
+            ssh.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
+            ssh.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
+            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_buffer_file);
+            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_diff_base);
+
+            this.ssh_session = Some(ssh);
         });
         this
     }
@@ -878,7 +882,10 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscription = client.subscribe_to_entity(remote_id)?;
+        let subscriptions = (
+            client.subscribe_to_entity::<Self>(remote_id)?,
+            client.subscribe_to_entity::<BufferStore>(remote_id)?,
+        );
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
@@ -886,7 +893,7 @@ impl Project {
             .await?;
         Self::from_join_project_response(
             response,
-            subscription,
+            subscriptions,
             client,
             user_store,
             languages,
@@ -898,7 +905,10 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscription: PendingEntitySubscription<Project>,
+        subscription: (
+            PendingEntitySubscription<Project>,
+            PendingEntitySubscription<BufferStore>,
+        ),
         client: Arc<Client>,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -907,6 +917,11 @@ impl Project {
     ) -> Result<Model<Self>> {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
+
+        let worktree_store = cx.new_model(|_| WorktreeStore::new(true))?;
+        let buffer_store =
+            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
+
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -914,9 +929,7 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             let yarn = YarnPathStore::new(fs.clone(), cx);
-            // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
-            // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
-            // That's because Worktree's identifier is entity id, which should probably be changed.
+
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
                 let worktree =
@@ -928,16 +941,12 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
 
-            let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
-
-            let buffer_store =
-                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
-                buffer_store,
+                buffer_store: buffer_store.clone(),
                 worktree_store,
                 shared_buffers: Default::default(),
                 loading_worktrees: Default::default(),
@@ -1019,7 +1028,11 @@ impl Project {
             }
             this
         })?;
-        let subscription = subscription.set_model(&this, &mut cx);
+
+        let subscriptions = [
+            subscription.0.set_model(&this, &mut cx),
+            subscription.1.set_model(&buffer_store, &mut cx),
+        ];
 
         let user_ids = response
             .payload
@@ -1033,7 +1046,7 @@ impl Project {
 
         this.update(&mut cx, |this, cx| {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
-            this.client_subscriptions.push(subscription);
+            this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
         })??;
 
@@ -1050,7 +1063,10 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscription = client.subscribe_to_entity(remote_id.0)?;
+        let subscriptions = (
+            client.subscribe_to_entity::<Self>(remote_id.0)?,
+            client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
+        );
         let response = client
             .request_envelope(proto::JoinHostedProject {
                 project_id: remote_id.0,
@@ -1058,7 +1074,7 @@ impl Project {
             .await?;
         Self::from_join_project_response(
             response,
-            subscription,
+            subscriptions,
             client,
             user_store,
             languages,
@@ -1573,16 +1589,17 @@ impl Project {
                 return Err(anyhow!("project was already shared"));
             }
         }
-        self.client_subscriptions.push(
+        self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&cx.handle(), &mut cx.to_async()),
-        );
-        self.client_subscriptions.push(
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.worktree_store, &mut cx.to_async()),
-        );
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&self.buffer_store, &mut cx.to_async()),
+        ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.set_remote_id(Some(project_id), cx)
@@ -2389,65 +2406,8 @@ impl Project {
                 self.detect_language_for_buffer(&buffer, cx);
                 self.register_buffer_with_language_servers(&buffer, cx);
             }
-            BufferStoreEvent::LocalBufferUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let Some(new_file) = buffer.file() else {
-                    return;
-                };
-                if let Some(project_id) = self.remote_id() {
-                    self.client
-                        .send(proto::UpdateBufferFile {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            file: Some(new_file.to_proto(cx)),
-                        })
-                        .log_err();
-                }
-            }
-            BufferStoreEvent::DiffBaseUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let diff_base = buffer.diff_base();
-                if let Some(project_id) = self.remote_id() {
-                    self.client
-                        .send(proto::UpdateDiffBase {
-                            project_id,
-                            buffer_id: buffer_id.to_proto(),
-                            diff_base: diff_base.map(|b| b.to_string()),
-                        })
-                        .log_err();
-                }
-            }
-            BufferStoreEvent::BufferSaved {
-                buffer: buffer_handle,
-                has_changed_file,
-                saved_version,
-            } => {
-                let buffer = buffer_handle.read(cx);
-                let buffer_id = buffer.remote_id();
-                let Some(new_file) = buffer.file() else {
-                    return;
-                };
-                if let Some(project_id) = self.remote_id() {
-                    self.client
-                        .send(proto::BufferSaved {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            version: serialize_version(&saved_version),
-                            mtime: new_file.mtime().map(|time| time.into()),
-                        })
-                        .log_err();
-                    if *has_changed_file {
-                        self.client
-                            .send(proto::UpdateBufferFile {
-                                project_id,
-                                buffer_id: buffer_id.into(),
-                                file: Some(new_file.to_proto(cx)),
-                            })
-                            .log_err();
-                    }
-                }
+            BufferStoreEvent::MessageToReplicas(message) => {
+                self.client.send_dynamic(message.clone()).log_err();
             }
         }
     }
@@ -2640,6 +2600,10 @@ impl Project {
                 for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
                     self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
                 }
+            }
+
+            BufferEvent::FileHandleChanged => {
+                self.detect_language_for_buffer(&buffer, cx);
             }
 
             _ => {}
@@ -9001,65 +8965,6 @@ impl Project {
         })?
     }
 
-    async fn handle_update_diff_base(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateDiffBase>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            let buffer_id = envelope.payload.buffer_id;
-            let buffer_id = BufferId::new(buffer_id)?;
-            if let Some(buffer) = this
-                .buffer_store
-                .read(cx)
-                .get_possibly_incomplete(buffer_id)
-            {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_diff_base(envelope.payload.diff_base, cx)
-                });
-            }
-            Ok(())
-        })?
-    }
-
-    async fn handle_update_buffer_file(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateBufferFile>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let buffer_id = envelope.payload.buffer_id;
-        let buffer_id = BufferId::new(buffer_id)?;
-
-        this.update(&mut cx, |this, cx| {
-            let payload = envelope.payload.clone();
-            if let Some(buffer) = this
-                .buffer_store
-                .read(cx)
-                .get_possibly_incomplete(buffer_id)
-            {
-                let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
-                let worktree = this
-                    .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
-                    .ok_or_else(|| anyhow!("no such worktree"))?;
-                let file = File::from_proto(file, worktree, cx)?;
-                buffer.update(cx, |buffer, cx| {
-                    buffer.file_updated(Arc::new(file), cx);
-                });
-                this.detect_language_for_buffer(&buffer, cx);
-            }
-            Ok(())
-        })?
-    }
-
-    async fn handle_save_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::SaveBuffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::BufferSaved> {
-        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_save_buffer(buffer_store, envelope, cx).await
-    }
-
     async fn handle_reload_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ReloadBuffers>,
@@ -10205,24 +10110,6 @@ impl Project {
             range: start..end,
             lsp_action,
         })
-    }
-
-    async fn handle_buffer_saved(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::BufferSaved>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_buffer_saved(buffer_store, envelope, cx).await
-    }
-
-    async fn handle_buffer_reloaded(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::BufferReloaded>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_buffer_reloaded(buffer_store, envelope, cx).await
     }
 
     #[allow(clippy::type_complexity)]

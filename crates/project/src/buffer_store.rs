@@ -13,7 +13,7 @@ use language::{
     Buffer, Capability, Event as BufferEvent, Language, Operation,
 };
 use rpc::{
-    proto::{self, AnyProtoClient, PeerId},
+    proto::{self, AnyProtoClient, EnvelopedMessage, PeerId},
     ErrorExt as _, TypedEnvelope,
 };
 use std::{io, path::Path, sync::Arc};
@@ -21,6 +21,7 @@ use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
 use worktree::{
     File, PathChange, ProjectEntryId, RemoteWorktree, UpdatedGitRepositoriesSet, Worktree,
+    WorktreeId,
 };
 
 /// A set of open buffers.
@@ -53,17 +54,7 @@ pub enum BufferStoreEvent {
         buffer: Model<Buffer>,
         old_file: Option<Arc<File>>,
     },
-    BufferSaved {
-        buffer: Model<Buffer>,
-        has_changed_file: bool,
-        saved_version: clock::Global,
-    },
-    LocalBufferUpdated {
-        buffer: Model<Buffer>,
-    },
-    DiffBaseUpdated {
-        buffer: Model<Buffer>,
-    },
+    MessageToReplicas(proto::Envelope),
 }
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
@@ -272,13 +263,23 @@ impl BufferStore {
                 })
                 .await;
 
-            this.update(&mut cx, |_, cx| {
+            this.update(&mut cx, |this, cx| {
                 // Assign the new diff bases on all of the buffers.
                 for (buffer, diff_base) in diff_bases_by_buffer {
-                    buffer.update(cx, |buffer, cx| {
+                    let buffer_id = buffer.update(cx, |buffer, cx| {
                         buffer.set_diff_base(diff_base.clone(), cx);
+                        buffer.remote_id().to_proto()
                     });
-                    cx.emit(BufferStoreEvent::DiffBaseUpdated { buffer })
+                    if let Some(project_id) = this.remote_id {
+                        cx.emit(BufferStoreEvent::MessageToReplicas(
+                            proto::UpdateDiffBase {
+                                project_id,
+                                buffer_id,
+                                diff_base,
+                            }
+                            .into_envelope(0, None, None),
+                        ))
+                    }
                 }
             })
         })
@@ -465,6 +466,7 @@ impl BufferStore {
         let text = buffer.as_rope().clone();
         let line_ending = buffer.line_ending();
         let version = buffer.version();
+        let buffer_id = buffer.remote_id();
         if buffer.file().is_some_and(|file| !file.is_created()) {
             has_changed_file = true;
         }
@@ -476,20 +478,35 @@ impl BufferStore {
         cx.spawn(move |this, mut cx| async move {
             let new_file = save.await?;
             let mtime = new_file.mtime;
+            this.update(&mut cx, |this, cx| {
+                if let Some(project_id) = this.remote_id {
+                    if has_changed_file {
+                        cx.emit(BufferStoreEvent::MessageToReplicas(
+                            proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: buffer_id.to_proto(),
+                                file: Some(language::File::to_proto(&*new_file, cx)),
+                            }
+                            .into_envelope(0, None, None),
+                        ));
+                    }
+                    cx.emit(BufferStoreEvent::MessageToReplicas(
+                        proto::BufferSaved {
+                            project_id,
+                            buffer_id: buffer_id.to_proto(),
+                            version: serialize_version(&version),
+                            mtime: mtime.map(|time| time.into()),
+                        }
+                        .into_envelope(0, None, None),
+                    ));
+                }
+            })?;
             buffer_handle.update(&mut cx, |buffer, cx| {
                 if has_changed_file {
                     buffer.file_updated(new_file, cx);
                 }
                 buffer.did_save(version.clone(), mtime, cx);
-            })?;
-            this.update(&mut cx, |_, cx| {
-                cx.emit(BufferStoreEvent::BufferSaved {
-                    buffer: buffer_handle,
-                    has_changed_file,
-                    saved_version: version,
-                })
-            })?;
-            Ok(())
+            })
         })
     }
 
@@ -820,7 +837,17 @@ impl BufferStore {
             }
         }
 
-        cx.emit(BufferStoreEvent::LocalBufferUpdated { buffer });
+        if let Some(project_id) = self.remote_id {
+            cx.emit(BufferStoreEvent::MessageToReplicas(
+                proto::UpdateBufferFile {
+                    project_id,
+                    buffer_id: buffer_id.to_proto(),
+                    file: Some(language::File::to_proto(&*new_file, cx)),
+                }
+                .into_envelope(0, None, None),
+            ));
+        }
+
         None
     }
 
@@ -1010,6 +1037,49 @@ impl BufferStore {
         }
 
         Ok(())
+    }
+
+    pub async fn handle_update_buffer_file(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateBufferFile>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let buffer_id = envelope.payload.buffer_id;
+        let buffer_id = BufferId::new(buffer_id)?;
+
+        this.update(&mut cx, |this, cx| {
+            let payload = envelope.payload.clone();
+            if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
+                let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
+                let worktree = this
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
+                    .ok_or_else(|| anyhow!("no such worktree"))?;
+                let file = File::from_proto(file, worktree, cx)?;
+                buffer.update(cx, |buffer, cx| {
+                    buffer.file_updated(Arc::new(file), cx);
+                });
+            }
+            Ok(())
+        })?
+    }
+
+    pub async fn handle_update_diff_base(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateDiffBase>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = envelope.payload.buffer_id;
+            let buffer_id = BufferId::new(buffer_id)?;
+            if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_diff_base(envelope.payload.diff_base, cx)
+                });
+            }
+            Ok(())
+        })?
     }
 
     pub async fn handle_save_buffer(

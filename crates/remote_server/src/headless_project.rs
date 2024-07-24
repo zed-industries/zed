@@ -176,34 +176,11 @@ impl HeadlessProject {
         &mut self,
         _: Model<BufferStore>,
         event: &BufferStoreEvent,
-        cx: &mut ModelContext<Self>,
+        _: &mut ModelContext<Self>,
     ) {
         match event {
-            BufferStoreEvent::LocalBufferUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let Some(new_file) = buffer.file() else {
-                    return;
-                };
-                self.session
-                    .send(proto::UpdateBufferFile {
-                        project_id: 0,
-                        buffer_id: buffer_id.into(),
-                        file: Some(new_file.to_proto(cx)),
-                    })
-                    .log_err();
-            }
-            BufferStoreEvent::DiffBaseUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let diff_base = buffer.diff_base();
-                self.session
-                    .send(proto::UpdateDiffBase {
-                        project_id: 0,
-                        buffer_id: buffer_id.to_proto(),
-                        diff_base: diff_base.map(|b| b.to_string()),
-                    })
-                    .log_err();
+            BufferStoreEvent::MessageToReplicas(message) => {
+                self.session.send_dynamic(message.clone()).log_err();
             }
             _ => {}
         }
