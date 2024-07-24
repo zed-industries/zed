@@ -5,15 +5,15 @@ use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, NumericStepper};
 
 #[derive(IntoElement)]
-pub struct EditorSettingsUi {}
+pub struct EditorSettingsControls {}
 
-impl EditorSettingsUi {
+impl EditorSettingsControls {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl RenderOnce for EditorSettingsUi {
+impl RenderOnce for EditorSettingsControls {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         v_flex()
             .gap_1()

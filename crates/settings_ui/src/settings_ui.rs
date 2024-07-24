@@ -3,7 +3,7 @@ mod theme_settings_ui;
 use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
-use editor::EditorSettingsUi;
+use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use settings::EditableSettingControl;
@@ -110,6 +110,6 @@ impl Render for SettingsPage {
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
             .child(UiFontSizeSetting::new(cx))
-            .child(EditorSettingsUi::new())
+            .child(EditorSettingsControls::new())
     }
 }
