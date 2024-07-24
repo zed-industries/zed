@@ -100,19 +100,7 @@ impl RenderOnce for BufferFontWeightControl {
                 "buffer-font-weight",
                 value.0.to_string(),
                 ContextMenu::build(cx, |mut menu, _cx| {
-                    let font_weights = vec![
-                        FontWeight::THIN,
-                        FontWeight::EXTRA_LIGHT,
-                        FontWeight::LIGHT,
-                        FontWeight::NORMAL,
-                        FontWeight::MEDIUM,
-                        FontWeight::SEMIBOLD,
-                        FontWeight::BOLD,
-                        FontWeight::EXTRA_BOLD,
-                        FontWeight::BLACK,
-                    ];
-
-                    for weight in font_weights {
+                    for weight in FontWeight::ALL {
                         menu = menu.custom_entry(
                             move |_cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
