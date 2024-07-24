@@ -147,7 +147,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace: &mut Workspace, _: &ToggleVimMode, cx| {
         let fs = workspace.app_state().fs.clone();
         let currently_enabled = VimModeSetting::get_global(cx).0;
-        update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
+        update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
             *setting = Some(!currently_enabled)
         })
     });
@@ -409,6 +409,7 @@ impl Vim {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
+            state.selected_register.take();
             if mode == Mode::Normal || mode != last_mode {
                 state.current_tx.take();
                 state.current_anchor.take();
@@ -676,6 +677,7 @@ impl Vim {
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
+                | Operator::ToggleComments
         ) {
             self.start_recording(cx)
         };

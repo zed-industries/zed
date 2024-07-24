@@ -18,7 +18,7 @@ test-support = ["collections/test-support", "gpui/test-support", "proto/test-sup
 
 [dependencies]
 anyhow.workspace = true
-async-tungstenite = "0.16"
+async-tungstenite.workspace = true
 base64.workspace = true
 chrono.workspace = true
 collections.workspace = true
@@ -27,7 +27,7 @@ gpui = { workspace = true, optional = true }
 parking_lot.workspace = true
 proto.workspace = true
 rand.workspace = true
-rsa = "0.4"
+rsa.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true

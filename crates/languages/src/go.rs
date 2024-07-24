@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
-use http::github::latest_github_release;
+use http_client::github::latest_github_release;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;

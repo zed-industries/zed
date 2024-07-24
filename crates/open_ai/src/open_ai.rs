@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -77,14 +77,14 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Custom { .. } => "custom",
+            Self::Custom { name, .. } => name,
         }
     }
 

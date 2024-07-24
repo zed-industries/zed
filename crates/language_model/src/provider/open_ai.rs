@@ -1,72 +1,159 @@
-use crate::CompletionProvider;
-use crate::LanguageModelCompletionProvider;
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
-use http::HttpClient;
-use language_model::{CloudModel, LanguageModel, LanguageModelRequest, Role};
-use open_ai::Model as OpenAiModel;
+use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
+    WhiteSpace,
+};
+use http_client::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage};
-use settings::Settings;
-use std::time::Duration;
-use std::{env, sync::Arc};
+use settings::{Settings, SettingsStore};
+use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
 
-pub struct OpenAiCompletionProvider {
-    api_key: Option<String>,
-    api_url: String,
-    model: OpenAiModel,
-    http_client: Arc<dyn HttpClient>,
-    low_speed_timeout: Option<Duration>,
-    settings_version: usize,
-    available_models_from_settings: Vec<OpenAiModel>,
+use crate::{
+    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, Role,
+};
+
+const PROVIDER_NAME: &str = "openai";
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct OpenAiSettings {
+    pub api_url: String,
+    pub low_speed_timeout: Option<Duration>,
+    pub available_models: Vec<open_ai::Model>,
 }
 
-impl OpenAiCompletionProvider {
-    pub fn new(
-        model: OpenAiModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-        available_models_from_settings: Vec<OpenAiModel>,
-    ) -> Self {
-        Self {
+pub struct OpenAiLanguageModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: gpui::Model<State>,
+}
+
+struct State {
+    api_key: Option<String>,
+    settings: OpenAiSettings,
+    _subscription: Subscription,
+}
+
+impl OpenAiLanguageModelProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
+        let state = cx.new_model(|cx| State {
             api_key: None,
-            api_url,
-            model,
-            http_client,
-            low_speed_timeout,
-            settings_version,
-            available_models_from_settings,
+            settings: OpenAiSettings::default(),
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                this.settings = AllLanguageModelSettings::get_global(cx).open_ai.clone();
+                cx.notify();
+            }),
+        });
+
+        Self { http_client, state }
+    }
+}
+
+impl LanguageModelProviderState for OpenAiLanguageModelProvider {
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+        Some(cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        }))
+    }
+}
+
+impl LanguageModelProvider for OpenAiLanguageModelProvider {
+    fn name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models = HashMap::default();
+
+        // Add base models from open_ai::Model::iter()
+        for model in open_ai::Model::iter() {
+            if !matches!(model, open_ai::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
+        }
+
+        // Override with available models from settings
+        for model in &self.state.read(cx).settings.available_models {
+            models.insert(model.id().to_string(), model.clone());
+        }
+
+        models
+            .into_values()
+            .map(|model| {
+                Arc::new(OpenAiLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model,
+                    state: self.state.clone(),
+                    http_client: self.http_client.clone(),
+                }) as Arc<dyn LanguageModel>
+            })
+            .collect()
+    }
+
+    fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.state.read(cx).api_key.is_some()
+    }
+
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+        if self.is_authenticated(cx) {
+            Task::ready(Ok(()))
+        } else {
+            let api_url = self.state.read(cx).settings.api_url.clone();
+            let state = self.state.clone();
+            cx.spawn(|mut cx| async move {
+                let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                    api_key
+                } else {
+                    let (_, api_key) = cx
+                        .update(|cx| cx.read_credentials(&api_url))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    String::from_utf8(api_key)?
+                };
+                state.update(&mut cx, |this, cx| {
+                    this.api_key = Some(api_key);
+                    cx.notify();
+                })
+            })
         }
     }
 
-    pub fn update(
-        &mut self,
-        model: OpenAiModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) {
-        self.model = model;
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx))
+            .into()
     }
 
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
-        let model = match request.model {
-            LanguageModel::OpenAi(model) => model,
-            _ => self.model.clone(),
-        };
+    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+        let delete_credentials = cx.delete_credentials(&self.state.read(cx).settings.api_url);
+        let state = self.state.clone();
+        cx.spawn(|mut cx| async move {
+            delete_credentials.await.log_err();
+            state.update(&mut cx, |this, cx| {
+                this.api_key = None;
+                cx.notify();
+            })
+        })
+    }
+}
 
+pub struct OpenAiLanguageModel {
+    id: LanguageModelId,
+    model: open_ai::Model,
+    state: gpui::Model<State>,
+    http_client: Arc<dyn HttpClient>,
+}
+
+impl OpenAiLanguageModel {
+    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         Request {
-            model,
+            model: self.model.clone(),
             messages: request
                 .messages
                 .into_iter()
@@ -92,80 +179,25 @@ impl OpenAiCompletionProvider {
     }
 }
 
-impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
-    fn available_models(&self) -> Vec<LanguageModel> {
-        if self.available_models_from_settings.is_empty() {
-            let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
-                vec![self.model.clone()]
-            } else {
-                OpenAiModel::iter()
-                    .filter(|model| !matches!(model, OpenAiModel::Custom { .. }))
-                    .collect()
-            };
-            available_models
-                .into_iter()
-                .map(LanguageModel::OpenAi)
-                .collect()
-        } else {
-            self.available_models_from_settings
-                .iter()
-                .cloned()
-                .map(LanguageModel::OpenAi)
-                .collect()
-        }
+impl LanguageModel for OpenAiLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
     }
 
-    fn settings_version(&self) -> usize {
-        self.settings_version
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
     }
 
-    fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = self.api_url.clone();
-            cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-                    api_key
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
-                };
-                cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    provider.update_current_as::<_, Self>(|provider| {
-                        provider.api_key = Some(api_key);
-                    });
-                })
-            })
-        }
+    fn telemetry_id(&self) -> String {
+        format!("openai/{}", self.model.id())
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let delete_credentials = cx.delete_credentials(&self.api_url);
-        cx.spawn(|mut cx| async move {
-            delete_credentials.await.log_err();
-            cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, Self>(|provider| {
-                    provider.api_key = None;
-                });
-            })
-        })
-    }
-
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(self.api_url.clone(), cx))
-            .into()
-    }
-
-    fn model(&self) -> LanguageModel {
-        LanguageModel::OpenAi(self.model.clone())
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
     }
 
     fn count_tokens(
@@ -173,20 +205,27 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_open_ai_tokens(request, cx.background_executor())
+        count_open_ai_tokens(request, self.model.clone(), cx)
     }
 
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = self.to_open_ai_request(request);
 
         let http_client = self.http_client.clone();
-        let api_key = self.api_key.clone();
-        let api_url = self.api_url.clone();
-        let low_speed_timeout = self.low_speed_timeout;
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, _| {
+            (
+                state.api_key.clone(),
+                state.settings.api_url.clone(),
+                state.settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(
@@ -209,17 +248,14 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
         }
         .boxed()
     }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
 }
 
 pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
-    background_executor: &gpui::BackgroundExecutor,
+    model: open_ai::Model,
+    cx: &AppContext,
 ) -> BoxFuture<'static, Result<usize>> {
-    background_executor
+    cx.background_executor()
         .spawn(async move {
             let messages = request
                 .messages
@@ -236,18 +272,10 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            match request.model {
-                LanguageModel::Anthropic(_)
-                | LanguageModel::Cloud(CloudModel::Claude3_5Sonnet)
-                | LanguageModel::Cloud(CloudModel::Claude3Opus)
-                | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
-                | LanguageModel::Cloud(CloudModel::Claude3Haiku)
-                | LanguageModel::OpenAi(OpenAiModel::Custom { .. }) => {
-                    // Tiktoken doesn't yet support these models, so we manually use the
-                    // same tokenizer as GPT-4.
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
+            if let open_ai::Model::Custom { .. } = model {
+                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            } else {
+                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
             }
         })
         .boxed()
@@ -255,11 +283,11 @@ pub fn count_open_ai_tokens(
 
 struct AuthenticationPrompt {
     api_key: View<Editor>,
-    api_url: String,
+    state: gpui::Model<State>,
 }
 
 impl AuthenticationPrompt {
-    fn new(api_url: String, cx: &mut WindowContext) -> Self {
+    fn new(state: gpui::Model<State>, cx: &mut WindowContext) -> Self {
         Self {
             api_key: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -269,7 +297,7 @@ impl AuthenticationPrompt {
                 );
                 editor
             }),
-            api_url,
+            state,
         }
     }
 
@@ -279,13 +307,17 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let write_credentials = cx.write_credentials(&self.api_url, "Bearer", api_key.as_bytes());
+        let write_credentials = cx.write_credentials(
+            &self.state.read(cx).settings.api_url,
+            "Bearer",
+            api_key.as_bytes(),
+        );
+        let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
-            cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
-                    provider.api_key = Some(api_key);
-                });
+            state.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                cx.notify();
             })
         })
         .detach_and_log_err(cx);

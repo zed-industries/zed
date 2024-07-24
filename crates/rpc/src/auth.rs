@@ -1,18 +1,19 @@
 use anyhow::{Context, Result};
 use rand::{thread_rng, Rng as _};
-use rsa::{PublicKey as _, PublicKeyEncoding, RSAPrivateKey, RSAPublicKey};
+use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use std::convert::TryFrom;
 
-pub struct PublicKey(RSAPublicKey);
+pub struct PublicKey(RsaPublicKey);
 
-pub struct PrivateKey(RSAPrivateKey);
+pub struct PrivateKey(RsaPrivateKey);
 
 /// Generate a public and private key for asymmetric encryption.
 pub fn keypair() -> Result<(PublicKey, PrivateKey)> {
     let mut rng = thread_rng();
     let bits = 1024;
-    let private_key = RSAPrivateKey::new(&mut rng, bits)?;
-    let public_key = RSAPublicKey::from(&private_key);
+    let private_key = RsaPrivateKey::new(&mut rng, bits)?;
+    let public_key = RsaPublicKey::from(&private_key);
     Ok((PublicKey(public_key), PrivateKey(private_key)))
 }
 
@@ -58,7 +59,10 @@ impl PrivateKey {
 impl TryFrom<PublicKey> for String {
     type Error = anyhow::Error;
     fn try_from(key: PublicKey) -> Result<Self> {
-        let bytes = key.0.to_pkcs1().context("failed to serialize public key")?;
+        let bytes = key
+            .0
+            .to_pkcs1_der()
+            .context("failed to serialize public key")?;
         let string = base64::encode_config(&bytes, base64::URL_SAFE);
         Ok(string)
     }
@@ -69,12 +73,12 @@ impl TryFrom<String> for PublicKey {
     fn try_from(value: String) -> Result<Self> {
         let bytes = base64::decode_config(&value, base64::URL_SAFE)
             .context("failed to base64-decode public key string")?;
-        let key = Self(RSAPublicKey::from_pkcs1(&bytes).context("failed to parse public key")?);
+        let key = Self(RsaPublicKey::from_pkcs1_der(&bytes).context("failed to parse public key")?);
         Ok(key)
     }
 }
 
-const PADDING_SCHEME: rsa::PaddingScheme = rsa::PaddingScheme::PKCS1v15Encrypt;
+const PADDING_SCHEME: Pkcs1v15Encrypt = Pkcs1v15Encrypt;
 
 #[cfg(test)]
 mod tests {
@@ -105,6 +109,20 @@ mod tests {
         // * decrypt the token using the private key.
         let decrypted_token = private.decrypt_string(&encrypted_token).unwrap();
         assert_eq!(decrypted_token, token);
+    }
+
+    #[test]
+    fn test_encode_and_decode_base64_public_key() {
+        // A base64-encoded public key.
+        //
+        // We're using a literal string to ensure that encoding and decoding works across differences in implementations.
+        let encoded_public_key = "MIGJAoGBAMPvufou8wOuUIF1Wlkbtn0ZMM9nC55QJ06nTZvgMfZv5esFVU9-cQO_JC1P9ZoEcMDJweFERnQuQLqzsrMDLFbkdgL128ZU43WOLiQraxaICFIZsPUeTtWMKp2D5bPWsNxs-lnCma7vCAry6fpXuj5AKQdk7cTZJNucgvZQ0uUfAgMBAAE=".to_string();
+
+        // Make sure we can parse the public key.
+        let public_key = PublicKey::try_from(encoded_public_key.clone()).unwrap();
+
+        // Make sure we re-encode to the same format.
+        assert_eq!(encoded_public_key, String::try_from(public_key).unwrap());
     }
 
     #[test]

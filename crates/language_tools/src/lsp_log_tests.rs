@@ -85,7 +85,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 server_name: LanguageServerName("the-rust-language-server".into()),
                 worktree_root_name: project
                     .read(cx)
-                    .worktrees()
+                    .worktrees(cx)
                     .next()
                     .unwrap()
                     .read(cx)

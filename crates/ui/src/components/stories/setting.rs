@@ -79,7 +79,7 @@ impl SettingStory {
             )
             .add_setting(
                 SettingsItem::new(
-                    "font-weifht",
+                    "font-weight",
                     "Font Weight".into(),
                     SettingType::Dropdown,
                     Some("400".to_string().into()),

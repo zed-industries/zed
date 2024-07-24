@@ -601,6 +601,21 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+4. Or to use multiple formatters consecutively, use an array of formatters:
+```json
+{
+  "formatter": [
+    {"language_server": {"name": "rust-analyzer"}},
+    {"external": {
+      "command": "sed",
+      "arguments": ["-e", "s/ *$//"]
+    }
+  ]
+}
+```
+Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
+If any of the formatters fails, the subsequent ones will still be executed.
+
 ## Code Actions On Format
 
 - Description: The code actions to perform with the primary language server when formatting the buffer.
