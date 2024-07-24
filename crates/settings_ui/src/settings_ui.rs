@@ -9,7 +9,9 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::theme_settings_ui::{BufferFontSizeSetting, EditableSetting, UiFontSizeSetting};
+use crate::theme_settings_ui::{
+    BufferFontSizeSetting, EditableSetting, InlineGitBlameSetting, UiFontSizeSetting,
+};
 
 pub struct SettingsUiFeatureFlag;
 
@@ -109,5 +111,6 @@ impl Render for SettingsPage {
             ))
             .child(UiFontSizeSetting::new(cx))
             .child(BufferFontSizeSetting::new(cx))
+            .child(InlineGitBlameSetting::new(cx))
     }
 }

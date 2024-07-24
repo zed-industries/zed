@@ -1,8 +1,9 @@
 use fs::Fs;
 use gpui::AppContext;
+use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, NumericStepper};
+use ui::{prelude::*, CheckboxWithLabel, NumericStepper};
 
 pub trait EditableSetting: RenderOnce {
     type Value: Send;
@@ -129,5 +130,54 @@ impl RenderOnce for BufferFontSizeSetting {
                     Self::write(value + px(1.), cx);
                 },
             ))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct InlineGitBlameSetting(bool);
+
+impl EditableSetting for InlineGitBlameSetting {
+    type Value = bool;
+    type Settings = ProjectSettings;
+
+    fn name(&self) -> SharedString {
+        "Inline Git Blame".into()
+    }
+
+    fn new(cx: &AppContext) -> Self {
+        let settings = ProjectSettings::get_global(cx);
+        Self(settings.git.inline_blame_enabled())
+    }
+
+    fn update(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value) {
+        if let Some(inline_blame) = settings.git.inline_blame.as_mut() {
+            inline_blame.enabled = value;
+        } else {
+            settings.git.inline_blame = Some(InlineBlameSettings {
+                enabled: false,
+                ..Default::default()
+            });
+        }
+    }
+}
+
+impl RenderOnce for InlineGitBlameSetting {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let value = self.0;
+
+        CheckboxWithLabel::new(
+            "inline-git-blame",
+            Label::new(self.name()),
+            value.into(),
+            |selection, cx| {
+                Self::write(
+                    match selection {
+                        Selection::Selected => true,
+                        Selection::Unselected | Selection::Indeterminate => false,
+                    },
+                    cx,
+                );
+            },
+        )
     }
 }
