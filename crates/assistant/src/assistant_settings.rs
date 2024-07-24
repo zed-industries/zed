@@ -144,8 +144,8 @@ impl AssistantSettingsContent {
                             fs,
                             cx,
                             move |content, _| {
-                                if content.open_ai.is_none() {
-                                    content.open_ai =
+                                if content.openai.is_none() {
+                                    content.openai =
                                         Some(language_model::settings::OpenAiSettingsContent {
                                             api_url,
                                             low_speed_timeout_in_seconds,
@@ -243,7 +243,7 @@ impl AssistantSettingsContent {
 
     pub fn set_model(&mut self, language_model: Arc<dyn LanguageModel>) {
         let model = language_model.id().0.to_string();
-        let provider = language_model.provider_name().0.to_string();
+        let provider = language_model.provider_id().0.to_string();
 
         match self {
             AssistantSettingsContent::Versioned(settings) => match settings {

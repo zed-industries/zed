@@ -21,9 +21,9 @@ pub fn init(cx: &mut AppContext) {
 
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
-    pub open_ai: OpenAiSettings,
     pub anthropic: AnthropicSettings,
     pub ollama: OllamaSettings,
+    pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
@@ -31,7 +31,7 @@ pub struct AllLanguageModelSettings {
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
-    pub open_ai: Option<OpenAiSettingsContent>,
+    pub openai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
@@ -110,21 +110,21 @@ impl settings::Settings for AllLanguageModelSettings {
             }
 
             merge(
-                &mut settings.open_ai.api_url,
-                value.open_ai.as_ref().and_then(|s| s.api_url.clone()),
+                &mut settings.openai.api_url,
+                value.openai.as_ref().and_then(|s| s.api_url.clone()),
             );
             if let Some(low_speed_timeout_in_seconds) = value
-                .open_ai
+                .openai
                 .as_ref()
                 .and_then(|s| s.low_speed_timeout_in_seconds)
             {
-                settings.open_ai.low_speed_timeout =
+                settings.openai.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
             merge(
-                &mut settings.open_ai.available_models,
+                &mut settings.openai.available_models,
                 value
-                    .open_ai
+                    .openai
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
