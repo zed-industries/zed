@@ -5,8 +5,6 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
-use settings::Settings;
-use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
@@ -109,13 +107,7 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
-            .child({
-                let theme_settings = ThemeSettings::get_global(cx);
-                UiFontSizeSetting::new(&theme_settings)
-            })
-            .child({
-                let theme_settings = ThemeSettings::get_global(cx);
-                BufferFontSizeSetting::new(&theme_settings)
-            })
+            .child(UiFontSizeSetting::new(cx))
+            .child(BufferFontSizeSetting::new(cx))
     }
 }

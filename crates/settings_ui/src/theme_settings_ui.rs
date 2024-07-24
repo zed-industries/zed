@@ -16,7 +16,7 @@ pub trait EditableSetting: RenderOnce {
         None
     }
 
-    fn new(settings: &Self::Settings) -> Self;
+    fn new(cx: &AppContext) -> Self;
 
     fn update(settings: &mut <Self::Settings as Settings>::FileContent, value: Self::Value);
 
@@ -45,7 +45,9 @@ impl EditableSetting for UiFontSizeSetting {
         Some(IconName::FontSize)
     }
 
-    fn new(settings: &Self::Settings) -> Self {
+    fn new(cx: &AppContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+
         Self(settings.ui_font_size)
     }
 
@@ -94,7 +96,9 @@ impl EditableSetting for BufferFontSizeSetting {
         Some(IconName::FontSize)
     }
 
-    fn new(settings: &Self::Settings) -> Self {
+    fn new(cx: &AppContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+
         Self(settings.buffer_font_size)
     }
 
