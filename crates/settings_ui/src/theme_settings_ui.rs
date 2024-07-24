@@ -15,11 +15,6 @@ pub trait EditableSetting: RenderOnce {
     /// Returns the name of this setting.
     fn name(&self) -> SharedString;
 
-    /// Returns the icon to be displayed in place of the setting name.
-    fn icon(&self) -> Option<IconName> {
-        None
-    }
-
     /// Returns a new instance of this setting.
     fn new(cx: &AppContext) -> Self;
 
@@ -49,10 +44,6 @@ impl EditableSetting for UiFontSizeSetting {
         "UI Font Size".into()
     }
 
-    fn icon(&self) -> Option<IconName> {
-        Some(IconName::FontSize)
-    }
-
     fn new(cx: &AppContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
 
@@ -70,13 +61,7 @@ impl RenderOnce for UiFontSizeSetting {
 
         h_flex()
             .gap_2()
-            .map(|el| {
-                if let Some(icon) = self.icon() {
-                    el.child(Icon::new(icon))
-                } else {
-                    el.child(Label::new(self.name()))
-                }
-            })
+            .child(Icon::new(IconName::FontSize))
             .child(NumericStepper::new(
                 self.0.to_string(),
                 move |_, cx| {
@@ -100,10 +85,6 @@ impl EditableSetting for BufferFontSizeSetting {
         "Buffer Font Size".into()
     }
 
-    fn icon(&self) -> Option<IconName> {
-        Some(IconName::FontSize)
-    }
-
     fn new(cx: &AppContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
 
@@ -121,13 +102,7 @@ impl RenderOnce for BufferFontSizeSetting {
 
         h_flex()
             .gap_2()
-            .map(|el| {
-                if let Some(icon) = self.icon() {
-                    el.child(Icon::new(icon))
-                } else {
-                    el.child(Label::new(self.name()))
-                }
-            })
+            .child(Icon::new(IconName::FontSize))
             .child(NumericStepper::new(
                 self.0.to_string(),
                 move |_, cx| {
