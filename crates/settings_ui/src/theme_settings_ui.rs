@@ -5,7 +5,8 @@ use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, NumericStepper};
 
-pub trait EditableSetting: RenderOnce {
+/// A UI control that can be used to edit a setting visually.
+pub trait EditableSettingControl: RenderOnce {
     /// The type of the setting value.
     type Value: Send;
 
@@ -36,7 +37,7 @@ pub trait EditableSetting: RenderOnce {
 #[derive(IntoElement)]
 pub struct UiFontSizeSetting(Pixels);
 
-impl EditableSetting for UiFontSizeSetting {
+impl EditableSettingControl for UiFontSizeSetting {
     type Value = Pixels;
     type Settings = ThemeSettings;
 
@@ -77,7 +78,7 @@ impl RenderOnce for UiFontSizeSetting {
 #[derive(IntoElement)]
 pub struct BufferFontSizeSetting(Pixels);
 
-impl EditableSetting for BufferFontSizeSetting {
+impl EditableSettingControl for BufferFontSizeSetting {
     type Value = Pixels;
     type Settings = ThemeSettings;
 
@@ -118,7 +119,7 @@ impl RenderOnce for BufferFontSizeSetting {
 #[derive(IntoElement)]
 pub struct InlineGitBlameSetting(bool);
 
-impl EditableSetting for InlineGitBlameSetting {
+impl EditableSettingControl for InlineGitBlameSetting {
     type Value = bool;
     type Settings = ProjectSettings;
 

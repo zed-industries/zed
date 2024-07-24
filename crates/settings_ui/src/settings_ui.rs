@@ -10,7 +10,7 @@ use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
 use crate::theme_settings_ui::{
-    BufferFontSizeSetting, EditableSetting, InlineGitBlameSetting, UiFontSizeSetting,
+    BufferFontSizeSetting, EditableSettingControl, InlineGitBlameSetting, UiFontSizeSetting,
 };
 
 pub struct SettingsUiFeatureFlag;
