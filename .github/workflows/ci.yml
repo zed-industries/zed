@@ -40,10 +40,15 @@ jobs:
 
       - name: Check spelling
         run: |
-          if ! which typos > /dev/null; then
-            cargo install typos-cli
+          if ! cargo install --list | grep "typos-cli v$TYPOS_CLI_VERSION" > /dev/null; then
+            echo "Installing typos-cli@$TYPOS_CLI_VERSION..."
+            cargo install "typos-cli@$TYPOS_CLI_VERSION"
+          else
+            echo "typos-cli@$TYPOS_CLI_VERSION is already installed."
           fi
           typos
+        env:
+          TYPOS_CLI_VERSION: "1.23.3"
 
       - name: Run style checks
         uses: ./.github/actions/check_style
