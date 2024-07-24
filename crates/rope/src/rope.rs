@@ -581,11 +581,11 @@ impl<'a> Chunks<'a> {
 
     fn offset_is_valid(&self) -> bool {
         if self.reversed {
-            if self.offset <= self.range.start {
+            if self.offset <= self.range.start || self.offset > self.range.end {
                 return false;
             }
         } else {
-            if self.offset >= self.range.end {
+            if self.offset < self.range.start || self.offset >= self.range.end {
                 return false;
             }
         }
@@ -645,8 +645,11 @@ impl<'a> Chunks<'a> {
             if self.offset == self.chunks.end(&()) {
                 self.next();
             }
+        }
 
+        if !self.offset_is_valid() {
             self.offset = self.offset.clamp(self.range.start, self.range.end);
+            self.chunks.seek(&self.offset, Bias::Right, &());
         }
 
         found
@@ -1402,6 +1405,13 @@ mod tests {
     use util::RandomCharIter;
     use Bias::{Left, Right};
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     #[test]
     fn test_all_4_byte_chars() {
         let mut rope = Rope::new();
@@ -1575,6 +1585,40 @@ mod tests {
                         .rev()
                         .collect::<String>(),
                     &expected[start_ix..end_ix]
+                );
+
+                let mut expected_line_starts: Vec<_> = expected[start_ix..end_ix]
+                    .match_indices('\n')
+                    .map(|(index, _)| start_ix + index + 1)
+                    .collect();
+                if start_ix < end_ix {
+                    expected_line_starts.insert(0, start_ix);
+                }
+
+                let mut chunks = actual.chunks_in_range(start_ix..end_ix);
+
+                let mut actual_line_starts = vec![chunks.offset()];
+                while chunks.next_line() {
+                    actual_line_starts.push(chunks.offset());
+                }
+                assert_eq!(
+                    actual_line_starts,
+                    expected_line_starts,
+                    "actual line starts != expected line starts when using next_line() for {:?} ({:?})",
+                    &expected[start_ix..end_ix],
+                    start_ix..end_ix
+                );
+
+                let mut actual_line_starts = Vec::new();
+                while chunks.prev_line() {
+                    actual_line_starts.insert(0, chunks.offset());
+                }
+                assert_eq!(
+                    actual_line_starts,
+                    expected_line_starts,
+                    "actual line starts != expected line starts when using prev_line() for {:?} ({:?})",
+                    &expected[start_ix..end_ix],
+                    start_ix..end_ix
                 );
             }
 
