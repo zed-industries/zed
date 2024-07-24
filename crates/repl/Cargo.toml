@@ -13,6 +13,7 @@ path = "src/repl.rs"
 doctest = false
 
 [dependencies]
+aho-corasick.workspace = true
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true

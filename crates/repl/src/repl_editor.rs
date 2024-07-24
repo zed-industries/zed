@@ -6,9 +6,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use editor::{Anchor, Editor, MultiBuffer, RangeToAnchorExt};
 use gpui::{prelude::*, AppContext, Entity, Model, View, WeakView, WindowContext};
-use language::{Buffer, BufferSnapshot, Language, Point};
+use language::{Buffer, BufferSnapshot, Language, Point, ToOffset};
 use multi_buffer::MultiBufferRow;
 use runtimelib::dirs::ask_jupyter;
+use util::ResultExt;
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
@@ -34,60 +35,61 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 
     let range = editor.read(cx).selections.newest::<Point>(cx).range();
 
-    for (selected_text, language, anchor_range) in snippets(&snapshot, range) {
-        let start = multibuffer
-            .read(cx)
-            .read(cx)
-            .anchor_in_excerpt(excerpt_id, anchor_range.start)
-            .unwrap();
-        let end = multibuffer
-            .read(cx)
-            .read(cx)
-            .anchor_in_excerpt(excerpt_id, anchor_range.end)
-            .unwrap();
-        let anchor_range = start..end;
-        let entity_id = editor.entity_id();
+    // todo!("FIX THIS!")
+    // for (selected_text, language, anchor_range) in snippets(&snapshot, range) {
+    //     let start = multibuffer
+    //         .read(cx)
+    //         .read(cx)
+    //         .anchor_in_excerpt(excerpt_id, anchor_range.start)
+    //         .unwrap();
+    //     let end = multibuffer
+    //         .read(cx)
+    //         .read(cx)
+    //         .anchor_in_excerpt(excerpt_id, anchor_range.end)
+    //         .unwrap();
+    //     let anchor_range = start..end;
+    //     let entity_id = editor.entity_id();
 
-        let kernel_specification = store.update(cx, |store, cx| {
-            store
-                .kernelspec(&language, cx)
-                .with_context(|| format!("No kernel found for language: {}", language.name()))
-        })?;
+    //     let kernel_specification = store.update(cx, |store, cx| {
+    //         store
+    //             .kernelspec(&language, cx)
+    //             .with_context(|| format!("No kernel found for language: {}", language.name()))
+    //     })?;
 
-        let fs = store.read(cx).fs().clone();
-        let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
-            session
-        } else {
-            let weak_editor = editor.downgrade();
-            let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
+    //     let fs = store.read(cx).fs().clone();
+    //     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
+    //         session
+    //     } else {
+    //         let weak_editor = editor.downgrade();
+    //         let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
 
-            editor.update(cx, |_editor, cx| {
-                cx.notify();
+    //         editor.update(cx, |_editor, cx| {
+    //             cx.notify();
 
-                cx.subscribe(&session, {
-                    let store = store.clone();
-                    move |_this, _session, event, cx| match event {
-                        SessionEvent::Shutdown(shutdown_event) => {
-                            store.update(cx, |store, _cx| {
-                                store.remove_session(shutdown_event.entity_id());
-                            });
-                        }
-                    }
-                })
-                .detach();
-            });
+    //             cx.subscribe(&session, {
+    //                 let store = store.clone();
+    //                 move |_this, _session, event, cx| match event {
+    //                     SessionEvent::Shutdown(shutdown_event) => {
+    //                         store.update(cx, |store, _cx| {
+    //                             store.remove_session(shutdown_event.entity_id());
+    //                         });
+    //                     }
+    //                 }
+    //             })
+    //             .detach();
+    //         });
 
-            store.update(cx, |store, _cx| {
-                store.insert_session(entity_id, session.clone());
-            });
+    //         store.update(cx, |store, _cx| {
+    //             store.insert_session(entity_id, session.clone());
+    //         });
 
-            session
-        };
+    //         session
+    //     };
 
-        session.update(cx, |session, cx| {
-            session.execute(&selected_text, anchor_range, cx);
-        });
-    }
+    //     session.update(cx, |session, cx| {
+    //         session.execute(&selected_text, anchor_range, cx);
+    //     });
+    // }
 
     anyhow::Ok(())
 }
@@ -159,55 +161,89 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn snippets(
-    buffer: &BufferSnapshot,
-    range: Range<Point>,
-) -> Vec<(String, Arc<Language>, Range<language::Anchor>)> {
-    // let buffer = buffer.read(cx);
+fn jupytext_snippets(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+    fn push_snippet(
+        snippets: &mut Vec<Range<Point>>,
+        buffer: &BufferSnapshot,
+        start_row: u32,
+        end_row: u32,
+    ) {
+        let mut snippet_end_row = end_row;
+        while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {
+            snippet_end_row -= 1;
+        }
+        snippets.push(
+            Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row)),
+        );
+    }
 
-    let line_comment_prefixes = buffer.language().map_or([].as_slice(), |language| {
-        language.default_scope().line_comment_prefixes()
-    });
+    let mut current_row = range.start.row;
 
-    if !line_comment_prefixes.is_empty() {
-        // let mut snippets = Vec::new();
+    let Some(language) = buffer.language() else {
+        return Vec::new();
+    };
 
-        let mut jupytext_start_row = None;
-        let mut prev_lines = buffer
-            .reversed_chunks_in_range(
-                Point::zero()..Point::new(range.start.row, buffer.line_len(range.start.row)),
-            )
-            .lines();
-        let mut current_row = range.start.row;
-        while let Some(line) = prev_lines.next() {
-            if let Some(prefix) = line_comment_prefixes
-                .iter()
-                .find(|prefix| line.starts_with(prefix.as_ref()))
-            {
-                if line[prefix.len()..].starts_with("%%") ||
-                jupytext_start_row = Some(current_row));
-                break;
-            } else {
-                current_row = current_row.saturating_sub(1);
-            }
+    let default_scope = language.default_scope();
+    let comment_prefixes = default_scope.line_comment_prefixes();
+    if comment_prefixes.is_empty() {
+        return Vec::new();
+    }
+
+    let jupytext_prefixes = comment_prefixes
+        .iter()
+        .map(|comment| format!("{comment} %%"))
+        .collect::<Vec<_>>();
+
+    let mut snippet_start_row = None;
+    loop {
+        if jupytext_prefixes
+            .iter()
+            .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
+        {
+            snippet_start_row = Some(current_row);
+            break;
+        } else if current_row > 0 {
+            current_row -= 1;
+        } else {
+            break;
         }
     }
 
-    // multi_buffer_snapshot.chunks(range, language_aware)
+    let mut snippets = Vec::new();
+    if let Some(mut snippet_start_row) = snippet_start_row {
+        for current_row in range.start.row + 1..=buffer.max_point().row {
+            if jupytext_prefixes
+                .iter()
+                .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
+            {
+                push_snippet(&mut snippets, buffer, snippet_start_row, current_row - 1);
 
-    // let range = if range.is_empty() {
-    //     Point::new(range.start.row, 0)
-    //         ..Point::new(
-    //             range.start.row,
-    //             multi_buffer_snapshot.line_len(MultiBufferRow(range.start.row)),
-    //         )
-    // } else {
-    //     if range.end.column == 0 {
-    //         range.end.row -= 1;
-    //         range.end.column = multi_buffer_snapshot.line_len(MultiBufferRow(range.end.row));
-    //     }
-    //     range
-    // };
+                if current_row <= range.end.row {
+                    snippet_start_row = current_row;
+                } else {
+                    return snippets;
+                }
+            }
+        }
+
+        push_snippet(
+            &mut snippets,
+            buffer,
+            snippet_start_row,
+            buffer.max_point().row,
+        );
+    }
+
+    snippets
+}
+
+fn snippet_ranges(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+    // let buffer = buffer.read(cx);
+    //
+    let jupytext_snippets = jupytext_snippets(buffer, range);
+    if !jupytext_snippets.is_empty() {
+        return jupytext_snippets;
+    }
 
     todo!()
     // let anchor_range = range.to_anchors(&multi_buffer_snapshot);
@@ -241,7 +277,7 @@ mod tests {
     use language::{Buffer, Language, LanguageConfig};
 
     #[gpui::test]
-    fn test_snippet(cx: &mut AppContext) {
+    fn test_snippet_ranges(cx: &mut AppContext) {
         // Create a test language
         let test_language = Arc::new(Language::new(
             LanguageConfig {
@@ -266,6 +302,9 @@ mod tests {
                     print(4 + 4)
 
                     print(5 + 5)
+
+
+
                 "# },
                 cx,
             )
@@ -273,17 +312,42 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let snippets = snippets(&snapshot, Point::new(2, 5)..Point::new(2, 5))
+        // Jupytext snippet surrounding an empty selection
+        let snippets = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5))
             .into_iter()
-            .map(|(selected_text, _, _)| selected_text)
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
             .collect::<Vec<_>>();
         assert_eq!(
             snippets,
             vec![indoc! { r#"
+                # %% [markdown]
                 # This is some arithmetic
                 print(1 + 1)
-                print(2 + 2)
-            "# }]
+                print(2 + 2)"# }]
+        );
+
+        // Jupytext snippets intersecting a non-empty selection
+        let snippets = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2))
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # %% [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)"#
+                },
+                indoc! { r#"
+                    # %%
+                    print(3 + 3)
+                    print(4 + 4)
+
+                    print(5 + 5)"#
+                }
+            ]
         );
     }
 }
