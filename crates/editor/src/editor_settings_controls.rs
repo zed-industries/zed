@@ -1,10 +1,7 @@
-use std::time::Instant;
-
-use gpui::{AppContext, FontWeight, Global, ReadGlobal};
-use parking_lot::RwLock;
+use gpui::{AppContext, FontWeight};
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
-use theme::ThemeSettings;
+use theme::{FontFamilyCache, ThemeSettings};
 use ui::{
     prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
     SettingsGroup,
@@ -34,42 +31,6 @@ impl RenderOnce for EditorSettingsControls {
                     .child(BufferFontSizeControl),
             )
             .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
-    }
-}
-
-#[derive(Default)]
-struct FontFamilyCacheState {
-    loaded_at: Option<Instant>,
-    font_families: Vec<SharedString>,
-}
-
-/// A cache for the list of font families.
-///
-/// Listing the available font families from the text system is expensive,
-/// so we do it once and then use the cached values each render.
-#[derive(Default)]
-struct FontFamilyCache {
-    state: RwLock<FontFamilyCacheState>,
-}
-
-impl Global for FontFamilyCache {}
-
-impl FontFamilyCache {
-    fn list_font_families(&self, cx: &AppContext) -> Vec<SharedString> {
-        if self.state.read().loaded_at.is_some() {
-            return self.state.read().font_families.clone();
-        }
-
-        let mut lock = self.state.write();
-        lock.font_families = cx
-            .text_system()
-            .all_font_names()
-            .into_iter()
-            .map(SharedString::from)
-            .collect();
-        lock.loaded_at = Some(Instant::now());
-
-        lock.font_families.clone()
     }
 }
 
@@ -109,17 +70,9 @@ impl RenderOnce for BufferFontFamilyControl {
                 "buffer-font-family",
                 value.clone(),
                 ContextMenu::build(cx, |mut menu, cx| {
-                    cx.default_global::<FontFamilyCache>();
                     let font_family_cache = FontFamilyCache::global(cx);
 
-                    use std::time::Instant;
-                    let start = Instant::now();
-                    let font_names = font_family_cache.list_font_families(cx);
-                    let duration = start.elapsed();
-                    println!("Time taken to get all font names: {:?}", duration);
-                    dbg!("Number of fonts: {}", font_names.len());
-
-                    for font_name in font_names {
+                    for font_name in font_family_cache.list_font_families(cx) {
                         menu = menu.custom_entry(
                             {
                                 let font_name = font_name.clone();
