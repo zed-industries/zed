@@ -1,4 +1,4 @@
-use crate::{prelude::*, Checkbox, ListHeader};
+use crate::{prelude::*, Checkbox, ContextMenu, ListHeader};
 
 use super::DropdownMenu;
 
@@ -42,12 +42,12 @@ pub enum SettingType {
 }
 
 #[derive(Debug, Clone, IntoElement)]
-pub struct SettingsGroup {
+pub struct LegacySettingsGroup {
     pub name: String,
     settings: Vec<SettingsItem>,
 }
 
-impl SettingsGroup {
+impl LegacySettingsGroup {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -61,7 +61,7 @@ impl SettingsGroup {
     }
 }
 
-impl RenderOnce for SettingsGroup {
+impl RenderOnce for LegacySettingsGroup {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let empty_message = format!("No settings available for {}", self.name);
 
@@ -207,7 +207,7 @@ impl RenderOnce for SettingsItem {
         let id: ElementId = self.id.clone().into();
 
         // When the setting is disabled or toggled off, we don't want any secondary elements to be interactable
-        let secondary_element_disabled = self.disabled || self.toggled == Some(false);
+        let _secondary_element_disabled = self.disabled || self.toggled == Some(false);
 
         let full_width = match self.layout {
             SettingLayout::FullLine | SettingLayout::FullLineJustified => true,
@@ -239,10 +239,12 @@ impl RenderOnce for SettingsItem {
             SettingType::Toggle(_) => None,
             SettingType::ToggleAnd(secondary_setting_type) => match secondary_setting_type {
                 SecondarySettingType::Dropdown => Some(
-                    DropdownMenu::new(id.clone(), &cx)
-                        .current_item(current_string)
-                        .disabled(secondary_element_disabled)
-                        .into_any_element(),
+                    DropdownMenu::new(
+                        id.clone(),
+                        current_string.unwrap_or_default(),
+                        ContextMenu::build(cx, |menu, _cx| menu),
+                    )
+                    .into_any_element(),
                 ),
             },
             SettingType::Input(input_type) => match input_type {
@@ -250,10 +252,13 @@ impl RenderOnce for SettingsItem {
                 InputType::Number => Some(div().child("number").into_any_element()),
             },
             SettingType::Dropdown => Some(
-                DropdownMenu::new(id.clone(), &cx)
-                    .current_item(current_string)
-                    .full_width(true)
-                    .into_any_element(),
+                DropdownMenu::new(
+                    id.clone(),
+                    current_string.unwrap_or_default(),
+                    ContextMenu::build(cx, |menu, _cx| menu),
+                )
+                .full_width(true)
+                .into_any_element(),
             ),
             SettingType::Range => Some(div().child("range").into_any_element()),
             SettingType::Unsupported => None,
@@ -308,12 +313,12 @@ impl RenderOnce for SettingsItem {
     }
 }
 
-pub struct SettingsMenu {
+pub struct LegacySettingsMenu {
     name: SharedString,
-    groups: Vec<SettingsGroup>,
+    groups: Vec<LegacySettingsGroup>,
 }
 
-impl SettingsMenu {
+impl LegacySettingsMenu {
     pub fn new(name: impl Into<SharedString>) -> Self {
         Self {
             name: name.into(),
@@ -321,13 +326,13 @@ impl SettingsMenu {
         }
     }
 
-    pub fn add_group(mut self, group: SettingsGroup) -> Self {
+    pub fn add_group(mut self, group: LegacySettingsGroup) -> Self {
         self.groups.push(group);
         self
     }
 }
 
-impl Render for SettingsMenu {
+impl Render for LegacySettingsMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_empty = self.groups.is_empty();
         v_flex()

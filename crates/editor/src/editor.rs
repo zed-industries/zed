@@ -18,6 +18,7 @@ mod blink_manager;
 mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
+mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -57,6 +58,7 @@ use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
