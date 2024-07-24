@@ -211,7 +211,7 @@ impl nodejs::Host for WasmState {
             .environment_path()
             .await
             .to_wasmtime_result()
-    }
+    }f
 }
 
 #[async_trait]
