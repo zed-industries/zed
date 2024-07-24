@@ -59,8 +59,17 @@ world extension {
     /// A list of environment variables.
     type env-vars = list<tuple<string, string>>;
 
+    /// The shell to execute a command.
+    enum windows-shell {
+        powershell,
+        cmd,
+    }
+
+    /// The executable to run the command.
     variant command-type {
-        shell(string),
+        /// Only used by Windows for now, use powershell or cmd to execute the command.
+        shell(windows-shell),
+        /// The path to the executable.
         other(string),
     }
 
