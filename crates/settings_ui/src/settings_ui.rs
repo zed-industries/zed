@@ -4,7 +4,9 @@ use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, View};
+use gpui::{
+    actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, View,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -64,19 +66,19 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct SettingsPage {
     focus_handle: FocusHandle,
-    settings: Vec<AnyView>,
+    // settings: Vec<AnyElement>,
 }
 
 impl SettingsPage {
     pub fn new(_workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx| Self {
             focus_handle: cx.focus_handle(),
-            settings: vec![cx
-                .new_view(|cx| {
-                    let theme_settings = ThemeSettings::get_global(cx);
-                    UiFontSizeSetting::new(&theme_settings)
-                })
-                .into()],
+            // settings: vec![cx
+            //     .new_view(|cx| {
+            //         let theme_settings = ThemeSettings::get_global(cx);
+            //         UiFontSizeSetting::new(&theme_settings)
+            //     })
+            //     .into()],
         })
     }
 }
@@ -110,7 +112,7 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
@@ -118,7 +120,10 @@ impl Render for SettingsPage {
             .child(Label::new(
                 "Nothing to see here yet. Feature-flagged for staff.",
             ))
-            .children(self.settings.iter().cloned())
+            .child({
+                let theme_settings = ThemeSettings::get_global(cx);
+                UiFontSizeSetting::new(&theme_settings)
+            })
         // .child(UiFontSettingsControl {})
         // .child(BufferFontSettingsControl {})
     }

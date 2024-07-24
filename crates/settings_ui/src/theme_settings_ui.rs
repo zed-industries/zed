@@ -28,13 +28,16 @@ pub trait EditableSetting: RenderOnce + Send + Sync {
 
     // }
 
-    fn write(value: Self::Value, fs: Arc<dyn Fs>, cx: &AppContext) {
+    fn write(value: Self::Value, cx: &AppContext) {
+        let fs = <dyn Fs>::global(cx);
+
         update_settings_file::<Self::Settings>(fs, cx, move |settings, _cx| {
             Self::update(settings, value);
         });
     }
 }
 
+#[derive(IntoElement)]
 pub struct UiFontSizeSetting(Pixels);
 
 impl EditableSetting for UiFontSizeSetting {
@@ -66,12 +69,12 @@ impl RenderOnce for UiFontSizeSetting {
             .child(Label::new(self.name()))
             .child(NumericStepper::new(
                 self.0.to_string(),
-                |_, cx| {
-                    Self::write(value - px(1.))
+                move |_, cx| {
+                    Self::write(value - px(1.), cx);
                     // self.save
                 },
-                |_, cx| {
-                    //
+                move |_, cx| {
+                    Self::write(value + px(1.), cx);
                 }, // cx.listener(|this, _event, cx| {
                    //     if this.0 > px(0.) {
                    //         this.0 -= px(1.);
