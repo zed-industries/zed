@@ -83,7 +83,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
-            .open_ai
+            .openai
             .available_models
         {
             models.insert(model.id().to_string(), model.clone());
@@ -111,7 +111,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             Task::ready(Ok(()))
         } else {
             let api_url = AllLanguageModelSettings::get_global(cx)
-                .open_ai
+                .openai
                 .api_url
                 .clone();
             let state = self.state.clone();
@@ -139,7 +139,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
+        let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
         cx.spawn(|mut cx| async move {
@@ -230,7 +230,8 @@ impl LanguageModel for OpenAiLanguageModel {
 
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
+            let settings = &AllLanguageModelSettings::get_global(cx).openai;
+            dbg!(settings);
             (
                 state.api_key.clone(),
                 settings.api_url.clone(),
@@ -321,7 +322,7 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let settings = &AllLanguageModelSettings::get_global(cx).open_ai;
+        let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
         let state = self.state.clone();

@@ -12,16 +12,13 @@ use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
 
-use ::settings::Settings;
 pub use model::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
-use settings::AllLanguageModelSettings;
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     settings::init(cx);
-    dbg!(&AllLanguageModelSettings::get_global(cx).ollama);
     registry::init(client, cx);
 }
 
