@@ -242,7 +242,7 @@ impl RenderOnce for SettingsItem {
                     DropdownMenu::new(
                         id.clone(),
                         current_string.unwrap_or_default(),
-                        ContextMenu::build(cx, |menu, _cx| menu.into()),
+                        ContextMenu::build(cx, |menu, _cx| menu),
                     )
                     .into_any_element(),
                 ),
@@ -255,7 +255,7 @@ impl RenderOnce for SettingsItem {
                 DropdownMenu::new(
                     id.clone(),
                     current_string.unwrap_or_default(),
-                    ContextMenu::build(cx, |menu, _cx| menu.into()),
+                    ContextMenu::build(cx, |menu, _cx| menu),
                 )
                 .full_width(true)
                 .into_any_element(),
