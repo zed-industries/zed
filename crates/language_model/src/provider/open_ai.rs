@@ -231,7 +231,6 @@ impl LanguageModel for OpenAiLanguageModel {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            dbg!(settings);
             (
                 state.api_key.clone(),
                 settings.api_url.clone(),
