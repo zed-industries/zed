@@ -52,7 +52,7 @@ tiny_http = "0.8"
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
-tokio-socks = { git = "https://github.com/Congyuwang/tokio-socks", default-features = false, features = ["futures"], rev = "10131e4" }
+tokio-socks.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
