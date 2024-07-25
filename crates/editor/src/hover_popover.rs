@@ -549,7 +549,6 @@ async fn parse_blocks(
                     .text_base()
                     .mt(rems(1.))
                     .mb_0(),
-                ..Default::default()
             };
 
             Markdown::new(
