@@ -8863,6 +8863,8 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "criterion",
+ "ctor",
+ "env_logger",
  "gpui",
  "log",
  "rand 0.8.5",
