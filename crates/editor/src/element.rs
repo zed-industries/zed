@@ -1970,6 +1970,7 @@ impl EditorElement {
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                     .into_any_element()
             }
