@@ -3,5 +3,8 @@
   "extends": ["config:recommended", ":semanticCommitsDisabled", "group:serdeMonorepo"],
   "dependencyDashboard": true,
   "timezone": "America/New_York",
-  "schedule": ["after 3pm on Wednesday"]
+  "schedule": ["after 3pm on Wednesday"],
+  "major": {
+    "dependencyDashboardApproval": true
+  }
 }
