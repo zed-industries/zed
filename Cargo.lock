@@ -13467,7 +13467,6 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
- "toml 0.8.10",
 ]
 
 [[package]]
