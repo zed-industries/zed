@@ -35,7 +35,6 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
-    time::{Duration, UNIX_EPOCH},
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
@@ -931,9 +930,6 @@ impl SerializableItem for Editor {
                     .session
                     .restore_unsaved_buffers
                 {
-                    let mtime = mtime.map(|(seconds, nanos)| {
-                        UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32)
-                    });
                     (path, contents, language, mtime)
                 } else {
                     (path, None, None, None)
@@ -1059,13 +1055,7 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
         let path = local_file.map(|file| file.abs_path(cx));
-        let mtime = local_file.and_then(|file| {
-            file.mtime().and_then(|time| {
-                time.duration_since(UNIX_EPOCH)
-                    .ok()
-                    .map(|duration| (duration.as_secs() as i64, duration.subsec_nanos() as i32))
-            })
-        });
+        let mtime = local_file.and_then(|file| file.mtime());
 
         let snapshot = buffer.read(cx).snapshot();
 

@@ -2,6 +2,7 @@ use anyhow::Result;
 use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
@@ -13,7 +14,7 @@ pub(crate) struct SerializedEditor {
     pub(crate) path: Option<PathBuf>,
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
-    pub(crate) mtime: Option<(i64, i32)>, // (seconds, nanoseconds)
+    pub(crate) mtime: Option<SystemTime>,
 }
 
 impl StaticColumnCount for SerializedEditor {
@@ -27,7 +28,14 @@ impl Bind for SerializedEditor {
         let start_index = statement.bind(&self.path, start_index)?;
         let start_index = statement.bind(&self.contents, start_index)?;
         let start_index = statement.bind(&self.language, start_index)?;
-        let start_index = match self.mtime {
+
+        let mtime = self.mtime.and_then(|mtime| {
+            mtime
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| (duration.as_secs() as i64, duration.subsec_nanos() as i32))
+        });
+        let start_index = match mtime {
             Some((seconds, nanos)) => {
                 let start_index = statement.bind(&seconds, start_index)?;
                 statement.bind(&nanos, start_index)?
@@ -53,7 +61,9 @@ impl Column for SerializedEditor {
         let (mtime_nanos, start_index): (Option<i32>, i32) =
             Column::column(statement, start_index)?;
 
-        let mtime = mtime_seconds.zip(mtime_nanos);
+        let mtime = mtime_seconds
+            .zip(mtime_nanos)
+            .map(|(seconds, nanos)| UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32));
 
         let editor = Self {
             path,
@@ -270,11 +280,12 @@ mod tests {
         assert_eq!(have, serialized_editor);
 
         // Storing and retrieving mtime
+        let now = SystemTime::now();
         let serialized_editor = SerializedEditor {
             path: None,
             contents: None,
             language: None,
-            mtime: Some((646464, 323232)),
+            mtime: Some(now),
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -286,6 +297,5 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(have, serialized_editor);
-        assert_eq!(have.mtime, Some((646464, 323232)));
     }
 }
