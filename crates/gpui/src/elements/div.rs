@@ -323,14 +323,14 @@ impl Interactivity {
     pub fn on_boxed_action(
         &mut self,
         action: &dyn Action,
-        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut WindowContext) + 'static,
     ) {
         let action = action.boxed_clone();
         self.action_listeners.push((
             (*action).type_id(),
             Box::new(move |_, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener)(&action, cx)
+                    (listener)(&*action, cx)
                 }
             }),
         ));
@@ -757,7 +757,7 @@ pub trait InteractiveElement: Sized {
     fn on_boxed_action(
         mut self,
         action: &dyn Action,
-        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
         self
