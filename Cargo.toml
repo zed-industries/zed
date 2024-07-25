@@ -536,7 +536,6 @@ style = { level = "allow", priority = -1 }
 
 # Individual rules that have violations in the codebase:
 almost_complete_range = "allow"
-reversed_empty_ranges = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
