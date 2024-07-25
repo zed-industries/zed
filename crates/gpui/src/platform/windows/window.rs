@@ -40,6 +40,7 @@ pub struct WindowsWindowState {
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub system_key_handled: bool,
 
     pub renderer: BladeRenderer,
 
@@ -87,6 +88,7 @@ impl WindowsWindowState {
         let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let system_key_handled = false;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new();
         let nc_button_pressed = None;
@@ -100,6 +102,7 @@ impl WindowsWindowState {
             scale_factor,
             callbacks,
             input_handler,
+            system_key_handled,
             renderer,
             click_state,
             system_settings,
