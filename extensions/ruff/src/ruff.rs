@@ -101,6 +101,8 @@ impl zed::Extension for RuffExtension {
     ) -> Result<zed::Command> {
         let mut binary = None;
         let mut args = None;
+        let mut enable_preview = true;
+
         if let Some(binary_settings) = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary)
@@ -112,12 +114,29 @@ impl zed::Extension for RuffExtension {
                 args = Some(bin_args);
             }
         }
+
+        if let Some(settings) = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings)
+        {
+            enable_preview = settings
+                .get("enable_preview")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(enable_preview);
+        }
+
         let command = if let Some(binary) = binary {
             binary
         } else {
             self.language_server_binary_path(server_id, worktree)?
         };
-        let args = args.unwrap_or_else(|| vec!["server".into()]);
+        let args = args.unwrap_or_else(|| {
+            if enable_preview {
+                vec!["server".into(), "--preview".into()]
+            } else {
+                vec!["server".into()]
+            }
+        });
         Ok(zed::Command {
             command,
             args,
