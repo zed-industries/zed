@@ -47,9 +47,14 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
 
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
-                if let Some(info_text) = info_text.as_ref() {
-                    menu = menu.colored_label(info_text.clone(), Color::Muted);
-                    menu = menu.separator();
+                if let Some(info_text) = info_text.clone() {
+                    menu = menu
+                        .custom_row(move |_cx| {
+                            Label::new(info_text.clone())
+                                .color(Color::Muted)
+                                .into_any_element()
+                        })
+                        .separator();
                 }
 
                 for (index, provider) in LanguageModelRegistry::global(cx)
