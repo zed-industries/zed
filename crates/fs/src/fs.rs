@@ -821,6 +821,11 @@ impl FakeFs {
         })
     }
 
+    pub fn set_next_mtime(&self, next_mtime: SystemTime) {
+        let mut state = self.state.lock();
+        state.next_mtime = next_mtime;
+    }
+
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
         self.write_file_internal(path, content).unwrap()
     }

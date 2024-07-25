@@ -14,7 +14,7 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonSize, ButtonStyle, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize, Tooltip,
 };
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -158,7 +158,7 @@ impl Render for QuickActionBar {
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_selections_menu.is_some())
@@ -207,7 +207,7 @@ impl Render for QuickActionBar {
 
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_settings_menu.is_some())
@@ -300,7 +300,7 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(Spacing::XLarge.rems(cx))
+            .gap(Spacing::Large.rems(cx))
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
@@ -378,7 +378,7 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .size(ButtonSize::Compact)
+            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)

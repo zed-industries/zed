@@ -3058,6 +3058,43 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn injections_intersecting_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, &Arc<Language>)> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .injection_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.injection_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let ranges = syntax_matches.peek().and_then(|mat| {
+                let config = &configs[mat.grammar_index]?;
+                let content_capture_range = mat.captures.iter().find_map(|capture| {
+                    if capture.index == config.content_capture_ix {
+                        Some(capture.node.byte_range())
+                    } else {
+                        None
+                    }
+                })?;
+                let language = self.language_at(content_capture_range.start)?;
+                Some((content_capture_range, language))
+            });
+            syntax_matches.advance();
+            ranges
+        })
+    }
+
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,

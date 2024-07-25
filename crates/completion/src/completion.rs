@@ -89,10 +89,10 @@ impl LanguageModelCompletionProvider {
 
     pub fn set_active_provider(
         &mut self,
-        provider_name: LanguageModelProviderId,
+        provider_id: LanguageModelProviderId,
         cx: &mut ModelContext<Self>,
     ) {
-        self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_name);
+        self.active_provider = LanguageModelRegistry::read_global(cx).provider(&provider_id);
         self.active_model = None;
         cx.notify();
     }

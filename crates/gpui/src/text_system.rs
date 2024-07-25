@@ -595,6 +595,19 @@ impl FontWeight {
     pub const EXTRA_BOLD: FontWeight = FontWeight(800.0);
     /// Black weight (900), the thickest value.
     pub const BLACK: FontWeight = FontWeight(900.0);
+
+    /// All of the font weights, in order from thinnest to thickest.
+    pub const ALL: [FontWeight; 9] = [
+        Self::THIN,
+        Self::EXTRA_LIGHT,
+        Self::LIGHT,
+        Self::NORMAL,
+        Self::MEDIUM,
+        Self::SEMIBOLD,
+        Self::BOLD,
+        Self::EXTRA_BOLD,
+        Self::BLACK,
+    ];
 }
 
 /// Allows italic or oblique faces to be selected.

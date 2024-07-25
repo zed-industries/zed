@@ -38,6 +38,7 @@ impl RenderOnce for ApplicationMenu {
                                             ))
                                         },
                                     )
+                                    .reserve_space_for_reset(true)
                                     .when(
                                         theme::has_adjusted_buffer_font_size(cx),
                                         |stepper| {
@@ -72,6 +73,7 @@ impl RenderOnce for ApplicationMenu {
                                             ))
                                         },
                                     )
+                                    .reserve_space_for_reset(true)
                                     .when(
                                         theme::has_adjusted_ui_font_size(cx),
                                         |stepper| {

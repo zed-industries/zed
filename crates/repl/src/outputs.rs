@@ -281,14 +281,14 @@ impl ErrorView {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let colors = cx.theme().colors();
+        let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
                 .w_full()
-                .bg(colors.background)
-                .py(cx.line_height() / 2.)
-                .border_l_1()
+                .px(padding)
+                .py(padding)
+                .border_1()
                 .border_color(theme.status().error_border)
                 .child(
                     h_flex()
@@ -429,13 +429,17 @@ impl ExecutionView {
                             self.outputs.push(output);
                         }
 
-                        // Comments from @rgbkrk, reach out with questions
+                        // There are other payloads that could be handled here, such as updating the input.
+                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
 
                         // Set next input adds text to the next cell. Not required to support.
                         // However, this could be implemented by adding text to the buffer.
+                        // Trigger in python using `get_ipython().set_next_input("text")`
+                        //
                         // runtimelib::Payload::SetNextInput { text, replace } => {},
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
+                        // Python users can trigger this with the `%edit` magic command
                         // runtimelib::Payload::EditMagic { filename, line_number } => {},
 
                         // Ask the user if they want to exit the kernel. Not required to support.
@@ -508,57 +512,60 @@ impl ExecutionView {
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let status = match &self.status {
+            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Executing => h_flex()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(3)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+                .child(Label::new("Executing...").color(Color::Muted))
+                .into_any_element(),
+            ExecutionStatus::Finished => Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .into_any_element(),
+            ExecutionStatus::Unknown => Label::new("Unknown status")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Queued => Label::new("Queued...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::KernelErrored(error) => Label::new(format!("Kernel error: {}", error))
+                .color(Color::Error)
+                .into_any_element(),
+        };
+
         if self.outputs.len() == 0 {
             return v_flex()
                 .min_h(cx.line_height())
                 .justify_center()
-                .child(match &self.status {
-                    ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
-                        .color(Color::Muted)
-                        .into_any_element(),
-                    ExecutionStatus::Executing => h_flex()
-                        .gap_2()
-                        .child(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(3)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                ),
-                        )
-                        .child(Label::new("Executing...").color(Color::Muted))
-                        .into_any_element(),
-                    ExecutionStatus::Finished => Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                    ExecutionStatus::Unknown => Label::new("Unknown status")
-                        .color(Color::Muted)
-                        .into_any_element(),
-                    ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
-                        .color(Color::Muted)
-                        .into_any_element(),
-                    ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
-                        .color(Color::Muted)
-                        .into_any_element(),
-                    ExecutionStatus::Queued => Label::new("Queued...")
-                        .color(Color::Muted)
-                        .into_any_element(),
-                    ExecutionStatus::KernelErrored(error) => {
-                        Label::new(format!("Kernel error: {}", error))
-                            .color(Color::Error)
-                            .into_any_element()
-                    }
-                })
+                .child(status)
                 .into_any_element();
         }
 
         div()
             .w_full()
             .children(self.outputs.iter().filter_map(|output| output.render(cx)))
+            .children(match self.status {
+                ExecutionStatus::Executing => vec![status],
+                ExecutionStatus::Queued => vec![status],
+                _ => vec![],
+            })
             .into_any_element()
     }
 }
@@ -569,13 +576,22 @@ impl LineHeight for ExecutionView {
             return 1; // For the status message if outputs are not there
         }
 
-        self.outputs
+        let num_lines = self
+            .outputs
             .iter()
             .map(|output| output.num_lines(cx))
             .fold(0_u8, |acc, additional_height| {
                 acc.saturating_add(additional_height)
             })
-            .max(1)
+            .max(1);
+
+        let num_lines = match self.status {
+            // Account for the status message if the execution is still ongoing
+            ExecutionStatus::Executing => num_lines.saturating_add(1),
+            ExecutionStatus::Queued => num_lines.saturating_add(1),
+            _ => num_lines,
+        };
+        num_lines
     }
 }
 
