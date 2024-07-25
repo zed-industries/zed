@@ -8,7 +8,7 @@ use gpui::{
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
-use lsp::{IoKind, LanguageServer};
+use lsp::{notification::SetTrace, IoKind, LanguageServer, SetTraceParams, TraceValue};
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
@@ -110,6 +110,7 @@ pub(crate) struct LogMenuItem {
     pub worktree_root_name: String,
     pub rpc_trace_enabled: bool,
     pub selected_entry: LogKind,
+    pub trace_level: lsp::TraceValue,
 }
 
 actions!(debug, [OpenLanguageServerLogs]);
@@ -600,6 +601,7 @@ impl LspLogView {
                     worktree_root_name: worktree.read(cx).root_name().to_string(),
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
+                    trace_level: lsp::TraceValue::Off,
                 })
             })
             .chain(
@@ -614,6 +616,7 @@ impl LspLogView {
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
                             selected_entry: self.active_entry_kind,
+                            trace_level: lsp::TraceValue::Off,
                         })
                     }),
             )
@@ -628,6 +631,7 @@ impl LspLogView {
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
                             selected_entry: self.active_entry_kind,
+                            trace_level: lsp::TraceValue::Off,
                         }),
                         _ => None,
                     }),
@@ -729,6 +733,18 @@ impl LspLogView {
         if !enabled && Some(server_id) == self.current_server_id {
             self.show_logs_for_server(server_id, cx);
             cx.notify();
+        }
+    }
+    fn update_trace_level(
+        &self,
+        server_id: LanguageServerId,
+        level: TraceValue,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(server) = self.project.read(cx).language_server_for_id(server_id) {
+            server
+                .notify::<SetTrace>(SetTraceParams { value: level })
+                .ok();
         }
     }
 }
@@ -896,123 +912,197 @@ impl Render for LspLogToolbarItemView {
                     })
                     .unwrap_or_else(|| "No server selected".into()),
             ))
-            .menu(move |cx| {
-                let menu_rows = menu_rows.clone();
+            .menu({
                 let log_view = log_view.clone();
-                let log_toolbar_view = log_toolbar_view.clone();
-                ContextMenu::build(cx, move |mut menu, cx| {
-                    for (ix, row) in menu_rows.into_iter().enumerate() {
-                        let server_selected = Some(row.server_id) == current_server_id;
-                        menu = menu
-                            .header(format!(
-                                "{} ({})",
-                                row.server_name.0, row.worktree_root_name
-                            ))
-                            .entry(
-                                SERVER_LOGS,
+                move |cx| {
+                    let menu_rows = menu_rows.clone();
+                    let log_view = log_view.clone();
+                    let log_toolbar_view = log_toolbar_view.clone();
+                    ContextMenu::build(cx, move |mut menu, cx| {
+                        for (ix, row) in menu_rows.into_iter().enumerate() {
+                            let server_selected = Some(row.server_id) == current_server_id;
+                            menu = menu
+                                .header(format!(
+                                    "{} ({})",
+                                    row.server_name.0, row.worktree_root_name
+                                ))
+                                .entry(
+                                    SERVER_LOGS,
+                                    None,
+                                    cx.handler_for(&log_view, move |view, cx| {
+                                        view.show_logs_for_server(row.server_id, cx);
+                                    }),
+                                );
+                            if server_selected && row.selected_entry == LogKind::Logs {
+                                let selected_ix = menu.select_last();
+                                debug_assert_eq!(
+                                    Some(ix * 4 + 1),
+                                    selected_ix,
+                                    "Could not scroll to a just added LSP menu item"
+                                );
+                            }
+                            menu = menu.entry(
+                                SERVER_TRACE,
                                 None,
                                 cx.handler_for(&log_view, move |view, cx| {
-                                    view.show_logs_for_server(row.server_id, cx);
+                                    view.show_trace_for_server(row.server_id, cx);
                                 }),
                             );
-                        if server_selected && row.selected_entry == LogKind::Logs {
-                            let selected_ix = menu.select_last();
-                            debug_assert_eq!(
-                                Some(ix * 4 + 1),
-                                selected_ix,
-                                "Could not scroll to a just added LSP menu item"
-                            );
-                        }
-                        menu = menu.entry(
-                            SERVER_TRACE,
-                            None,
-                            cx.handler_for(&log_view, move |view, cx| {
-                                view.show_trace_for_server(row.server_id, cx);
-                            }),
-                        );
-                        if server_selected && row.selected_entry == LogKind::Trace {
-                            let selected_ix = menu.select_last();
-                            debug_assert_eq!(
-                                Some(ix * 4 + 2),
-                                selected_ix,
-                                "Could not scroll to a just added LSP menu item"
-                            );
-                        }
-                        menu = menu.custom_entry(
-                            {
-                                let log_toolbar_view = log_toolbar_view.clone();
-                                move |cx| {
-                                    h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new(RPC_MESSAGES))
-                                        .child(
-                                            div().child(
-                                                Checkbox::new(
-                                                    ix,
-                                                    if row.rpc_trace_enabled {
-                                                        Selection::Selected
-                                                    } else {
-                                                        Selection::Unselected
-                                                    },
-                                                )
-                                                .on_click(cx.listener_for(
-                                                    &log_toolbar_view,
-                                                    move |view, selection, cx| {
-                                                        let enabled = matches!(
-                                                            selection,
+                            if server_selected && row.selected_entry == LogKind::Trace {
+                                let selected_ix = menu.select_last();
+                                debug_assert_eq!(
+                                    Some(ix * 4 + 2),
+                                    selected_ix,
+                                    "Could not scroll to a just added LSP menu item"
+                                );
+                            }
+                            menu = menu.custom_entry(
+                                {
+                                    let log_toolbar_view = log_toolbar_view.clone();
+                                    move |cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(RPC_MESSAGES))
+                                            .child(
+                                                div().child(
+                                                    Checkbox::new(
+                                                        ix,
+                                                        if row.rpc_trace_enabled {
                                                             Selection::Selected
-                                                        );
-                                                        view.toggle_rpc_logging_for_server(
-                                                            row.server_id,
-                                                            enabled,
-                                                            cx,
-                                                        );
-                                                        cx.stop_propagation();
-                                                    },
-                                                )),
-                                            ),
-                                        )
-                                        .into_any_element()
-                                }
-                            },
-                            cx.handler_for(&log_view, move |view, cx| {
-                                view.show_rpc_trace_for_server(row.server_id, cx);
-                            }),
-                        );
-                        if server_selected && row.selected_entry == LogKind::Rpc {
-                            let selected_ix = menu.select_last();
-                            debug_assert_eq!(
-                                Some(ix * 4 + 3),
-                                selected_ix,
-                                "Could not scroll to a just added LSP menu item"
+                                                        } else {
+                                                            Selection::Unselected
+                                                        },
+                                                    )
+                                                    .on_click(cx.listener_for(
+                                                        &log_toolbar_view,
+                                                        move |view, selection, cx| {
+                                                            let enabled = matches!(
+                                                                selection,
+                                                                Selection::Selected
+                                                            );
+                                                            view.toggle_rpc_logging_for_server(
+                                                                row.server_id,
+                                                                enabled,
+                                                                cx,
+                                                            );
+                                                            cx.stop_propagation();
+                                                        },
+                                                    )),
+                                                ),
+                                            )
+                                            .into_any_element()
+                                    }
+                                },
+                                cx.handler_for(&log_view, move |view, cx| {
+                                    view.show_rpc_trace_for_server(row.server_id, cx);
+                                }),
                             );
+                            if server_selected && row.selected_entry == LogKind::Rpc {
+                                let selected_ix = menu.select_last();
+                                debug_assert_eq!(
+                                    Some(ix * 4 + 3),
+                                    selected_ix,
+                                    "Could not scroll to a just added LSP menu item"
+                                );
+                            }
                         }
-                    }
-                    menu
-                })
-                .into()
+                        menu
+                    })
+                    .into()
+                }
             });
 
-        h_flex().size_full().child(lsp_menu).child(
-            div()
-                .child(
-                    Button::new("clear_log_button", "Clear").on_click(cx.listener(
-                        |this, _, cx| {
-                            if let Some(log_view) = this.log_view.as_ref() {
-                                log_view.update(cx, |log_view, cx| {
-                                    log_view.editor.update(cx, |editor, cx| {
-                                        editor.set_read_only(false);
-                                        editor.clear(cx);
-                                        editor.set_read_only(true);
-                                    });
-                                })
-                            }
-                        },
-                    )),
-                )
-                .ml_2(),
-        )
+        h_flex()
+            .size_full()
+            .child(lsp_menu)
+            .child(
+                div()
+                    .child(
+                        Button::new("clear_log_button", "Clear").on_click(cx.listener(
+                            |this, _, cx| {
+                                if let Some(log_view) = this.log_view.as_ref() {
+                                    log_view.update(cx, |log_view, cx| {
+                                        log_view.editor.update(cx, |editor, cx| {
+                                            editor.set_read_only(false);
+                                            editor.clear(cx);
+                                            editor.set_read_only(true);
+                                        });
+                                    })
+                                }
+                            },
+                        )),
+                    )
+                    .ml_2(),
+            )
+            .child(log_view.update(cx, |this, cx| {
+                if this.active_entry_kind == LogKind::Trace {
+                    let log_view = log_view.clone();
+                    div().child(
+                        PopoverMenu::new("lsp-trace-level-menu")
+                            .anchor(AnchorCorner::TopLeft)
+                            .trigger(Button::new(
+                                "language_server_trace_level_selector",
+                                "Trace level",
+                            ))
+                            .menu({
+                                let log_view = log_view.clone();
+                                move |cx| {
+                                    ContextMenu::build(cx, |menu, cx| {
+                                        let log_view = log_view.clone();
+
+                                        menu.entry("Off", None, {
+                                            let log_view = log_view.clone();
+                                            move |cx| {
+                                                log_view.update(cx, |this, cx| {
+                                                    if let Some(id) = this.current_server_id {
+                                                        this.update_trace_level(
+                                                            id,
+                                                            TraceValue::Off,
+                                                            cx,
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        })
+                                        .entry("Messages", None, {
+                                            let log_view = log_view.clone();
+                                            move |cx| {
+                                                log_view.update(cx, |this, cx| {
+                                                    if let Some(id) = this.current_server_id {
+                                                        this.update_trace_level(
+                                                            id,
+                                                            TraceValue::Messages,
+                                                            cx,
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        })
+                                        .entry(
+                                            "Verbose",
+                                            None,
+                                            move |cx| {
+                                                log_view.update(cx, |this, cx| {
+                                                    if let Some(id) = this.current_server_id {
+                                                        this.update_trace_level(
+                                                            id,
+                                                            TraceValue::Verbose,
+                                                            cx,
+                                                        );
+                                                    }
+                                                });
+                                            },
+                                        )
+                                    })
+                                    .into()
+                                }
+                            }),
+                    )
+                } else {
+                    div()
+                }
+            }))
     }
 }
 
