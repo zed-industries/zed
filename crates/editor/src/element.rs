@@ -1569,7 +1569,8 @@ impl EditorElement {
             editor
                 .breakpoints
                 .iter()
-                .filter_map(|(_, breakpoint)| {
+                .flat_map(|(_buffer_id, breakpoint_set)| breakpoint_set.iter())
+                .filter_map(|breakpoint| {
                     let point = breakpoint
                         .position
                         .to_display_point(&snapshot.display_snapshot);

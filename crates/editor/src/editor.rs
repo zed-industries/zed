@@ -450,7 +450,7 @@ struct ResolvedTasks {
     position: Anchor,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct Breakpoint {
     position: Anchor,
 }
@@ -574,7 +574,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    breakpoints: BTreeMap<(BufferId, ExcerptId), Breakpoint>,
+    breakpoints: BTreeMap<BufferId, HashSet<Breakpoint>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
@@ -5999,15 +5999,15 @@ impl Editor {
         };
 
         let buffer_id = buffer.read(cx).remote_id();
-        let key = (buffer_id, breakpoint_position.excerpt_id);
+        // let key = (buffer_id, breakpoint_position);
+        let breakpoint = Breakpoint {
+            position: breakpoint_position,
+        };
 
-        if self.breakpoints.remove(&key).is_none() {
-            self.breakpoints.insert(
-                key,
-                Breakpoint {
-                    position: breakpoint_position,
-                },
-            );
+        let breakpoint_set = self.breakpoints.entry(buffer_id).or_default();
+
+        if !breakpoint_set.remove(&breakpoint) {
+            breakpoint_set.insert(breakpoint);
         }
         // let row = breakpoint_position
         //     .to_point(&(self.snapshot(cx).display_snapshot.buffer_snapshot))
