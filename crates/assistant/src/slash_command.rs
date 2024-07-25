@@ -27,6 +27,7 @@ pub mod now_command;
 pub mod project_command;
 pub mod prompt_command;
 pub mod search_command;
+pub mod symbols_command;
 pub mod tabs_command;
 pub mod term_command;
 

@@ -29,9 +29,19 @@ impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";
 }
 
+pub struct LanguageModels {}
+impl FeatureFlag for LanguageModels {
+    const NAME: &'static str = "language-models";
+}
+
 pub struct TerminalInlineAssist {}
 impl FeatureFlag for TerminalInlineAssist {
     const NAME: &'static str = "terminal-inline-assist";
+}
+
+pub struct GroupedDiagnostics {}
+impl FeatureFlag for GroupedDiagnostics {
+    const NAME: &'static str = "grouped-diagnostics";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
@@ -60,6 +70,10 @@ pub trait FeatureFlagAppExt {
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
     fn is_staff(&self) -> bool;
+
+    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    where
+        F: Fn(bool, &mut AppContext) + 'static;
 }
 
 impl FeatureFlagAppExt for AppContext {
@@ -84,5 +98,15 @@ impl FeatureFlagAppExt for AppContext {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.staff)
             .unwrap_or(false)
+    }
+
+    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    where
+        F: Fn(bool, &mut AppContext) + 'static,
+    {
+        self.observe_global::<FeatureFlags>(move |cx| {
+            let feature_flags = cx.global::<FeatureFlags>();
+            callback(feature_flags.has_flag(<T as FeatureFlag>::NAME), cx);
+        })
     }
 }

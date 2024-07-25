@@ -103,6 +103,25 @@ impl IndexedDocsStore {
             .await
     }
 
+    pub async fn load_many_by_prefix(&self, prefix: String) -> Result<Vec<(String, MarkdownDocs)>> {
+        self.database_future
+            .clone()
+            .await
+            .map_err(|err| anyhow!(err))?
+            .load_many_by_prefix(prefix)
+            .await
+    }
+
+    /// Returns whether any entries exist with the given prefix.
+    pub async fn any_with_prefix(&self, prefix: String) -> Result<bool> {
+        self.database_future
+            .clone()
+            .await
+            .map_err(|err| anyhow!(err))?
+            .any_with_prefix(prefix)
+            .await
+    }
+
     pub fn index(
         self: Arc<Self>,
         package: PackageName,
@@ -254,6 +273,42 @@ impl IndexedDocsDatabase {
             entries
                 .get(&txn, &key)?
                 .ok_or_else(|| anyhow!("no docs found for {key}"))
+        })
+    }
+
+    pub fn load_many_by_prefix(&self, prefix: String) -> Task<Result<Vec<(String, MarkdownDocs)>>> {
+        let env = self.env.clone();
+        let entries = self.entries;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let results = entries
+                .iter(&txn)?
+                .filter_map(|entry| {
+                    let (key, value) = entry.ok()?;
+                    if key.starts_with(&prefix) {
+                        Some((key, value))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            Ok(results)
+        })
+    }
+
+    /// Returns whether any entries exist with the given prefix.
+    pub fn any_with_prefix(&self, prefix: String) -> Task<Result<bool>> {
+        let env = self.env.clone();
+        let entries = self.entries;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let any = entries
+                .iter(&txn)?
+                .any(|entry| entry.map_or(false, |(key, _value)| key.starts_with(&prefix)));
+            Ok(any)
         })
     }
 

@@ -14,7 +14,7 @@ use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
-use fs::RealFs;
+use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
@@ -28,6 +28,7 @@ use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion};
+use session::Session;
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -46,7 +47,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -158,6 +159,27 @@ fn init_headless(
     )
 }
 
+// init_common is called for both headless and normal mode.
+fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
+    SystemAppearance::init(cx);
+    theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+    command_palette::init(cx);
+    language_model::init(app_state.client.clone(), cx);
+    snippet_provider::init(cx);
+    supermaven::init(app_state.client.clone(), cx);
+    inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
+    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    repl::init(app_state.fs.clone(), cx);
+    extension::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.languages.clone(),
+        ThemeRegistry::global(cx),
+        cx,
+    );
+}
+
 fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     match cx.try_global::<AppMode>() {
         Some(AppMode::Headless(_)) => {
@@ -172,26 +194,24 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         }
     };
 
-    SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
     #[cfg(target_os = "linux")]
     crate::zed::linux_prompts::init(cx);
 
-    theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     app_state.languages.set_theme(cx.theme().clone());
-    command_palette::init(cx);
     editor::init(cx);
     image_viewer::init(cx);
     diagnostics::init(cx);
 
     audio::init(Assets, cx);
     workspace::init(app_state.clone(), cx);
-    recent_projects::init(cx);
 
+    recent_projects::init(cx);
     go_to_line::init(cx);
     file_finder::init(cx);
     tab_switcher::init(cx);
+    dev_server_projects::init(app_state.client.clone(), cx);
     outline::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
@@ -201,7 +221,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     search::init(cx);
     vim::init(cx);
     terminal_view::init(cx);
-
     journal::init(app_state.clone(), cx);
     language_selector::init(cx);
     theme_selector::init(cx);
@@ -212,8 +231,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     feedback::init(cx);
     markdown_preview::init(cx);
     welcome::init(cx);
+    settings_ui::init(cx);
     extensions_ui::init(cx);
-    snippet_provider::init(cx);
 
     // Initialize each completion provider. Settings are used for toggling between them.
     let copilot_language_server_id = app_state.languages.next_language_server_id();
@@ -223,13 +242,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
         app_state.node_runtime.clone(),
         cx,
     );
-    supermaven::init(app_state.client.clone(), cx);
-
-    inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-
-    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-
-    repl::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -260,17 +272,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     telemetry.report_setting_event("theme", cx.theme().name.to_string());
     telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
     telemetry.flush_events();
-
-    extension::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        app_state.node_runtime.clone(),
-        app_state.languages.clone(),
-        ThemeRegistry::global(cx),
-        cx,
-    );
-
-    dev_server_projects::init(app_state.client.clone(), cx);
 
     let fs = app_state.fs.clone();
     load_user_themes_in_background(fs.clone(), cx);
@@ -308,10 +309,15 @@ fn main() {
         .block(installation_id())
         .ok()
         .unzip();
-    let session_id = Uuid::new_v4().to_string();
+
+    let session = app.background_executor().block(Session::new());
 
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
-    reliability::init_panic_hook(installation_id.clone(), app_version, session_id.clone());
+    reliability::init_panic_hook(
+        installation_id.clone(),
+        app_version,
+        session.id().to_owned(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -393,6 +399,8 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
+        <dyn Fs>::set_global(fs.clone(), cx);
+
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
 
@@ -424,7 +432,7 @@ fn main() {
         client::init(&client, cx);
         language::init(cx);
         let telemetry = client.telemetry();
-        telemetry.start(installation_id.clone(), session_id, cx);
+        telemetry.start(installation_id.clone(), session.id().to_owned(), cx);
         telemetry.report_app_event(
             match existing_installation_id_found {
                 Some(false) => "first open",
@@ -440,12 +448,13 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
+            session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-
         reliability::init(client.http_client(), installation_id, cx);
+        init_common(app_state.clone(), cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -522,6 +531,21 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         fail_to_open_window(e, cx);
         return;
     };
+
+    if let Some(connection_info) = request.ssh_connection {
+        cx.spawn(|mut cx| async move {
+            open_ssh_paths(
+                connection_info,
+                request.open_paths,
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut cx,
+            )
+            .await
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
 
     let mut task = None;
     if !request.open_paths.is_empty() {
@@ -644,23 +668,18 @@ async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let restore_behaviour = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
-    let location = match restore_behaviour {
-        workspace::RestoreOnStartupBehaviour::LastWorkspace => {
-            workspace::last_opened_workspace_paths().await
+    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+        for location in locations {
+            cx.update(|cx| {
+                workspace::open_paths(
+                    location.paths().as_ref(),
+                    app_state.clone(),
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+            })?
+            .await?;
         }
-        _ => None,
-    };
-    if let Some(location) = location {
-        cx.update(|cx| {
-            workspace::open_paths(
-                location.paths().as_ref(),
-                app_state,
-                workspace::OpenOptions::default(),
-                cx,
-            )
-        })?
-        .await?;
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
@@ -673,6 +692,42 @@ async fn restore_or_create_workspace(
     }
 
     Ok(())
+}
+
+pub(crate) async fn restorable_workspace_locations(
+    cx: &mut AsyncAppContext,
+    app_state: &Arc<AppState>,
+) -> Option<Vec<workspace::LocalPaths>> {
+    let mut restore_behaviour = cx
+        .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
+        .ok()?;
+
+    let last_session_id = app_state.session.last_session_id();
+    if last_session_id.is_none()
+        && matches!(
+            restore_behaviour,
+            workspace::RestoreOnStartupBehaviour::LastSession
+        )
+    {
+        restore_behaviour = workspace::RestoreOnStartupBehaviour::LastWorkspace;
+    }
+
+    match restore_behaviour {
+        workspace::RestoreOnStartupBehaviour::LastWorkspace => {
+            workspace::last_opened_workspace_paths()
+                .await
+                .map(|location| vec![location])
+        }
+        workspace::RestoreOnStartupBehaviour::LastSession => {
+            if let Some(last_session_id) = last_session_id {
+                workspace::last_session_workspace_locations(last_session_id)
+                    .filter(|locations| !locations.is_empty())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -893,7 +948,10 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
         Err(error) => {
-            if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
+            if arg.starts_with("file://")
+                || arg.starts_with("zed-cli://")
+                || arg.starts_with("ssh://")
+            {
                 Ok(arg.into())
             } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())

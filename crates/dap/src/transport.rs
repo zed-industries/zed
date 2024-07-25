@@ -5,15 +5,15 @@ use dap_types::{
     ProgressEndEvent, ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent,
     ThreadEvent,
 };
-use futures::{
-    channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
-    AsyncBufRead, AsyncWrite, SinkExt as _, StreamExt,
-};
+use futures::{AsyncBufRead, AsyncWrite};
 use gpui::AsyncAppContext;
-use parking_lot::Mutex;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
+use smol::{
+    channel::{unbounded, Receiver, Sender},
+    io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt},
+    lock::Mutex,
+};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -91,7 +91,7 @@ impl Transport {
         server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
         server_stderr: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         cx: &mut AsyncAppContext,
-    ) -> (UnboundedReceiver<Payload>, UnboundedSender<Payload>) {
+    ) -> (Receiver<Payload>, Sender<Payload>) {
         let (client_tx, server_rx) = unbounded::<Payload>();
         let (server_tx, client_rx) = unbounded::<Payload>();
 
@@ -100,13 +100,20 @@ impl Transport {
         });
 
         let _ = cx.update(|cx| {
-            cx.spawn(|_| Self::receive(transport.clone(), server_stdout, client_tx))
+            let transport = transport.clone();
+
+            cx.background_executor()
+                .spawn(Self::receive(transport.clone(), server_stdout, client_tx))
                 .detach_and_log_err(cx);
-            cx.spawn(|_| Self::send(transport, server_stdin, client_rx))
+
+            cx.background_executor()
+                .spawn(Self::send(transport.clone(), server_stdin, client_rx))
                 .detach_and_log_err(cx);
 
             if let Some(stderr) = server_stderr {
-                cx.spawn(|_| Self::err(stderr)).detach_and_log_err(cx);
+                cx.background_executor()
+                    .spawn(Self::err(stderr))
+                    .detach_and_log_err(cx);
             }
         });
 
@@ -176,7 +183,7 @@ impl Transport {
     ) -> Result<()> {
         if let Payload::Request(request) = &mut payload {
             if let Some(back) = request.back_ch.take() {
-                self.pending_requests.lock().insert(request.seq, back);
+                self.pending_requests.lock().await.insert(request.seq, back);
             }
         }
         self.send_string_to_server(server_stdin, serde_json::to_string(&payload)?)
@@ -189,10 +196,8 @@ impl Transport {
         request: String,
     ) -> Result<()> {
         server_stdin
-            .write_all(format!("Content-Length: {}\r\n\r\n", request.len()).as_bytes())
+            .write_all(format!("Content-Length: {}\r\n\r\n{}", request.len(), request).as_bytes())
             .await?;
-
-        server_stdin.write_all(request.as_bytes()).await?;
 
         server_stdin.flush().await?;
         Ok(())
@@ -208,17 +213,13 @@ impl Transport {
 
     async fn process_server_message(
         &self,
-        mut client_tx: &UnboundedSender<Payload>,
+        client_tx: &Sender<Payload>,
         payload: Payload,
     ) -> Result<()> {
         match payload {
             Payload::Response(res) => {
-                let pending_request = {
-                    let mut pending_requests = self.pending_requests.lock();
-                    pending_requests.remove(&res.request_seq)
-                };
+                if let Some(tx) = self.pending_requests.lock().await.remove(&res.request_seq) {
 
-                if let Some(mut tx) = pending_request {
                     if !tx.is_closed() {
                         tx.send(Self::process_response(res)).await?;
                     } else {
@@ -245,7 +246,7 @@ impl Transport {
     async fn receive(
         transport: Arc<Self>,
         mut server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
-        client_tx: UnboundedSender<Payload>,
+        client_tx: Sender<Payload>,
     ) -> Result<()> {
         let mut recv_buffer = String::new();
         loop {
@@ -262,9 +263,9 @@ impl Transport {
     async fn send(
         transport: Arc<Self>,
         mut server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
-        mut client_rx: UnboundedReceiver<Payload>,
+        client_rx: Receiver<Payload>,
     ) -> Result<()> {
-        while let Some(payload) = client_rx.next().await {
+        while let Ok(payload) = client_rx.recv().await {
             transport
                 .send_payload_to_server(&mut server_stdin, payload)
                 .await?;

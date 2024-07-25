@@ -74,46 +74,60 @@ fn scroll_editor(
     }
 
     editor.scroll_screen(amount, cx);
-    if should_move_cursor {
-        let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {
-            visible_rows as u32
-        } else {
-            return;
-        };
-
-        let top_anchor = editor.scroll_manager.anchor().anchor;
-        let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
-
-        editor.change_selections(None, cx, |s| {
-            s.move_with(|map, selection| {
-                let mut head = selection.head();
-                let top = top_anchor.to_display_point(map);
-
-                if preserve_cursor_position {
-                    let old_top = old_top_anchor.to_display_point(map);
-                    let new_row =
-                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0);
-                    head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
-                }
-                let min_row = DisplayRow(top.row().0 + vertical_scroll_margin as u32);
-                let max_row =
-                    DisplayRow(top.row().0 + visible_rows - vertical_scroll_margin as u32 - 1);
-
-                let new_head = if head.row() < min_row {
-                    map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)
-                } else if head.row() > max_row {
-                    map.clip_point(DisplayPoint::new(max_row, head.column()), Bias::Left)
-                } else {
-                    head
-                };
-                if selection.is_empty() {
-                    selection.collapse_to(new_head, selection.goal)
-                } else {
-                    selection.set_head(new_head, selection.goal)
-                };
-            })
-        });
+    if !should_move_cursor {
+        return;
     }
+
+    let visible_line_count = if let Some(visible_line_count) = editor.visible_line_count() {
+        visible_line_count
+    } else {
+        return;
+    };
+
+    let top_anchor = editor.scroll_manager.anchor().anchor;
+    let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
+
+    editor.change_selections(None, cx, |s| {
+        s.move_with(|map, selection| {
+            let mut head = selection.head();
+            let top = top_anchor.to_display_point(map);
+
+            if preserve_cursor_position {
+                let old_top = old_top_anchor.to_display_point(map);
+                let new_row = if old_top.row() == top.row() {
+                    DisplayRow(
+                        top.row()
+                            .0
+                            .saturating_add_signed(amount.lines(visible_line_count) as i32),
+                    )
+                } else {
+                    DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0)
+                };
+                head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
+            }
+            let min_row = if top.row().0 == 0 {
+                DisplayRow(0)
+            } else {
+                DisplayRow(top.row().0 + vertical_scroll_margin as u32)
+            };
+            let max_row = DisplayRow(
+                top.row().0 + visible_line_count as u32 - vertical_scroll_margin as u32 - 1,
+            );
+
+            let new_head = if head.row() < min_row {
+                map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)
+            } else if head.row() > max_row {
+                map.clip_point(DisplayPoint::new(max_row, head.column()), Bias::Left)
+            } else {
+                head
+            };
+            if selection.is_empty() {
+                selection.collapse_to(new_head, selection.goal)
+            } else {
+                selection.set_head(new_head, selection.goal)
+            };
+        })
+    });
 }
 
 #[cfg(test)]
@@ -249,6 +263,11 @@ mod test {
         cx.simulate_shared_keystrokes("ctrl-u").await;
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-d ctrl-d 4 j ctrl-u ctrl-u")
+            .await;
+        cx.shared_state().await.assert_matches();
+
+        // test returning to top
+        cx.simulate_shared_keystrokes("g g ctrl-d ctrl-u ctrl-u")
             .await;
         cx.shared_state().await.assert_matches();
     }

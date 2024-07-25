@@ -164,7 +164,7 @@ impl<'a> FoldMapWriter<'a> {
             new_tree
         };
 
-        consolidate_inlay_edits(&mut edits);
+        let edits = consolidate_inlay_edits(edits);
         let edits = self.0.sync(snapshot.clone(), edits);
         (self.0.snapshot.clone(), edits)
     }
@@ -212,7 +212,7 @@ impl<'a> FoldMapWriter<'a> {
             folds
         };
 
-        consolidate_inlay_edits(&mut edits);
+        let edits = consolidate_inlay_edits(edits);
         let edits = self.0.sync(snapshot.clone(), edits);
         (self.0.snapshot.clone(), edits)
     }
@@ -513,7 +513,7 @@ impl FoldMap {
                     });
                 }
 
-                consolidate_fold_edits(&mut fold_edits);
+                fold_edits = consolidate_fold_edits(fold_edits);
             }
 
             self.snapshot.transforms = new_transforms;
@@ -809,7 +809,7 @@ where
     cursor
 }
 
-fn consolidate_inlay_edits(edits: &mut Vec<InlayEdit>) {
+fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
     edits.sort_unstable_by(|a, b| {
         a.old
             .start
@@ -817,42 +817,68 @@ fn consolidate_inlay_edits(edits: &mut Vec<InlayEdit>) {
             .then_with(|| b.old.end.cmp(&a.old.end))
     });
 
-    let mut i = 1;
-    while i < edits.len() {
-        let edit = edits[i].clone();
-        let prev_edit = &mut edits[i - 1];
-        if prev_edit.old.end >= edit.old.start {
-            prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
-            prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
-            prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
-            edits.remove(i);
-            continue;
-        }
-        i += 1;
-    }
+    let _old_alloc_ptr = edits.as_ptr();
+    let mut inlay_edits = edits.into_iter();
+    let inlay_edits = if let Some(mut first_edit) = inlay_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
+        let mut v: Vec<_> = inlay_edits
+            .scan(&mut first_edit, |prev_edit, edit| {
+                if prev_edit.old.end >= edit.old.start {
+                    prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
+                    prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
+                    prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
+                    Some(None) // Skip this edit, it's merged
+                } else {
+                    let prev = std::mem::replace(*prev_edit, edit);
+                    Some(Some(prev)) // Yield the previous edit
+                }
+            })
+            .filter_map(|x| x)
+            .collect();
+        v.push(first_edit.clone());
+        debug_assert_eq!(_old_alloc_ptr, v.as_ptr(), "Inlay edits were reallocated");
+        v
+    } else {
+        vec![]
+    };
+
+    inlay_edits
 }
 
-fn consolidate_fold_edits(edits: &mut Vec<FoldEdit>) {
+fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
     edits.sort_unstable_by(|a, b| {
         a.old
             .start
             .cmp(&b.old.start)
             .then_with(|| b.old.end.cmp(&a.old.end))
     });
+    let _old_alloc_ptr = edits.as_ptr();
+    let mut fold_edits = edits.into_iter();
+    let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
+        let mut v: Vec<_> = fold_edits
+            .scan(&mut first_edit, |prev_edit, edit| {
+                if prev_edit.old.end >= edit.old.start {
+                    prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
+                    prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
+                    prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
+                    Some(None) // Skip this edit, it's merged
+                } else {
+                    let prev = std::mem::replace(*prev_edit, edit);
+                    Some(Some(prev)) // Yield the previous edit
+                }
+            })
+            .filter_map(|x| x)
+            .collect();
+        v.push(first_edit.clone());
+        v
+    } else {
+        vec![]
+    };
 
-    let mut i = 1;
-    while i < edits.len() {
-        let edit = edits[i].clone();
-        let prev_edit = &mut edits[i - 1];
-        if prev_edit.old.end >= edit.old.start {
-            prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
-            prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
-            prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
-            edits.remove(i);
-            continue;
-        }
-        i += 1;
-    }
+    fold_edits
 }
 
 #[derive(Clone, Debug, Default)]

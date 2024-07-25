@@ -15,6 +15,15 @@ const MARKDOWN_EXAMPLE: &'static str = r#"
 ## Headings
 Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
 
+```rust
+gpui::window::ViewContext
+impl<'a, V> ViewContext<'a, V>
+pub fn on_blur(&mut self, handle: &FocusHandle, listener: impl FnMut(&mut V, &mut iewContext<V>) + 'static) -> Subscription
+where
+    // Bounds from impl:
+    V: 'static,
+```
+
 ## Emphasis
 Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
 
@@ -94,12 +103,13 @@ pub fn main() {
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = FakeNodeRuntime::new();
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-        languages::init(language_registry.clone(), node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
+
+        let language_registry =
+            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        language_registry.set_theme(cx.theme().clone());
+        let language_registry = Arc::new(language_registry);
+        languages::init(language_registry.clone(), node_runtime, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
