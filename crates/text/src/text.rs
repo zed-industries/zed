@@ -2012,7 +2012,7 @@ impl BufferSnapshot {
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end, 0).to_offset(self);
+        let end = Point::new(row_range.end - 1, self.line_len(row_range.end - 1)).to_offset(self);
 
         let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
