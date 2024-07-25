@@ -8690,7 +8690,7 @@ dependencies = [
  "smol",
  "terminal_view",
  "theme",
- "tree-sitter-markdown",
+ "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-typescript",
  "ui",

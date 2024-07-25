@@ -258,6 +258,7 @@ fn snippet_ranges(
             return markdown_code_blocks(buffer, range.clone());
         }
     }
+
     let (jupytext_snippets, next_cursor) = jupytext_snippets(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return (jupytext_snippets, next_cursor);
@@ -277,8 +278,11 @@ fn snippet_ranges(
     }
 }
 
-fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
-    buffer
+fn markdown_code_blocks(
+    buffer: &BufferSnapshot,
+    range: Range<Point>,
+) -> (Vec<Range<Point>>, Option<Point>) {
+    let ranges = buffer
         .injections_intersecting_range(range)
         .filter(|(_, language)| language_supported(language))
         .map(|(content_range, _)| {
@@ -287,7 +291,9 @@ fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Ran
 
             code_block_range(buffer, content_range.start.row, content_range.end.row)
         })
-        .collect()
+        .collect();
+    // TODO: Fix this and actually return a point
+    (ranges, None)
 }
 
 fn language_supported(language: &Arc<Language>) -> bool {
@@ -457,7 +463,7 @@ mod tests {
 
     #[gpui::test]
     fn test_markdown_code_blocks(cx: &mut AppContext) {
-        let markdown = languages::language("markdown", tree_sitter_markdown::language());
+        let markdown = languages::language("markdown", tree_sitter_md::language());
         let typescript =
             languages::language("typescript", tree_sitter_typescript::language_typescript());
         let python = languages::language("python", tree_sitter_python::language());
@@ -492,7 +498,8 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let snippets = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5))
+        let (snippets, _) = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5));
+        let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
             .collect::<Vec<_>>();
@@ -535,7 +542,8 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let snippets = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5))
+        let (snippets, _) = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5));
+        let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
             .collect::<Vec<_>>();
@@ -572,7 +580,8 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let snippets = snippet_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5))
+        let (snippets, _) = snippet_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5));
+        let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
             .collect::<Vec<_>>();
