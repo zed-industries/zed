@@ -33,16 +33,18 @@ use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Item, Project};
+use search::ProjectSearchView;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use util::{RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
+    searchable::SearchableItem,
     ui::{
-        h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, HighlightedLabel, Icon,
-        IconName, IconSize, Label, LabelCommon, ListItem, Selectable, Spacing, StyledExt,
-        StyledTypography,
+        h_flex, v_flex, ActiveTheme, Clickable, Color, ContextMenu, FluentBuilder,
+        HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
+        LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography,
     },
     OpenInTerminal, Workspace,
 };
@@ -75,6 +77,7 @@ pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     project: Model<Project>,
+    workspace: View<Workspace>,
     active: bool,
     scroll_handle: UniformListScrollHandle,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -235,6 +238,7 @@ impl PartialEq for FsEntry {
 struct ActiveItem {
     item_id: EntityId,
     active_editor: WeakView<Editor>,
+    _buffer_search_subscription: Option<Subscription>,
     _editor_subscrpiption: Subscription,
 }
 
@@ -297,6 +301,7 @@ impl OutlinePanel {
 
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
+        let workspace_handle = cx.view().clone();
         let outline_panel = cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -356,7 +361,8 @@ impl OutlinePanel {
 
             let mut outline_panel = Self {
                 active: false,
-                project: project.clone(),
+                workspace: workspace_handle,
+                project,
                 fs: workspace.app_state().fs.clone(),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
@@ -1911,8 +1917,8 @@ impl OutlinePanel {
                     if new_selected_entry.is_some() {
                         outline_panel.selected_entry = new_selected_entry;
                     }
-                    outline_panel.fetch_outdated_outlines(cx);
-                    outline_panel.autoscroll(cx);
+                    outline_panel.update_non_fs_items(cx);
+
                     cx.notify();
                 })
                 .ok();
@@ -1926,8 +1932,24 @@ impl OutlinePanel {
     ) {
         let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.clear_previous(cx);
+        let outline_panel = cx.view().clone();
+        let buffer_search_subscription =
+            new_active_editor
+                .to_searchable_item_handle(cx)
+                .map(|handle| {
+                    handle.subscribe_to_search_events(
+                        cx,
+                        Box::new(move |_, cx| {
+                            outline_panel.update(cx, |outline_panel, cx| {
+                                outline_panel.update_search_matches(cx);
+                                outline_panel.autoscroll(cx);
+                            });
+                        }),
+                    )
+                });
         self.active_item = Some(ActiveItem {
             item_id: new_active_editor.item_id(),
+            _buffer_search_subscription: buffer_search_subscription,
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
         });
@@ -2729,6 +2751,40 @@ impl OutlinePanel {
         };
         !self.collapsed_entries.contains(&entry_to_check)
     }
+
+    fn update_non_fs_items(&mut self, cx: &mut ViewContext<OutlinePanel>) {
+        self.fetch_outdated_outlines(cx);
+        self.update_search_matches(cx);
+        self.autoscroll(cx);
+    }
+
+    fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
+        let project_search_matches = self
+            .workspace
+            .read(cx)
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<ProjectSearchView>())
+            .map(|project_search| project_search.read(cx).get_matches(cx))
+            .unwrap_or_default();
+        let buffer_search_matches = self
+            .active_item
+            .as_ref()
+            .and_then(|active_item| active_item.active_editor.upgrade())
+            .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
+            .unwrap_or_default();
+        dbg!(
+            "????????????? TODO kb actually update and display the matches",
+            project_search_matches.len(),
+            buffer_search_matches.len(),
+        );
+        // Ideas:
+        // * decide, how to represent the `CachedEntry` with FS entries on top, and then Excerpt + Outlines <—> vs Search result <—> vs something else on the low level
+        // * Maybe, add an enum for cached entries, instead of just `Vec<CachedEntry>`?
+        // * Or, keep a mode only, and refresh the cached entries accordingly.
+        // * Other entry kinds should have more priority than the outlines, but less than the search results: if a more prioritized kind entries were 0 and become > 0, swith over that presentation. Fall back to a less prioritized entry, if current entries are 0.
+    }
 }
 
 fn back_to_common_visited_parent(
@@ -3009,7 +3065,20 @@ impl Render for OutlinePanel {
         .child(
             v_flex()
                 .child(div().mx_2().border_primary(cx).border_t_1())
-                .child(v_flex().p_2().child(self.filter_editor.clone())),
+                .child(
+                    h_flex().p_2().child(self.filter_editor.clone()).child(
+                        div().border_1().child(IconButton::new("outline-panel-menu", IconName::Menu)
+                            .shape(IconButtonShape::Square)
+                            .on_click(|e, cx| {
+                                dbg!("!!!!!!!! TODO kb show a context menu with multiple layouts");
+                                // Ideas:
+                                // * show a different icon per view mode selected, with a different hover
+                                // * clear filter on the new category [auto]selection, re-reveal the selection again in the new list
+                                // * have a togglable "pin" button to forbid the list from updating for the new mode/editor at all.
+                            }))
+                        ,
+                    ),
+                ),
         )
     }
 }
@@ -3047,11 +3116,15 @@ fn subscribe_for_editor_events(
             }
             EditorEvent::ExcerptsExpanded { ids } => {
                 outline_panel.invalidate_outlines(ids);
-                outline_panel.fetch_outdated_outlines(cx)
+                outline_panel.fetch_outdated_outlines(cx);
+                outline_panel.update_search_matches(cx);
+                outline_panel.autoscroll(cx);
             }
             EditorEvent::ExcerptsEdited { ids } => {
                 outline_panel.invalidate_outlines(ids);
                 outline_panel.fetch_outdated_outlines(cx);
+                outline_panel.update_search_matches(cx);
+                outline_panel.autoscroll(cx);
             }
             EditorEvent::Reparsed(buffer_id) => {
                 if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
@@ -3059,7 +3132,7 @@ fn subscribe_for_editor_events(
                         excerpt.invalidate_outlines();
                     }
                 }
-                outline_panel.fetch_outdated_outlines(cx);
+                outline_panel.update_non_fs_items(cx);
             }
             _ => {}
         },

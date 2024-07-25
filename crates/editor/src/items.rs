@@ -1144,6 +1144,14 @@ pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
+    fn get_matches(&self, _: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map_or(Vec::new(), |(_color, ranges)| {
+                ranges.iter().map(|range| range.clone()).collect()
+            })
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }

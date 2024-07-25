@@ -503,6 +503,10 @@ impl Item for ProjectSearchView {
 }
 
 impl ProjectSearchView {
+    pub fn get_matches(&self, cx: &AppContext) -> Vec<Range<Anchor>> {
+        self.model.read(cx).match_ranges.clone()
+    }
+
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) {
         self.filters_enabled = !self.filters_enabled;
         ActiveSettings::update_global(cx, |settings, cx| {
