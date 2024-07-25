@@ -8,6 +8,7 @@ use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{
     tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
 };
+use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
