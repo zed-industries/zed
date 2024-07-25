@@ -3877,7 +3877,6 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
- "cap-std",
  "client",
  "collections",
  "ctor",
