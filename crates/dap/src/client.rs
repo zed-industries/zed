@@ -365,7 +365,6 @@ impl DebugAdapterClient {
         self.server_tx.send(Payload::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
-        let _ = self.next_sequence_id();
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
