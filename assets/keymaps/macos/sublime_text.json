@@ -14,6 +14,7 @@
     "bindings": {
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
+      "cmd-d": ["editor::SelectNext", { "replace_newest": false }],
       "cmd-ctrl-up": "editor::MoveLineUp",
       "cmd-ctrl-down": "editor::MoveLineDown",
       "cmd-shift-space": "editor::SelectAll",

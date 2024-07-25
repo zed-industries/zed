@@ -14,6 +14,7 @@
     "bindings": {
       "ctrl-shift-up": "editor::MoveLineUp",
       "ctrl-shift-down": "editor::MoveLineDown",
+      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
