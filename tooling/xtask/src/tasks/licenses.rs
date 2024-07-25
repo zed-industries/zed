@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 
 use crate::workspace::load_workspace;
@@ -13,8 +13,11 @@ pub fn run_licenses(_args: LicensesArgs) -> Result<()> {
 
     let workspace = load_workspace()?;
 
-    for member in workspace.members {
-        let crate_dir = PathBuf::from(&member);
+    for package in workspace.workspace_packages() {
+        let crate_dir = package
+            .manifest_path
+            .parent()
+            .ok_or_else(|| anyhow!("no crate directory for {}", package.name))?;
 
         if let Some(license_file) = first_license_file(&crate_dir, &LICENSE_FILES) {
             if !license_file.is_symlink() {
@@ -24,15 +27,15 @@ pub fn run_licenses(_args: LicensesArgs) -> Result<()> {
             continue;
         }
 
-        println!("Missing license: {member}");
+        println!("Missing license: {}", package.name);
     }
 
     Ok(())
 }
 
-fn first_license_file(path: &Path, license_files: &[&str]) -> Option<PathBuf> {
+fn first_license_file(path: impl AsRef<Path>, license_files: &[&str]) -> Option<PathBuf> {
     for license_file in license_files {
-        let path_to_license = path.join(license_file);
+        let path_to_license = path.as_ref().join(license_file);
         if path_to_license.exists() {
             return Some(path_to_license);
         }
