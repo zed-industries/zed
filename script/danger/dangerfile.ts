@@ -1,5 +1,5 @@
 import { danger, warn } from "danger";
-const { prHygiene } = require("danger-plugin-pr-hygiene");
+import { prHygiene } from "danger-plugin-pr-hygiene";
 
 prHygiene({
   rules: {
