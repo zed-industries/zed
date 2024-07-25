@@ -16,12 +16,12 @@ jobs:
       - ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
