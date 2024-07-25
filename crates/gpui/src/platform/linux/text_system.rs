@@ -177,9 +177,6 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
-
-    #[cfg(target_os = "windows")]
-    fn destroy(&self) {}
 }
 
 impl CosmicTextSystemState {
