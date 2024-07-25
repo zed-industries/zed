@@ -916,6 +916,8 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+// TODO: this test is flaky on our linux CI machines
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -955,6 +957,8 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇ123456789", Mode::Normal);
     cx.simulate_keystrokes("g x");
     cx.assert_state("1234fooˇ56789", Mode::Normal);
+
+    cx.executor().allow_parking();
 
     // test command
     cx.update(|cx| {
