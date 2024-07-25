@@ -664,8 +664,14 @@ fn handle_calc_client_size(
     if state_ptr.state.borrow().is_maximized() {
         requested_client_rect[0].top += frame_y + padding;
     } else {
-        // Magic number that calculates the width of the border
-        requested_client_rect[0].top += frame_y - 3;
+        match state_ptr.windows_version {
+            WindowsVersion::Win10 => {}
+            WindowsVersion::Win11 => {
+                // Magic number that calculates the width of the border
+                let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
+                requested_client_rect[0].top += border;
+            }
+        }
     }
 
     Some(0)
