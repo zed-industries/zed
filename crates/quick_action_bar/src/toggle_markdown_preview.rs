@@ -1,5 +1,7 @@
 use gpui::{AnyElement, WeakView};
-use markdown_preview::markdown_preview_view::MarkdownPreviewView;
+use markdown_preview::{
+    markdown_preview_view::MarkdownPreviewView, OpenPreview, OpenPreviewToTheSide,
+};
 use ui::{prelude::*, IconButtonShape, Tooltip};
 use workspace::Workspace;
 
@@ -25,7 +27,7 @@ impl QuickActionBar {
             return None;
         }
 
-        let preview_visible = true;
+        let preview_visible = false;
 
         let button = IconButton::new(
             "toggle-markdown-preview",
@@ -35,6 +37,9 @@ impl QuickActionBar {
                 IconName::FileText
             },
         )
+        .shape(IconButtonShape::Square)
+        .icon_size(IconSize::Small)
+        .style(ButtonStyle::Subtle)
         .tooltip(move |cx| {
             Tooltip::with_meta(
                 format!(
@@ -42,13 +47,21 @@ impl QuickActionBar {
                     if preview_visible { "Hide" } else { "Show" }
                 ),
                 Some(&markdown_preview::OpenPreview),
-                "Cmd+Click to open in a split",
+                "Option+Click to open in a split",
                 cx,
             )
         })
-        .shape(IconButtonShape::Square)
-        .icon_size(IconSize::Small)
-        .style(ButtonStyle::Subtle);
+        .on_click(move |_, cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                workspace.update(cx, |_, cx| {
+                    if cx.modifiers().alt {
+                        cx.dispatch_action(Box::new(OpenPreviewToTheSide));
+                    } else {
+                        cx.dispatch_action(Box::new(OpenPreview));
+                    }
+                });
+            }
+        });
 
         Some(button.into_any_element())
     }
