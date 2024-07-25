@@ -410,6 +410,7 @@ impl EditorActionId {
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
+#[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
     dirty: bool,
@@ -420,17 +421,6 @@ struct ScrollbarMarkerState {
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
         self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
-    }
-}
-
-impl Default for ScrollbarMarkerState {
-    fn default() -> Self {
-        Self {
-            scrollbar_size: Size::default(),
-            dirty: false,
-            markers: Arc::from([]),
-            pending_refresh: None,
-        }
     }
 }
 
@@ -5821,7 +5811,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     deletion_ranges
                         .into_iter()
@@ -5887,7 +5877,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     edit_ranges
                         .into_iter()
@@ -8188,7 +8178,7 @@ impl Editor {
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             let snapshot = this.buffer.read(cx).read(cx);
-            let empty_str: Arc<str> = "".into();
+            let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
 
             fn comment_prefix_range(

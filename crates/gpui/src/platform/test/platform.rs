@@ -49,7 +49,7 @@ impl TestPlatform {
         let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
 
         #[cfg(target_os = "linux")]
-        let text_system = Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
+        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
 
         #[cfg(target_os = "windows")]
         let text_system = Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
@@ -115,7 +115,7 @@ impl TestPlatform {
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
                     if let Some(window) = window.as_ref() {
-                        if Arc::ptr_eq(&previous_window.0, &window.0) {
+                        if Rc::ptr_eq(&previous_window.0, &window.0) {
                             return;
                         }
                     }

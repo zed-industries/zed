@@ -171,6 +171,11 @@ impl DirectWriteTextSystem {
             font_id_by_identifier: HashMap::default(),
         })))
     }
+
+    pub(crate) fn destroy(&self) {
+        let mut lock = self.0.write();
+        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
+    }
 }
 
 impl PlatformTextSystem for DirectWriteTextSystem {
@@ -238,11 +243,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
                 font_size,
                 ..Default::default()
             })
-    }
-
-    fn destroy(&self) {
-        let mut lock = self.0.write();
-        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
     }
 }
 
@@ -924,7 +924,7 @@ struct RendererContext<'t, 'a, 'b> {
 }
 
 #[allow(non_snake_case)]
-impl IDWritePixelSnapping_Impl for TextRenderer {
+impl IDWritePixelSnapping_Impl for TextRenderer_Impl {
     fn IsPixelSnappingDisabled(
         &self,
         _clientdrawingcontext: *const ::core::ffi::c_void,
@@ -959,7 +959,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
 }
 
 #[allow(non_snake_case)]
-impl IDWriteTextRenderer_Impl for TextRenderer {
+impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,
