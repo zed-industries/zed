@@ -39,6 +39,7 @@ struct LanguageServerState {
     log_messages: VecDeque<String>,
     trace_messages: VecDeque<String>,
     rpc_state: Option<LanguageServerRpcState>,
+    trace_level: TraceValue,
     _io_logs_subscription: Option<lsp::Subscription>,
     _lsp_logs_subscription: Option<lsp::Subscription>,
     _lsp_trace_subscription: Option<lsp::Subscription>,
@@ -265,6 +266,7 @@ impl LogStore {
                     rpc_state: None,
                     log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                     trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                    trace_level: TraceValue::Off,
                     _io_logs_subscription: None,
                     _lsp_logs_subscription: None,
                     _lsp_trace_subscription: None,
@@ -742,6 +744,12 @@ impl LspLogView {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(server) = self.project.read(cx).language_server_for_id(server_id) {
+            self.log_store.update(cx, |this, _| {
+                if let Some(state) = this.get_language_server_state(server_id) {
+                    state.trace_level = level;
+                }
+            });
+
             server
                 .notify::<SetTrace>(SetTraceParams { value: level })
                 .ok();
@@ -1035,7 +1043,7 @@ impl Render for LspLogToolbarItemView {
                     )
                     .ml_2(),
             )
-            .child(log_view.update(cx, |this, cx| {
+            .child(log_view.update(cx, |this, _| {
                 if this.active_entry_kind == LogKind::Trace {
                     let log_view = log_view.clone();
                     div().child(
@@ -1047,53 +1055,40 @@ impl Render for LspLogToolbarItemView {
                             ))
                             .menu({
                                 let log_view = log_view.clone();
+
                                 move |cx| {
-                                    ContextMenu::build(cx, |menu, cx| {
+                                    let id = log_view.read(cx).current_server_id?;
+
+                                    let trace_level = log_view.update(cx, |this, cx| {
+                                        this.log_store.update(cx, |this, _| {
+                                            Some(this.get_language_server_state(id)?.trace_level)
+                                        })
+                                    })?;
+
+                                    ContextMenu::build(cx, |mut menu, _| {
                                         let log_view = log_view.clone();
 
-                                        menu.entry("Off", None, {
-                                            let log_view = log_view.clone();
-                                            move |cx| {
-                                                log_view.update(cx, |this, cx| {
-                                                    if let Some(id) = this.current_server_id {
-                                                        this.update_trace_level(
-                                                            id,
-                                                            TraceValue::Off,
-                                                            cx,
-                                                        );
-                                                    }
-                                                });
+                                        for (option, label) in [
+                                            (TraceValue::Off, "Off"),
+                                            (TraceValue::Messages, "Messages"),
+                                            (TraceValue::Verbose, "Verbose"),
+                                        ] {
+                                            menu = menu.entry(label, None, {
+                                                let log_view = log_view.clone();
+                                                move |cx| {
+                                                    log_view.update(cx, |this, cx| {
+                                                        if let Some(id) = this.current_server_id {
+                                                            this.update_trace_level(id, option, cx);
+                                                        }
+                                                    });
+                                                }
+                                            });
+                                            if option == trace_level {
+                                                menu.select_last();
                                             }
-                                        })
-                                        .entry("Messages", None, {
-                                            let log_view = log_view.clone();
-                                            move |cx| {
-                                                log_view.update(cx, |this, cx| {
-                                                    if let Some(id) = this.current_server_id {
-                                                        this.update_trace_level(
-                                                            id,
-                                                            TraceValue::Messages,
-                                                            cx,
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                        })
-                                        .entry(
-                                            "Verbose",
-                                            None,
-                                            move |cx| {
-                                                log_view.update(cx, |this, cx| {
-                                                    if let Some(id) = this.current_server_id {
-                                                        this.update_trace_level(
-                                                            id,
-                                                            TraceValue::Verbose,
-                                                            cx,
-                                                        );
-                                                    }
-                                                });
-                                            },
-                                        )
+                                        }
+
+                                        menu
                                     })
                                     .into()
                                 }
