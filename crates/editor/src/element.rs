@@ -1553,6 +1553,7 @@ impl EditorElement {
         (offset_y, length)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
         line_height: Pixels,
@@ -1612,6 +1613,7 @@ impl EditorElement {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -4044,6 +4046,7 @@ impl EditorElement {
         self.column_pixels(digit_count, cx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_hunk_diff_close_indicators(
         &self,
         line_height: Pixels,
@@ -4084,6 +4087,7 @@ impl EditorElement {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
     row: DisplayRow,
