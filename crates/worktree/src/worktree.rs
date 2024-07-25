@@ -510,7 +510,7 @@ impl Worktree {
                                 }
                             }
                         };
-                        cx.emit(Event::UpdatedEntries(Arc::from([])));
+                        cx.emit(Event::UpdatedEntries(Arc::default()));
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
                             if this.observed_snapshot(*scan_id) {
@@ -1698,7 +1698,7 @@ impl LocalWorktree {
         let (snapshots_tx, mut snapshots_rx) =
             mpsc::unbounded::<(LocalSnapshot, UpdatedEntriesSet, UpdatedGitRepositoriesSet)>();
         snapshots_tx
-            .unbounded_send((self.snapshot(), Arc::from([]), Arc::from([])))
+            .unbounded_send((self.snapshot(), Arc::default(), Arc::default()))
             .ok();
 
         let worktree_id = cx.entity_id().as_u64();

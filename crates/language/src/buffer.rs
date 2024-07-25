@@ -1402,7 +1402,7 @@ impl Buffer {
                 LineEnding::normalize(&mut new_text);
 
                 let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = "".into();
+                let empty: Arc<str> = Arc::default();
 
                 let mut edits = Vec::new();
                 let mut old_offset = 0;
@@ -1720,7 +1720,7 @@ impl Buffer {
             .get(&self.text.replica_id())
             .map_or(true, |set| !set.selections.is_empty())
         {
-            self.set_active_selections(Arc::from([]), false, Default::default(), cx);
+            self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
     }
 
