@@ -4,6 +4,7 @@
     "config:recommended",
     ":semanticCommitsDisabled",
     ":separateMultipleMajorReleases",
+    "helpers:pinGitHubActionDigests",
     "group:serdeMonorepo"
   ],
   "dependencyDashboard": true,
