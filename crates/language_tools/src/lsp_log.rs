@@ -68,7 +68,7 @@ pub struct LspLogView {
     editor_subscriptions: Vec<Subscription>,
     log_store: Model<LogStore>,
     current_server_id: Option<LanguageServerId>,
-    is_showing_rpc_trace: bool,
+    active_entry_kind: LogKind,
     project: Model<Project>,
     focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
@@ -85,14 +85,31 @@ enum MessageKind {
     Receive,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum LogKind {
+    Rpc,
+    Trace,
+    #[default]
+    Logs,
+}
+
+impl LogKind {
+    fn label(&self) -> &'static str {
+        match self {
+            LogKind::Rpc => RPC_MESSAGES,
+            LogKind::Trace => SERVER_TRACE,
+            LogKind::Logs => SERVER_LOGS,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LogMenuItem {
     pub server_id: LanguageServerId,
     pub server_name: LanguageServerName,
     pub worktree_root_name: String,
     pub rpc_trace_enabled: bool,
-    pub rpc_trace_selected: bool,
-    pub logs_selected: bool,
+    pub selected_entry: LogKind,
 }
 
 actions!(debug, [OpenLanguageServerLogs]);
@@ -303,7 +320,7 @@ impl LogStore {
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.log_messages;
-        Self::add_language_server_message(log_lines, id, message, cx);
+        Self::add_language_server_message(log_lines, id, message, LogKind::Logs, cx);
         Some(())
     }
 
@@ -316,7 +333,7 @@ impl LogStore {
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.trace_messages;
-        Self::add_language_server_message(log_lines, id, message, cx);
+        Self::add_language_server_message(log_lines, id, message, LogKind::Trace, cx);
         Some(())
     }
 
@@ -324,6 +341,7 @@ impl LogStore {
         log_lines: &mut VecDeque<String>,
         id: LanguageServerId,
         message: &str,
+        kind: LogKind,
         cx: &mut ModelContext<Self>,
     ) {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
@@ -334,7 +352,7 @@ impl LogStore {
         cx.emit(Event::NewServerLogEntry {
             id,
             entry: message.to_string(),
-            is_rpc: false,
+            kind,
         });
         cx.notify();
     }
@@ -428,7 +446,7 @@ impl LogStore {
             cx.emit(Event::NewServerLogEntry {
                 id: language_server_id,
                 entry: line_before_message.to_string(),
-                is_rpc: true,
+                kind: LogKind::Rpc,
             });
         }
 
@@ -440,7 +458,7 @@ impl LogStore {
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
             entry: message.to_string(),
-            is_rpc: true,
+            kind: LogKind::Rpc,
         });
         cx.notify();
         Some(())
@@ -467,10 +485,10 @@ impl LspLogView {
             if let Some(current_lsp) = this.current_server_id {
                 if !store.read(cx).language_servers.contains_key(&current_lsp) {
                     if let Some(server_id) = first_server_id_for_project {
-                        if this.is_showing_rpc_trace {
-                            this.show_rpc_trace_for_server(server_id, cx)
-                        } else {
-                            this.show_logs_for_server(server_id, cx)
+                        match this.active_entry_kind {
+                            LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
+                            LogKind::Trace => this.show_trace_for_server(server_id, cx),
+                            LogKind::Logs => this.show_logs_for_server(server_id, cx),
                         }
                     } else {
                         this.current_server_id = None;
@@ -483,21 +501,19 @@ impl LspLogView {
                     }
                 }
             } else if let Some(server_id) = first_server_id_for_project {
-                if this.is_showing_rpc_trace {
-                    this.show_rpc_trace_for_server(server_id, cx)
-                } else {
-                    this.show_logs_for_server(server_id, cx)
+                match this.active_entry_kind {
+                    LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
+                    LogKind::Trace => this.show_trace_for_server(server_id, cx),
+                    LogKind::Logs => this.show_logs_for_server(server_id, cx),
                 }
             }
 
             cx.notify();
         });
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, e, cx| match e {
-            Event::NewServerLogEntry { id, entry, is_rpc } => {
+            Event::NewServerLogEntry { id, entry, kind } => {
                 if log_view.current_server_id == Some(*id) {
-                    if (*is_rpc && log_view.is_showing_rpc_trace)
-                        || (!*is_rpc && !log_view.is_showing_rpc_trace)
-                    {
+                    if *kind == log_view.active_entry_kind {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
                             let last_point = editor.buffer().read(cx).len(cx);
@@ -528,7 +544,7 @@ impl LspLogView {
             project,
             log_store,
             current_server_id: None,
-            is_showing_rpc_trace: false,
+            active_entry_kind: LogKind::Logs,
             _log_store_subscriptions: vec![
                 model_changes_subscription,
                 events_subscriptions,
@@ -583,10 +599,7 @@ impl LspLogView {
                     server_name: language_server_name,
                     worktree_root_name: worktree.read(cx).root_name().to_string(),
                     rpc_trace_enabled: state.rpc_state.is_some(),
-                    rpc_trace_selected: self.is_showing_rpc_trace
-                        && self.current_server_id == Some(server_id),
-                    logs_selected: !self.is_showing_rpc_trace
-                        && self.current_server_id == Some(server_id),
+                    selected_entry: self.active_entry_kind,
                 })
             })
             .chain(
@@ -600,10 +613,7 @@ impl LspLogView {
                             server_name: name.clone(),
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
-                            rpc_trace_selected: self.is_showing_rpc_trace
-                                && self.current_server_id == Some(server_id),
-                            logs_selected: !self.is_showing_rpc_trace
-                                && self.current_server_id == Some(server_id),
+                            selected_entry: self.active_entry_kind,
                         })
                     }),
             )
@@ -617,10 +627,7 @@ impl LspLogView {
                             server_name: name.clone(),
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
-                            rpc_trace_selected: self.is_showing_rpc_trace
-                                && self.current_server_id == Some(*server_id),
-                            logs_selected: !self.is_showing_rpc_trace
-                                && self.current_server_id == Some(*server_id),
+                            selected_entry: self.active_entry_kind,
                         }),
                         _ => None,
                     }),
@@ -639,7 +646,23 @@ impl LspLogView {
             .map(log_contents);
         if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
-            self.is_showing_rpc_trace = false;
+            self.active_entry_kind = LogKind::Logs;
+            let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, cx);
+            self.editor = editor;
+            self.editor_subscriptions = editor_subscriptions;
+            cx.notify();
+        }
+        cx.focus(&self.focus_handle);
+    }
+    fn show_trace_for_server(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
+        let log_contents = self
+            .log_store
+            .read(cx)
+            .server_trace(server_id)
+            .map(log_contents);
+        if let Some(log_contents) = log_contents {
+            self.current_server_id = Some(server_id);
+            self.active_entry_kind = LogKind::Trace;
             let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, cx);
             self.editor = editor;
             self.editor_subscriptions = editor_subscriptions;
@@ -660,7 +683,7 @@ impl LspLogView {
         });
         if let Some(rpc_log) = rpc_log {
             self.current_server_id = Some(server_id);
-            self.is_showing_rpc_trace = true;
+            self.active_entry_kind = LogKind::Rpc;
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -868,11 +891,7 @@ impl Render for LspLogToolbarItemView {
                             "{} ({}) - {}",
                             row.server_name.0,
                             row.worktree_root_name,
-                            if row.rpc_trace_selected {
-                                RPC_MESSAGES
-                            } else {
-                                SERVER_LOGS
-                            },
+                            row.selected_entry.label()
                         ))
                     })
                     .unwrap_or_else(|| "No server selected".into()),
@@ -896,15 +915,29 @@ impl Render for LspLogToolbarItemView {
                                     view.show_logs_for_server(row.server_id, cx);
                                 }),
                             );
-                        if server_selected && row.logs_selected {
+                        if server_selected && row.selected_entry == LogKind::Logs {
                             let selected_ix = menu.select_last();
                             debug_assert_eq!(
-                                Some(ix * 3 + 1),
+                                Some(ix * 4 + 1),
                                 selected_ix,
                                 "Could not scroll to a just added LSP menu item"
                             );
                         }
-
+                        menu = menu.entry(
+                            SERVER_TRACE,
+                            None,
+                            cx.handler_for(&log_view, move |view, cx| {
+                                view.show_trace_for_server(row.server_id, cx);
+                            }),
+                        );
+                        if server_selected && row.selected_entry == LogKind::Trace {
+                            let selected_ix = menu.select_last();
+                            debug_assert_eq!(
+                                Some(ix * 4 + 2),
+                                selected_ix,
+                                "Could not scroll to a just added LSP menu item"
+                            );
+                        }
                         menu = menu.custom_entry(
                             {
                                 let log_toolbar_view = log_toolbar_view.clone();
@@ -947,10 +980,10 @@ impl Render for LspLogToolbarItemView {
                                 view.show_rpc_trace_for_server(row.server_id, cx);
                             }),
                         );
-                        if server_selected && row.rpc_trace_selected {
+                        if server_selected && row.selected_entry == LogKind::Rpc {
                             let selected_ix = menu.select_last();
                             debug_assert_eq!(
-                                Some(ix * 3 + 2),
+                                Some(ix * 4 + 3),
                                 selected_ix,
                                 "Could not scroll to a just added LSP menu item"
                             );
@@ -986,6 +1019,7 @@ impl Render for LspLogToolbarItemView {
 const RPC_MESSAGES: &str = "RPC Messages";
 const SERVER_LOGS: &str = "Server Logs";
 const SERVER_TRACE: &str = "Server Trace";
+
 impl LspLogToolbarItemView {
     pub fn new() -> Self {
         Self {
@@ -1021,7 +1055,7 @@ pub enum Event {
     NewServerLogEntry {
         id: LanguageServerId,
         entry: String,
-        is_rpc: bool,
+        kind: LogKind,
     },
 }
 
