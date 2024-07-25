@@ -1655,9 +1655,7 @@ mod tests {
                 if rng.gen() {
                     let expected_next_line_start = expected[random_offset..end_ix]
                         .find('\n')
-                        .map(|newline_ix|
-                            random_offset + newline_ix + 1
-                        );
+                        .map(|newline_ix| random_offset + newline_ix + 1);
 
                     let moved = chunks.next_line();
                     assert_eq!(
