@@ -484,6 +484,10 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+[patch.crates-io]
+# Patch Tree-sitter for updated wasmtime.
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f4a57817d58a2f134fe863674acad6bbf007228" }
+
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
