@@ -4,8 +4,9 @@ use crate::{FontFallbacks, FontFeatures};
 use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{
-        kCFTypeArrayCallBacks, CFArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount,
-        CFArrayGetValueAtIndex, CFArrayRef, CFMutableArrayRef,
+        kCFTypeArrayCallBacks, CFArray, CFArrayAppendArray, CFArrayAppendValue,
+        CFArrayCreateMutable, CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef,
+        CFMutableArrayRef,
     },
     base::{kCFAllocatorDefault, CFRelease, TCFType},
     dictionary::{
@@ -14,6 +15,7 @@ use core_foundation::{
     number::CFNumber,
     string::{CFString, CFStringRef},
 };
+use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{display::CFDictionary, geometry::CGAffineTransform};
 use core_text::{
     font::{cascade_list_for_languages, CTFont, CTFontRef},
@@ -31,7 +33,6 @@ pub fn apply_features_and_fallbacks(
     font: &mut FontKitFont,
     features: &FontFeatures,
     fallbacks: &FontFallbacks,
-    pref_langs: &CFArray<CFString>,
 ) -> anyhow::Result<()> {
     unsafe {
         let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
@@ -45,12 +46,16 @@ pub fn apply_features_and_fallbacks(
         }
 
         {
+            let preferred_languages: CFArray<CFString> =
+                CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages());
+
             let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
                 font.native_font().as_concrete_TypeRef(),
-                pref_langs.as_concrete_TypeRef(),
+                preferred_languages.as_concrete_TypeRef(),
             );
             let default_fallbacks: CFArray<CTFontDescriptor> =
                 CFArray::wrap_under_create_rule(default_fallbacks);
+
             default_fallbacks
                 .iter()
                 .filter(|desc| desc.font_path().is_some())

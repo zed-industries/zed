@@ -60,7 +60,6 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
-    pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -70,13 +69,9 @@ struct MacTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
-unsafe impl Send for MacTextSystemState {}
-unsafe impl Sync for MacTextSystemState {}
-
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
-            pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -237,7 +232,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
+            apply_features_and_fallbacks(&mut font, features, fallbacks)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -644,15 +639,7 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-fn get_pref_langs() -> CFArray<CFString> {
-    unsafe {
-        let array = CFLocaleCopyPreferredLanguages();
-        let ret: CFArray<CFString> = CFArray::wrap_under_get_rule(array);
-        ret
-    }
-}
-
-// Some fonts may have no attributest despite `core_text` requiring them (and panicking).
+// Some fonts may have no attributes despite `core_text` requiring them (and panicking).
 // This is the same version as `core_text` has without `expect` calls.
 mod lenient_font_attributes {
     use core_foundation::{
