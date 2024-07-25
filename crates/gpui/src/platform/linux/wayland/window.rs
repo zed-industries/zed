@@ -545,6 +545,7 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
