@@ -19,7 +19,7 @@ collections.workspace = true
 futures.workspace = true
 git.workspace = true
 git2.workspace = true
-gpui = { workspace = true, optional = true }
+gpui.workspace = true
 lazy_static.workspace = true
 libc.workspace = true
 parking_lot.workspace = true

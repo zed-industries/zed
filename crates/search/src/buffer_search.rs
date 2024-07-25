@@ -13,10 +13,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
-    FontStyle, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
-    ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
-    WhiteSpace, WindowContext,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView, Hsla,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _, WindowContext,
 };
 use project::{
     search::SearchQuery,
@@ -117,12 +116,8 @@ impl BufferSearchBar {
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(

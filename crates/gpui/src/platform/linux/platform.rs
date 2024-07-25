@@ -30,7 +30,6 @@ use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
-use time::UtcOffset;
 use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
@@ -264,24 +263,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.multiple {
-                    if !options.files {
-                        "Open folders"
-                    } else {
-                        "Open files"
-                    }
+                let title = if options.directories {
+                    "Open Folder"
                 } else {
-                    if !options.files {
-                        "Open folder"
-                    } else {
-                        "Open file"
-                    }
+                    "Open File"
                 };
 
                 let request = match OpenFileRequest::default()
                     .modal(true)
                     .title(title)
-                    .accept_label("Select")
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
@@ -322,8 +312,7 @@ impl<P: LinuxClient + 'static> Platform for P {
             .spawn(async move {
                 let request = match SaveFileRequest::default()
                     .modal(true)
-                    .title("Select new path")
-                    .accept_label("Accept")
+                    .title("Save File")
                     .current_folder(directory)
                     .expect("pathbuf should not be nul terminated")
                     .send()
@@ -406,10 +395,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
-
-    fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::UTC
-    }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -739,7 +724,7 @@ impl Keystroke {
             // we only include the shift for upper-case letters by convention,
             // so don't include for numbers and symbols, but do include for
             // tab/enter, etc.
-            if key.chars().count() == 1 && key_utf8 == key {
+            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
                 modifiers.shift = false;
             }
         }

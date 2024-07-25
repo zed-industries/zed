@@ -3,9 +3,9 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Underline,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, GPUSpecs, Hsla,
+    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -18,7 +18,7 @@ use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use std::{mem, sync::Arc};
 
-const MAX_FRAME_TIME_MS: u32 = 1000;
+const MAX_FRAME_TIME_MS: u32 = 10000;
 
 #[cfg(target_os = "macos")]
 pub type Context = ();
@@ -412,7 +412,8 @@ impl BladeRenderer {
     fn wait_for_gpu(&mut self) {
         if let Some(last_sp) = self.last_sync_point.take() {
             if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
-                panic!("GPU hung");
+                log::error!("GPU hung");
+                while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
             }
         }
     }
@@ -448,6 +449,18 @@ impl BladeRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn gpu_specs(&self) -> GPUSpecs {
+        let info = self.gpu.device_information();
+
+        GPUSpecs {
+            is_software_emulated: info.is_software_emulated,
+            device_name: info.device_name.clone(),
+            driver_name: info.driver_name.clone(),
+            driver_info: info.driver_info.clone(),
+        }
     }
 
     #[cfg(target_os = "macos")]

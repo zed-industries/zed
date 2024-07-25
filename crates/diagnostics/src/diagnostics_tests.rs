@@ -1,7 +1,7 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{BlockContext, DisplayRow, TransformBlock},
+    display_map::{Block, BlockContext, DisplayRow},
     DisplayPoint, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
@@ -954,6 +954,7 @@ fn random_diagnostic(
             is_primary,
             is_disk_based: false,
             is_unnecessary: false,
+            data: None,
         },
     }
 }
@@ -974,9 +975,9 @@ fn editor_blocks(
                 snapshot
                     .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
                     .filter_map(|(row, block)| {
-                        let transform_block_id = block.id();
+                        let block_id = block.id();
                         let name: SharedString = match block {
-                            TransformBlock::Custom(block) => {
+                            Block::Custom(block) => {
                                 let mut element = block.render(&mut BlockContext {
                                     context: cx,
                                     anchor_x: px(0.),
@@ -984,7 +985,7 @@ fn editor_blocks(
                                     line_height: px(0.),
                                     em_width: px(0.),
                                     max_width: px(0.),
-                                    transform_block_id,
+                                    block_id,
                                     editor_style: &editor::EditorStyle::default(),
                                 });
                                 let element = element.downcast_mut::<Stateful<Div>>().unwrap();
@@ -996,7 +997,7 @@ fn editor_blocks(
                                     .ok()?
                             }
 
-                            TransformBlock::ExcerptHeader {
+                            Block::ExcerptHeader {
                                 starts_new_buffer, ..
                             } => {
                                 if *starts_new_buffer {
@@ -1005,7 +1006,7 @@ fn editor_blocks(
                                     EXCERPT_HEADER.into()
                                 }
                             }
-                            TransformBlock::ExcerptFooter { .. } => EXCERPT_FOOTER.into(),
+                            Block::ExcerptFooter { .. } => EXCERPT_FOOTER.into(),
                         };
 
                         Some((row, name))

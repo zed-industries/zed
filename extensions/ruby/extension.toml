@@ -1,7 +1,7 @@
 id = "ruby"
 name = "Ruby"
 description = "Ruby support."
-version = "0.0.7"
+version = "0.0.8"
 schema_version = 1
 authors = ["Vitaly Slobodin <vitaliy.slobodin@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
@@ -12,6 +12,10 @@ language = "Ruby"
 
 [language_servers.ruby-lsp]
 name = "Ruby LSP"
+language = "Ruby"
+
+[language_servers.rubocop]
+name = "Rubocop"
 language = "Ruby"
 
 [grammars.ruby]

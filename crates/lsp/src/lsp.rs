@@ -209,6 +209,14 @@ impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
     }
 }
 
+/// Combined capabilities of the server and the adapter.
+pub struct AdapterServerCapabilities {
+    // Reported capabilities by the server
+    pub server_capabilities: ServerCapabilities,
+    // List of code actions supported by the LspAdapter matching the server
+    pub code_action_kinds: Option<Vec<CodeActionKind>>,
+}
+
 /// Experimental: Informs the end user about the state of the server
 ///
 /// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
@@ -914,6 +922,15 @@ impl LanguageServer {
     /// Get the reported capabilities of the running language server.
     pub fn capabilities(&self) -> ServerCapabilities {
         self.capabilities.read().clone()
+    }
+
+    /// Get the reported capabilities of the running language server and
+    /// what we know on the client/adapter-side of its capabilities.
+    pub fn adapter_server_capabilities(&self) -> AdapterServerCapabilities {
+        AdapterServerCapabilities {
+            server_capabilities: self.capabilities(),
+            code_action_kinds: self.code_action_kinds(),
+        }
     }
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {

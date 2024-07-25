@@ -256,7 +256,7 @@ mod tests {
         );
 
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
@@ -340,7 +340,7 @@ mod tests {
             workspace
                 .update(cx, |workspace, cx| {
                     // Now, let's switch the active item to .ts file.
-                    workspace.activate_item(&editor1, cx);
+                    workspace.activate_item(&editor1, true, true, cx);
                     task_context(workspace, cx)
                 })
                 .await,

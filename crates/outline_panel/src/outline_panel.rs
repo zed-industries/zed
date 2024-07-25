@@ -457,7 +457,9 @@ impl OutlinePanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry.clone() {
+        if self.filter_editor.focus_handle(cx).is_focused(cx) {
+            cx.propagate()
+        } else if let Some(selected_entry) = self.selected_entry.clone() {
             self.open_entry(&selected_entry, cx);
         }
     }
@@ -2783,7 +2785,7 @@ impl Panel for OutlinePanel {
         settings::update_settings_file::<OutlinePanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
+            move |settings, _| {
                 let dock = match position {
                     DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
                     DockPosition::Right => OutlinePanelDockPosition::Right,

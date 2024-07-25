@@ -2581,7 +2581,7 @@ pub mod tests {
         );
 
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
         let buffer_1 = project
@@ -2931,7 +2931,7 @@ pub mod tests {
         );
 
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
         let buffer_1 = project
