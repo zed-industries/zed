@@ -12,7 +12,7 @@ use crate::{
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::{anyhow, bail, Context as _};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -1392,7 +1392,7 @@ pub async fn handle_websocket_request(
         let socket = socket
             .map_ok(to_tungstenite_message)
             .err_into()
-            .with(|message| async move { Ok(to_axum_message(message)) });
+            .with(|message| async move { to_axum_message(message) });
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
@@ -5154,8 +5154,8 @@ async fn get_private_user_info(
     Ok(())
 }
 
-fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
-    match message {
+fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
+    let message = match message {
         TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
         TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
@@ -5164,7 +5164,20 @@ fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
             code: frame.code.into(),
             reason: frame.reason,
         })),
-    }
+        // We should never receive a frame while reading the message, according
+        // to the `tungstenite` maintainers:
+        //
+        // > It cannot occur when you read messages from the WebSocket, but it
+        // > can be used when you want to send the raw frames (e.g. you want to
+        // > send the frames to the WebSocket without composing the full message first).
+        // >
+        // > — https://github.com/snapview/tungstenite-rs/issues/268
+        TungsteniteMessage::Frame(_) => {
+            bail!("received an unexpected frame while reading the message")
+        }
+    };
+
+    Ok(message)
 }
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
