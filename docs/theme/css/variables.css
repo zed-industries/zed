@@ -18,7 +18,8 @@
 
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
-  --sidebar-active: rgb(8, 76, 207);
+  --sidebar-active: hsl(219, 93%, 42%);
+  --sidebar-active-bg: hsl(219, 93%, 42%, 0.1);
   --sidebar-spacer: #f4f4f4;
 
   --scrollbar: #8f8f8f;
