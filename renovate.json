@@ -13,5 +13,12 @@
   "major": {
     "dependencyDashboardApproval": true
   },
-  "prFooter": "Release Notes:\n\n- N/A"
+  "prFooter": "Release Notes:\n\n- N/A",
+  "packageRules": [
+    {
+      "description": "Group wasmtime crates together.",
+      "matchPackagePatterns": ["wasmtime**"],
+      "groupName": "wasmtime"
+    }
+  ]
 }
