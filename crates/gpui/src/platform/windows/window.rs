@@ -61,6 +61,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
+    pub(crate) windows_version: WindowsVersion,
 }
 
 impl WindowsWindowState {
@@ -222,6 +223,7 @@ impl WindowsWindowStatePtr {
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
             executor: context.executor.clone(),
+            windows_version: context.windows_version,
         }))
     }
 }
@@ -247,6 +249,7 @@ struct WindowCreateContext {
     is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
+    windows_version: WindowsVersion,
 }
 
 impl WindowsWindow {
@@ -256,6 +259,7 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
+        windows_version: WindowsVersion,
     ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -295,6 +299,7 @@ impl WindowsWindow {
             is_movable: params.is_movable,
             executor,
             current_cursor,
+            windows_version,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
