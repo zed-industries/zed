@@ -1561,6 +1561,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
@@ -1584,6 +1585,7 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
+                        rows_with_hunk_bounds,
                         cx,
                     );
                     Some(button)
@@ -5438,6 +5440,7 @@ impl Element for EditorElement {
                         scroll_pixel_position,
                         &gutter_dimensions,
                         &gutter_hitbox,
+                        &rows_with_hunk_bounds,
                         &snapshot,
                         cx,
                     );
