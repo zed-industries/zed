@@ -62,13 +62,22 @@ pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     _process: Option<Child>,
     server_tx: Sender<Payload>,
-    request_count: AtomicU64,
+    sequence_count: AtomicU64,
     capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
     config: DebugAdapterConfig,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
 }
 
 impl DebugAdapterClient {
+    /// Creates & returns a new debug adapter client
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -77,7 +86,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
+    ) -> Result<Self>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -110,6 +119,17 @@ impl DebugAdapterClient {
         }
     }
 
+    /// Creates a debug client that connects to an adapter through tcp
+    ///
+    /// TCP clients don't have an error communication stream with an adapter
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     #[allow(clippy::too_many_arguments)]
     async fn create_tcp_client<F>(
         id: DebugAdapterClientId,
@@ -120,7 +140,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
+    ) -> Result<Self>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -169,6 +189,7 @@ impl DebugAdapterClient {
         )
     }
 
+    /// Get an open port to use with the tcp client when not supplied by debug config
     async fn get_port() -> Option<u16> {
         Some(
             TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
@@ -180,6 +201,15 @@ impl DebugAdapterClient {
         )
     }
 
+    /// Creates a debug client that connects to an adapter through std input/output
+    ///
+    /// # Parameters
+    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
+    /// - `config`: The adapter specific configurations from debugger task that is starting
+    /// - `command`: The command that starts the debugger
+    /// - `args`: Arguments of the command that starts the debugger
+    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cx`: The context that the new client belongs too
     async fn create_stdio_client<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -188,7 +218,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
+    ) -> Result<Self>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -244,22 +274,22 @@ impl DebugAdapterClient {
         process: Option<Child>,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
+    ) -> Result<Self>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client = Arc::new(Self {
+        let client = Self {
             id,
             config,
             server_tx,
             _process: process,
-            request_count: AtomicU64::new(1),
+            sequence_count: AtomicU64::new(1),
             capabilities: Default::default(),
             thread_states: Arc::new(Mutex::new(HashMap::new())),
-        });
+        };
 
         cx.update(|cx| {
             cx.background_executor()
@@ -275,6 +305,14 @@ impl DebugAdapterClient {
         Ok(client)
     }
 
+    /// Set's up a client's event handler.
+    ///
+    /// This function should only be called once or else errors will arise
+    /// # Parameters
+    /// `client`: A pointer to the client to pass the event handler too
+    /// `event_handler`: The function that is called to handle events
+    ///     should be DebugPanel::handle_debug_client_events
+    /// `cx`: The context that this task will run in
     pub async fn handle_events<F>(
         client_rx: Receiver<Payload>,
         mut event_handler: F,
@@ -286,8 +324,8 @@ impl DebugAdapterClient {
         while let Ok(payload) = client_rx.recv().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
-                e => {
-                    dbg!(&e);
+                err => {
+                    log::error!("Invalid Event: {:#?}", err);
                 }
             })?;
         }
@@ -307,6 +345,8 @@ impl DebugAdapterClient {
         anyhow::Ok(())
     }
 
+    /// Send a request to an adapter and get a response back
+    /// Note: This function will block until a response is sent back from the adapter
     pub async fn request<R: dap_types::requests::Request>(
         &self,
         arguments: R::Arguments,
@@ -317,7 +357,7 @@ impl DebugAdapterClient {
 
         let request = Request {
             back_ch: Some(callback_tx),
-            seq: self.next_request_id(),
+            seq: self.next_sequence_id(),
             command: R::COMMAND.to_string(),
             arguments: Some(serialized_arguments),
         };
@@ -325,6 +365,7 @@ impl DebugAdapterClient {
         self.server_tx.send(Payload::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
+        let _ = self.next_sequence_id();
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
@@ -348,8 +389,11 @@ impl DebugAdapterClient {
         self.capabilities.lock().clone().unwrap_or_default()
     }
 
-    pub fn next_request_id(&self) -> u64 {
-        self.request_count.fetch_add(1, Ordering::Relaxed)
+    /// Get the next sequence id to be used in a request
+    /// # Side Effect
+    /// This function also increment's client's sequence count by one
+    pub fn next_sequence_id(&self) -> u64 {
+        self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {

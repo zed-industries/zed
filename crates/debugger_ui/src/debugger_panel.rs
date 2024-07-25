@@ -79,7 +79,6 @@ impl DebugPanel {
                         let client = this.debug_client_by_id(*client_id, cx);
                         cx.spawn(|_, _| async move {
                             client.initialize().await?;
-
                             let request_args = client.config().request_args.map(|a| a.args);
 
                             // send correct request based on adapter config
@@ -134,6 +133,9 @@ impl DebugPanel {
         event: &Events,
         cx: &mut ViewContext<Self>,
     ) {
+        // Increment the sequence id because an event is being processed
+        let _ = client.next_sequence_id();
+
         match event {
             Events::Initialized(event) => Self::handle_initialized_event(client, event, cx),
             Events::Stopped(event) => Self::handle_stopped_event(client, event, cx),
@@ -152,6 +154,7 @@ impl DebugPanel {
             Events::ProgressStart(_) => {}
             Events::ProgressUpdate(_) => {}
             Events::Invalidated(_) => {}
+            Events::Other(_) => {}
         }
     }
 
@@ -172,7 +175,7 @@ impl DebugPanel {
 
         let task = workspace.update(&mut cx, |workspace, cx| {
             let project_path = workspace.project().read_with(cx, |project, cx| {
-                project.project_path_for_full_path(&Path::new(&path), cx)
+                project.project_path_for_absolute_path(&Path::new(&path), cx)
             });
 
             if let Some(project_path) = project_path {
@@ -255,7 +258,7 @@ impl DebugPanel {
 
         let task = workspace.update(&mut cx, |workspace, cx| {
             let project_path = workspace.project().read_with(cx, |project, cx| {
-                project.project_path_for_full_path(&Path::new(&path), cx)
+                project.project_path_for_absolute_path(&Path::new(&path), cx)
             });
 
             if let Some(project_path) = project_path {
@@ -325,7 +328,7 @@ impl DebugPanel {
             return;
         };
 
-        let client_id = client.id().clone();
+        let client_id = client.id();
         cx.spawn({
             let event = event.clone();
             |this, mut cx| async move {
@@ -342,11 +345,11 @@ impl DebugPanel {
                     stack_trace_response.stack_frames.first().unwrap().clone();
                 let mut scope_tasks = Vec::new();
                 for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
-                    let frame_id = stack_frame.id.clone();
+                    let frame_id = stack_frame.id;
                     let client = client.clone();
                     scope_tasks.push(async move {
                         anyhow::Ok((
-                            frame_id.clone(),
+                            frame_id,
                             client
                                 .request::<Scopes>(ScopesArguments { frame_id })
                                 .await?,
@@ -362,11 +365,11 @@ impl DebugPanel {
                     scopes.insert(thread_id, response.scopes.clone());
 
                     for scope in response.scopes {
-                        let scope_reference = scope.variables_reference.clone();
+                        let scope_reference = scope.variables_reference;
                         let client = client.clone();
                         variable_tasks.push(async move {
                             anyhow::Ok((
-                                scope_reference.clone(),
+                                scope_reference,
                                 client
                                     .request::<Variables>(VariablesArguments {
                                         variables_reference: scope_reference,
@@ -392,7 +395,7 @@ impl DebugPanel {
                         .or_insert(ThreadState::default());
 
                     thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
-                    thread_state.stack_frames = stack_trace_response.stack_frames.clone();
+                    thread_state.stack_frames = stack_trace_response.stack_frames;
                     thread_state.scopes = scopes;
                     thread_state.variables = variables;
                     thread_state.status = ThreadStatus::Stopped;
@@ -460,7 +463,7 @@ impl DebugPanel {
                 .thread_states()
                 .insert(thread_id, ThreadState::default());
         } else {
-            client.update_thread_state_status(thread_id.clone(), ThreadStatus::Ended);
+            client.update_thread_state_status(thread_id, ThreadStatus::Ended);
 
             // TODO: we want to figure out for witch clients/threads we should remove the highlights
             cx.spawn({

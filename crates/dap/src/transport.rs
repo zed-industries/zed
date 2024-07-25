@@ -45,6 +45,8 @@ pub enum Events {
     ProgressEnd(ProgressEndEvent),
     Invalidated(InvalidatedEvent),
     Memory(MemoryEvent),
+    #[serde(untagged)]
+    Other(HashMap<String, Value>),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -125,7 +127,13 @@ impl Transport {
         let mut content_length = None;
         loop {
             buffer.truncate(0);
-            if reader.read_line(buffer).await? == 0 {
+
+            if reader
+                .read_line(buffer)
+                .await
+                .with_context(|| "reading a message from server")?
+                == 0
+            {
                 return Err(anyhow!("reader stream closed"));
             };
 
@@ -146,10 +154,12 @@ impl Transport {
         let content_length = content_length.context("missing content length")?;
 
         let mut content = vec![0; content_length];
-        reader.read_exact(&mut content).await?;
-        let msg = std::str::from_utf8(&content).context("invalid utf8 from server")?;
+        reader
+            .read_exact(&mut content)
+            .await
+            .with_context(|| "reading after a loop")?;
 
-        dbg!(msg);
+        let msg = std::str::from_utf8(&content).context("invalid utf8 from server")?;
 
         Ok(serde_json::from_str::<Payload>(msg)?)
     }
@@ -190,7 +200,6 @@ impl Transport {
             .await?;
 
         server_stdin.flush().await?;
-
         Ok(())
     }
 
@@ -210,11 +219,20 @@ impl Transport {
         match payload {
             Payload::Response(res) => {
                 if let Some(tx) = self.pending_requests.lock().await.remove(&res.request_seq) {
-                    tx.send(Self::process_response(res)).await?;
+
+                    if !tx.is_closed() {
+                        tx.send(Self::process_response(res)).await?;
+                    } else {
+                        log::warn!(
+                            "Response stream associated with request seq: {} is closed",
+                            &res.request_seq
+                        ); // TODO: Fix this case so it never happens
+                    }
                 } else {
                     client_tx.send(Payload::Response(res)).await?;
                 };
             }
+
             Payload::Request(_) => {
                 client_tx.send(payload).await?;
             }
@@ -237,7 +255,8 @@ impl Transport {
                     &client_tx,
                     Self::recv_server_message(&mut server_stdout, &mut recv_buffer).await?,
                 )
-                .await?;
+                .await
+                .context("Process server message failed in transport::receive")?;
         }
     }
 
