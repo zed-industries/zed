@@ -102,7 +102,6 @@ impl ZigExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("zls-{}", release.version);
-
         let binary_path = match platform {
             zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/bin/zls"),
             zed::Os::Windows => format!("{version_dir}/zls.exe"),
