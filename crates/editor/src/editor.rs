@@ -5167,7 +5167,7 @@ impl Editor {
             }))
     }
 
-    fn render_close_hunk_diff_button(
+    fn close_hunk_diff_button(
         &self,
         hunk: HoveredHunk,
         row: DisplayRow,

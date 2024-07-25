@@ -1248,7 +1248,7 @@ impl EditorElement {
 
     // Folds contained in a hunk are ignored apart from shrinking visual size
     // If a fold contains any hunks then that fold line is marked as modified
-    fn layout_git_gutters(
+    fn layout_gutter_git_hunks(
         &self,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
@@ -3170,7 +3170,7 @@ impl EditorElement {
         });
     }
 
-    fn diff_hunk_bounds(
+    pub(super) fn diff_hunk_bounds(
         snapshot: &EditorSnapshot,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
@@ -4053,7 +4053,7 @@ impl EditorElement {
             expanded_hunks_by_rows
                 .into_iter()
                 .map(|(display_row, hunk)| {
-                    let button = editor.render_close_hunk_diff_button(
+                    let button = editor.close_hunk_diff_button(
                         HoveredHunk {
                             multi_buffer_range: hunk.hunk_range,
                             status: hunk.status,
@@ -5078,7 +5078,7 @@ impl Element for EditorElement {
                         self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
 
-                    let display_hunks = self.layout_git_gutters(
+                    let display_hunks = self.layout_gutter_git_hunks(
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
