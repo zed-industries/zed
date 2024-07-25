@@ -64,13 +64,17 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        self.0
+        let mut result = self
+            .0
             .read()
             .font_system
             .db()
             .faces()
-            .map(|face| face.post_script_name.clone())
-            .collect()
+            .filter_map(|face| face.families.first().map(|family| family.0.clone()))
+            .collect_vec();
+        result.sort();
+        result.dedup();
+        result
     }
 
     fn all_font_families(&self) -> Vec<String> {
