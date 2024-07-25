@@ -130,6 +130,7 @@ impl DebugAdapterClient {
     /// - `args`: Arguments of the command that starts the debugger
     /// - `project_path`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
+    #[allow(clippy::too_many_arguments)]
     async fn create_tcp_client<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -323,8 +324,8 @@ impl DebugAdapterClient {
         while let Ok(payload) = client_rx.recv().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
-                e => {
-                    dbg!(&e);
+                err => {
+                    log::error!("Invalid Event: {:#?}", err);
                 }
             })?;
         }

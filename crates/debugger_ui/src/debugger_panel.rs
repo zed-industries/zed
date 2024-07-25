@@ -325,7 +325,7 @@ impl DebugPanel {
             return;
         };
 
-        let client_id = client.id().clone();
+        let client_id = client.id();
         cx.spawn({
             let event = event.clone();
             |this, mut cx| async move {
