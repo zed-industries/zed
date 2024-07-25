@@ -49,7 +49,7 @@ impl Default for RichText {
             text: SharedString::default(),
             highlights: Vec::new(),
             link_ranges: Vec::new(),
-            link_urls: Arc::from([]),
+            link_urls: Arc::default(),
             custom_ranges: Vec::new(),
             custom_ranges_tooltip_fn: None,
         }

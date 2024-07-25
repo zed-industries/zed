@@ -236,7 +236,7 @@ impl Default for ParsedMarkdown {
     fn default() -> Self {
         Self {
             source: SharedString::default(),
-            events: Arc::from([]),
+            events: Arc::default(),
         }
     }
 }
