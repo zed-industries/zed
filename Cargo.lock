@@ -1186,7 +1186,7 @@ dependencies = [
  "p256",
  "percent-encoding",
  "ring",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "subtle",
  "time",
  "tracing",
@@ -1221,7 +1221,7 @@ dependencies = [
  "md-5",
  "pin-project-lite",
  "sha1",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "tracing",
 ]
 
@@ -2330,7 +2330,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "smol",
  "sysinfo",
  "telemetry_events",
@@ -2476,7 +2476,7 @@ dependencies = [
  "serde_json",
  "session",
  "settings",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "sqlx",
  "subtle",
  "supermaven_api",
@@ -5822,7 +5822,7 @@ dependencies = [
  "hmac 0.12.1",
  "serde",
  "serde_json",
- "sha2 0.10.7",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -6233,7 +6233,7 @@ dependencies = [
  "postage",
  "serde",
  "serde_json",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "simplelog",
 ]
 
@@ -6251,7 +6251,7 @@ dependencies = [
  "prost-types",
  "reqwest",
  "serde",
- "sha2 0.10.7",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -7142,7 +7142,7 @@ dependencies = [
  "pbkdf2 0.12.2",
  "rand 0.8.5",
  "serde",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "zbus",
  "zeroize",
  "zvariant",
@@ -7366,7 +7366,7 @@ checksum = "51f44edd08f51e2ade572f141051021c5af22677e42b7dd28a88155151c33594"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
- "sha2 0.10.7",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -8003,7 +8003,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "shellexpand 2.1.2",
  "shlex",
  "similar",
@@ -8915,7 +8915,7 @@ dependencies = [
  "rsa",
  "serde",
  "serde_json",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "strum",
  "tracing",
  "util",
@@ -8999,7 +8999,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38c74a686185620830701348de757fd36bef4aa9680fd23c49fc539ddcc1af32"
 dependencies = [
  "globset",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "walkdir",
 ]
 
@@ -9440,7 +9440,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "smol",
  "tempfile",
  "theme",
@@ -9654,9 +9654,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.7"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479fb9d862239e610720565ca91403019f2f00410f1864c5aa7479b950a76ed8"
+checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -10060,7 +10060,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "smallvec",
  "sqlformat",
  "thiserror",
@@ -10101,7 +10101,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "sqlx-core",
  "sqlx-mysql",
  "sqlx-postgres",
@@ -10148,7 +10148,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "sha1",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -10193,7 +10193,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -10674,7 +10674,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json_lenient",
- "sha2 0.10.7",
+ "sha2 0.10.8",
  "shellexpand 2.1.2",
  "util",
 ]
