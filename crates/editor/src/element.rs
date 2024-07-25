@@ -4949,13 +4949,8 @@ impl Element for EditorElement {
                         .collect::<SmallVec<[_; 2]>>();
 
                     let hitbox = cx.insert_hitbox(bounds, false);
-                    let gutter_hitbox = cx.insert_hitbox(
-                        Bounds {
-                            origin: bounds.origin,
-                            size: size(gutter_dimensions.width, bounds.size.height),
-                        },
-                        false,
-                    );
+                    let gutter_hitbox =
+                        cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
                     let text_hitbox = cx.insert_hitbox(
                         Bounds {
                             origin: gutter_hitbox.upper_right(),
@@ -5588,6 +5583,16 @@ impl Element for EditorElement {
                 });
             })
         })
+    }
+}
+
+pub(super) fn gutter_bounds(
+    editor_bounds: Bounds<Pixels>,
+    gutter_dimensions: GutterDimensions,
+) -> Bounds<Pixels> {
+    Bounds {
+        origin: editor_bounds.origin,
+        size: size(gutter_dimensions.width, editor_bounds.size.height),
     }
 }
 
