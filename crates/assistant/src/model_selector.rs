@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{assistant_settings::AssistantSettings, LanguageModelCompletionProvider};
 use fs::Fs;
+use gpui::SharedString;
 use language_model::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
@@ -11,7 +12,7 @@ pub struct ModelSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<ContextMenu>>,
     fs: Arc<dyn Fs>,
     trigger: T,
-    info_text: Option<String>,
+    info_text: Option<SharedString>,
 }
 
 impl<T: PopoverTrigger> ModelSelector<T> {
@@ -29,7 +30,7 @@ impl<T: PopoverTrigger> ModelSelector<T> {
         self
     }
 
-    pub fn with_info_text(mut self, text: impl Into<String>) -> Self {
+    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
         self.info_text = Some(text.into());
         self
     }
@@ -46,18 +47,8 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
 
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
-                if let Some(ref info_text) = info_text {
-                    menu = menu.custom_entry(
-                        {
-                            let info_text = info_text.clone();
-                            move |_| {
-                                Label::new(info_text.clone())
-                                    .into_element()
-                                    .into_any_element()
-                            }
-                        },
-                        |_| {},
-                    );
+                if let Some(info_text) = info_text.as_ref() {
+                    menu = menu.colored_label(info_text.clone(), Color::Muted);
                     menu = menu.separator();
                 }
 

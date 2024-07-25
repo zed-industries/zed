@@ -14,7 +14,10 @@ use theme::ThemeSettings;
 enum ContextMenuItem {
     Separator,
     Header(SharedString),
-    Label(SharedString),
+    Label {
+        text: SharedString,
+        color: Option<Color>,
+    },
     Entry {
         toggled: Option<bool>,
         label: SharedString,
@@ -149,8 +152,18 @@ impl ContextMenu {
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        let label = label.into();
-        self.items.push(ContextMenuItem::Label(label));
+        self.items.push(ContextMenuItem::Label {
+            text: label.into(),
+            color: None,
+        });
+        self
+    }
+
+    pub fn colored_label(mut self, label: impl Into<SharedString>, color: Color) -> Self {
+        self.items.push(ContextMenuItem::Label {
+            text: label.into(),
+            color: Some(color),
+        });
         self
     }
 
@@ -349,10 +362,13 @@ impl Render for ContextMenu {
                                         .inset(true)
                                         .into_any_element()
                                 }
-                                ContextMenuItem::Label(label) => ListItem::new(ix)
+                                ContextMenuItem::Label { text, color } => ListItem::new(ix)
                                     .inset(true)
                                     .disabled(true)
-                                    .child(Label::new(label.clone()))
+                                    .child(
+                                        Label::new(text.clone())
+                                            .when_some(*color, |label, color| label.color(color)),
+                                    )
                                     .into_any_element(),
                                 ContextMenuItem::Entry {
                                     toggled,

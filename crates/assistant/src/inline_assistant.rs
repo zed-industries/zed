@@ -1423,7 +1423,7 @@ impl Render for PromptEditor {
                     .child(
                         ModelSelector::new(
                             self.fs.clone(),
-                            IconButton::new("context", IconName::MenuAlt)
+                            IconButton::new("context", IconName::SlidersAlt)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
@@ -1442,7 +1442,11 @@ impl Render for PromptEditor {
                                     )
                                 }),
                         )
-                        .with_info_text("Inline transformations use context from the currently selected assistant panel tab."),
+                        .with_info_text(
+                            "Inline transformations use context\n\
+                            from the currently selected\n\
+                            assistant panel tab.",
+                        ),
                     )
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
