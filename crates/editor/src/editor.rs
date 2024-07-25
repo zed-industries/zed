@@ -408,6 +408,7 @@ impl EditorActionId {
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
+#[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
     dirty: bool,
@@ -418,17 +419,6 @@ struct ScrollbarMarkerState {
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
         self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
-    }
-}
-
-impl Default for ScrollbarMarkerState {
-    fn default() -> Self {
-        Self {
-            scrollbar_size: Size::default(),
-            dirty: false,
-            markers: Arc::default(),
-            pending_refresh: None,
-        }
     }
 }
 
