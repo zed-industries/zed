@@ -250,7 +250,7 @@ impl ContextMenu {
         }
     }
 
-    pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
+    pub fn on_action_dispatch(&mut self, dispatched: &dyn Action, cx: &mut ViewContext<Self>) {
         if self.clicked {
             cx.propagate();
             return;
@@ -262,7 +262,7 @@ impl ContextMenu {
                 ..
             } = item
             {
-                action.partial_eq(&**dispatched)
+                action.partial_eq(dispatched)
             } else {
                 false
             }
