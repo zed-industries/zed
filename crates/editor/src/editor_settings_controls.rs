@@ -55,7 +55,7 @@ impl EditableSettingControl for BufferFontFamilyControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        settings.buffer_font_family = Some(value.to_string());
+        settings.buffer_font_family = Some(vec![value.to_string()]);
     }
 }
 
