@@ -1,5 +1,5 @@
 use client::Client;
-use collections::HashMap;
+use collections::BTreeMap;
 use gpui::{AppContext, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
@@ -10,7 +10,7 @@ use crate::{
         copilot_chat::CopilotChatLanguageModelProvider, ollama::OllamaLanguageModelProvider,
         open_ai::OpenAiLanguageModelProvider,
     },
-    LanguageModel, LanguageModelProvider, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderState,
 };
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -53,7 +53,7 @@ fn register_language_model_providers(
                 registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
             } else {
                 registry.unregister_provider(
-                    &LanguageModelProviderName::from(
+                    &LanguageModelProviderId::from(
                         crate::provider::cloud::PROVIDER_NAME.to_string(),
                     ),
                     cx,
@@ -70,7 +70,7 @@ impl Global for GlobalLanguageModelRegistry {}
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
-    providers: HashMap<LanguageModelProviderName, Arc<dyn LanguageModelProvider>>,
+    providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
 }
 
 impl LanguageModelRegistry {
@@ -99,7 +99,7 @@ impl LanguageModelRegistry {
         provider: T,
         cx: &mut ModelContext<Self>,
     ) {
-        let name = provider.name();
+        let name = provider.id();
 
         if let Some(subscription) = provider.subscribe(cx) {
             subscription.detach();
@@ -111,7 +111,7 @@ impl LanguageModelRegistry {
 
     pub fn unregister_provider(
         &mut self,
-        name: &LanguageModelProviderName,
+        name: &LanguageModelProviderId,
         cx: &mut ModelContext<Self>,
     ) {
         if self.providers.remove(name).is_some() {
@@ -119,10 +119,8 @@ impl LanguageModelRegistry {
         }
     }
 
-    pub fn providers(
-        &self,
-    ) -> impl Iterator<Item = (&LanguageModelProviderName, &Arc<dyn LanguageModelProvider>)> {
-        self.providers.iter()
+    pub fn providers(&self) -> impl Iterator<Item = &Arc<dyn LanguageModelProvider>> {
+        self.providers.values()
     }
 
     pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
@@ -132,19 +130,9 @@ impl LanguageModelRegistry {
             .collect()
     }
 
-    pub fn available_models_grouped_by_provider(
-        &self,
-        cx: &AppContext,
-    ) -> HashMap<LanguageModelProviderName, Vec<Arc<dyn LanguageModel>>> {
-        self.providers
-            .iter()
-            .map(|(name, provider)| (name.clone(), provider.provided_models(cx)))
-            .collect()
-    }
-
     pub fn provider(
         &self,
-        name: &LanguageModelProviderName,
+        name: &LanguageModelProviderId,
     ) -> Option<Arc<dyn LanguageModelProvider>> {
         self.providers.get(name).cloned()
     }
@@ -165,10 +153,10 @@ mod tests {
 
         let providers = registry.read(cx).providers().collect::<Vec<_>>();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].0, &crate::provider::fake::provider_name());
+        assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(&crate::provider::fake::provider_name(), cx);
+            registry.unregister_provider(&crate::provider::fake::provider_id(), cx);
         });
 
         let providers = registry.read(cx).providers().collect::<Vec<_>>();
