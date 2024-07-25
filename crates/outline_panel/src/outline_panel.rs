@@ -2785,7 +2785,7 @@ impl Panel for OutlinePanel {
         settings::update_settings_file::<OutlinePanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
+            move |settings, _| {
                 let dock = match position {
                     DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
                     DockPosition::Right => OutlinePanelDockPosition::Right,

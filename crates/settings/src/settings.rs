@@ -1,3 +1,4 @@
+mod editable_setting_control;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -7,6 +8,7 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, str};
 use util::asset_str;
 
+pub use editable_setting_control::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
@@ -21,7 +23,7 @@ pub use settings_store::{
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut AppContext) {
-    let mut settings = SettingsStore::default();
+    let mut settings = SettingsStore::new(cx);
     settings
         .set_default_settings(&default_settings(), cx)
         .unwrap();

@@ -185,7 +185,7 @@ impl RenderOnce for ListItem {
                     .w_full()
                     .relative()
                     .gap_1()
-                    .px_2()
+                    .px_1p5()
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::Sparse => this.py_1(),

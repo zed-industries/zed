@@ -354,6 +354,7 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
+    DeletedEntry(ProjectEntryId),
 }
 
 static EMPTY_PATH: &str = "";
@@ -738,10 +739,12 @@ impl Worktree {
         trash: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<()>>> {
-        match self {
+        let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
-        }
+        }?;
+        cx.emit(Event::DeletedEntry(entry_id));
+        Some(task)
     }
 
     pub fn rename_entry(
@@ -1208,25 +1211,10 @@ impl LocalWorktree {
                 if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
                     if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
                         let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(cx.background_executor().spawn({
-                            let fs = fs.clone();
-                            let abs_path = abs_path.clone();
-                            async move {
-                                let metadata = fs
-                                    .metadata(&abs_path)
-                                    .await
-                                    .with_context(|| {
-                                        format!("loading file and FS metadata for {abs_path:?}")
-                                    })
-                                    .log_err()
-                                    .flatten()?;
-                                if metadata.is_dir || metadata.is_symlink {
-                                    None
-                                } else {
-                                    git_repo.load_index_text(&repo_path)
-                                }
-                            }
-                        }));
+                        index_task = Some(
+                            cx.background_executor()
+                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
+                        );
                     }
                 }
             }

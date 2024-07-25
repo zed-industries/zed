@@ -73,6 +73,7 @@ pub enum Operator {
     Register,
     RecordRegister,
     ReplayRegister,
+    ToggleComments,
 }
 
 #[derive(Default, Clone)]
@@ -328,6 +329,7 @@ impl Operator {
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
+            Operator::ToggleComments => "gc",
         }
     }
 
@@ -353,7 +355,8 @@ impl Operator {
             | Operator::Uppercase
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
-            | Operator::OppositeCase => false,
+            | Operator::OppositeCase
+            | Operator::ToggleComments => false,
         }
     }
 }

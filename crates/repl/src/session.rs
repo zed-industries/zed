@@ -377,7 +377,13 @@ impl Session {
         self.blocks.clear();
     }
 
-    pub fn execute(&mut self, code: &str, anchor_range: Range<Anchor>, cx: &mut ViewContext<Self>) {
+    pub fn execute(
+        &mut self,
+        code: String,
+        anchor_range: Range<Anchor>,
+        next_cell: Option<Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
         };
@@ -387,7 +393,7 @@ impl Session {
         }
 
         let execute_request = ExecuteRequest {
-            code: code.to_string(),
+            code,
             ..ExecuteRequest::default()
         };
 
@@ -448,7 +454,11 @@ impl Session {
             return;
         };
 
-        let new_cursor_pos = editor_block.invalidation_anchor;
+        let new_cursor_pos = if let Some(next_cursor) = next_cell {
+            next_cursor
+        } else {
+            editor_block.invalidation_anchor
+        };
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);

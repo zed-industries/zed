@@ -1320,9 +1320,8 @@ fn render_same_line_diagnostics(
         let editor_handle = editor_handle.clone();
         let parent = h_flex()
             .items_start()
-            .child(v_flex().size_full().when_some_else(
-                toggle_expand_label,
-                |parent, label| {
+            .child(v_flex().size_full().map(|parent| {
+                if let Some(label) = toggle_expand_label {
                     parent.child(Button::new(cx.block_id, label).on_click({
                         let diagnostics = Arc::clone(&diagnostics);
                         move |_, cx| {
@@ -1353,16 +1352,15 @@ fn render_same_line_diagnostics(
                             });
                         }
                     }))
-                },
-                |parent| {
+                } else {
                     parent.child(
                         h_flex()
                             .size(IconSize::default().rems())
                             .invisible()
                             .flex_none(),
                     )
-                },
-            ));
+                }
+            }));
         let max_message_rows = if expanded {
             None
         } else {

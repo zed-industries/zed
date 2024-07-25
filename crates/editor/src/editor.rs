@@ -11,13 +11,14 @@
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
 mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
+mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -58,6 +59,7 @@ use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -595,7 +597,7 @@ pub struct EditorSnapshot {
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
@@ -615,18 +617,6 @@ impl GutterDimensions {
     /// right align content with the line numbers
     pub fn fold_area_width(&self) -> Pixels {
         self.margin + self.right_padding
-    }
-}
-
-impl Default for GutterDimensions {
-    fn default() -> Self {
-        Self {
-            left_padding: Pixels::ZERO,
-            right_padding: Pixels::ZERO,
-            width: Pixels::ZERO,
-            margin: Pixels::ZERO,
-            git_blame_entries_width: None,
-        }
     }
 }
 
@@ -5256,7 +5246,7 @@ impl Editor {
             }))
     }
 
-    fn render_close_hunk_diff_button(
+    fn close_hunk_diff_button(
         &self,
         hunk: HoveredHunk,
         row: DisplayRow,
@@ -10478,7 +10468,7 @@ impl Editor {
         };
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
-        update_settings_file::<TabBarSettings>(fs, cx, move |setting| {
+        update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
             setting.show = Some(!current_show);
         });
     }
@@ -10951,17 +10941,6 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
-        // this is to try and catch a panic sooner
-        for range in ranges {
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.start);
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.end);
-        }
-
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
@@ -11980,6 +11959,11 @@ impl Editor {
         let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
+
+    fn gutter_bounds(&self) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_bounds?;
+        Some(element::gutter_bounds(bounds, self.gutter_dimensions))
+    }
 }
 
 fn hunks_for_selections(
@@ -12366,7 +12350,7 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
-    pub fn gutter_dimensions(
+    fn gutter_dimensions(
         &self,
         font_id: FontId,
         font_size: Pixels,

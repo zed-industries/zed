@@ -1,7 +1,11 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
-use project::{buffer_store::BufferStore, ProjectPath, WorktreeId, WorktreeSettings};
+use project::{
+    buffer_store::{BufferStore, BufferStoreEvent},
+    worktree_store::WorktreeStore,
+    ProjectPath, WorktreeId, WorktreeSettings,
+};
 use remote::SshSession;
 use rpc::{
     proto::{self, AnyProtoClient, PeerId},
@@ -12,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt as _;
 use worktree::Worktree;
 
 const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
@@ -20,39 +25,61 @@ const PROJECT_ID: u64 = 0;
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
     pub session: AnyProtoClient,
-    pub worktrees: Vec<Model<Worktree>>,
+    pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
     pub next_entry_id: Arc<AtomicUsize>,
 }
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::default());
+        cx.set_global(SettingsStore::new(cx));
         WorktreeSettings::register(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let this = cx.weak_model();
 
+        let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
+        let buffer_store =
+            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx));
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
+
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_update_buffer);
-        session.add_request_handler(this.clone(), Self::handle_save_buffer);
+
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
+
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_create_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_rename_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_copy_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_delete_project_entry,
+        );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_expand_project_entry,
+        );
 
         HeadlessProject {
             session: session.into(),
             fs,
-            worktrees: Vec::new(),
-            buffer_store: cx.new_model(|_| BufferStore::new(true)),
+            worktree_store,
+            buffer_store,
             next_entry_id: Default::default(),
         }
-    }
-
-    fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
-        self.worktrees
-            .iter()
-            .find(|worktree| worktree.read(cx).id() == id)
-            .cloned()
     }
 
     pub async fn handle_add_worktree(
@@ -74,7 +101,9 @@ impl HeadlessProject {
 
         this.update(&mut cx, |this, cx| {
             let session = this.session.clone();
-            this.worktrees.push(worktree.clone());
+            this.worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.add(&worktree, cx);
+            });
             worktree.update(cx, |worktree, cx| {
                 worktree.observe_updates(0, cx, move |update| {
                     session.send(update).ok();
@@ -87,38 +116,6 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_update_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateBuffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.handle_update_buffer(envelope, false, cx)
-            })
-        })?
-    }
-
-    pub async fn handle_save_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::SaveBuffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::BufferSaved> {
-        let (buffer_store, worktree) = this.update(&mut cx, |this, cx| {
-            let buffer_store = this.buffer_store.clone();
-            let worktree = if let Some(path) = &envelope.payload.new_path {
-                Some(
-                    this.worktree_for_id(WorktreeId::from_proto(path.worktree_id), cx)
-                        .context("worktree does not exist")?,
-                )
-            } else {
-                None
-            };
-            anyhow::Ok((buffer_store, worktree))
-        })??;
-        BufferStore::handle_save_buffer(buffer_store, PROJECT_ID, worktree, envelope, cx).await
-    }
-
     pub async fn handle_open_buffer_by_path(
         this: Model<Self>,
         message: TypedEnvelope<proto::OpenBufferByPath>,
@@ -126,9 +123,6 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let (buffer_store, buffer, session) = this.update(&mut cx, |this, cx| {
-            let worktree = this
-                .worktree_for_id(worktree_id, cx)
-                .context("no such worktree")?;
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(
@@ -136,7 +130,6 @@ impl HeadlessProject {
                         worktree_id,
                         path: PathBuf::from(message.payload.path).into(),
                     },
-                    worktree,
                     cx,
                 )
             });
@@ -162,5 +155,21 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub fn on_buffer_store_event(
+        &mut self,
+        _: Model<BufferStore>,
+        event: &BufferStoreEvent,
+        _: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::MessageToReplicas(message) => {
+                self.session
+                    .send_dynamic(message.as_ref().clone())
+                    .log_err();
+            }
+            _ => {}
+        }
     }
 }

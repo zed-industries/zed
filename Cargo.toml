@@ -44,7 +44,7 @@ members = [
     "crates/gpui_macros",
     "crates/headless",
     "crates/html_to_markdown",
-    "crates/http",
+    "crates/http_client",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion_button",
@@ -90,7 +90,9 @@ members = [
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
+    "crates/session",
     "crates/settings",
+    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/sqlez",
@@ -159,13 +161,13 @@ resolver = "2"
 
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
+aho-corasick = "1.1"
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
-async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
@@ -202,7 +204,7 @@ gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
-http = { path = "crates/http" }
+http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
@@ -248,7 +250,9 @@ rpc = { path = "crates/rpc" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
+session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 sqlez = { path = "crates/sqlez" }
@@ -282,22 +286,24 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
 alacritty_terminal = "0.23"
-any_vec = "0.13"
-anyhow = "1.0.57"
+any_vec = "0.14"
+anyhow = "1.0.86"
 ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1" }
 async-fs = "1.6"
+async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async-tungstenite = { version = "0.16" }
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "a477c2008db27db0b9f745715e119b3ee7ab7818" }
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -311,7 +317,7 @@ dashmap = "5.5.3"
 derive_more = "0.99.17"
 dirs = "4.0"
 emojis = "0.6.1"
-env_logger = "0.9"
+env_logger = "0.10"
 exec = "0.3.1"
 fork = "0.1.23"
 futures = "0.3"
@@ -334,7 +340,7 @@ itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
@@ -355,12 +361,14 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+rsa = "0.9.6"
 runtimelib = { version = "0.12", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
+rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = "0.8"
+schemars = {version = "0.8", features = ["impl_json_schema"]}
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -395,29 +403,28 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.20", features = ["wasm"] }
-tree-sitter-bash = "0.20.5"
-tree-sitter-c = "0.20.1"
-tree-sitter-cpp = "0.20.5"
-tree-sitter-css = "0.20"
-tree-sitter-elixir = "0.1.1"
+tree-sitter = { version = "0.22", features = ["wasm"] }
+tree-sitter-bash = "0.21"
+tree-sitter-c = "0.21"
+tree-sitter-cpp = "0.22"
+tree-sitter-css = "0.21"
+tree-sitter-elixir = "0.2"
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "b82ab803d887002a0af11f6ce63d72884580bf33" }
-tree-sitter-gomod = "1.0.1"
-tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-rustc-demangle = "0.1.23"
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
-tree-sitter-html = "0.19.0"
-tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", rev = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
-tree-sitter-json = "0.20.2"
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-python = "0.20.2"
-tree-sitter-regex = "0.20.0"
-tree-sitter-ruby = "0.20.0"
-tree-sitter-rust = "0.20.3"
-tree-sitter-typescript = "0.20.5"
-tree-sitter-yaml = "0.0.1"
+tree-sitter-go = "0.21"
+tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod"}
+tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work", rev = "dcbabff454703c3a4bc98a23cf8778d4be46fd22" }
+tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
+tree-sitter-html = "0.20"
+tree-sitter-jsdoc = "0.21"
+tree-sitter-json = "0.21"
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "e3855e37f8f2c71aa7513c18a9c95fb7461b1b10" }
+protols-tree-sitter-proto = "0.2"
+tree-sitter-python = "0.21"
+tree-sitter-regex = "0.21"
+tree-sitter-ruby = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-typescript = "0.21"
+tree-sitter-yaml = "0.6"
 unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
@@ -425,14 +432,14 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
-wasmtime = { version = "19.0.0", default-features = false, features = [
+wasmtime = { version = "19.0.2", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "19.0.0"
+wasmtime-wasi = "19.0.2"
 which = "6.0.0"
 wit-component = "0.201"
 sys-locale = "0.3.1"
@@ -476,11 +483,6 @@ features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-[patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
-# Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968e819c0d9b015437ffc694511e175801a17c7" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

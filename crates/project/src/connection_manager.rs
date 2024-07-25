@@ -85,7 +85,7 @@ impl Manager {
                         Some(proto::RejoinProject {
                             id: project_id,
                             worktrees: project
-                                .worktrees()
+                                .worktrees(cx)
                                 .map(|worktree| {
                                     let worktree = worktree.read(cx);
                                     proto::RejoinWorktree {

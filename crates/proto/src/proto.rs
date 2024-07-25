@@ -103,6 +103,10 @@ impl AnyProtoClient {
         let envelope = request.into_envelope(0, None, None);
         self.0.send(envelope)
     }
+
+    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
+        self.0.send(message)
+    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -395,7 +399,6 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
-    // Remote development
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
@@ -515,7 +518,6 @@ request_messages!(
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
-    // Remote development
     (AddWorktree, AddWorktreeResponse),
 );
 

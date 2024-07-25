@@ -58,6 +58,7 @@ impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let path_blob = statement.column_blob(start_index)?;
         let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
+            println!("path blog is empty");
             Default::default()
         } else {
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
@@ -214,6 +215,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
+    pub(crate) session_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]

@@ -38,8 +38,8 @@ pub fn init(cx: &mut AppContext) {
                 if let Some(existing) = existing {
                     workspace.activate_item(&existing, true, true, cx);
                 } else {
-                    let extensions_page = ReplSessionsPage::new(cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
+                    let repl_sessions_page = ReplSessionsPage::new(cx);
+                    workspace.add_item_to_active_pane(Box::new(repl_sessions_page), None, true, cx)
                 }
             });
 
