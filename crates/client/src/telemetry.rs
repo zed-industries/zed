@@ -18,7 +18,7 @@ use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
-    MemoryEvent, SettingEvent,
+    MemoryEvent, ReplEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -531,6 +531,21 @@ impl Telemetry {
         }
     }
 
+    pub fn report_repl_event(
+        self: &Arc<Self>,
+        kernel_language: String,
+        kernel_status: String,
+        repl_session_id: String,
+    ) {
+        let event = Event::Repl(ReplEvent {
+            kernel_language,
+            kernel_status,
+            repl_session_id,
+        });
+
+        self.report_event(event)
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -626,6 +641,7 @@ impl Telemetry {
                             release_channel: state.release_channel.map(Into::into),
                             events,
                         };
+                        dbg!(&request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
