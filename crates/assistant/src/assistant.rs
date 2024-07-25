@@ -30,9 +30,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command,
+    active_command, auto_command, default_command, diagnostics_command, docs_command,
+    fetch_command, file_command, now_command, project_command, prompt_command, search_command,
+    symbols_command, tabs_command, term_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -223,6 +223,7 @@ fn init_completion_provider(client: Arc<Client>, cx: &mut AppContext) {
 
 fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
+    slash_command_registry.register_command(auto_command::AutoCommand, true);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
