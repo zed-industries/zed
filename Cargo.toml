@@ -535,7 +535,6 @@ single_range_in_vec_init = "allow"
 style = { level = "allow", priority = -1 }
 
 # Individual rules that have violations in the codebase:
-almost_complete_range = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
