@@ -304,7 +304,6 @@ bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
 blade-macros = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
 blade-util = { git = "https://github.com/zed-industries/blade", rev = "7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e" }
-cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
@@ -432,14 +431,14 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
-wasmtime = { version = "19.0.2", default-features = false, features = [
+wasmtime = { version = "21.0.1", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "19.0.2"
+wasmtime-wasi = "21.0.1"
 which = "6.0.0"
 wit-component = "0.201"
 sys-locale = "0.3.1"
@@ -482,6 +481,10 @@ features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+[patch.crates-io]
+# Patch Tree-sitter for updated wasmtime.
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f4a57817d58a2f134fe863674acad6bbf007228" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
