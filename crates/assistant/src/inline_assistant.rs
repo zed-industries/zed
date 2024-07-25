@@ -1443,7 +1443,7 @@ impl Render for PromptEditor {
                                 }),
                         )
                         .with_info_text(
-                            "Inline transformations use context\n\
+                            "Inline edits use context\n\
                             from the currently selected\n\
                             assistant panel tab.",
                         ),
