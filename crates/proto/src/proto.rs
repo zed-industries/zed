@@ -410,7 +410,6 @@ messages!(
     (SynchronizeContextsResponse, Foreground),
     (LspExtSwitchSourceHeader, Background),
     (LspExtSwitchSourceHeaderResponse, Background),
-    // Remote development
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
@@ -538,7 +537,6 @@ request_messages!(
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
-    // Remote development
     (AddWorktree, AddWorktreeResponse),
 );
 

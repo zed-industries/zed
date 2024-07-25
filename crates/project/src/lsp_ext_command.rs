@@ -169,7 +169,6 @@ impl LspCommand for SwitchSourceHeader {
         _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> SwitchSourceHeaderParams {
-        log::info!("SwitchSourceHeader::to_lsp(path={:?})", path);
         SwitchSourceHeaderParams(lsp::TextDocumentIdentifier {
             uri: lsp::Url::from_file_path(path).unwrap(),
         })

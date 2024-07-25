@@ -30,8 +30,6 @@ pub fn switch_source_header(
     _: &SwitchSourceHeader,
     cx: &mut ViewContext<'_, Editor>,
 ) {
-    log::info!("switch_source_header action");
-
     let Some(project) = &editor.project else {
         return;
     };
@@ -60,7 +58,6 @@ pub fn switch_source_header(
                 .read(cx)
                 .language_servers_for_buffer(buffer.read(cx), cx)
                 .find_map(|(adapter, server)| {
-                    log::info!("adapter.name.0: {:?}", adapter.name.0);
                     if adapter.name.0.as_ref() == "clangd" {
                         Some((server.server_id(), buffer.clone()))
                     } else {
@@ -82,8 +79,6 @@ pub fn switch_source_header(
         .unwrap()
         .to_owned();
 
-    log::info!("switch source/header: source_file: {:?}", source_file);
-
     let switch_source_header_task = project.update(cx, |project, cx| {
         project.request_lsp(
             buffer,
@@ -95,19 +90,29 @@ pub fn switch_source_header(
     cx.spawn(|_editor, mut cx| async move {
         let switch_source_header = switch_source_header_task
             .await
-            .context("switch source/header")?;
+            .with_context(|| format!("Switch source/header LSP request for path \"{}\" failed", source_file))?;
         if switch_source_header.0.is_empty() {
-            log::info!("clangd returned an empty string for switch source/header");
+            log::info!("Clangd returned an empty string when requesting to switch source/header from \"{}\"", source_file);
             return Ok(());
         }
 
-        let goto = Url::parse(&switch_source_header.0).context("switch source/header")?;
+        let goto = Url::parse(&switch_source_header.0).with_context(|| {
+            format!(
+                "Parsing URL \"{}\" returned from switch source/header failed",
+                switch_source_header.0
+            )
+        })?;
 
         workspace
             .update(&mut cx, |workspace, view_cx| {
                 workspace.open_abs_path(PathBuf::from(goto.path()), false, view_cx)
             })
-            .context("switch source/header")?
+            .with_context(|| {
+                format!(
+                    "Switch source/header could not open \"{}\" in workspace",
+                    goto.path()
+                )
+            })?
             .await
             .map(|_| ())
     })
