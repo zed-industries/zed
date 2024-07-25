@@ -423,7 +423,8 @@ impl DebugPanel {
 
                     if let Some(item) = this.pane.read(cx).active_item() {
                         if let Some(pane) = item.downcast::<DebugPanelItem>() {
-                            if pane.read(cx).thread_id() == thread_id {
+                            let pane = pane.read(cx);
+                            if pane.thread_id() == thread_id && pane.client().id() == client_id {
                                 let workspace = this.workspace.clone();
                                 let client = client.clone();
                                 return cx.spawn(|_, cx| async move {
