@@ -12,7 +12,7 @@ use gpui::{
     Model, Render, Subscription, Task, Transformation, WeakModel,
 };
 use http_client::HttpClient;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
@@ -21,15 +21,16 @@ use ui::{
     VisualContext,
 };
 
-use crate::{settings::AllLanguageModelSettings, LanguageModelProviderState};
+use crate::LanguageModelProviderState;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderName, LanguageModelRequest, Role,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, Role,
 };
 
 use super::open_ai::count_open_ai_tokens;
 
-const PROVIDER_NAME: &str = "copilot_chat";
+const PROVIDER_ID: &str = "copilot_chat";
+const PROVIDER_NAME: &str = "GitHub Copilot Chat";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct CopilotChatSettings {
@@ -113,14 +114,9 @@ impl CopilotChatLanguageModelProvider {
                 oauth_token: None,
                 api_key: None,
                 settings: CopilotChatSettings::default(),
-                _settings_subscription: cx.observe_global::<SettingsStore>(
-                    |this: &mut State, cx| {
-                        this.settings = AllLanguageModelSettings::get_global(cx)
-                            .copilot_chat
-                            .clone();
-                        cx.notify();
-                    },
-                ),
+                _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                    cx.notify();
+                }),
                 _oauth_token_subscription,
             }
         });
@@ -231,6 +227,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             Ok(())
         })
     }
+
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
 }
 
 pub struct CopilotChatLanguageModel {
@@ -284,7 +284,8 @@ impl LanguageModel for CopilotChatLanguageModel {
     > {
         if let Some(message) = request.messages.last() {
             if message.content.is_empty() {
-                const EMPTY_PROMPT_MSG: &str = "Please provide a prompt";
+                const EMPTY_PROMPT_MSG: &str =
+                    "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
             }
 
@@ -292,7 +293,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             // While their API does return an error message for this, we can catch it earlier
             // and provide a more helpful error message.
             if !matches!(message.role, Role::User) {
-                const USER_ROLE_MSG: &str = "The final message must be from the user. Please provide system prompts, if any, followed by the user prompt.";
+                const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
             }
         }
@@ -351,6 +352,10 @@ impl LanguageModel for CopilotChatLanguageModel {
             Ok(stream)
         })
         .boxed()
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
     }
 }
 
