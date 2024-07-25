@@ -1989,16 +1989,20 @@ impl EditorElement {
                             .x_for_index(align_to.column() as usize)
                     };
 
-                block.render(&mut BlockContext {
-                    context: cx,
-                    anchor_x,
-                    gutter_dimensions,
-                    line_height,
-                    em_width,
-                    block_id,
-                    max_width: text_hitbox.size.width.max(*scroll_width),
-                    editor_style: &self.style,
-                })
+                div()
+                    .size_full()
+                    .child(block.render(&mut BlockContext {
+                        context: cx,
+                        anchor_x,
+                        gutter_dimensions,
+                        line_height,
+                        em_width,
+                        block_id,
+                        max_width: text_hitbox.size.width.max(*scroll_width),
+                        editor_style: &self.style,
+                    }))
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .into_any_element()
             }
 
             Block::ExcerptHeader {
@@ -2843,6 +2847,9 @@ impl EditorElement {
         em_width: Pixels,
         cx: &mut WindowContext,
     ) {
+        if !self.editor.focus_handle(cx).is_focused(cx) {
+            return;
+        }
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
@@ -5616,15 +5623,15 @@ impl Element for EditorElement {
 
                     self.paint_text(layout, cx);
 
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_gutter_highlights(layout, cx);
+                        self.paint_gutter_indicators(layout, cx);
+                    }
+
                     if !layout.blocks.is_empty() {
                         cx.with_element_namespace("blocks", |cx| {
                             self.paint_blocks(layout, cx);
                         });
-                    }
-
-                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                        self.paint_gutter_highlights(layout, cx);
-                        self.paint_gutter_indicators(layout, cx);
                     }
 
                     self.paint_scrollbar(layout, cx);

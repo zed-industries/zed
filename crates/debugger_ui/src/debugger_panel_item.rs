@@ -436,9 +436,8 @@ impl Render for DebugPanelItem {
             .child(
                 h_flex()
                     .gap_2()
-                    .when_else(
-                        self.current_thread_state().status == ThreadStatus::Running,
-                        |this| {
+                    .map(|this| {
+                        if self.current_thread_state().status == ThreadStatus::Running {
                             this.child(
                                 IconButton::new("debug-pause", IconName::DebugPause)
                                     .on_click(
@@ -446,8 +445,7 @@ impl Render for DebugPanelItem {
                                     )
                                     .tooltip(move |cx| Tooltip::text("Pause program", cx)),
                             )
-                        },
-                        |this| {
+                        } else {
                             this.child(
                                 IconButton::new("debug-continue", IconName::DebugContinue)
                                     .on_click(cx.listener(|_, _, cx| {
@@ -456,8 +454,8 @@ impl Render for DebugPanelItem {
                                     .disabled(thread_status != ThreadStatus::Stopped)
                                     .tooltip(move |cx| Tooltip::text("Continue program", cx)),
                             )
-                        },
-                    )
+                        }
+                    })
                     .child(
                         IconButton::new("debug-step-over", IconName::DebugStepOver)
                             .on_click(
