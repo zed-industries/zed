@@ -465,7 +465,6 @@ features = [
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
-    "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
