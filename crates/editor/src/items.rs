@@ -35,6 +35,7 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
+    time::{Duration, UNIX_EPOCH},
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
@@ -924,14 +925,18 @@ impl SerializableItem for Editor {
                 path,
                 contents,
                 language,
+                mtime,
             })) => {
                 if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
-                    (path, contents, language)
+                    let mtime = mtime.map(|(seconds, nanos)| {
+                        UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32)
+                    });
+                    (path, contents, language, mtime)
                 } else {
-                    (path, None, None)
+                    (path, None, None, None)
                 }
             }
             Ok(None) => {
@@ -943,7 +948,7 @@ impl SerializableItem for Editor {
         };
 
         match path_content_language {
-            (None, Some(content), language_name) => cx.spawn(|_, mut cx| async move {
+            (None, Some(content), language_name, _) => cx.spawn(|_, mut cx| async move {
                 let language = if let Some(language_name) = language_name {
                     let language_registry =
                         project.update(&mut cx, |project, _| project.languages().clone())?;
@@ -969,7 +974,7 @@ impl SerializableItem for Editor {
                     editor
                 })
             }),
-            (Some(path), contents, _) => {
+            (Some(path), contents, _, mtime) => {
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
                         .find_worktree(&path, cx)
@@ -994,9 +999,19 @@ impl SerializableItem for Editor {
                             // disk and then overwrite the content.
                             // But for now, it keeps the implementation of the content serialization
                             // simple, because we don't have to persist all of the metadata that we get
-                            // by loading the file (git diff base, mtime, ...).
+                            // by loading the file (git diff base, ...).
                             if let Some(buffer_text) = contents {
                                 buffer.update(&mut cx, |buffer, cx| {
+                                    // If we did restore an mtime, we want to store it on the buffer
+                                    // so that the next edit will mark the buffer as dirty/conflicted.
+                                    if mtime.is_some() {
+                                        buffer.did_reload(
+                                            buffer.version(),
+                                            buffer.line_ending(),
+                                            mtime,
+                                            cx,
+                                        );
+                                    }
                                     buffer.set_text(buffer_text, cx);
                                 })?;
                             }
@@ -1042,11 +1057,16 @@ impl SerializableItem for Editor {
         let buffer = self.buffer().read(cx).as_singleton()?;
 
         let is_dirty = buffer.read(cx).is_dirty();
-        let path = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx));
+        let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
+        let path = local_file.map(|file| file.abs_path(cx));
+        let mtime = local_file.and_then(|file| {
+            file.mtime().and_then(|time| {
+                time.duration_since(UNIX_EPOCH)
+                    .ok()
+                    .map(|duration| (duration.as_secs() as i64, duration.subsec_nanos() as i32))
+            })
+        });
+
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn(|_this, cx| async move {
@@ -1064,6 +1084,7 @@ impl SerializableItem for Editor {
                         path,
                         contents,
                         language,
+                        mtime,
                     };
 
                     DB.save_serialized_editor(item_id, workspace_id, editor)

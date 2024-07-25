@@ -13,36 +13,53 @@ pub(crate) struct SerializedEditor {
     pub(crate) path: Option<PathBuf>,
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
+    pub(crate) mtime: Option<(i64, i32)>, // (seconds, nanoseconds)
 }
 
 impl StaticColumnCount for SerializedEditor {
     fn column_count() -> usize {
-        3
+        5
     }
 }
 
 impl Bind for SerializedEditor {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&self.path, start_index)?;
-        let next_index = statement.bind(&self.contents, next_index)?;
-        let next_index = statement.bind(&self.language, next_index)?;
-        Ok(next_index)
+        let start_index = statement.bind(&self.path, start_index)?;
+        let start_index = statement.bind(&self.contents, start_index)?;
+        let start_index = statement.bind(&self.language, start_index)?;
+        let start_index = match self.mtime {
+            Some((seconds, nanos)) => {
+                let start_index = statement.bind(&seconds, start_index)?;
+                statement.bind(&nanos, start_index)?
+            }
+            None => {
+                let start_index = statement.bind::<Option<i64>>(&None, start_index)?;
+                statement.bind::<Option<i32>>(&None, start_index)?
+            }
+        };
+        Ok(start_index)
     }
 }
 
 impl Column for SerializedEditor {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (path, start_index): (Option<PathBuf>, i32) = Column::column(statement, start_index)?;
-
         let (contents, start_index): (Option<String>, i32) =
             Column::column(statement, start_index)?;
         let (language, start_index): (Option<String>, i32) =
             Column::column(statement, start_index)?;
+        let (mtime_seconds, start_index): (Option<i64>, i32) =
+            Column::column(statement, start_index)?;
+        let (mtime_nanos, start_index): (Option<i32>, i32) =
+            Column::column(statement, start_index)?;
+
+        let mtime = mtime_seconds.zip(mtime_nanos);
 
         let editor = Self {
             path,
             contents,
             language,
+            mtime,
         };
         Ok((editor, start_index))
     }
@@ -59,6 +76,8 @@ define_connection!(
     //   scroll_horizontal_offset: f32,
     //   content: Option<String>,
     //   language: Option<String>,
+    //   mtime_seconds: Option<i64>,
+    //   mtime_nanos: Option<i32>,
     // )
     pub static ref DB: EditorDb<WorkspaceDb> =
         &[sql! (
@@ -104,7 +123,8 @@ define_connection!(
             ALTER TABLE new_editors_tmp RENAME TO editors;
         ),
         sql! (
-            ALTER TABLE editors ADD COLUMN mtime INTEGER DEFAULT NULL;
+            ALTER TABLE editors ADD COLUMN mtime_seconds INTEGER DEFAULT NULL;
+            ALTER TABLE editors ADD COLUMN mtime_nanos INTEGER DEFAULT NULL;
         ),
         ];
 );
@@ -112,7 +132,7 @@ define_connection!(
 impl EditorDb {
     query! {
         pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
-            SELECT path, contents, language FROM editors
+            SELECT path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
@@ -120,15 +140,17 @@ impl EditorDb {
     query! {
         pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path, contents, language)
+                (item_id, workspace_id, path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
-                (?1, ?2, ?3, ?4, ?5)
+                (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
                 path = ?3,
                 contents = ?4,
-                language = ?5
+                language = ?5,
+                mtime_seconds = ?6,
+                mtime_nanos = ?7
         }
     }
 
@@ -198,6 +220,7 @@ mod tests {
             path: Some(PathBuf::from("testing.txt")),
             contents: None,
             language: None,
+            mtime: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -215,6 +238,7 @@ mod tests {
             path: Some(PathBuf::from("testing.txt")),
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
+            mtime: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -232,6 +256,7 @@ mod tests {
             path: None,
             contents: None,
             language: None,
+            mtime: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -243,5 +268,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(have, serialized_editor);
+
+        // Storing and retrieving mtime
+        let serialized_editor = SerializedEditor {
+            path: None,
+            contents: None,
+            language: None,
+            mtime: Some((646464, 323232)),
+        };
+
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+            .await
+            .unwrap();
+
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
+        assert_eq!(have.mtime, Some((646464, 323232)));
     }
 }
