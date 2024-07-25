@@ -15,7 +15,7 @@ use std::{
     future::Future,
     path::Path,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use util::ResultExt;
 use worktree::Snapshot;
@@ -107,6 +107,7 @@ impl SummaryIndex {
         &self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        let start = Instant::now();
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
@@ -123,6 +124,12 @@ impl SummaryIndex {
                 summaries.task,
                 persist
             )?;
+
+            log::info!(
+                "Summarizing everything that changed on disk took {:?}",
+                start.elapsed()
+            );
+
             Ok(())
         }
     }
@@ -132,6 +139,7 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        let start = Instant::now();
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
@@ -148,6 +156,9 @@ impl SummaryIndex {
                 summaries.task,
                 persist
             )?;
+
+            log::info!("Summarizing updated entries took {:?}", start.elapsed());
+
             Ok(())
         }
     }
@@ -374,7 +385,7 @@ impl SummaryIndex {
     }
 
     fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let provider = CompletionProvider::global(cx);
         let model = PREFERRED_SUMMARIZATION_MODEL;
         const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
