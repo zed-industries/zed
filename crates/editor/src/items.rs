@@ -949,7 +949,12 @@ impl SerializableItem for Editor {
                     let language_registry =
                         project.update(&mut cx, |project, _| project.languages().clone())?;
 
-                    Some(language_registry.language_for_name(&language_name).await?)
+                    // We don't fail here, because we'd rather not set the language if the name changed
+                    // than fail to restore the buffer.
+                    language_registry
+                        .language_for_name(&language_name)
+                        .await
+                        .ok()
                 } else {
                     None
                 };
@@ -1492,7 +1497,7 @@ mod tests {
 
     use super::*;
     use gpui::{AppContext, VisualTestContext};
-    use language::TestFile;
+    use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::{
         path::{Path, PathBuf},
@@ -1532,6 +1537,20 @@ mod tests {
             .unwrap()
     }
 
+    fn rust_language() -> Arc<language::Language> {
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ))
+    }
+
     #[gpui::test]
     async fn test_deserialize(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
@@ -1566,6 +1585,8 @@ mod tests {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.is_dirty(cx));
                 assert!(!editor.has_conflict(cx));
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_some());
             });
         }
 
@@ -1593,13 +1614,20 @@ mod tests {
 
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), ""); // The file should be empty as per our initial setup
-                assert!(!editor.is_dirty(cx)); // The editor should not be dirty
+                assert!(!editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_some());
             });
         }
 
-        // Test case 3: Deserialize with no path (untitled buffer)
+        // Test case 3: Deserialize with no path (untitled buffer, with content and language)
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            // Add Rust to the language, so that we can restore the language of the buffer
+            project.update(cx, |project, cx| project.languages().add(rust_language()));
+
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
@@ -1608,7 +1636,7 @@ mod tests {
             let serialized_editor = SerializedEditor {
                 path: None,
                 contents: Some("hello".to_string()),
-                language: None,
+                language: Some("Rust".to_string()),
                 mtime: None,
             };
 
@@ -1622,14 +1650,13 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "hello");
                 assert!(editor.is_dirty(cx)); // The editor should be dirty for an untitled buffer
-                assert!(editor
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .unwrap()
-                    .read(cx)
-                    .file()
-                    .is_none()); // The buffer should not have an associated file
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert_eq!(
+                    buffer.language().map(|lang| lang.name()).as_deref(),
+                    Some("Rust")
+                ); // Language should be set to Rust
+                assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });
         }
 
