@@ -1052,26 +1052,23 @@ impl SerializableItem for Editor {
         Some(cx.spawn(|_this, cx| async move {
             cx.background_executor()
                 .spawn(async move {
-                    if let Some(path) = path {
-                        DB.save_path(item_id, workspace_id, path.clone())
-                            .await
-                            .context("failed to save path of buffer")?
-                    }
+                    let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                        let contents = snapshot.text();
+                        let language = snapshot.language().map(|lang| lang.name().to_string());
+                        (Some(contents), language)
+                    } else {
+                        (None, None)
+                    };
 
-                    if serialize_dirty_buffers {
-                        let (contents, language) = if is_dirty {
-                            let contents = snapshot.text();
-                            let language = snapshot.language().map(|lang| lang.name().to_string());
-                            (Some(contents), language)
-                        } else {
-                            (None, None)
-                        };
+                    let editor = SerializedEditor {
+                        path,
+                        contents,
+                        language,
+                    };
 
-                        DB.save_contents(item_id, workspace_id, contents, language)
-                            .await?;
-                    }
-
-                    anyhow::Ok(())
+                    DB.save_serialized_editor(item_id, workspace_id, editor)
+                        .await
+                        .context("failed to save serialized editor")
                 })
                 .await
                 .context("failed to save contents of buffer")?;

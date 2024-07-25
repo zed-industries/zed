@@ -118,29 +118,17 @@ impl EditorDb {
     }
 
     query! {
-        pub async fn save_path(item_id: ItemId, workspace_id: WorkspaceId, path: PathBuf) -> Result<()> {
+        pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path)
+                (item_id, workspace_id, path, contents, language)
             VALUES
-                (?1, ?2, ?3)
+                (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
-                path = ?3
-        }
-    }
-
-    query! {
-        pub async fn save_contents(item_id: ItemId, workspace: WorkspaceId, contents: Option<String>, language: Option<String>) -> Result<()> {
-            INSERT INTO editors
-                (item_id, workspace_id, contents, language)
-            VALUES
-                (?1, ?2, ?3, ?4)
-            ON CONFLICT DO UPDATE SET
-                item_id = ?1,
-                workspace_id = ?2,
-                contents = ?3,
-                language = ?4
+                path = ?3,
+                contents = ?4,
+                language = ?5
         }
     }
 
@@ -203,78 +191,57 @@ mod tests {
     use gpui;
 
     #[gpui::test]
-    async fn test_saving_content() {
+    async fn test_save_and_get_serialized_editor() {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
-        // Sanity check: make sure there is no row in the `editors` table
-        assert_eq!(DB.get_serialized_editor(1234, workspace_id).unwrap(), None);
+        let serialized_editor = SerializedEditor {
+            path: Some(PathBuf::from("testing.txt")),
+            contents: None,
+            language: None,
+        };
 
-        // Save content/language
-        DB.save_contents(
-            1234,
-            workspace_id,
-            Some("testing".into()),
-            Some("Go".into()),
-        )
-        .await
-        .unwrap();
-
-        // Check that it can be read from DB
-        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
-        let SerializedEditor {
-            path,
-            contents,
-            language,
-        } = path_and_contents.unwrap();
-        assert!(path.is_none());
-        assert_eq!(contents, Some("testing".to_owned()));
-        assert_eq!(language, Some("Go".to_owned()));
-
-        // Update it with NULL
-        DB.save_contents(1234, workspace_id, None, None)
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        // Check that it worked
-        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
-        let SerializedEditor {
-            path,
-            contents,
-            language,
-        } = path_and_contents.unwrap();
-        assert!(path.is_none());
-        assert!(contents.is_none());
-        assert!(language.is_none());
-    }
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
 
-    #[gpui::test]
-    async fn test_get_path_and_contents() {
-        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+        // Now update contents and language
+        let serialized_editor = SerializedEditor {
+            path: Some(PathBuf::from("testing.txt")),
+            contents: Some("Test".to_owned()),
+            language: Some("Go".to_owned()),
+        };
 
-        // Save path
-        DB.save_path(1234, workspace_id, PathBuf::from("testfile.txt"))
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        // Save content and language
-        DB.save_contents(
-            1234,
-            workspace_id,
-            Some("testing".into()),
-            Some("Go".into()),
-        )
-        .await
-        .unwrap();
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
 
-        // Check that it can be read from DB
-        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
-        let SerializedEditor {
-            path,
-            contents,
-            language,
-        } = path_and_contents.unwrap();
-        assert_eq!(path, Some(PathBuf::from("testfile.txt")));
-        assert_eq!(contents, Some("testing".to_owned()));
-        assert_eq!(language, Some("Go".to_owned()));
+        // Now set all the fields to NULL
+        let serialized_editor = SerializedEditor {
+            path: None,
+            contents: None,
+            language: None,
+        };
+
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+            .await
+            .unwrap();
+
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
     }
 }
