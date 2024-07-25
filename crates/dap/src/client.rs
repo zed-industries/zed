@@ -62,7 +62,7 @@ pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     _process: Option<Child>,
     server_tx: Sender<Payload>,
-    request_count: AtomicU64,
+    sequence_count: AtomicU64,
     capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
     config: DebugAdapterConfig,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
@@ -286,7 +286,7 @@ impl DebugAdapterClient {
             config,
             server_tx,
             _process: process,
-            request_count: AtomicU64::new(1),
+            sequence_count: AtomicU64::new(1),
             capabilities: Default::default(),
             thread_states: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -357,7 +357,7 @@ impl DebugAdapterClient {
 
         let request = Request {
             back_ch: Some(callback_tx),
-            seq: self.next_request_id(),
+            seq: self.next_sequence_id(),
             command: R::COMMAND.to_string(),
             arguments: Some(serialized_arguments),
         };
@@ -365,6 +365,7 @@ impl DebugAdapterClient {
         self.server_tx.send(Payload::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
+        let _ = self.next_sequence_id();
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
@@ -388,8 +389,11 @@ impl DebugAdapterClient {
         self.capabilities.lock().clone().unwrap_or_default()
     }
 
-    pub fn next_request_id(&self) -> u64 {
-        self.request_count.fetch_add(1, Ordering::Relaxed)
+    /// Get the next sequence id to be used in a request
+    /// # Side Effect
+    /// This function also increment's client's sequence count by one
+    pub fn next_sequence_id(&self) -> u64 {
+        self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
