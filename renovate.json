@@ -17,7 +17,7 @@
   "packageRules": [
     {
       "description": "Group wasmtime crates together.",
-      "matchPackagePatterns": ["wasmtime**"],
+      "matchPackagePrefixes": ["wasmtime**"],
       "groupName": "wasmtime"
     }
   ]
