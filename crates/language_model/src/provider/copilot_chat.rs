@@ -47,16 +47,14 @@ pub struct State {
     api_key: Option<(String, NaiveDateTime)>,
     settings: CopilotChatSettings,
     _settings_subscription: Subscription,
-    _oauth_token_subscription: Subscription,
+    _oauth_token_subscription: Option<Subscription>,
 }
 
 impl CopilotChatLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| {
-            let _oauth_token_subscription =
-                // We explicitly init Copilot before the language models to ensure that it's available
-                // here.
-                cx.observe(&Copilot::global(cx).unwrap(), |this: &mut State, model, cx| {
+            let _oauth_token_subscription = if let Some(copilot) = Copilot::global(cx) {
+                Some(cx.observe(&copilot, |this: &mut State, model, cx| {
                     match model.read(cx).status() {
                         Status::Authorized => cx
                             .spawn(|this: WeakModel<State>, mut cx| async move {
@@ -64,9 +62,7 @@ impl CopilotChatLanguageModelProvider {
                                     .update(|cx| cx.read_credentials(COPILOT_CHAT_AUTH_URL))?
                                     .await?
                                 {
-                                    Some((_, creds)) => {
-                                        String::from_utf8(creds)?
-                                    }
+                                    Some((_, creds)) => String::from_utf8(creds)?,
                                     None => {
                                         let oauth_token = fetch_copilot_oauth_token().await?;
 
@@ -108,7 +104,10 @@ impl CopilotChatLanguageModelProvider {
                         }
                         _ => {}
                     }
-                });
+                }))
+            } else {
+                None
+            };
 
             State {
                 oauth_token: None,
@@ -380,21 +379,23 @@ impl CopilotChatLanguageModel {
 }
 
 struct AuthenticationPrompt {
-    copilot_status: copilot::Status,
-    _subscription: Subscription,
+    copilot_status: Option<copilot::Status>,
+    _subscription: Option<Subscription>,
 }
 
 impl AuthenticationPrompt {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let copilot = Copilot::global(cx).unwrap();
+        let copilot = Copilot::global(cx);
 
-        let _subscription = cx.observe(&copilot, |this, model, cx| {
-            this.copilot_status = model.read(cx).status();
-            cx.notify()
+        let _subscription = copilot.as_ref().map_or(None, |copilot| {
+            Some(cx.observe(copilot, |this, model, cx| {
+                this.copilot_status = Some(model.read(cx).status());
+                cx.notify();
+            }))
         });
 
         Self {
-            copilot_status: copilot.read(cx).status(),
+            copilot_status: copilot.map_or(None, |model| Some(model.read(cx).status())),
             _subscription,
         }
     }
@@ -414,66 +415,71 @@ impl Render for AuthenticationPrompt {
                 |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
             );
 
+        const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
         match &self.copilot_status {
-            Status::Disabled => {
-                const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
-                return v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL));
-            }
-            Status::Starting { task: _ } => {
-                const LABEL: &str = "Starting Copilot...";
-                return v_flex()
-                    .gap_6()
-                    .p_4()
-                    .justify_center()
-                    .items_center()
-                    .child(Label::new(LABEL))
-                    .child(loading_icon);
-            }
-            Status::SigningIn { prompt: _ } => {
-                const LABEL: &str = "Signing in to Copilot...";
-                return v_flex()
-                    .gap_6()
-                    .p_4()
-                    .justify_center()
-                    .items_center()
-                    .child(Label::new(LABEL))
-                    .child(loading_icon);
-            }
-            Status::Error(_) => {
-                const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
-                return v_flex()
-                    .gap_6()
-                    .p_4()
-                    .child(Label::new(LABEL))
-                    .child(svg().size_8().path(IconName::CopilotError.path()));
-            }
-            _ => {
-                const LABEL: &str =
+            Some(status) => match status {
+                Status::Disabled => {
+                    return v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL));
+                }
+                Status::Starting { task: _ } => {
+                    const LABEL: &str = "Starting Copilot...";
+                    return v_flex()
+                        .gap_6()
+                        .p_4()
+                        .justify_center()
+                        .items_center()
+                        .child(Label::new(LABEL))
+                        .child(loading_icon);
+                }
+                Status::SigningIn { prompt: _ } => {
+                    const LABEL: &str = "Signing in to Copilot...";
+                    return v_flex()
+                        .gap_6()
+                        .p_4()
+                        .justify_center()
+                        .items_center()
+                        .child(Label::new(LABEL))
+                        .child(loading_icon);
+                }
+                Status::Error(_) => {
+                    const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
+                    return v_flex()
+                        .gap_6()
+                        .p_4()
+                        .child(Label::new(LABEL))
+                        .child(svg().size_8().path(IconName::CopilotError.path()));
+                }
+                _ => {
+                    const LABEL: &str =
                     "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
-                v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("sign_in", "Sign In")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Medium)
-                                .style(ui::ButtonStyle::Filled)
-                                .full_width()
-                                // I don't love that using the inline_completion_button module here, but it's the best way to share the logic between the two buttons,
-                                // without a bunch of refactoring.
-                                .on_click(|_, cx| inline_completion_button::initiate_sign_in(cx)),
-                        )
-                        .child(
-                            div().flex().w_full().items_center().child(
-                                Label::new("Sign in to start using Github Copilot Chat.")
-                                    .color(Color::Muted)
-                                    .size(ui::LabelSize::Small),
+                    v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("sign_in", "Sign In")
+                                    .icon_color(Color::Muted)
+                                    .icon(IconName::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Medium)
+                                    .style(ui::ButtonStyle::Filled)
+                                    .full_width()
+                                    // I don't love that using the inline_completion_button module here, but it's the best way to share the logic between the two buttons,
+                                    // without a bunch of refactoring.
+                                    .on_click(|_, cx| {
+                                        inline_completion_button::initiate_sign_in(cx)
+                                    }),
+                            )
+                            .child(
+                                div().flex().w_full().items_center().child(
+                                    Label::new("Sign in to start using Github Copilot Chat.")
+                                        .color(Color::Muted)
+                                        .size(ui::LabelSize::Small),
+                                ),
                             ),
-                        ),
-                )
-            }
+                    )
+                }
+            },
+            None => v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL)),
         }
     }
 }

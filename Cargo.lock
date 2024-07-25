@@ -382,7 +382,6 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "completion",
- "copilot",
  "ctor",
  "editor",
  "env_logger",
