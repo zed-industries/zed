@@ -4,7 +4,9 @@
 
 Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
-<!-- TODO: Include GIF in action -->
+![Run Python Block by Block](https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4)
+
+![Markdown documents become notebooks](https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png)
 
 ## Installation
 
@@ -15,19 +17,17 @@ Zed supports running code in multiple languages. To get started, you need to ins
 * [Python (ipykernel)](#python)
 * [TypeScript (Deno)](#typescript-deno)
 
-Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown.
-
-<!-- TODO: Make markdown a link with an example -->
+Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
 
 ## Using the REPL
 
-To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to `ctrl-shift-enter` on macOS). You can also click on the REPL icon in the toolbar.
+To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to `ctrl-shift-enter` on macOS) to run a block, selection, or line. You can also click on the REPL icon in the toolbar.
 
 The `repl: run` command will be executed on your selection(s), and the result will be displayed below the selection.
 
 Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
 
-### Notebooks as code
+### Cell mode
 
 Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
 
@@ -115,6 +115,10 @@ language, you can assign a kernel for any supported language in your `settings.j
 }
 ```
 
+## Debugging Kernelspecs
+
+Available kernels are shown via the `repl: sessions` command. To refresh the kernels you can run, use the `repl: refresh kernelspecs` command.
+
 If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
 ```
@@ -129,13 +133,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-Note: Zed will not find kernels nested within your Python `sys.prefix`, shown here as `/Users/z/.pyenv/versions/miniconda3-latest/`.
-
-```
-$ jupyter kernelspec list
-Available kernels:
-  conda-base            /Users/z/Library/Jupyter/kernels/conda-base
-  python3               /Users/z/.pyenv/versions/miniconda3-latest/share/jupyter/kernels/python3
-```
-
-You must run `python -m ipykernel install --user` to install the kernel.
+Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
