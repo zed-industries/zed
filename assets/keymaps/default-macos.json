@@ -135,6 +135,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
@@ -144,12 +145,6 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
-    }
-  },
-  {
-    "context": "Editor && mode == full && !jupyter",
-    "bindings": {
-      "cmd-enter": "editor::NewlineBelow"
     }
   },
   {
