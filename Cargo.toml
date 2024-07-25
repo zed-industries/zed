@@ -286,7 +286,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
 alacritty_terminal = "0.23"
-any_vec = "0.13"
+any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
