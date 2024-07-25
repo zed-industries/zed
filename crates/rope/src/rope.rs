@@ -636,9 +636,10 @@ impl<'a> Chunks<'a> {
                 self.offset = *self.chunks.start();
 
                 if let Some(chunk) = self.peek() {
-                    let newline_ix = chunk.find('\n').unwrap();
-                    self.offset += newline_ix + 1;
-                    found = self.offset_is_valid();
+                    if let Some(newline_ix) = chunk.find('\n') {
+                        self.offset += newline_ix + 1;
+                        found = self.offset_is_valid();
+                    }
                 }
             }
 
@@ -671,8 +672,11 @@ impl<'a> Chunks<'a> {
         }
 
         if let Some(chunk) = self.chunks.item() {
-            if let Some(newline_ix) = chunk.0[..self.offset - *self.chunks.start() - 1].rfind('\n')
-            {
+            let mut end_ix = self.offset - *self.chunks.start() - 1;
+            while !chunk.0.is_char_boundary(end_ix) {
+                end_ix -= 1;
+            }
+            if let Some(newline_ix) = chunk.0[..end_ix].rfind('\n') {
                 self.offset = *self.chunks.start() + newline_ix + 1;
                 if self.offset_is_valid() {
                     return true;
@@ -690,6 +694,7 @@ impl<'a> Chunks<'a> {
                     if self.offset == self.chunks.end(&()) {
                         self.chunks.next(&());
                     }
+
                     return true;
                 }
             }
@@ -1591,13 +1596,14 @@ mod tests {
                     .match_indices('\n')
                     .map(|(index, _)| start_ix + index + 1)
                     .collect();
-                if start_ix < end_ix {
-                    expected_line_starts.insert(0, start_ix);
+                // Remove the last index if it starts at the end of the range.
+                if expected_line_starts.last() == Some(&end_ix) {
+                    expected_line_starts.pop();
                 }
 
                 let mut chunks = actual.chunks_in_range(start_ix..end_ix);
 
-                let mut actual_line_starts = vec![chunks.offset()];
+                let mut actual_line_starts = Vec::new();
                 while chunks.next_line() {
                     actual_line_starts.push(chunks.offset());
                 }
@@ -1609,10 +1615,14 @@ mod tests {
                     start_ix..end_ix
                 );
 
+                if start_ix < end_ix {
+                    expected_line_starts.insert(0, start_ix);
+                }
                 let mut actual_line_starts = Vec::new();
                 while chunks.prev_line() {
-                    actual_line_starts.insert(0, chunks.offset());
+                    actual_line_starts.push(chunks.offset());
                 }
+                actual_line_starts.reverse();
                 assert_eq!(
                     actual_line_starts,
                     expected_line_starts,
