@@ -76,6 +76,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
         WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
@@ -273,7 +274,8 @@ fn handle_syskeydown_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-    let result = if func(PlatformInput::KeyDown(event)).default_prevented {
+    let result = if !func(PlatformInput::KeyDown(event)).propagate {
+        state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
         None
@@ -1065,6 +1067,17 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.udpate(handle).log_err();
     Some(0)
+}
+
+fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    if wparam.0 == SC_KEYMENU as usize {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.system_key_handled {
+            lock.system_key_handled = false;
+            return Some(0);
+        }
+    }
+    None
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
