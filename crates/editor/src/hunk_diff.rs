@@ -13,7 +13,7 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
+    div, h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
     ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
@@ -462,12 +462,12 @@ impl Editor {
                                 },
                             );
 
-                            let button = editor.close_hunk_diff_button(
+                            let close_button = editor.close_hunk_diff_button(
                                 hunk.clone(),
                                 hunk_display_range.start.row(),
                                 cx,
                             );
-                            (gutter_dimensions, hunk_bounds, button)
+                            (gutter_dimensions, hunk_bounds, close_button)
                         });
                     let click_editor = editor.clone();
                     let clicked_hunk = hunk.clone();
@@ -509,7 +509,13 @@ impl Editor {
                                             }
                                         }),
                                 )
-                                .child(close_button),
+                                .child(
+                                    v_flex()
+                                        .size_full()
+                                        .pt(ui::rems(0.25))
+                                        .justify_start()
+                                        .child(close_button),
+                                ),
                         )
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
