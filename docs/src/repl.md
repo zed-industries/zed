@@ -4,9 +4,22 @@
 
 Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
-![Run Python Block by Block](https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4)
-
-![Markdown documents become notebooks](https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png)
+<figure style="overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
+    <video loop controls playsinline>
+        <source
+            src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
+            type='video/webm; codecs="vp8.0, vorbis"'
+        />
+        <source
+            src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
+            type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
+        />
+        <source
+          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
+          type="image/png"
+        />
+    </video>
+</figure>
 
 ## Installation
 
