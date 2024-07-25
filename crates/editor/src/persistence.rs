@@ -1,4 +1,5 @@
 use anyhow::Result;
+use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use std::path::PathBuf;
 
@@ -6,6 +7,46 @@ use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub(crate) struct SerializedEditor {
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) contents: Option<String>,
+    pub(crate) language: Option<String>,
+}
+
+impl StaticColumnCount for SerializedEditor {
+    fn column_count() -> usize {
+        3
+    }
+}
+
+impl Bind for SerializedEditor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.path, start_index)?;
+        let next_index = statement.bind(&self.contents, next_index)?;
+        let next_index = statement.bind(&self.language, next_index)?;
+        Ok(next_index)
+    }
+}
+
+impl Column for SerializedEditor {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (path, start_index): (Option<PathBuf>, i32) = Column::column(statement, start_index)?;
+
+        let (contents, start_index): (Option<String>, i32) =
+            Column::column(statement, start_index)?;
+        let (language, start_index): (Option<String>, i32) =
+            Column::column(statement, start_index)?;
+
+        let editor = Self {
+            path,
+            contents,
+            language,
+        };
+        Ok((editor, start_index))
+    }
+}
 
 define_connection!(
     // Current schema shape using pseudo-rust syntax:
@@ -61,12 +102,16 @@ define_connection!(
             DROP TABLE editors;
 
             ALTER TABLE new_editors_tmp RENAME TO editors;
-        )];
+        ),
+        sql! (
+            ALTER TABLE editors ADD COLUMN mtime INTEGER DEFAULT NULL;
+        ),
+        ];
 );
 
 impl EditorDb {
     query! {
-        pub fn get_path_and_contents(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(Option<PathBuf>, Option<String>, Option<String>)>> {
+        pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
             SELECT path, contents, language FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
@@ -159,12 +204,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_saving_content() {
-        env_logger::try_init().ok();
-
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         // Sanity check: make sure there is no row in the `editors` table
-        assert_eq!(DB.get_path_and_contents(1234, workspace_id).unwrap(), None);
+        assert_eq!(DB.get_serialized_editor(1234, workspace_id).unwrap(), None);
 
         // Save content/language
         DB.save_contents(
@@ -177,8 +220,12 @@ mod tests {
         .unwrap();
 
         // Check that it can be read from DB
-        let path_and_contents = DB.get_path_and_contents(1234, workspace_id).unwrap();
-        let (path, contents, language) = path_and_contents.unwrap();
+        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
+        let SerializedEditor {
+            path,
+            contents,
+            language,
+        } = path_and_contents.unwrap();
         assert!(path.is_none());
         assert_eq!(contents, Some("testing".to_owned()));
         assert_eq!(language, Some("Go".to_owned()));
@@ -189,10 +236,45 @@ mod tests {
             .unwrap();
 
         // Check that it worked
-        let path_and_contents = DB.get_path_and_contents(1234, workspace_id).unwrap();
-        let (path, contents, language) = path_and_contents.unwrap();
+        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
+        let SerializedEditor {
+            path,
+            contents,
+            language,
+        } = path_and_contents.unwrap();
         assert!(path.is_none());
         assert!(contents.is_none());
         assert!(language.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_get_path_and_contents() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+        // Save path
+        DB.save_path(1234, workspace_id, PathBuf::from("testfile.txt"))
+            .await
+            .unwrap();
+
+        // Save content and language
+        DB.save_contents(
+            1234,
+            workspace_id,
+            Some("testing".into()),
+            Some("Go".into()),
+        )
+        .await
+        .unwrap();
+
+        // Check that it can be read from DB
+        let path_and_contents = DB.get_serialized_editor(1234, workspace_id).unwrap();
+        let SerializedEditor {
+            path,
+            contents,
+            language,
+        } = path_and_contents.unwrap();
+        assert_eq!(path, Some(PathBuf::from("testfile.txt")));
+        assert_eq!(contents, Some("testing".to_owned()));
+        assert_eq!(language, Some("Go".to_owned()));
     }
 }

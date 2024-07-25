@@ -1,7 +1,9 @@
 use crate::{
-    editor_settings::SeedQuerySetting, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll,
-    Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
-    NavigationData, SearchWithinRange, ToPoint as _,
+    editor_settings::SeedQuerySetting,
+    persistence::{SerializedEditor, DB},
+    scroll::ScrollAnchor,
+    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer,
+    MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
@@ -915,15 +917,19 @@ impl SerializableItem for Editor {
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
         let path_content_language = match DB
-            .get_path_and_contents(item_id, workspace_id)
+            .get_serialized_editor(item_id, workspace_id)
             .context("Failed to query editor state")
         {
-            Ok(Some((path, content, language))) => {
+            Ok(Some(SerializedEditor {
+                path,
+                contents,
+                language,
+            })) => {
                 if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
-                    (path, content, language)
+                    (path, contents, language)
                 } else {
                     (path, None, None)
                 }
