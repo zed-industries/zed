@@ -134,6 +134,7 @@ impl ExtensionFilter {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
     Git,
+    OpenIn,
     Vim,
     LanguageBash,
     LanguageC,
@@ -150,6 +151,19 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
+            (
+                Feature::OpenIn,
+                vec![
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "codeberg",
+                    "sourcehut",
+                    "permalink",
+                    "link",
+                    "open in",
+                ],
+            ),
             (Feature::Vim, vec!["vim"]),
             (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
@@ -957,6 +971,11 @@ impl ExtensionsPage {
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
                 .docs_url("https://zed.dev/docs/git"),
+                Feature::OpenIn => FeatureUpsell::new(
+                    telemetry,
+                    "Zed supports linking to a source line on GitHub and others.",
+                )
+                .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
