@@ -27,10 +27,11 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         return Ok(());
     };
 
-    let (ranges, next_cell_point) = snippet_ranges(&buffer.read(cx).snapshot(), selected_range);
+    let (runnable_ranges, next_cell_point) =
+        runnable_ranges(&buffer.read(cx).snapshot(), selected_range);
 
-    for range in ranges {
-        let Some(language) = multibuffer.read(cx).language_at(range.start, cx) else {
+    for runnable_range in runnable_ranges {
+        let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
             continue;
         };
 
@@ -76,8 +77,11 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         let next_cursor;
         {
             let snapshot = multibuffer.read(cx).read(cx);
-            selected_text = snapshot.text_for_range(range.clone()).collect::<String>();
-            anchor_range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+            selected_text = snapshot
+                .text_for_range(runnable_range.clone())
+                .collect::<String>();
+            anchor_range = snapshot.anchor_before(runnable_range.start)
+                ..snapshot.anchor_after(runnable_range.end);
             next_cursor = next_cell_point.map(|point| snapshot.anchor_after(point));
         }
 
@@ -159,7 +163,7 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
+fn cell_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
     let mut snippet_end_row = end_row;
     while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {
         snippet_end_row -= 1;
@@ -168,7 +172,7 @@ fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range
 }
 
 // Returns the ranges of the snippets in the buffer and the next point for moving the cursor to
-fn jupytext_snippets(
+fn jupytext_cells(
     buffer: &BufferSnapshot,
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
@@ -211,7 +215,7 @@ fn jupytext_snippets(
                 .iter()
                 .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
             {
-                snippets.push(snippet_range(buffer, snippet_start_row, current_row - 1));
+                snippets.push(cell_range(buffer, snippet_start_row, current_row - 1));
 
                 if current_row <= range.end.row {
                     snippet_start_row = current_row;
@@ -223,7 +227,7 @@ fn jupytext_snippets(
         }
 
         // Go to the end of the buffer (no more jupytext cells found)
-        snippets.push(snippet_range(
+        snippets.push(cell_range(
             buffer,
             snippet_start_row,
             buffer.max_point().row,
@@ -233,7 +237,7 @@ fn jupytext_snippets(
     (snippets, None)
 }
 
-fn snippet_ranges(
+fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
@@ -243,12 +247,12 @@ fn snippet_ranges(
         }
     }
 
-    let (jupytext_snippets, next_cursor) = jupytext_snippets(buffer, range.clone());
+    let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return (jupytext_snippets, next_cursor);
     }
 
-    let snippet_range = snippet_range(buffer, range.start.row, range.end.row);
+    let snippet_range = cell_range(buffer, range.start.row, range.end.row);
     let start_language = buffer.language_at(snippet_range.start);
     let end_language = buffer.language_at(snippet_range.end);
 
@@ -262,6 +266,8 @@ fn snippet_ranges(
     }
 }
 
+// We allow markdown code blocks to end in a trailing newline in order to render the output
+// below the final code fence. This is different than our behavior for selections and Jupytext cells.
 fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
     buffer
         .injections_intersecting_range(range)
@@ -322,7 +328,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Single-point selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -330,7 +336,7 @@ mod tests {
         assert_eq!(snippets, vec!["print(1 + 1)"]);
 
         // Multi-line selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -343,7 +349,7 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0));
 
         let snippets = snippets
             .into_iter()
@@ -396,7 +402,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Jupytext snippet surrounding an empty selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5));
 
         let snippets = snippets
             .into_iter()
@@ -412,7 +418,7 @@ mod tests {
         );
 
         // Jupytext snippets intersecting a non-empty selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -475,7 +481,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -520,7 +526,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -559,7 +565,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
