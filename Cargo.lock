@@ -11167,9 +11167,10 @@ dependencies = [
 [[package]]
 name = "tokio-socks"
 version = "0.5.2"
-source = "git+https://github.com/Congyuwang/tokio-socks?rev=235a036e25b7c5184ba933af3a0ec6c3864fb142#235a036e25b7c5184ba933af3a0ec6c3864fb142"
+source = "git+https://github.com/sticnarf/tokio-socks?rev=16c02afd2767a1ec63fac918f04ef74b4323e6be#16c02afd2767a1ec63fac918f04ef74b4323e6be"
 dependencies = [
  "either",
+ "futures-io",
  "futures-util",
  "thiserror",
 ]

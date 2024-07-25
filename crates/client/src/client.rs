@@ -50,6 +50,7 @@ use std::{
 };
 use telemetry::Telemetry;
 use thiserror::Error;
+use tokio_socks::io::FuturesIoCompatExt as _;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
@@ -1187,22 +1188,22 @@ impl Client {
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
             let socks_proxy = get_socks_proxy(&proxy);
             let stream = match socks_proxy {
-                Some((socks_proxy, SocksVersion::V4)) => {
-                    let stream = smol::net::TcpStream::connect(socks_proxy).await?;
-                    SocksStream::Socks4(
-                        tokio_socks::tcp::Socks4Stream::connect_with_socket(stream, rpc_host)
-                            .await
-                            .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                Some((socks_proxy, SocksVersion::V4)) => SocksStream::Socks4(
+                    tokio_socks::tcp::Socks4Stream::connect_with_socket(
+                        smol::net::TcpStream::connect(socks_proxy).await?.compat(),
+                        rpc_host,
                     )
-                }
-                Some((socks_proxy, SocksVersion::V5)) => {
-                    let stream = smol::net::TcpStream::connect(socks_proxy).await?;
-                    SocksStream::Socks5(
-                        tokio_socks::tcp::Socks5Stream::connect_with_socket(stream, rpc_host)
-                            .await
-                            .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                    .await
+                    .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                ),
+                Some((socks_proxy, SocksVersion::V5)) => SocksStream::Socks5(
+                    tokio_socks::tcp::Socks5Stream::connect_with_socket(
+                        smol::net::TcpStream::connect(socks_proxy).await?.compat(),
+                        rpc_host,
                     )
-                }
+                    .await
+                    .map_err(|err| anyhow!("error connecting to socks {}", err))?,
+                ),
                 None => SocksStream::NoProxy(smol::net::TcpStream::connect(rpc_host).await?),
             };
 

@@ -2,6 +2,7 @@ use std::pin::Pin;
 
 use futures::io::{AsyncRead, AsyncWrite};
 use http_client::proxy::Proxy;
+use tokio_socks::io::Compat;
 
 pub enum SocksVersion {
     V4,
@@ -10,8 +11,8 @@ pub enum SocksVersion {
 
 pub enum SocksStream<S> {
     NoProxy(S),
-    Socks4(tokio_socks::tcp::Socks4Stream<S>),
-    Socks5(tokio_socks::tcp::Socks5Stream<S>),
+    Socks4(tokio_socks::tcp::Socks4Stream<Compat<S>>),
+    Socks5(tokio_socks::tcp::Socks5Stream<Compat<S>>),
 }
 
 pub fn get_socks_proxy(proxy: &Proxy) -> Option<((String, u16), SocksVersion)> {

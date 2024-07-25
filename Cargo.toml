@@ -401,7 +401,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
-tokio-socks = { git = "https://github.com/Congyuwang/tokio-socks", rev = "235a036e25b7c5184ba933af3a0ec6c3864fb142", default-features = false }
+tokio-socks = { git = "https://github.com/sticnarf/tokio-socks", rev = "16c02afd2767a1ec63fac918f04ef74b4323e6be", default-features = false, features = ["futures-io"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = "0.20.5"
