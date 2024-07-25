@@ -1570,17 +1570,21 @@ impl EditorElement {
                 .breakpoints
                 .iter()
                 .filter_map(|(_, breakpoint)| {
-                    if snapshot.is_line_folded(breakpoint.row) {
+                    let point = breakpoint
+                        .position
+                        .to_display_point(&snapshot.display_snapshot);
+
+                    let row = MultiBufferRow { 0: point.row().0 };
+
+                    if snapshot.is_line_folded(row) {
                         return None;
                     }
-                    let display_row = Point::new(breakpoint.row.0, 0)
-                        .to_display_point(snapshot)
-                        .row();
-                    let button = editor.render_breakpoint(display_row, cx);
+
+                    let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
 
                     let button = prepaint_gutter_button(
                         button,
-                        display_row,
+                        point.row(),
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
