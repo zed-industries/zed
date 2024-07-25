@@ -516,6 +516,13 @@ impl Session {
         match &message.content {
             JupyterMessageContent::Status(status) => {
                 self.kernel.set_execution_state(&status.execution_state);
+
+                self.telemetry.report_repl_event(
+                    self.kernel_specification.kernelspec.language.clone(),
+                    KernelStatus::from(&self.kernel).to_string(),
+                    cx.entity_id().to_string(),
+                );
+
                 cx.notify();
             }
             JupyterMessageContent::KernelInfoReply(reply) => {
