@@ -1,10 +1,10 @@
-@media only screen and (max-width: 1639px) {
+@media only screen and (max-width: 1674px) {
   .sidetoc {
     display: none;
   }
 }
 
-@media only screen and (min-width: 1640px) {
+@media only screen and (min-width: 1675px) {
   main {
     position: relative;
   }
@@ -16,11 +16,16 @@
   }
   .pagetoc {
     position: fixed;
-    width: 200px;
+    top: 64px;
+    width: 220px;
     height: calc(100vh - var(--menu-bar-height) - 0.67em * 4);
-    margin-top: 8px;
+    padding-top: 80px;
     margin-right: 16px;
+    padding-bottom: 40px;
     overflow: auto;
+  }
+  .pagetoc > :last-child {
+    margin-bottom: 64px;
   }
   .pagetoc a {
     width: fit-content;
@@ -49,14 +54,17 @@
     background: var(--sidebar-bg);
     color: var(--sidebar-fg);
   }
+  .pagetoc .pagetoc-H1 {
+    display: none;
+  }
   .pagetoc .pagetoc-H2 {
-    margin-left: 24px;
+    /* margin-left: 24px; */
   }
   .pagetoc .pagetoc-H3 {
-    margin-left: 42px;
+    margin-left: 24px;
   }
   .pagetoc .pagetoc-H4 {
-    margin-left: 64px;
+    margin-left: 42px;
   }
   .pagetoc .pagetoc-H5 {
     display: none;

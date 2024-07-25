@@ -139,7 +139,7 @@ h6:target::before {
 
 .content {
   overflow-y: auto;
-  padding: 24px 4px 48px 4px;
+  padding: 48px 4px;
 }
 .content main {
   margin-inline-start: auto;
