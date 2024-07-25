@@ -11,6 +11,7 @@ pub struct ModelSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<ContextMenu>>,
     fs: Arc<dyn Fs>,
     trigger: T,
+    info_text: Option<String>,
 }
 
 impl<T: PopoverTrigger> ModelSelector<T> {
@@ -19,11 +20,17 @@ impl<T: PopoverTrigger> ModelSelector<T> {
             handle: None,
             fs,
             trigger,
+            info_text: None,
         }
     }
 
     pub fn with_handle(mut self, handle: PopoverMenuHandle<ContextMenu>) -> Self {
         self.handle = Some(handle);
+        self
+    }
+
+    pub fn with_info_text(mut self, text: impl Into<String>) -> Self {
+        self.info_text = Some(text.into());
         self
     }
 }
@@ -35,8 +42,25 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             menu = menu.with_handle(handle);
         }
 
+        let info_text = self.info_text.clone();
+
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
+                if let Some(ref info_text) = info_text {
+                    menu = menu.custom_entry(
+                        {
+                            let info_text = info_text.clone();
+                            move |_| {
+                                Label::new(info_text.clone())
+                                    .into_element()
+                                    .into_any_element()
+                            }
+                        },
+                        |_| {},
+                    );
+                    menu = menu.separator();
+                }
+
                 for (index, provider) in LanguageModelRegistry::global(cx)
                     .read(cx)
                     .providers()
