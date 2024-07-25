@@ -437,7 +437,7 @@ impl ToolbarItemView for BufferSearchBar {
                 ));
 
             self.active_searchable_item = Some(searchable_item_handle);
-            let _ = self.update_matches(cx);
+            drop(self.update_matches(cx));
             if !self.dismissed {
                 return ToolbarItemLocation::Secondary;
             }
@@ -719,7 +719,7 @@ impl BufferSearchBar {
     fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        let _ = self.update_matches(cx);
+        drop(self.update_matches(cx));
         cx.notify();
     }
 
@@ -856,7 +856,7 @@ impl BufferSearchBar {
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                let _ = self.update_matches(cx);
+                drop(self.update_matches(cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
@@ -874,7 +874,7 @@ impl BufferSearchBar {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
-            let _ = self.update_matches(cx);
+            drop(self.update_matches(cx));
             cx.notify();
         }
     }
@@ -1047,10 +1047,10 @@ impl BufferSearchBar {
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            let _ = self.search(&new_query, Some(self.search_options), cx);
+            drop(self.search(&new_query, Some(self.search_options), cx));
         } else {
             self.search_history_cursor.reset();
-            let _ = self.search("", Some(self.search_options), cx);
+            drop(self.search("", Some(self.search_options), cx));
         }
     }
 
@@ -1061,7 +1061,7 @@ impl BufferSearchBar {
                 .current(&mut self.search_history_cursor)
                 .map(str::to_string)
             {
-                let _ = self.search(&new_query, Some(self.search_options), cx);
+                drop(self.search(&new_query, Some(self.search_options), cx));
                 return;
             }
         }
@@ -1071,7 +1071,7 @@ impl BufferSearchBar {
             .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            let _ = self.search(&new_query, Some(self.search_options), cx);
+            drop(self.search(&new_query, Some(self.search_options), cx));
         }
     }
 

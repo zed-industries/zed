@@ -363,6 +363,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
+    #[allow(clippy::let_underscore_future)]
     let _ = store.update(cx, |store, cx| store.reload(None, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
