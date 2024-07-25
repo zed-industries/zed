@@ -1559,6 +1559,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
@@ -1602,6 +1603,7 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
+                        rows_with_hunk_bounds,
                         cx,
                     );
                     Some(button)
@@ -1617,6 +1619,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let mut active = false;
@@ -1640,6 +1643,7 @@ impl EditorElement {
             gutter_dimensions,
             scroll_pixel_position,
             gutter_hitbox,
+            rows_with_hunk_bounds,
             cx,
         );
 
@@ -4042,11 +4046,12 @@ impl EditorElement {
 
     fn layout_hunk_diff_close_indicators(
         &self,
-        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
+        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -4070,6 +4075,7 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_pixel_position,
                         gutter_hitbox,
+                        rows_with_hunk_bounds,
                         cx,
                     )
                 })
@@ -4085,6 +4091,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
+    rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
     cx: &mut WindowContext<'_>,
 ) -> AnyElement {
     let mut button = button.into_any_element();
@@ -4094,14 +4101,16 @@ fn prepaint_gutter_button(
     );
     let indicator_size = button.layout_as_root(available_space, cx);
 
-    let blame_width = gutter_dimensions
-        .git_blame_entries_width
-        .unwrap_or(Pixels::ZERO);
+    let blame_offset = gutter_dimensions.git_blame_entries_width;
+    let gutter_offset = rows_with_hunk_bounds
+        .get(&row)
+        .map(|bounds| bounds.origin.x + bounds.size.width);
+    let left_offset = blame_offset.max(gutter_offset).unwrap_or(Pixels::ZERO);
 
-    let mut x = blame_width;
+    let mut x = left_offset;
     let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
         - indicator_size.width
-        - blame_width;
+        - left_offset;
     x += available_width / 2.;
 
     let mut y = row.as_f32() * line_height - scroll_pixel_position.y;
@@ -5300,6 +5309,27 @@ impl Element for EditorElement {
                             .collect::<HashMap<_, _>>()
                     });
 
+                    let rows_with_hunk_bounds = display_hunks
+                        .iter()
+                        .filter_map(|(hunk, hitbox)| Some((hunk, hitbox.as_ref()?.bounds)))
+                        .fold(
+                            HashMap::default(),
+                            |mut rows_with_hunk_bounds, (hunk, bounds)| {
+                                match hunk {
+                                    DisplayDiffHunk::Folded { display_row } => {
+                                        rows_with_hunk_bounds.insert(*display_row, bounds);
+                                    }
+                                    DisplayDiffHunk::Unfolded {
+                                        display_row_range, ..
+                                    } => {
+                                        for display_row in display_row_range.iter_rows() {
+                                            rows_with_hunk_bounds.insert(display_row, bounds);
+                                        }
+                                    }
+                                }
+                                rows_with_hunk_bounds
+                            },
+                        );
                     let mut _context_menu_visible = false;
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
@@ -5348,6 +5378,7 @@ impl Element for EditorElement {
                                                     scroll_pixel_position,
                                                     &gutter_dimensions,
                                                     &gutter_hitbox,
+                                                    &rows_with_hunk_bounds,
                                                     cx,
                                                 );
                                         }
@@ -5363,6 +5394,7 @@ impl Element for EditorElement {
                             scroll_pixel_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
+                            &rows_with_hunk_bounds,
                             &snapshot,
                             cx,
                         )
@@ -5371,11 +5403,12 @@ impl Element for EditorElement {
                     };
 
                     let close_indicators = self.layout_hunk_diff_close_indicators(
-                        expanded_add_hunks_by_rows,
                         line_height,
                         scroll_pixel_position,
                         &gutter_dimensions,
                         &gutter_hitbox,
+                        &rows_with_hunk_bounds,
+                        expanded_add_hunks_by_rows,
                         cx,
                     );
 
