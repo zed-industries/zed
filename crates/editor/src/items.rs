@@ -916,23 +916,23 @@ impl SerializableItem for Editor {
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
-        let path_content_language = match DB
+        let serialized_editor = match DB
             .get_serialized_editor(item_id, workspace_id)
             .context("Failed to query editor state")
         {
-            Ok(Some(SerializedEditor {
-                path,
-                contents,
-                language,
-                mtime,
-            })) => {
+            Ok(Some(serialized_editor)) => {
                 if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
-                    (path, contents, language, mtime)
+                    serialized_editor
                 } else {
-                    (path, None, None, None)
+                    SerializedEditor {
+                        path: serialized_editor.path,
+                        contents: None,
+                        language: None,
+                        mtime: None,
+                    }
                 }
             }
             Ok(None) => {
@@ -943,39 +943,48 @@ impl SerializableItem for Editor {
             }
         };
 
-        match path_content_language {
-            (None, Some(content), language_name, _) => cx.spawn(|_, mut cx| async move {
-                let language = if let Some(language_name) = language_name {
-                    let language_registry =
-                        project.update(&mut cx, |project, _| project.languages().clone())?;
+        let buffer_task = match serialized_editor {
+            SerializedEditor {
+                path: None,
+                contents: Some(contents),
+                language,
+                ..
+            } => cx.spawn(|_, mut cx| {
+                let project = project.clone();
+                async move {
+                    let language = if let Some(language_name) = language {
+                        let language_registry =
+                            project.update(&mut cx, |project, _| project.languages().clone())?;
 
-                    // We don't fail here, because we'd rather not set the language if the name changed
-                    // than fail to restore the buffer.
-                    language_registry
-                        .language_for_name(&language_name)
-                        .await
-                        .ok()
-                } else {
-                    None
-                };
+                        // We don't fail here, because we'd rather not set the language if the name changed
+                        // than fail to restore the buffer.
+                        language_registry
+                            .language_for_name(&language_name)
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    };
 
-                // First create the empty buffer
-                let buffer = project.update(&mut cx, |project, cx| {
-                    project.create_local_buffer("", language, cx)
-                })?;
+                    // First create the empty buffer
+                    let buffer = project.update(&mut cx, |project, cx| {
+                        project.create_local_buffer("", language, cx)
+                    })?;
 
-                // Then set the text so that the dirty bit is set correctly
-                buffer.update(&mut cx, |buffer, cx| {
-                    buffer.set_text(content, cx);
-                })?;
+                    // Then set the text so that the dirty bit is set correctly
+                    buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_text(contents, cx);
+                    })?;
 
-                cx.new_view(|cx| {
-                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                    editor
-                })
+                    anyhow::Ok(buffer)
+                }
             }),
-            (Some(path), contents, _, mtime) => {
+            SerializedEditor {
+                path: Some(path),
+                contents,
+                mtime,
+                ..
+            } => {
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
                         .find_worktree(&path, cx)
@@ -990,7 +999,7 @@ impl SerializableItem for Editor {
 
                 project_item
                     .map(|project_item| {
-                        cx.spawn(|pane, mut cx| async move {
+                        cx.spawn(|_, mut cx| async move {
                             let (_, project_item) = project_item.await?;
                             let buffer = project_item.downcast::<Buffer>().map_err(|_| {
                                 anyhow!("Project item at stored path was not a buffer")
@@ -1017,20 +1026,26 @@ impl SerializableItem for Editor {
                                 })?;
                             }
 
-                            pane.update(&mut cx, |_, cx| {
-                                cx.new_view(|cx| {
-                                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-
-                                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                                    editor
-                                })
-                            })
+                            Ok(buffer)
                         })
                     })
                     .unwrap_or_else(|error| Task::ready(Err(error)))
             }
-            _ => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
-        }
+            _ => return Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+        };
+
+        cx.spawn(|pane, mut cx| async move {
+            let buffer = buffer_task.await?;
+
+            pane.update(&mut cx, |_, cx| {
+                cx.new_view(|cx| {
+                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+
+                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                    editor
+                })
+            })
+        })
     }
 
     fn serialize(
@@ -1626,7 +1641,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.update(cx, |project, cx| project.languages().add(rust_language()));
+            project.update(cx, |project, _| project.languages().add(rust_language()));
 
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
