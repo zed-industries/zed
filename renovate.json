@@ -6,5 +6,7 @@
   "schedule": ["after 3pm on Wednesday"],
   "major": {
     "dependencyDashboardApproval": true
-  }
+  },
+  "labels": ["cla-signed"],
+  "commitBody": "Release Notes:\n\n- N/A"
 }
