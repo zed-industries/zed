@@ -2035,15 +2035,25 @@ impl BufferSnapshot {
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = if row_range.end > row_range.start {
-            Point::new(row_range.end - 1, 0).to_offset(self)
+
+        let end_point;
+        let end;
+        if row_range.end > row_range.start {
+            end_point = Point::new(row_range.end - 1, self.line_len(row_range.end - 1));
+            end = end_point.to_offset(self);
         } else {
-            start
+            end_point = Point::new(row_range.start, 0);
+            end = start;
         };
 
         let mut chunks = self.as_rope().chunks_in_range(start..end);
+        // Move the cursor to the start of the last line if it's not empty.
         chunks.seek(end);
-        let mut row = row_range.end;
+        if end_point.column > 0 {
+            chunks.prev_line();
+        }
+
+        let mut row = end_point.row;
         let mut done = start == end;
         std::iter::from_fn(move || {
             if done {
@@ -2055,7 +2065,10 @@ impl BufferSnapshot {
                     chunks.prev_line();
                 }
                 done = !chunks.prev_line();
-                row -= 1;
+                if !done {
+                    row -= 1;
+                }
+
                 Some(indent)
             }
         })
