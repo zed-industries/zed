@@ -619,6 +619,7 @@ impl<'a> Chunks<'a> {
     ///
     /// This method advances the cursor to the beginning of the next line.
     /// If the cursor is already at the end of the rope, this method does nothing.
+    /// Reversed chunks iterators are not currently supported and will panic.
     ///
     /// Returns `true` if the cursor was successfully moved to the next line start,
     /// or `false` if the cursor was already at the end of the rope.
@@ -629,7 +630,7 @@ impl<'a> Chunks<'a> {
         if let Some(chunk) = self.peek() {
             if let Some(newline_ix) = chunk.find('\n') {
                 self.offset += newline_ix + 1;
-                found = self.offset_is_valid();
+                found = self.offset <= self.range.end;
             } else {
                 self.chunks
                     .search_forward(|summary| summary.text.lines.row > 0, &());
@@ -637,9 +638,9 @@ impl<'a> Chunks<'a> {
 
                 if let Some(newline_ix) = self.peek().and_then(|chunk| chunk.find('\n')) {
                     self.offset += newline_ix + 1;
-                    found = self.offset_is_valid();
+                    found = self.offset <= self.range.end;
                 } else {
-                    self.offset = self.range.end;
+                    self.offset = self.chunks.end(&());
                 }
             }
 
@@ -648,8 +649,8 @@ impl<'a> Chunks<'a> {
             }
         }
 
-        if !self.offset_is_valid() {
-            self.offset = self.offset.clamp(self.range.start, self.range.end);
+        if self.offset > self.range.end {
+            self.offset = cmp::min(self.offset, self.range.end);
             self.chunks.seek(&self.offset, Bias::Right, &());
         }
 
@@ -657,6 +658,7 @@ impl<'a> Chunks<'a> {
     }
 
     /// Move this cursor to the preceding position in the rope that starts a new line.
+    /// Reversed chunks iterators are not currently supported and will panic.
     ///
     /// If this cursor is not on the start of a line, it will be moved to the start of
     /// its current line. Otherwise it will be moved to the start of the previous line.
@@ -1606,10 +1608,6 @@ mod tests {
                     .match_indices('\n')
                     .map(|(index, _)| start_ix + index + 1)
                     .collect();
-                // Remove the last index if it starts at the end of the range.
-                if expected_line_starts.last() == Some(&end_ix) {
-                    expected_line_starts.pop();
-                }
 
                 let mut chunks = actual.chunks_in_range(start_ix..end_ix);
 
@@ -1630,6 +1628,11 @@ mod tests {
                 {
                     expected_line_starts.insert(0, start_ix);
                 }
+                // Remove the last index if it starts at the end of the range.
+                if expected_line_starts.last() == Some(&end_ix) {
+                    expected_line_starts.pop();
+                }
+
                 let mut actual_line_starts = Vec::new();
                 while chunks.prev_line() {
                     actual_line_starts.push(chunks.offset());
@@ -1652,14 +1655,9 @@ mod tests {
                 if rng.gen() {
                     let expected_next_line_start = expected[random_offset..end_ix]
                         .find('\n')
-                        .and_then(|newline_ix| {
-                            let newline_ix = random_offset + newline_ix + 1;
-                            if newline_ix == end_ix {
-                                None
-                            } else {
-                                Some(newline_ix)
-                            }
-                        });
+                        .map(|newline_ix|
+                            random_offset + newline_ix + 1
+                        );
 
                     let moved = chunks.next_line();
                     assert_eq!(
