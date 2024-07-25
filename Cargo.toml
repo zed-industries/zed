@@ -537,13 +537,6 @@ single_range_in_vec_init = "allow"
 style = { level = "allow", priority = -1 }
 
 # Individual rules that have violations in the codebase:
-almost_complete_range = "allow"
-arc_with_non_send_sync = "allow"
-borrowed_box = "allow"
-let_underscore_future = "allow"
-map_entry = "allow"
-non_canonical_partial_ord_impl = "allow"
-reversed_empty_ranges = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]

@@ -691,7 +691,7 @@ impl Copilot {
             {
                 match event {
                     language::Event::Edited => {
-                        let _ = registered_buffer.report_changes(&buffer, cx);
+                        drop(registered_buffer.report_changes(&buffer, cx));
                     }
                     language::Event::Saved => {
                         server

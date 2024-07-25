@@ -59,6 +59,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    rc::Rc,
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -5492,7 +5493,7 @@ impl Element for EditorElement {
 
                     EditorLayout {
                         mode: snapshot.mode,
-                        position_map: Arc::new(PositionMap {
+                        position_map: Rc::new(PositionMap {
                             size: bounds.size,
                             scroll_pixel_position,
                             scroll_max,
@@ -5642,7 +5643,7 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    position_map: Arc<PositionMap>,
+    position_map: Rc<PositionMap>,
     hitbox: Hitbox,
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
