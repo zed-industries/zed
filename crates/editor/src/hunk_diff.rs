@@ -484,7 +484,10 @@ impl Editor {
                                 .child(
                                     h_flex()
                                         .id("gutter hunk")
-                                        .pl(hunk_bounds.origin.x)
+                                        .pl(gutter_dimensions.margin
+                                            + gutter_dimensions
+                                                .git_blame_entries_width
+                                                .unwrap_or_default())
                                         .max_w(hunk_bounds.size.width)
                                         .min_w(hunk_bounds.size.width)
                                         .size_full()
