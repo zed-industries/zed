@@ -1488,10 +1488,16 @@ fn path_for_file<'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::editor_tests::init_test;
+
     use super::*;
-    use gpui::AppContext;
+    use gpui::{AppContext, VisualTestContext};
     use language::TestFile;
-    use std::path::Path;
+    use project::FakeFs;
+    use std::{
+        path::{Path, PathBuf},
+        time::SystemTime,
+    };
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
@@ -1500,5 +1506,162 @@ mod tests {
             root_name: String::new(),
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
+    }
+
+    async fn deserialize_editor(
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        workspace: View<Workspace>,
+        project: Model<Project>,
+        cx: &mut VisualTestContext,
+    ) -> View<Editor> {
+        workspace
+            .update(cx, |workspace, cx| {
+                let pane = workspace.active_pane();
+                pane.update(cx, |_, cx| {
+                    Editor::deserialize(
+                        project.clone(),
+                        workspace.weak_handle(),
+                        workspace_id,
+                        item_id,
+                        cx,
+                    )
+                })
+            })
+            .await
+            .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_deserialize(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let now = SystemTime::now();
+        let fs = FakeFs::new(cx.executor());
+        fs.set_next_mtime(now);
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        // Test case 1: Deserialize with path and contents
+        {
+            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let item_id = 1234 as ItemId;
+
+            let serialized_editor = SerializedEditor {
+                path: Some(PathBuf::from("/file.rs")),
+                contents: Some("fn main() {}".to_string()),
+                language: Some("Rust".to_string()),
+                mtime: Some(now),
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "fn main() {}");
+                assert!(editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+            });
+        }
+
+        // Test case 2: Deserialize with only path
+        {
+            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 5678 as ItemId;
+            let serialized_editor = SerializedEditor {
+                path: Some(PathBuf::from("/file.rs")),
+                contents: None,
+                language: None,
+                mtime: None,
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), ""); // The file should be empty as per our initial setup
+                assert!(!editor.is_dirty(cx)); // The editor should not be dirty
+            });
+        }
+
+        // Test case 3: Deserialize with no path (untitled buffer)
+        {
+            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 9012 as ItemId;
+            let serialized_editor = SerializedEditor {
+                path: None,
+                contents: Some("hello".to_string()),
+                language: None,
+                mtime: None,
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "hello");
+                assert!(editor.is_dirty(cx)); // The editor should be dirty for an untitled buffer
+                assert!(editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .file()
+                    .is_none()); // The buffer should not have an associated file
+            });
+        }
+
+        // Test case 4: Deserialize with path, content, and old mtime
+        {
+            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 9345 as ItemId;
+            let old_mtime = now
+                .checked_sub(std::time::Duration::from_secs(60 * 60 * 24))
+                .unwrap();
+            let serialized_editor = SerializedEditor {
+                path: Some(PathBuf::from("/file.rs")),
+                contents: Some("fn main() {}".to_string()),
+                language: Some("Rust".to_string()),
+                mtime: Some(old_mtime),
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "fn main() {}");
+                assert!(editor.has_conflict(cx)); // The editor should have a conflict
+            });
+        }
     }
 }
