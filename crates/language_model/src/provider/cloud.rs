@@ -6,10 +6,11 @@ use crate::{
 };
 use anyhow::Result;
 use client::Client;
+use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 

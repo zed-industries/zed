@@ -2,6 +2,7 @@ use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
+use http_client::Url;
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,

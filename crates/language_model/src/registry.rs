@@ -1,5 +1,5 @@
 use client::Client;
-use collections::HashMap;
+use collections::BTreeMap;
 use gpui::{AppContext, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
@@ -65,7 +65,7 @@ impl Global for GlobalLanguageModelRegistry {}
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
-    providers: HashMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
+    providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
 }
 
 impl LanguageModelRegistry {
@@ -114,26 +114,14 @@ impl LanguageModelRegistry {
         }
     }
 
-    pub fn providers(
-        &self,
-    ) -> impl Iterator<Item = (&LanguageModelProviderId, &Arc<dyn LanguageModelProvider>)> {
-        self.providers.iter()
+    pub fn providers(&self) -> impl Iterator<Item = &Arc<dyn LanguageModelProvider>> {
+        self.providers.values()
     }
 
     pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         self.providers
             .values()
             .flat_map(|provider| provider.provided_models(cx))
-            .collect()
-    }
-
-    pub fn available_models_grouped_by_provider(
-        &self,
-        cx: &AppContext,
-    ) -> HashMap<LanguageModelProviderId, Vec<Arc<dyn LanguageModel>>> {
-        self.providers
-            .iter()
-            .map(|(name, provider)| (name.clone(), provider.provided_models(cx)))
             .collect()
     }
 
@@ -160,7 +148,7 @@ mod tests {
 
         let providers = registry.read(cx).providers().collect::<Vec<_>>();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].0, &crate::provider::fake::provider_id());
+        assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
             registry.unregister_provider(&crate::provider::fake::provider_id(), cx);

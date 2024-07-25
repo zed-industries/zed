@@ -3,12 +3,12 @@ use gpui::View;
 use crate::prelude::*;
 
 use crate::{
-    SecondarySettingType, SettingLayout, SettingType, SettingsGroup, SettingsItem, SettingsMenu,
-    ToggleType,
+    LegacySettingsGroup, LegacySettingsMenu, SecondarySettingType, SettingLayout, SettingType,
+    SettingsItem, ToggleType,
 };
 
 pub struct SettingStory {
-    menus: Vec<(SharedString, View<SettingsMenu>)>,
+    menus: Vec<(SharedString, View<LegacySettingsMenu>)>,
 }
 
 impl SettingStory {
@@ -27,7 +27,7 @@ impl SettingStory {
 
 impl SettingStory {
     pub fn empty_menu(&mut self, cx: &mut ViewContext<Self>) {
-        let menu = cx.new_view(|_cx| SettingsMenu::new("Empty Menu"));
+        let menu = cx.new_view(|_cx| LegacySettingsMenu::new("Empty Menu"));
 
         self.menus.push(("Empty Menu".into(), menu));
     }
@@ -55,18 +55,18 @@ impl SettingStory {
         )
         .layout(SettingLayout::FullLineJustified);
 
-        let group = SettingsGroup::new("Appearance")
+        let group = LegacySettingsGroup::new("Appearance")
             .add_setting(theme_setting)
             .add_setting(appearance_setting)
             .add_setting(high_contrast_setting);
 
-        let menu = cx.new_view(|_cx| SettingsMenu::new("Appearance").add_group(group));
+        let menu = cx.new_view(|_cx| LegacySettingsMenu::new("Appearance").add_group(group));
 
         self.menus.push(("Single Group".into(), menu));
     }
 
     pub fn editor_example(&mut self, cx: &mut ViewContext<Self>) {
-        let font_group = SettingsGroup::new("Font")
+        let font_group = LegacySettingsGroup::new("Font")
             .add_setting(
                 SettingsItem::new(
                     "font-family",
@@ -117,7 +117,7 @@ impl SettingStory {
                 .toggled(true),
             );
 
-        let editor_group = SettingsGroup::new("Editor")
+        let editor_group = LegacySettingsGroup::new("Editor")
             .add_setting(
                 SettingsItem::new(
                     "show-indent-guides",
@@ -137,7 +137,7 @@ impl SettingStory {
                 .toggled(false),
             );
 
-        let gutter_group = SettingsGroup::new("Gutter")
+        let gutter_group = LegacySettingsGroup::new("Gutter")
             .add_setting(
                 SettingsItem::new(
                     "enable-git-hunks",
@@ -158,7 +158,7 @@ impl SettingStory {
                 .layout(SettingLayout::FullLineJustified),
             );
 
-        let scrollbar_group = SettingsGroup::new("Scrollbar")
+        let scrollbar_group = LegacySettingsGroup::new("Scrollbar")
             .add_setting(
                 SettingsItem::new(
                     "scrollbar-visibility",
@@ -198,7 +198,7 @@ impl SettingStory {
             );
 
         let menu = cx.new_view(|_cx| {
-            SettingsMenu::new("Editor")
+            LegacySettingsMenu::new("Editor")
                 .add_group(font_group)
                 .add_group(editor_group)
                 .add_group(gutter_group)

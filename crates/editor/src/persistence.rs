@@ -1,11 +1,79 @@
 use anyhow::Result;
+use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub(crate) struct SerializedEditor {
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) contents: Option<String>,
+    pub(crate) language: Option<String>,
+    pub(crate) mtime: Option<SystemTime>,
+}
+
+impl StaticColumnCount for SerializedEditor {
+    fn column_count() -> usize {
+        5
+    }
+}
+
+impl Bind for SerializedEditor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let start_index = statement.bind(&self.path, start_index)?;
+        let start_index = statement.bind(&self.contents, start_index)?;
+        let start_index = statement.bind(&self.language, start_index)?;
+
+        let mtime = self.mtime.and_then(|mtime| {
+            mtime
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| (duration.as_secs() as i64, duration.subsec_nanos() as i32))
+        });
+        let start_index = match mtime {
+            Some((seconds, nanos)) => {
+                let start_index = statement.bind(&seconds, start_index)?;
+                statement.bind(&nanos, start_index)?
+            }
+            None => {
+                let start_index = statement.bind::<Option<i64>>(&None, start_index)?;
+                statement.bind::<Option<i32>>(&None, start_index)?
+            }
+        };
+        Ok(start_index)
+    }
+}
+
+impl Column for SerializedEditor {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (path, start_index): (Option<PathBuf>, i32) = Column::column(statement, start_index)?;
+        let (contents, start_index): (Option<String>, i32) =
+            Column::column(statement, start_index)?;
+        let (language, start_index): (Option<String>, i32) =
+            Column::column(statement, start_index)?;
+        let (mtime_seconds, start_index): (Option<i64>, i32) =
+            Column::column(statement, start_index)?;
+        let (mtime_nanos, start_index): (Option<i32>, i32) =
+            Column::column(statement, start_index)?;
+
+        let mtime = mtime_seconds
+            .zip(mtime_nanos)
+            .map(|(seconds, nanos)| UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32));
+
+        let editor = Self {
+            path,
+            contents,
+            language,
+            mtime,
+        };
+        Ok((editor, start_index))
+    }
+}
 
 define_connection!(
     // Current schema shape using pseudo-rust syntax:
@@ -18,6 +86,8 @@ define_connection!(
     //   scroll_horizontal_offset: f32,
     //   content: Option<String>,
     //   language: Option<String>,
+    //   mtime_seconds: Option<i64>,
+    //   mtime_nanos: Option<i32>,
     // )
     pub static ref DB: EditorDb<WorkspaceDb> =
         &[sql! (
@@ -61,41 +131,36 @@ define_connection!(
             DROP TABLE editors;
 
             ALTER TABLE new_editors_tmp RENAME TO editors;
-        )];
+        ),
+        sql! (
+            ALTER TABLE editors ADD COLUMN mtime_seconds INTEGER DEFAULT NULL;
+            ALTER TABLE editors ADD COLUMN mtime_nanos INTEGER DEFAULT NULL;
+        ),
+        ];
 );
 
 impl EditorDb {
     query! {
-        pub fn get_path_and_contents(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(Option<PathBuf>, Option<String>, Option<String>)>> {
-            SELECT path, contents, language FROM editors
+        pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
+            SELECT path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
 
     query! {
-        pub async fn save_path(item_id: ItemId, workspace_id: WorkspaceId, path: PathBuf) -> Result<()> {
+        pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path)
+                (item_id, workspace_id, path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
-                (?1, ?2, ?3)
+                (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
-                path = ?3
-        }
-    }
-
-    query! {
-        pub async fn save_contents(item_id: ItemId, workspace: WorkspaceId, contents: Option<String>, language: Option<String>) -> Result<()> {
-            INSERT INTO editors
-                (item_id, workspace_id, contents, language)
-            VALUES
-                (?1, ?2, ?3, ?4)
-            ON CONFLICT DO UPDATE SET
-                item_id = ?1,
-                workspace_id = ?2,
-                contents = ?3,
-                language = ?4
+                path = ?3,
+                contents = ?4,
+                language = ?5,
+                mtime_seconds = ?6,
+                mtime_nanos = ?7
         }
     }
 
@@ -158,41 +223,79 @@ mod tests {
     use gpui;
 
     #[gpui::test]
-    async fn test_saving_content() {
-        env_logger::try_init().ok();
-
+    async fn test_save_and_get_serialized_editor() {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
-        // Sanity check: make sure there is no row in the `editors` table
-        assert_eq!(DB.get_path_and_contents(1234, workspace_id).unwrap(), None);
+        let serialized_editor = SerializedEditor {
+            path: Some(PathBuf::from("testing.txt")),
+            contents: None,
+            language: None,
+            mtime: None,
+        };
 
-        // Save content/language
-        DB.save_contents(
-            1234,
-            workspace_id,
-            Some("testing".into()),
-            Some("Go".into()),
-        )
-        .await
-        .unwrap();
-
-        // Check that it can be read from DB
-        let path_and_contents = DB.get_path_and_contents(1234, workspace_id).unwrap();
-        let (path, contents, language) = path_and_contents.unwrap();
-        assert!(path.is_none());
-        assert_eq!(contents, Some("testing".to_owned()));
-        assert_eq!(language, Some("Go".to_owned()));
-
-        // Update it with NULL
-        DB.save_contents(1234, workspace_id, None, None)
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        // Check that it worked
-        let path_and_contents = DB.get_path_and_contents(1234, workspace_id).unwrap();
-        let (path, contents, language) = path_and_contents.unwrap();
-        assert!(path.is_none());
-        assert!(contents.is_none());
-        assert!(language.is_none());
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
+
+        // Now update contents and language
+        let serialized_editor = SerializedEditor {
+            path: Some(PathBuf::from("testing.txt")),
+            contents: Some("Test".to_owned()),
+            language: Some("Go".to_owned()),
+            mtime: None,
+        };
+
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+            .await
+            .unwrap();
+
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
+
+        // Now set all the fields to NULL
+        let serialized_editor = SerializedEditor {
+            path: None,
+            contents: None,
+            language: None,
+            mtime: None,
+        };
+
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+            .await
+            .unwrap();
+
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
+
+        // Storing and retrieving mtime
+        let now = SystemTime::now();
+        let serialized_editor = SerializedEditor {
+            path: None,
+            contents: None,
+            language: None,
+            mtime: Some(now),
+        };
+
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+            .await
+            .unwrap();
+
+        let have = DB
+            .get_serialized_editor(1234, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(have, serialized_editor);
     }
 }

@@ -92,7 +92,7 @@ use ui::{
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
