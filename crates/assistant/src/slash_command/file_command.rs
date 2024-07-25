@@ -29,7 +29,7 @@ impl FileSlashCommand {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = "".into();
+            let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
