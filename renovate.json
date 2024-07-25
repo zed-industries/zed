@@ -1,10 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    ":semanticCommitsDisabled",
-
-    // Dependency groups.
-    "group:serdeMonorepo"
-  ]
+  "extends": ["config:recommended", ":semanticCommitsDisabled", "group:serdeMonorepo"]
 }
