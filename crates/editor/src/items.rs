@@ -1075,7 +1075,7 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
         let path = local_file.map(|file| file.abs_path(cx));
-        let mtime = local_file.and_then(|file| file.mtime());
+        let mtime = buffer.read(cx).saved_mtime();
 
         let snapshot = buffer.read(cx).snapshot();
 
