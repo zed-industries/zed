@@ -13,8 +13,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Styled, ViewContext, VisualContext,
+    div, h_flex, rems, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -512,7 +512,7 @@ impl Editor {
                                 .child(
                                     v_flex()
                                         .size_full()
-                                        .pt(ui::rems(0.25))
+                                        .pt(rems(0.25))
                                         .justify_start()
                                         .child(close_button),
                                 ),
