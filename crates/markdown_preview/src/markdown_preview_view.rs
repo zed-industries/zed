@@ -99,7 +99,7 @@ impl MarkdownPreviewView {
             .and_then(|view| pane.index_for_item(&view))
     }
 
-    fn resolve_active_item_as_markdown_editor(
+    pub fn resolve_active_item_as_markdown_editor(
         workspace: &Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<View<Editor>> {
