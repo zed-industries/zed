@@ -115,7 +115,7 @@ impl TestPlatform {
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
                     if let Some(window) = window.as_ref() {
-                        if Arc::ptr_eq(&previous_window.0, &window.0) {
+                        if Rc::ptr_eq(&previous_window.0, &window.0) {
                             return;
                         }
                     }

@@ -536,7 +536,6 @@ style = { level = "allow", priority = -1 }
 
 # Individual rules that have violations in the codebase:
 almost_complete_range = "allow"
-arc_with_non_send_sync = "allow"
 let_underscore_future = "allow"
 reversed_empty_ranges = "allow"
 type_complexity = "allow"

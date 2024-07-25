@@ -27,8 +27,8 @@ use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
 use workspace::Workspace;
 
-use std::{fmt::Debug, ops::RangeInclusive};
-use std::{mem, sync::Arc};
+use std::mem;
+use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
 use crate::{BlockContext, BlockProperties, TerminalView};
 
@@ -156,7 +156,7 @@ pub struct TerminalElement {
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
     interactivity: Interactivity,
-    block_below_cursor: Option<Arc<BlockProperties>>,
+    block_below_cursor: Option<Rc<BlockProperties>>,
 }
 
 impl InteractiveElement for TerminalElement {
@@ -177,7 +177,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
-        block_below_cursor: Option<Arc<BlockProperties>>,
+        block_below_cursor: Option<Rc<BlockProperties>>,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
