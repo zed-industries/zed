@@ -37,9 +37,11 @@ struct ProjectState {
 struct LanguageServerState {
     kind: LanguageServerKind,
     log_messages: VecDeque<String>,
+    trace_messages: VecDeque<String>,
     rpc_state: Option<LanguageServerRpcState>,
     _io_logs_subscription: Option<lsp::Subscription>,
     _lsp_logs_subscription: Option<lsp::Subscription>,
+    _lsp_trace_subscription: Option<lsp::Subscription>,
 }
 
 enum LanguageServerKind {
@@ -244,12 +246,16 @@ impl LogStore {
                     kind,
                     rpc_state: None,
                     log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                    trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                     _io_logs_subscription: None,
                     _lsp_logs_subscription: None,
+                    _lsp_trace_subscription: None,
                 }
             });
 
-        if server.has_notification_handler::<lsp::notification::LogMessage>() {
+        if server.has_notification_handler::<lsp::notification::LogMessage>()
+            || server.has_notification_handler::<lsp::notification::LogTrace>()
+        {
             // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
             return Some(server_state);
         }
@@ -264,10 +270,22 @@ impl LogStore {
         let this = cx.handle().downgrade();
         server_state._lsp_logs_subscription =
             Some(server.on_notification::<lsp::notification::LogMessage, _>({
+                let this = this.clone();
                 move |params, mut cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, cx| {
                             this.add_language_server_log(server_id, &params.message, cx);
+                        })
+                        .ok();
+                    }
+                }
+            }));
+        server_state._lsp_trace_subscription =
+            Some(server.on_notification::<lsp::notification::LogTrace, _>({
+                move |params, mut cx| {
+                    if let Some(this) = this.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            this.add_language_server_trace(server_id, &params.message, cx);
                         })
                         .ok();
                     }
@@ -285,6 +303,29 @@ impl LogStore {
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.log_messages;
+        Self::add_language_server_message(log_lines, id, message, cx);
+        Some(())
+    }
+
+    fn add_language_server_trace(
+        &mut self,
+        id: LanguageServerId,
+        message: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let language_server_state = self.get_language_server_state(id)?;
+
+        let log_lines = &mut language_server_state.trace_messages;
+        Self::add_language_server_message(log_lines, id, message, cx);
+        Some(())
+    }
+
+    fn add_language_server_message(
+        log_lines: &mut VecDeque<String>,
+        id: LanguageServerId,
+        message: &str,
+        cx: &mut ModelContext<Self>,
+    ) {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
@@ -296,7 +337,6 @@ impl LogStore {
             is_rpc: false,
         });
         cx.notify();
-        Some(())
     }
 
     fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut ModelContext<Self>) {
@@ -307,7 +347,9 @@ impl LogStore {
     fn server_logs(&self, server_id: LanguageServerId) -> Option<&VecDeque<String>> {
         Some(&self.language_servers.get(&server_id)?.log_messages)
     }
-
+    fn server_trace(&self, server_id: LanguageServerId) -> Option<&VecDeque<String>> {
+        Some(&self.language_servers.get(&server_id)?.trace_messages)
+    }
     fn server_ids_for_project<'a>(
         &'a self,
         lookup_project: &'a WeakModel<Project>,
@@ -943,7 +985,7 @@ impl Render for LspLogToolbarItemView {
 
 const RPC_MESSAGES: &str = "RPC Messages";
 const SERVER_LOGS: &str = "Server Logs";
-
+const SERVER_TRACE: &str = "Server Trace";
 impl LspLogToolbarItemView {
     pub fn new() -> Self {
         Self {
