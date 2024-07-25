@@ -361,7 +361,6 @@ fn show_hover(
                         let markdown_style = MarkdownStyle {
                             base_text_style,
                             selection_background_color: { cx.theme().players().local().selection },
-                            soft_break_delim: String::from("\n"),
                             link: TextStyleRefinement {
                                 underline: Some(gpui::UnderlineStyle {
                                     thickness: px(1.),
