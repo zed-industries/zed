@@ -1,16 +1,17 @@
-use crate::transport::{Events, Payload, Request, Response, Transport};
+use crate::transport::{Events, Payload, Response, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Restart,
-        SetBreakpoints, StepBack, StepIn, StepOut,
+        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
+        Restart, RunInTerminal, SetBreakpoints, StepBack, StepIn, StepOut,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
-    NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
-    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
-    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
+    NextArguments, PauseArguments, RestartArguments, RunInTerminalRequestArguments,
+    RunInTerminalResponse, Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source,
+    SourceBreakpoint, StackFrame, StepBackArguments, StepInArguments, StepOutArguments,
+    SteppingGranularity, Variable,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
@@ -284,7 +285,7 @@ impl DebugAdapterClient {
         let client = Self {
             id,
             config,
-            server_tx,
+            server_tx: server_tx.clone(),
             _process: process,
             sequence_count: AtomicU64::new(1),
             capabilities: Default::default(),
@@ -297,7 +298,7 @@ impl DebugAdapterClient {
                 .detach_and_log_err(cx);
 
             cx.spawn(|mut cx| async move {
-                Self::handle_events(client_rx, event_handler, &mut cx).await
+                Self::handle_events(client_rx, server_tx, event_handler, &mut cx).await
             })
             .detach_and_log_err(cx);
         })?;
@@ -315,6 +316,7 @@ impl DebugAdapterClient {
     /// `cx`: The context that this task will run in
     pub async fn handle_events<F>(
         client_rx: Receiver<Payload>,
+        server_tx: Sender<Payload>,
         mut event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<()>
@@ -324,9 +326,58 @@ impl DebugAdapterClient {
         while let Ok(payload) = client_rx.recv().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
-                err => {
-                    log::error!("Invalid Event: {:#?}", err);
+                Payload::Request(request) => {
+                    if RunInTerminal::COMMAND == request.command {
+                        let server_tx = server_tx.clone();
+                        cx.spawn(|_| async move {
+                            let arguments: RunInTerminalRequestArguments =
+                                serde_json::from_value(request.arguments.unwrap_or_default())?;
+
+                            dbg!(&arguments);
+
+                            let envs: HashMap<String, String> = arguments
+                                .env
+                                .unwrap()
+                                .as_object()
+                                .unwrap()
+                                .iter()
+                                .map(|(key, value)| (key.clone(), value.clone().to_string()))
+                                .collect();
+
+                            let mut args = arguments.args.clone();
+
+                            let mut command = process::Command::new(args.remove(0));
+                            command.current_dir(arguments.cwd).envs(envs).args(args);
+
+                            let process = command
+                                .spawn()
+                                .with_context(|| "failed to spawn run in terminal command.")?;
+
+                            let json = serde_json::to_value(RunInTerminalResponse {
+                                process_id: Some(process.id() as u64),
+                                shell_process_id: None,
+                            })?;
+
+                            dbg!(&json);
+
+                            server_tx
+                                .send(Payload::Response(Response {
+                                    request_seq: request.seq,
+                                    success: true,
+                                    command: RunInTerminal::COMMAND.into(),
+                                    message: None,
+                                    body: Some(json),
+                                }))
+                                .await?;
+
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    } else {
+                        log::error!("Unhandled Event: {:#?}", request.command);
+                    }
                 }
+                _ => unreachable!(),
             })?;
         }
 
@@ -347,15 +398,12 @@ impl DebugAdapterClient {
 
     /// Send a request to an adapter and get a response back
     /// Note: This function will block until a response is sent back from the adapter
-    pub async fn request<R: dap_types::requests::Request>(
-        &self,
-        arguments: R::Arguments,
-    ) -> Result<R::Response> {
+    pub async fn request<R: Request>(&self, arguments: R::Arguments) -> Result<R::Response> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
         let (callback_tx, callback_rx) = bounded::<Result<Response>>(1);
 
-        let request = Request {
+        let request = crate::transport::Request {
             back_ch: Some(callback_tx),
             seq: self.next_sequence_id(),
             command: R::COMMAND.to_string(),
