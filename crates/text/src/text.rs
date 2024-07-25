@@ -542,6 +542,35 @@ pub struct LineIndent {
 }
 
 impl LineIndent {
+    pub fn from_chunks(chunks: &mut Chunks) -> Self {
+        let mut tabs = 0;
+        let mut spaces = 0;
+        let mut line_blank = true;
+
+        'outer: while let Some(chunk) = chunks.peek() {
+            for ch in chunk.chars() {
+                if ch == '\t' {
+                    tabs += 1;
+                } else if ch == ' ' {
+                    spaces += 1;
+                } else {
+                    if ch != '\n' {
+                        line_blank = false;
+                    }
+                    break 'outer;
+                }
+            }
+
+            chunks.next();
+        }
+
+        Self {
+            tabs,
+            spaces,
+            line_blank,
+        }
+    }
+
     /// Constructs a new `LineIndent` which only contains spaces.
     pub fn spaces(spaces: u32) -> Self {
         Self {
@@ -1985,15 +2014,17 @@ impl BufferSnapshot {
         let start = Point::new(row_range.start, 0).to_offset(self);
         let end = Point::new(row_range.end, 0).to_offset(self);
 
-        let mut lines = self.as_rope().chunks_in_range(start..end).lines();
+        let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
+        let mut done = false;
         std::iter::from_fn(move || {
-            if let Some(line) = lines.next() {
-                let indent = LineIndent::from(line);
-                row += 1;
-                Some((row - 1, indent))
-            } else {
+            if done {
                 None
+            } else {
+                let indent = (row, LineIndent::from_chunks(&mut chunks));
+                done = !chunks.next_line();
+                row += 1;
+                Some(indent)
             }
         })
     }
