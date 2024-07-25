@@ -167,23 +167,7 @@ fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range
     Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
 }
 
-fn code_block_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
-    let mut snippet_end_row = end_row;
-    while (buffer.is_line_blank(snippet_end_row) || line_is_fence(buffer, snippet_end_row))
-        && snippet_end_row > start_row
-    {
-        snippet_end_row -= 1;
-    }
-    Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
-}
-
-fn line_is_fence(buffer: &BufferSnapshot, row: u32) -> bool {
-    buffer
-        .text_for_range(Point::new(row, 0)..Point::new(row, buffer.line_len(row)))
-        .all(|chunk| chunk.trim().chars().all(|c| c == '`'))
-}
-
-// Returns the ranges of the snippets in the buffer and the next range for moving the cursor to
+// Returns the ranges of the snippets in the buffer and the next point for moving the cursor to
 fn jupytext_snippets(
     buffer: &BufferSnapshot,
     range: Range<Point>,
@@ -232,7 +216,7 @@ fn jupytext_snippets(
                 if current_row <= range.end.row {
                     snippet_start_row = current_row;
                 } else {
-                    // Return our snippets as well as the next range for moving the cursor to
+                    // Return our snippets as well as the next point for moving the cursor to
                     return (snippets, Some(Point::new(current_row, 0)));
                 }
             }
@@ -255,7 +239,7 @@ fn snippet_ranges(
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language() {
         if language.name().as_ref() == "Markdown" {
-            return markdown_code_blocks(buffer, range.clone());
+            return (markdown_code_blocks(buffer, range.clone()), None);
         }
     }
 
@@ -278,22 +262,14 @@ fn snippet_ranges(
     }
 }
 
-fn markdown_code_blocks(
-    buffer: &BufferSnapshot,
-    range: Range<Point>,
-) -> (Vec<Range<Point>>, Option<Point>) {
-    let ranges = buffer
+fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+    buffer
         .injections_intersecting_range(range)
         .filter(|(_, language)| language_supported(language))
         .map(|(content_range, _)| {
-            let content_range = buffer.offset_to_point(content_range.start)
-                ..buffer.offset_to_point(content_range.end);
-
-            code_block_range(buffer, content_range.start.row, content_range.end.row)
+            buffer.offset_to_point(content_range.start)..buffer.offset_to_point(content_range.end)
         })
-        .collect();
-    // TODO: Fix this and actually return a point
-    (ranges, None)
+        .collect()
 }
 
 fn language_supported(language: &Arc<Language>) -> bool {
@@ -489,7 +465,8 @@ mod tests {
                     ```typescript
                     console.log("foo")
                     ```
-                "# },
+                    "#
+                },
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
@@ -509,9 +486,10 @@ mod tests {
             vec![
                 indoc! { r#"
                     let foo = 999;
-                    console.log(foo + 1999);"#
+                    console.log(foo + 1999);
+                    "#
                 },
-                r#"console.log("foo")"#,
+                "console.log(\"foo\")\n"
             ]
         );
 
@@ -553,10 +531,11 @@ mod tests {
             vec![
                 indoc! { r#"
                     let foo = 999;
-                    console.log(foo + 1999);"#
+                    console.log(foo + 1999);
+                    "#
                 },
-                r#"console.log("foo")"#,
-                r#"console.log("another code block")"#,
+                "console.log(\"foo\")\n",
+                "console.log(\"another code block\")\n",
             ]
         );
 
@@ -591,7 +570,8 @@ mod tests {
             vec![indoc! { r#"
                 print("hello there")
                 print("hello there")
-                print("hello there")"#
+                print("hello there")
+                "#
             },]
         );
     }
