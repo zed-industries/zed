@@ -113,29 +113,30 @@ impl ToolbarItemView for Breadcrumbs {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
-        if let Some(item) = active_pane_item {
-            let this = cx.view().downgrade();
-            self.subscription = Some(item.subscribe_to_item_events(
-                cx,
-                Box::new(move |event, cx| {
-                    if let ItemEvent::UpdateBreadcrumbs = event {
-                        this.update(cx, |this, cx| {
-                            cx.notify();
-                            if let Some(active_item) = this.active_item.as_ref() {
-                                cx.emit(ToolbarItemEvent::ChangeLocation(
-                                    active_item.breadcrumb_location(cx),
-                                ))
-                            }
-                        })
-                        .ok();
-                    }
-                }),
-            ));
-            self.active_item = Some(item.boxed_clone());
-            item.breadcrumb_location(cx)
-        } else {
-            ToolbarItemLocation::Hidden
-        }
+
+        let Some(item) = active_pane_item else {
+            return ToolbarItemLocation::Hidden;
+        };
+
+        let this = cx.view().downgrade();
+        self.subscription = Some(item.subscribe_to_item_events(
+            cx,
+            Box::new(move |event, cx| {
+                if let ItemEvent::UpdateBreadcrumbs = event {
+                    this.update(cx, |this, cx| {
+                        cx.notify();
+                        if let Some(active_item) = this.active_item.as_ref() {
+                            cx.emit(ToolbarItemEvent::ChangeLocation(
+                                active_item.breadcrumb_location(cx),
+                            ))
+                        }
+                    })
+                    .ok();
+                }
+            }),
+        ));
+        self.active_item = Some(item.boxed_clone());
+        item.breadcrumb_location(cx)
     }
 
     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {

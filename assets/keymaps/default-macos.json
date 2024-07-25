@@ -83,7 +83,7 @@
       "ctrl-n": "editor::MoveDown",
       "ctrl-b": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
-      "ctrl-l": "editor::NextScreen",
+      "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-b": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
@@ -102,9 +102,9 @@
       "ctrl-shift-b": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
       "ctrl-shift-f": "editor::SelectRight",
-      "alt-shift-left": "editor::SelectToPreviousWordStart",
+      "alt-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
       "alt-shift-b": "editor::SelectToPreviousWordStart",
-      "alt-shift-right": "editor::SelectToNextWordEnd",
+      "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "alt-shift-f": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
@@ -126,7 +126,8 @@
       "cmd-alt-z": "editor::RevertSelectedHunks",
       "cmd-'": "editor::ToggleHunkDiff",
       "cmd-\"": "editor::ExpandAllHunkDiffs",
-      "cmd-alt-g b": "editor::ToggleGitBlame"
+      "cmd-alt-g b": "editor::ToggleGitBlame",
+      "cmd-i": "editor::ShowSignatureHelp"
     }
   },
   {
@@ -134,6 +135,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
@@ -143,12 +145,6 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
-    }
-  },
-  {
-    "context": "Editor && mode == full && !jupyter",
-    "bindings": {
-      "cmd-enter": "editor::NewlineBelow"
     }
   },
   {
@@ -177,6 +173,12 @@
     "context": "Markdown",
     "bindings": {
       "cmd-c": "markdown::Copy"
+    }
+  },
+  {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-shift-enter": "repl::Run"
     }
   },
   {
@@ -254,7 +256,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "cmd-enter": "search::ReplaceAll"
@@ -291,7 +293,6 @@
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
     }
   },
@@ -301,19 +302,20 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-alt-up": "editor::AddSelectionAbove",
+      "cmd-alt-up": "editor::AddSelectionAbove", // Insert cursor above
       "cmd-ctrl-p": "editor::AddSelectionAbove",
-      "cmd-alt-down": "editor::AddSelectionBelow",
+      "cmd-alt-down": "editor::AddSelectionBelow", // Insert cursor below
       "cmd-ctrl-n": "editor::AddSelectionBelow",
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
       "alt-shift-up": "editor::DuplicateLineUp",
       "alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
-      "cmd-d": ["editor::SelectNext", { "replace_newest": false }],
-      "cmd-shift-l": "editor::SelectAllMatches",
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
+      "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
@@ -569,12 +571,6 @@
     }
   },
   {
-    "context": "Editor && jupyter && !ContextEditor",
-    "bindings": {
-      "cmd-enter": "repl::Run"
-    }
-  },
-  {
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
@@ -591,6 +587,14 @@
     "context": "ChannelModal",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "Picker > Editor",
+    "bindings": {
+      "tab": "picker::ConfirmCompletion",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
     }
   },
   {
@@ -613,19 +617,12 @@
     }
   },
   {
-    "context": "Picker",
-    "bindings": {
-      "f2": "picker::UseSelectedQuery",
-      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
-      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
-    }
-  },
-  {
     "context": "Terminal",
     "bindings": {
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences

@@ -3,17 +3,17 @@
     "bindings": {
       "ctrl-shift-[": "pane::ActivatePrevItem",
       "ctrl-shift-]": "pane::ActivateNextItem",
-      "ctrl-pagedown": "pane::ActivatePrevItem",
-      "ctrl-pageup": "pane::ActivateNextItem",
-      "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
     }
   },
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": "editor::MoveLineUp",
+      "ctrl-shift-down": "editor::MoveLineDown",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
@@ -24,6 +24,8 @@
       "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
+      "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
+      "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"

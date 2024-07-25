@@ -16,7 +16,8 @@
     "impl" @context
     trait: (_)? @name
     "for"? @context
-    type: (_) @name) @item
+    type: (_) @name
+    body: (_ "{" @open (_)* "}" @close)) @item
 
 (trait_item
     (visibility_modifier)? @context

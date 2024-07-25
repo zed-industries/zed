@@ -75,6 +75,9 @@ impl RealGitRepository {
     }
 }
 
+// https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+const GIT_MODE_SYMLINK: u32 = 0o120000;
+
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -91,8 +94,8 @@ impl GitRepository for RealGitRepository {
             check_path_to_repo_path_errors(relative_file_path)?;
 
             let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
-                Some(entry) => entry.id,
-                None => return Ok(None),
+                Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
+                _ => return Ok(None),
             };
 
             let content = repo.find_blob(oid)?.content().to_owned();

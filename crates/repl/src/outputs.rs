@@ -1,8 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::stdio::TerminalOutput;
 use anyhow::Result;
-use gpui::{img, AnyElement, FontWeight, ImageData, Render, TextRun, View};
+use gpui::{
+    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, TextRun,
+    Transformation, View,
+};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
@@ -11,13 +15,13 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
-// Given these outputs are destined for the editor with the block decorations API, all of them must report
-// how many lines they will take up in the editor.
+/// Given these outputs are destined for the editor with the block decorations API, all of them must report
+/// how many lines they will take up in the editor.
 pub trait LineHeight: Sized {
     fn num_lines(&self, cx: &mut WindowContext) -> u8;
 }
 
-// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
+/// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
@@ -113,6 +117,9 @@ fn cell_content(row: &Value, field: &str) -> String {
     }
 }
 
+// Declare constant for the padding multiple on the line height
+const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
+
 impl TableView {
     pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
@@ -166,8 +173,6 @@ impl TableView {
             None => return div().into_any_element(),
         };
 
-        // todo!(): compute the width of each column by finding the widest cell in each column
-
         let mut headings = serde_json::Map::new();
         for field in &self.table.schema.fields {
             headings.insert(field.name.clone(), Value::String(field.name.clone()));
@@ -196,6 +201,8 @@ impl TableView {
     ) -> AnyElement {
         let theme = cx.theme();
 
+        let line_height = cx.line_height();
+
         let row_cells = schema
             .fields
             .iter()
@@ -223,11 +230,11 @@ impl TableView {
                     .w(*width + px(22.))
                     .child(value)
                     .px_2()
-                    .py_1()
+                    .py((TABLE_Y_PADDING_MULTIPLE / 2.0) * line_height)
                     .border_color(theme.colors().border);
 
                 if is_header {
-                    cell = cell.border_2().bg(theme.colors().border_focused)
+                    cell = cell.border_1().bg(theme.colors().border_focused)
                 } else {
                     cell = cell.border_1()
                 }
@@ -251,20 +258,19 @@ impl TableView {
 impl LineHeight for TableView {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
         let num_rows = match &self.table.data {
-            Some(data) => data.len(),
-            // We don't support Path based data sources
-            None => 0,
+            // Rows + header
+            Some(data) => data.len() + 1,
+            // We don't support Path based data sources, however we
+            // still render the header and padding
+            None => 1 + 1,
         };
 
-        // Given that each cell has both `py_1` and a border, we have to estimate
-        // a reasonable size to add on, then round up.
-        let row_heights = (num_rows as f32 * 1.2) + 1.0;
-
-        (row_heights as u8).saturating_add(2) // Header + spacing
+        let num_lines = num_rows as f32 * (1.0 + TABLE_Y_PADDING_MULTIPLE) + 1.0;
+        num_lines.ceil() as u8
     }
 }
 
-// Userspace error from the kernel
+/// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
@@ -275,14 +281,14 @@ impl ErrorView {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let colors = cx.theme().colors();
+        let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
                 .w_full()
-                .bg(colors.background)
-                .p_4()
-                .border_l_1()
+                .px(padding)
+                .py(padding)
+                .border_1()
                 .border_color(theme.status().error_border)
                 .child(
                     h_flex()
@@ -297,7 +303,7 @@ impl ErrorView {
 
 impl LineHeight for ErrorView {
     fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 0;
+        let mut height: u8 = 1; // Start at 1 to account for the y padding
         height = height.saturating_add(self.ename.lines().count() as u8);
         height = height.saturating_add(self.evalue.lines().count() as u8);
         height = height.saturating_add(self.traceback.num_lines(cx));
@@ -363,7 +369,7 @@ impl LineHeight for OutputType {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub enum ExecutionStatus {
     #[default]
     Unknown,
@@ -423,13 +429,17 @@ impl ExecutionView {
                             self.outputs.push(output);
                         }
 
-                        // Comments from @rgbkrk, reach out with questions
+                        // There are other payloads that could be handled here, such as updating the input.
+                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
 
                         // Set next input adds text to the next cell. Not required to support.
                         // However, this could be implemented by adding text to the buffer.
+                        // Trigger in python using `get_ipython().set_next_input("text")`
+                        //
                         // runtimelib::Payload::SetNextInput { text, replace } => {},
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
+                        // Python users can trigger this with the `%edit` magic command
                         // runtimelib::Payload::EditMagic { filename, line_number } => {},
 
                         // Ask the user if they want to exit the kernel. Not required to support.
@@ -502,25 +512,60 @@ impl ExecutionView {
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let status = match &self.status {
+            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Executing => h_flex()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(3)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+                .child(Label::new("Executing...").color(Color::Muted))
+                .into_any_element(),
+            ExecutionStatus::Finished => Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .into_any_element(),
+            ExecutionStatus::Unknown => Label::new("Unknown status")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Queued => Label::new("Queued...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::KernelErrored(error) => Label::new(format!("Kernel error: {}", error))
+                .color(Color::Error)
+                .into_any_element(),
+        };
+
         if self.outputs.len() == 0 {
-            return match &self.status {
-                ExecutionStatus::ConnectingToKernel => div().child("Connecting to kernel..."),
-                ExecutionStatus::Executing => div().child("Executing..."),
-                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
-                ExecutionStatus::Unknown => div().child("..."),
-                ExecutionStatus::ShuttingDown => div().child("Kernel shutting down..."),
-                ExecutionStatus::Shutdown => div().child("Kernel shutdown"),
-                ExecutionStatus::Queued => div().child("Queued"),
-                ExecutionStatus::KernelErrored(error) => {
-                    div().child(format!("Kernel error: {}", error))
-                }
-            }
-            .into_any_element();
+            return v_flex()
+                .min_h(cx.line_height())
+                .justify_center()
+                .child(status)
+                .into_any_element();
         }
 
         div()
             .w_full()
             .children(self.outputs.iter().filter_map(|output| output.render(cx)))
+            .children(match self.status {
+                ExecutionStatus::Executing => vec![status],
+                ExecutionStatus::Queued => vec![status],
+                _ => vec![],
+            })
             .into_any_element()
     }
 }
@@ -531,12 +576,22 @@ impl LineHeight for ExecutionView {
             return 1; // For the status message if outputs are not there
         }
 
-        self.outputs
+        let num_lines = self
+            .outputs
             .iter()
             .map(|output| output.num_lines(cx))
-            .fold(0, |acc, additional_height| {
+            .fold(0_u8, |acc, additional_height| {
                 acc.saturating_add(additional_height)
             })
+            .max(1);
+
+        let num_lines = match self.status {
+            // Account for the status message if the execution is still ongoing
+            ExecutionStatus::Executing => num_lines.saturating_add(1),
+            ExecutionStatus::Queued => num_lines.saturating_add(1),
+            _ => num_lines,
+        };
+        num_lines
     }
 }
 

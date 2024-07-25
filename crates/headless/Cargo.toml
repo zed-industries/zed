@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+extension.workspace = true
 signal-hook.workspace = true
 gpui.workspace = true
 log.workspace = true

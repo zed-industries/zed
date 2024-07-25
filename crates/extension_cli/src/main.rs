@@ -7,6 +7,7 @@ use std::{
 };
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
+use ::http_client::HttpClientWithProxy;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
@@ -58,7 +59,9 @@ async fn main() -> Result<()> {
     let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
-    let builder = ExtensionBuilder::new(scratch_dir);
+
+    let http_client = Arc::new(HttpClientWithProxy::new(None));
+    let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(
             &extension_path,

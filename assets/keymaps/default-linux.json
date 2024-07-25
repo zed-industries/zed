@@ -19,7 +19,6 @@
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -79,10 +78,8 @@
       "shift-down": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
+      "ctrl-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
@@ -100,6 +97,7 @@
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
       "ctrl-'": "editor::ToggleHunkDiff",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
+      "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame"
     }
   },
@@ -108,8 +106,8 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
-      "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-enter": "editor::NewlineAbove",
+      "ctrl-shift-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
@@ -207,7 +205,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-alt-enter": "search::ReplaceAll"
@@ -260,20 +258,19 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": "editor::AddSelectionAbove",
-      "shift-alt-down": "editor::AddSelectionBelow",
+      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
       "ctrl-alt-shift-up": "editor::DuplicateLineUp",
       "ctrl-alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
-      "ctrl-shift-l": "editor::SelectAllMatches",
-      "ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": false }],
+      "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
+      "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
+      "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],
       "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-k ctrl-i": "editor::Hover",
@@ -326,7 +323,7 @@
       "alt-9": ["pane::ActivateItem", 8],
       "alt-0": "pane::ActivateLastItem",
       "ctrl-alt--": "pane::GoBack",
-      "ctrl-alt-shift--": "pane::GoForward",
+      "ctrl-alt-_": "pane::GoForward",
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPrevMatch",
@@ -397,7 +394,7 @@
     "bindings": {
       "ctrl-shift-k": "editor::DeleteLine",
       "ctrl-shift-d": "editor::DuplicateLineDown",
-      "ctrl-j": "editor::JoinLines",
+      "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
@@ -478,6 +475,12 @@
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-shift-enter": "repl::Run"
     }
   },
   {
@@ -567,6 +570,13 @@
     }
   },
   {
+    "context": "Picker > Editor",
+    "bindings": {
+      "tab": "picker::ConfirmCompletion",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }]
+    }
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
@@ -591,6 +601,7 @@
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
+      "ctrl-a": "editor::SelectAll",
       "shift-ctrl-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",

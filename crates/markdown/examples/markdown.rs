@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, App, KeyBinding, Task, View, WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
@@ -14,6 +14,15 @@ const MARKDOWN_EXAMPLE: &'static str = r#"
 
 ## Headings
 Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
+
+```rust
+gpui::window::ViewContext
+impl<'a, V> ViewContext<'a, V>
+pub fn on_blur(&mut self, handle: &FocusHandle, listener: impl FnMut(&mut V, &mut iewContext<V>) + 'static) -> Subscription
+where
+    // Bounds from impl:
+    V: 'static,
+```
 
 ## Emphasis
 Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
@@ -94,55 +103,61 @@ pub fn main() {
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = FakeNodeRuntime::new();
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-        languages::init(language_registry.clone(), node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
+
+        let language_registry =
+            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        language_registry.set_theme(cx.theme().clone());
+        let language_registry = Arc::new(language_registry);
+        languages::init(language_registry.clone(), node_runtime, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| {
+                let markdown_style = MarkdownStyle {
+                    base_text_style: gpui::TextStyle {
+                        font_family: "Zed Plex Sans".into(),
+                        color: cx.theme().colors().terminal_ansi_black,
+                        ..Default::default()
+                    },
+                    code_block: StyleRefinement::default()
+                        .font_family("Zed Plex Mono")
+                        .m(rems(1.))
+                        .bg(rgb(0xAAAAAAA)),
+                    inline_code: gpui::TextStyleRefinement {
+                        font_family: Some("Zed Mono".into()),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        background_color: Some(cx.theme().colors().editor_background),
+                        ..Default::default()
+                    },
+                    rule_color: Color::Muted.color(cx),
+                    block_quote_border_color: Color::Muted.color(cx),
+                    block_quote: gpui::TextStyleRefinement {
+                        color: Some(Color::Muted.color(cx)),
+                        ..Default::default()
+                    },
+                    link: gpui::TextStyleRefinement {
+                        color: Some(Color::Accent.color(cx)),
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: px(1.),
+                            color: Some(Color::Accent.color(cx)),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    syntax: cx.theme().syntax().clone(),
+                    selection_background_color: {
+                        let mut selection = cx.theme().players().local().selection;
+                        selection.fade_out(0.7);
+                        selection
+                    },
+                    ..Default::default()
+                };
+
                 MarkdownExample::new(
                     MARKDOWN_EXAMPLE.to_string(),
-                    MarkdownStyle {
-                        code_block: gpui::TextStyleRefinement {
-                            font_family: Some("Zed Plex Mono".into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(cx.theme().colors().editor_background),
-                            ..Default::default()
-                        },
-                        inline_code: gpui::TextStyleRefinement {
-                            font_family: Some("Zed Plex Mono".into()),
-                            // @nate: Could we add inline-code specific styles to the theme?
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(cx.theme().colors().editor_background),
-                            ..Default::default()
-                        },
-                        rule_color: Color::Muted.color(cx),
-                        block_quote_border_color: Color::Muted.color(cx),
-                        block_quote: gpui::TextStyleRefinement {
-                            color: Some(Color::Muted.color(cx)),
-                            ..Default::default()
-                        },
-                        link: gpui::TextStyleRefinement {
-                            color: Some(Color::Accent.color(cx)),
-                            underline: Some(gpui::UnderlineStyle {
-                                thickness: px(1.),
-                                color: Some(Color::Accent.color(cx)),
-                                wavy: false,
-                            }),
-                            ..Default::default()
-                        },
-                        syntax: cx.theme().syntax().clone(),
-                        selection_background_color: {
-                            let mut selection = cx.theme().players().local().selection;
-                            selection.fade_out(0.7);
-                            selection
-                        },
-                    },
+                    markdown_style,
                     language_registry,
                     cx,
                 )
@@ -163,7 +178,8 @@ impl MarkdownExample {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut WindowContext,
     ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
+        let markdown =
+            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx, None));
         Self { markdown }
     }
 }

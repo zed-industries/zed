@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::Context;
+use client::Client;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
-use feature_flags::FeatureFlagAppExt;
-use feature_flags::FeatureFlagViewExt;
 use gpui::AsyncWindowContext;
 use gpui::Subscription;
 use gpui::Task;
@@ -21,6 +20,7 @@ use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
+use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use task::TerminalWorkDir;
@@ -33,6 +33,7 @@ use ui::{
 };
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
+use workspace::notifications::NotifyResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::open_dev_server_project;
@@ -70,20 +71,7 @@ enum Mode {
 }
 
 impl DevServerProjects {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, _| {
-            if enabled {
-                Self::register_open_remote_action(workspace);
-            }
-        })
-        .detach();
-
-        if cx.has_flag::<feature_flags::Remoting>() {
-            Self::register_open_remote_action(workspace);
-        }
-    }
-
-    fn register_open_remote_action(workspace: &mut Workspace) {
+    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
             let handle = cx.view().downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
@@ -114,25 +102,31 @@ impl DevServerProjects {
             cx.notify();
         });
 
+        let mut base_style = cx.text_style();
+        base_style.refine(&gpui::TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            ..Default::default()
+        });
+
         let markdown_style = MarkdownStyle {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Plex Mono".into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
+            base_text_style: base_style,
+            code_block: gpui::StyleRefinement {
+                text: Some(gpui::TextStyleRefinement {
+                    font_family: Some("Zed Plex Mono".into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
-            inline_code: Default::default(),
-            block_quote: Default::default(),
             link: gpui::TextStyleRefinement {
                 color: Some(Color::Accent.color(cx)),
                 ..Default::default()
             },
-            rule_color: Default::default(),
-            block_quote_border_color: Default::default(),
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
+        let markdown =
+            cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx, None));
 
         Self {
             mode: Mode::Default(None),
@@ -167,16 +161,13 @@ impl DevServerProjects {
             .read(cx)
             .projects_for_server(dev_server_id)
             .iter()
-            .any(|p| p.path == path)
+            .any(|p| p.paths.iter().any(|p| p == &path))
         {
             cx.spawn(|_, mut cx| async move {
                 cx.prompt(
                     gpui::PromptLevel::Critical,
                     "Failed to create project",
-                    Some(&format!(
-                        "Project {} already exists for this dev server.",
-                        path
-                    )),
+                    Some(&format!("{} is already open on this dev server.", path)),
                     &["Ok"],
                 )
                 .await
@@ -448,15 +439,10 @@ impl DevServerProjects {
         .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
 
-    fn delete_dev_server_project(
-        &mut self,
-        id: DevServerProjectId,
-        path: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn delete_dev_server_project(&mut self, id: DevServerProjectId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
             gpui::PromptLevel::Warning,
-            format!("Delete \"{}\"?", path).as_str(),
+            "Delete this project?",
             Some("This will delete the remote project. You can always re-add it later."),
             &["Delete", "Cancel"],
         );
@@ -696,12 +682,11 @@ impl DevServerProjects {
         let dev_server_project_id = project.id;
         let project_id = project.project_id;
         let is_online = project_id.is_some();
-        let project_path = project.path.clone();
 
         ListItem::new(("remote-project", dev_server_project_id.0))
             .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
             .child(
-                    Label::new(project.path.clone())
+                    Label::new(project.paths.join(", "))
             )
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
@@ -717,7 +702,7 @@ impl DevServerProjects {
             }))
             .end_hover_slot::<AnyElement>(Some(IconButton::new("remove-remote-project", IconName::Trash)
                 .on_click(cx.listener(move |this, _, cx| {
-                    this.delete_dev_server_project(dev_server_project_id, &project_path, cx)
+                    this.delete_dev_server_project(dev_server_project_id, cx)
                 }))
                 .tooltip(|cx| Tooltip::text("Delete remote project", cx)).into_any_element()))
     }
@@ -972,53 +957,86 @@ impl DevServerProjects {
             is_creating = Some(*creating);
             creating_dev_server = Some(*dev_server_id);
         };
+        let is_signed_out = Client::global(cx).status().borrow().is_signed_out();
 
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new()
                     .show_dismiss_button(true)
-                    .child(Headline::new("Remote Projects").size(HeadlineSize::Small)),
+                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::Small)),
             )
-            .section(
-                Section::new().child(
-                    div().mb_4().child(
-                        List::new()
-                            .empty_message("No dev servers registered.")
-                            .header(Some(
-                                ListHeader::new("Dev Servers").end_slot(
-                                    Button::new("register-dev-server-button", "New Server")
-                                        .icon(IconName::Plus)
-                                        .icon_position(IconPosition::Start)
-                                        .tooltip(|cx| {
-                                            Tooltip::text("Register a new dev server", cx)
-                                        })
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.mode =
-                                                Mode::CreateDevServer(CreateDevServer::default());
-                                            this.dev_server_name_input.update(
-                                                cx,
-                                                |text_field, cx| {
-                                                    text_field.editor().update(cx, |editor, cx| {
-                                                        editor.set_text("", cx);
-                                                    });
-                                                },
-                                            );
-                                            cx.notify();
-                                        })),
-                                ),
-                            ))
-                            .children(dev_servers.iter().map(|dev_server| {
-                                let creating = if creating_dev_server == Some(dev_server.id) {
-                                    is_creating
-                                } else {
-                                    None
-                                };
-                                self.render_dev_server(dev_server, creating, cx)
-                                    .into_any_element()
-                            })),
+            .when(is_signed_out, |modal| {
+                modal
+                    .section(Section::new().child(v_flex().mb_4().child(Label::new(
+                        "You are not currently signed in to Zed. Currently the remote development featuers are only available to signed in users. Please sign in to continue.",
+                    ))))
+                    .footer(
+                        ModalFooter::new().end_slot(
+                            Button::new("sign_in", "Sign in")
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .style(ButtonStyle::Filled)
+                                .full_width()
+                                .on_click(cx.listener(|_, _, cx| {
+                                    let client = Client::global(cx).clone();
+                                    cx.spawn(|_, mut cx| async move {
+                                        client
+                                            .authenticate_and_connect(true, &cx)
+                                            .await
+                                            .notify_async_err(&mut cx);
+                                    })
+                                    .detach();
+                                    cx.emit(gpui::DismissEvent);
+                                })),
+                        ),
+                    )
+            })
+            .when(!is_signed_out, |modal| {
+                modal.section(
+                    Section::new().child(
+                        div().mb_4().child(
+                            List::new()
+                                .empty_message("No dev servers registered.")
+                                .header(Some(
+                                    ListHeader::new("Dev Servers").end_slot(
+                                        Button::new("register-dev-server-button", "New Server")
+                                            .icon(IconName::Plus)
+                                            .icon_position(IconPosition::Start)
+                                            .tooltip(|cx| {
+                                                Tooltip::text("Register a new dev server", cx)
+                                            })
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.mode = Mode::CreateDevServer(
+                                                    CreateDevServer::default(),
+                                                );
+                                                this.dev_server_name_input.update(
+                                                    cx,
+                                                    |text_field, cx| {
+                                                        text_field.editor().update(
+                                                            cx,
+                                                            |editor, cx| {
+                                                                editor.set_text("", cx);
+                                                            },
+                                                        );
+                                                    },
+                                                );
+                                                cx.notify();
+                                            })),
+                                    ),
+                                ))
+                                .children(dev_servers.iter().map(|dev_server| {
+                                    let creating = if creating_dev_server == Some(dev_server.id) {
+                                        is_creating
+                                    } else {
+                                        None
+                                    };
+                                    self.render_dev_server(dev_server, creating, cx)
+                                        .into_any_element()
+                                })),
+                        ),
                     ),
-                ),
-            )
+                )
+            })
     }
 }
 
@@ -1153,7 +1171,7 @@ pub async fn spawn_ssh_task(
         "-x".to_string(),
         "-c".to_string(),
         format!(
-            r#"~/.local/bin/zed -v >/dev/stderr || (curl -sSL https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | bash && ~/.local/bin/zed --dev-server-token {}"#,
+            r#"~/.local/bin/zed -v >/dev/stderr || (curl -f https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | sh && ZED_HEADLESS=1 ~/.local/bin/zed --dev-server-token {}"#,
             access_token
         ),
     ];
@@ -1174,10 +1192,12 @@ pub async fn spawn_ssh_task(
                         ssh_command: ssh_connection_string,
                         path: None,
                     }),
-                    env: Default::default(),
                     use_new_terminal: true,
                     allow_concurrent_runs: false,
                     reveal: RevealStrategy::Always,
+                    hide: HideStrategy::Never,
+                    env: Default::default(),
+                    shell: Default::default(),
                 },
                 cx,
             )

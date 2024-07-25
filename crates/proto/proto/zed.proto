@@ -262,7 +262,16 @@ message Envelope {
         OpenContextResponse open_context_response = 213;
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
-        SynchronizeContextsResponse synchronize_contexts_response = 216; // current max
+        SynchronizeContextsResponse synchronize_contexts_response = 216;
+
+        GetSignatureHelp get_signature_help = 217;
+        GetSignatureHelpResponse get_signature_help_response = 218;
+        ListRemoteDirectory list_remote_directory = 219;
+        ListRemoteDirectoryResponse list_remote_directory_response = 220;
+        UpdateDevServerProject update_dev_server_project = 221;
+
+        AddWorktree add_worktree = 222;
+        AddWorktreeResponse add_worktree_response = 223; // current max
     }
 
     reserved 158 to 161;
@@ -502,6 +511,20 @@ message CreateDevServerProjectResponse {
 
 message ValidateDevServerProjectRequest {
     string path = 1;
+}
+
+message ListRemoteDirectory {
+    uint64 dev_server_id = 1;
+    string path = 2;
+}
+
+message ListRemoteDirectoryResponse {
+    repeated string entries = 1;
+}
+
+message UpdateDevServerProject {
+    uint64 dev_server_project_id = 1;
+    repeated string paths = 2;
 }
 
 message CreateDevServer {
@@ -934,6 +957,55 @@ message GetCodeActionsResponse {
     repeated VectorClockEntry version = 2;
 }
 
+message GetSignatureHelp {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message GetSignatureHelpResponse {
+    optional SignatureHelp signature_help = 1;
+}
+
+message SignatureHelp {
+    repeated SignatureInformation signatures = 1;
+    optional uint32 active_signature = 2;
+    optional uint32 active_parameter = 3;
+}
+
+message SignatureInformation {
+    string label = 1;
+    optional Documentation documentation = 2;
+    repeated ParameterInformation parameters = 3;
+    optional uint32 active_parameter = 4;
+}
+
+message Documentation {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+enum MarkupKind {
+    PlainText = 0;
+    Markdown = 1;
+}
+
+message ParameterInformation {
+    oneof label {
+        string simple = 1;
+        LabelOffsets label_offsets = 2;
+    }
+    optional Documentation documentation = 3;
+}
+
+message LabelOffsets {
+    uint32 start = 1;
+    uint32 end = 2;
+}
+
 message GetHover {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -1283,6 +1355,7 @@ message DevServerProject {
     reserved 4;
     uint64 dev_server_id = 5;
     string path = 6;
+    repeated string paths = 7;
 }
 
 message DevServer {
@@ -1577,7 +1650,7 @@ message Follow {
 
 message FollowResponse {
     View active_view = 3;
-    // TODO: after 0.124.0 is retired, remove these.
+    // TODO: Remove after version 0.145.x stabilizes.
     optional ViewId active_view_id = 1;
     repeated View views = 2;
 }
@@ -1588,7 +1661,7 @@ message UpdateFollowers {
     reserved 3;
     oneof variant {
         View create_view = 5;
-        // TODO: after 0.124.0 is retired, remove these.
+        // TODO: Remove after version 0.145.x stabilizes.
         UpdateActiveView update_active_view = 4;
         UpdateView update_view = 6;
     }
@@ -1621,6 +1694,10 @@ message UpdateActiveView {
     View view = 3;
 }
 
+enum PanelId {
+    AssistantPanel = 0;
+}
+
 message UpdateView {
     ViewId id = 1;
     optional PeerId leader_id = 2;
@@ -1643,10 +1720,12 @@ message UpdateView {
 message View {
     ViewId id = 1;
     optional PeerId leader_id = 2;
+    optional PanelId panel_id = 6;
 
     oneof variant {
         Editor editor = 3;
         ChannelView channel_view = 4;
+        ContextEditor context_editor = 5;
     }
 
     message Editor {
@@ -1662,6 +1741,11 @@ message View {
 
     message ChannelView {
         uint64 channel_id = 1;
+        Editor editor = 2;
+    }
+
+    message ContextEditor {
+        string context_id = 1;
         Editor editor = 2;
     }
 }
@@ -1805,6 +1889,7 @@ message Diagnostic {
         Information = 3;
         Hint = 4;
     }
+    optional string data = 12;
 }
 
 message Operation {
@@ -2135,6 +2220,7 @@ message MultiLspQuery {
     oneof request {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
     }
 }
 
@@ -2153,6 +2239,7 @@ message LspResponse {
     oneof response {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
+        GetSignatureHelpResponse get_signature_help_response = 3;
     }
 }
 
@@ -2196,12 +2283,35 @@ message TaskTemplate {
     bool use_new_terminal = 6;
     bool allow_concurrent_runs = 7;
     RevealStrategy reveal = 8;
+    HideStrategy hide = 10;
     repeated string tags = 9;
+    Shell shell = 11;
 }
 
+message Shell {
+    message WithArguments {
+        string program = 1;
+        repeated string args = 2;
+    }
+
+    oneof shell_type {
+        System system = 1;
+        string program = 2;
+        WithArguments with_arguments = 3;
+    }
+}
+
+message System {}
+
 enum RevealStrategy {
-    Always = 0;
-    Never = 1;
+    RevealAlways = 0;
+    RevealNever = 1;
+}
+
+enum HideStrategy {
+    HideAlways = 0;
+    HideNever = 1;
+    HideOnSuccess = 2;
 }
 
 message TaskSourceKind {
@@ -2342,4 +2452,14 @@ message SynchronizeContexts {
 
 message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
+}
+
+// Remote FS
+
+message AddWorktree {
+    string path = 1;
+}
+
+message AddWorktreeResponse {
+    uint64 worktree_id = 1;
 }

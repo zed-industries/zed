@@ -2,6 +2,7 @@
 mod file_finder_tests;
 
 mod new_path_prompt;
+mod open_path_prompt;
 
 use collections::{BTreeSet, HashMap};
 use editor::{scroll::Autoscroll, Bias, Editor};
@@ -13,6 +14,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
+use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use settings::Settings;
@@ -41,6 +43,7 @@ pub struct FileFinder {
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(FileFinder::register).detach();
     cx.observe_new_views(NewPathPrompt::register).detach();
+    cx.observe_new_views(OpenPathPrompt::register).detach();
 }
 
 impl FileFinder {
@@ -676,7 +679,7 @@ impl FileFinderDelegate {
                     let update_result = project
                         .update(&mut cx, |project, cx| {
                             if let Some((worktree, relative_path)) =
-                                project.find_local_worktree(query_path, cx)
+                                project.find_worktree(query_path, cx)
                             {
                                 path_matches.push(ProjectPanelOrdMatch(PathMatch {
                                     score: 1.0,

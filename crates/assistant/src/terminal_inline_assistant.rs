@@ -1,7 +1,6 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count,
-    prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
-    CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    humanize_token_count, prompts::generate_terminal_assistant_prompt, AssistantPanel,
+    AssistantPanelEvent, LanguageModelCompletionProvider, ModelSelector,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -13,11 +12,12 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
-    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
+    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
-use settings::{update_settings_file, Settings};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use settings::Settings;
 use std::{
     cmp,
     sync::Arc,
@@ -26,7 +26,7 @@ use std::{
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -73,11 +73,13 @@ impl TerminalInlineAssistant {
         terminal_view: &View<TerminalView>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
+        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let prompt_buffer =
+            cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
         let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 
@@ -212,8 +214,6 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let model = CompletionProvider::global(cx).model();
-
         let shell = std::env::var("SHELL").ok();
         let working_directory = assist
             .terminal
@@ -265,7 +265,6 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
-            model,
             messages,
             stop: Vec::new(),
             temperature: 1.0,
@@ -448,22 +447,19 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let fs = self.fs.clone();
-
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
-                    IconButton::new("start", IconName::Sparkle)
+                    IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
@@ -474,15 +470,14 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| {
                             Tooltip::with_meta(
                                 "Interrupt Generation",
@@ -500,7 +495,7 @@ impl Render for PromptEditor {
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
+                        .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
@@ -508,8 +503,7 @@ impl Render for PromptEditor {
                     if self.edited_since_done {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
-                            .icon_size(IconSize::XSmall)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
                                 Tooltip::with_meta(
                                     "Restart Generation",
@@ -524,7 +518,7 @@ impl Render for PromptEditor {
                     } else {
                         IconButton::new("confirm", IconName::Play)
                             .icon_color(Color::Info)
-                            .size(ButtonSize::None)
+                            .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
                                 Tooltip::for_action("Execute generated command", &menu::Confirm, cx)
                             })
@@ -552,59 +546,27 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(
-                        PopoverMenu::new("model-switcher")
-                            .menu(move |cx| {
-                                ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models(cx)
-                                    {
-                                        menu = menu.custom_entry(
-                                            {
-                                                let model = model.clone();
-                                                move |_| {
-                                                    Label::new(model.display_name())
-                                                        .into_any_element()
-                                                }
-                                            },
-                                            {
-                                                let fs = fs.clone();
-                                                let model = model.clone();
-                                                move |cx| {
-                                                    let model = model.clone();
-                                                    update_settings_file::<AssistantSettings>(
-                                                        fs.clone(),
-                                                        cx,
-                                                        move |settings| settings.set_model(model),
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    }
-                                    menu
-                                })
-                                .into()
-                            })
-                            .trigger(
-                                IconButton::new("context", IconName::Settings)
-                                    .size(ButtonSize::None)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            format!(
-                                                "Using {}",
-                                                CompletionProvider::global(cx)
-                                                    .model()
-                                                    .display_name()
-                                            ),
-                                            None,
-                                            "Click to Change Model",
-                                            cx,
-                                        )
-                                    }),
-                            )
-                            .anchor(gpui::AnchorCorner::BottomRight),
-                    )
+                    .child(ModelSelector::new(
+                        self.fs.clone(),
+                        IconButton::new("context", IconName::Settings)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    format!(
+                                        "Using {}",
+                                        LanguageModelCompletionProvider::read_global(cx)
+                                            .active_model()
+                                            .map(|model| model.name().0)
+                                            .unwrap_or_else(|| "No model selected".into()),
+                                    ),
+                                    None,
+                                    "Change Model",
+                                    cx,
+                                )
+                            }),
+                    ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
@@ -746,7 +708,9 @@ impl PromptEditor {
                 })??;
 
             let token_count = cx
-                .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                .update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                })?
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
@@ -876,7 +840,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
+        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -943,13 +907,9 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
+            font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
         EditorElement::new(
             &self.editor,
@@ -1025,8 +985,12 @@ impl Codegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
 
         let telemetry = self.telemetry.clone();
-        let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).complete(prompt, cx);
+        let model_telemetry_id = LanguageModelCompletionProvider::read_global(cx)
+            .active_model()
+            .map(|m| m.telemetry_id())
+            .unwrap_or_default();
+        let response =
+            LanguageModelCompletionProvider::read_global(cx).stream_completion(prompt, cx);
 
         self.generation = cx.spawn(|this, mut cx| async move {
             let response = response.await;
@@ -1037,8 +1001,8 @@ impl Codegen {
                     let mut response_latency = None;
                     let request_start = Instant::now();
                     let task = async {
-                        let mut response = response.inner.await?;
-                        while let Some(chunk) = response.next().await {
+                        let mut chunks = response?;
+                        while let Some(chunk) = chunks.next().await {
                             if response_latency.is_none() {
                                 response_latency = Some(request_start.elapsed());
                             }
