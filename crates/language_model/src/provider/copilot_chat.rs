@@ -7,7 +7,10 @@ use copilot::copilot_chat::{
 };
 use copilot::{Copilot, Status};
 use futures::{FutureExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Model, Render, Subscription, Task, WeakModel};
+use gpui::{
+    bounce, ease_in_out, percentage, svg, Animation, AnimationExt, AppContext, AsyncAppContext,
+    Model, Render, Subscription, Task, Transformation, WeakModel,
+};
 use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
 use std::time::Duration;
@@ -49,26 +52,62 @@ pub struct State {
 impl CopilotChatLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| {
-            let _oauth_token_subscription = cx.subscribe(
-                &Copilot::global(cx).unwrap(),
-                |_, _, event, cx| match event {
-                    // Ensures that the API key is reset when the user signs out, as well as deleted from the keychain.
-                    copilot::Event::CopilotAuthSignedOut => {
-                        let reset = cx.delete_credentials(COPILOT_CHAT_AUTH_URL);
-                        cx.spawn(|this: WeakModel<State>, mut cx| async move {
-                            reset.await?;
+            let _oauth_token_subscription =
+                // We explicitly init Copilot before the language models to ensure that it's available
+                // here.
+                cx.observe(&Copilot::global(cx).unwrap(), |this: &mut State, model, cx| {
+                    match model.read(cx).status() {
+                        Status::Authorized => cx
+                            .spawn(|this: WeakModel<State>, mut cx| async move {
+                                let oauth_token = match cx
+                                    .update(|cx| cx.read_credentials(COPILOT_CHAT_AUTH_URL))?
+                                    .await?
+                                {
+                                    Some((_, creds)) => {
+                                        String::from_utf8(creds)?
+                                    }
+                                    None => {
+                                        let oauth_token = fetch_copilot_oauth_token().await?;
 
-                            this.update(&mut cx, |this, cx| {
-                                this.oauth_token = None;
-                                this.api_key = None;
-                                cx.notify();
+                                        cx.update(|cx| {
+                                            cx.write_credentials(
+                                                COPILOT_CHAT_AUTH_URL,
+                                                "Bearer",
+                                                oauth_token.as_bytes(),
+                                            )
+                                        })?
+                                        .await?;
+                                        oauth_token
+                                    }
+                                };
+
+                                this.update(&mut cx, |this, cx| {
+                                    this.oauth_token = Some(oauth_token);
+                                    cx.notify();
+                                })
                             })
-                        })
-                        .detach_and_log_err(cx);
+                            .detach_and_log_err(cx),
+                        Status::SignedOut => {
+                            // If we don't have an OAuth Token, no need to do anything. This happens on startup
+                            // when a user hasn't logged in to Copilot yet.
+                            if this.oauth_token.is_none() {
+                                return;
+                            }
+                            let reset = cx.delete_credentials(COPILOT_CHAT_AUTH_URL);
+                            cx.spawn(|this: WeakModel<State>, mut cx| async move {
+                                reset.await?;
+
+                                this.update(&mut cx, |this, cx| {
+                                    this.oauth_token = None;
+                                    this.api_key = None;
+                                    cx.notify();
+                                })
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
-            );
+                });
 
             State {
                 oauth_token: None,
@@ -143,35 +182,21 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
         } else {
-            let Some(copilot) = Copilot::global(cx) else {
-                return Task::ready(Err(anyhow::anyhow!(
-                    "Copilot is not available. Please start Copilot and try again."
-                )));
-            };
-
-            let state = self.state.clone();
+            // We let the _copilot_subscription deal with fetching an OAuth
+            // token when necessary, so here we just need to provide a
+            // helpful error message to the user
+            let copilot = Copilot::global(cx).unwrap();
 
             match copilot.read(cx).status() {
-                Status::Authorized => cx.spawn(|mut cx| async move {
-                    let oauth_token = match cx.update(|cx| cx.read_credentials(&COPILOT_CHAT_AUTH_URL.to_string()))?.await? {
-                        Some((_, creds)) => {
-                            String::from_utf8(creds)?
-                        },
-                        None => {
-                            let oauth_token = fetch_copilot_oauth_token().await?;
-
-                            cx.update(|cx| cx.write_credentials(COPILOT_CHAT_AUTH_URL, "Bearer", oauth_token.as_bytes()))?.await?;
-                            oauth_token
-                        }
-                    };
-
-                    state.update(&mut cx, |this, cx| {
-                        this.oauth_token = Some(oauth_token);
-                        cx.notify();
-                    })
-                }),
-
-                _ => Task::ready(Err(anyhow::anyhow!("You are not authorized with Github Copilot. Please authorize first, then try again")))
+                Status::Disabled => Task::ready(Err(anyhow::anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."))),
+                Status::Error(e) => Task::ready(Err(anyhow::anyhow!(format!("Received the following error while signing into Copilot: {e}")))),
+                Status::Starting { task: _ } => Task::ready(Err(anyhow::anyhow!("Copilot is still starting, please wait for Copilot to start then try again"))),
+                Status::Unauthorized => Task::ready(Err(anyhow::anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."))),
+                Status::Authorized => Task::ready(Ok(())),
+                Status::SignedOut => Task::ready(Err(anyhow::anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."))),
+                Status::SigningIn { prompt: _ } => {
+                    Task::ready(Err(anyhow::anyhow!("Still signing into Copilot...")))
+                },
             }
         }
     }
@@ -257,9 +282,25 @@ impl LanguageModel for CopilotChatLanguageModel {
         'static,
         gpui::Result<futures::stream::BoxStream<'static, gpui::Result<String>>>,
     > {
+        if let Some(message) = request.messages.last() {
+            if message.content.is_empty() {
+                const EMPTY_PROMPT_MSG: &str = "Please provide a prompt";
+                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
+            }
+
+            // Copilot Chat has a restriction that the final message must be from the user.
+            // While their API does return an error message for this, we can catch it earlier
+            // and provide a more helpful error message.
+            if !matches!(message.role, Role::User) {
+                const USER_ROLE_MSG: &str = "The final message must be from the user. Please provide system prompts, if any, followed by the user prompt.";
+                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
+            }
+        }
+
         let state = self.state.clone();
         let http_client = self.http_client.clone();
         let request = self.to_copilot_chat_request(request);
+
         let Ok((oauth_token, api_key, low_speed_timeout)) =
             cx.read_model(&self.state, |state, _| {
                 (
@@ -334,61 +375,100 @@ impl CopilotChatLanguageModel {
 }
 
 struct AuthenticationPrompt {
-    copilot: Option<Model<Copilot>>,
+    copilot_status: copilot::Status,
+    _subscription: Subscription,
 }
 
 impl AuthenticationPrompt {
-    pub fn new(cx: &mut AppContext) -> Self {
-        Self {
-            copilot: Copilot::global(cx),
-        }
-    }
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let copilot = Copilot::global(cx).unwrap();
 
-    pub fn copilot_disabled(&self, cx: &mut AppContext) -> bool {
-        self.copilot.is_none()
-            || self
-                .copilot
-                .clone()
-                .unwrap()
-                .read(cx)
-                .status()
-                .is_disabled()
+        let _subscription = cx.observe(&copilot, |this, model, cx| {
+            this.copilot_status = model.read(cx).status();
+            cx.notify()
+        });
+
+        Self {
+            copilot_status: copilot.read(cx).status(),
+            _subscription,
+        }
     }
 }
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const LABEL: &str =
-            "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
+        let loading_icon = svg()
+            .size_8()
+            .path(IconName::ArrowCircle.path())
+            .text_color(cx.text_style().color)
+            .with_animation(
+                "icon_circle_arrow",
+                Animation::new(Duration::from_secs(2))
+                    .repeat()
+                    .with_easing(bounce(ease_in_out)),
+                |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+            );
 
-        const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
-
-        if self.copilot_disabled(cx) {
-            return v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL));
-        }
-
-        v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
-            v_flex()
-                .gap_2()
-                .child(
-                    Button::new("sign_in", "Sign In")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Medium)
-                        .style(ui::ButtonStyle::Filled)
-                        .full_width()
-                        // I don't love that using the inline_completion_button module here, but it's the best way to share the logic between the two buttons,
-                        // without a bunch of refactoring.
-                        .on_click(|_, cx| inline_completion_button::initiate_sign_in(cx)),
+        match &self.copilot_status {
+            Status::Disabled => {
+                const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
+                return v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL));
+            }
+            Status::Starting { task: _ } => {
+                const LABEL: &str = "Starting Copilot...";
+                return v_flex()
+                    .gap_6()
+                    .p_4()
+                    .justify_center()
+                    .items_center()
+                    .child(Label::new(LABEL))
+                    .child(loading_icon);
+            }
+            Status::SigningIn { prompt: _ } => {
+                const LABEL: &str = "Signing in to Copilot...";
+                return v_flex()
+                    .gap_6()
+                    .p_4()
+                    .justify_center()
+                    .items_center()
+                    .child(Label::new(LABEL))
+                    .child(loading_icon);
+            }
+            Status::Error(_) => {
+                const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
+                return v_flex()
+                    .gap_6()
+                    .p_4()
+                    .child(Label::new(LABEL))
+                    .child(svg().size_8().path(IconName::CopilotError.path()));
+            }
+            _ => {
+                const LABEL: &str =
+                    "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
+                v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("sign_in", "Sign In")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Medium)
+                                .style(ui::ButtonStyle::Filled)
+                                .full_width()
+                                // I don't love that using the inline_completion_button module here, but it's the best way to share the logic between the two buttons,
+                                // without a bunch of refactoring.
+                                .on_click(|_, cx| inline_completion_button::initiate_sign_in(cx)),
+                        )
+                        .child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("Sign in to start using Github Copilot Chat.")
+                                    .color(Color::Muted)
+                                    .size(ui::LabelSize::Small),
+                            ),
+                        ),
                 )
-                .child(
-                    div().flex().w_full().items_center().child(
-                        Label::new("Sign in to start using Github Copilot Chat.")
-                            .color(Color::Muted)
-                            .size(ui::LabelSize::Small),
-                    ),
-                ),
-        )
+            }
+        }
     }
 }
