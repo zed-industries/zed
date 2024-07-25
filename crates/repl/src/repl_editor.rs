@@ -36,7 +36,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 
         let kernel_specification = store.update(cx, |store, cx| {
             store
-                .kernelspec(&language, cx)
+                .kernelspec(editor.clone(), &language, cx)
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
@@ -96,7 +96,7 @@ pub enum SessionSupport {
     Unsupported,
 }
 
-pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport {
+pub fn session(editor: View<Editor>, cx: &mut AppContext) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -104,10 +104,10 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
         return SessionSupport::ActiveSession(session);
     };
 
-    let Some(language) = get_language(editor, cx) else {
+    let Some(language) = get_language(editor.downgrade(), cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+    let kernelspec = store.update(cx, |store, cx| store.kernelspec(editor, &language, cx));
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),

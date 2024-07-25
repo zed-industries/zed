@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use editor::EditorSettings;
-use gpui::AppContext;
+use editor::{Editor, EditorSettings};
+use gpui::{AppContext, View};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use workspace::item::ItemHandle;
 
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
@@ -17,6 +18,14 @@ impl JupyterSettings {
         // we put the `enable` flag on its settings.
         // This allows the editor to set up context for key bindings/actions.
         EditorSettings::jupyter_enabled(cx)
+    }
+
+    pub fn settings<'a>(editor: View<Editor>, cx: &'a AppContext) -> &'a Self {
+        let project_path = editor.project_path(cx);
+        match project_path {
+            Some(project_path) => JupyterSettings::get(Some((&project_path).into()), cx),
+            None => JupyterSettings::get_global(cx),
+        }
     }
 }
 

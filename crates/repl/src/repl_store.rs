@@ -3,12 +3,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
+use editor::Editor;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
 use language::Language;
 use project::Fs;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 
 use crate::kernels::kernel_specifications;
 use crate::{JupyterSettings, KernelSpecification, Session};
@@ -113,10 +114,11 @@ impl ReplStore {
 
     pub fn kernelspec(
         &self,
+        editor: View<Editor>,
         language: &Language,
         cx: &mut ModelContext<Self>,
     ) -> Option<KernelSpecification> {
-        let settings = JupyterSettings::get_global(cx);
+        let settings = JupyterSettings::settings(editor, cx);
         let language_name = language.code_fence_block_name();
         let selected_kernel = settings.kernel_selections.get(language_name.as_ref());
 

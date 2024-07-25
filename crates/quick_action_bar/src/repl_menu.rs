@@ -54,7 +54,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = repl::session(editor.clone(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
