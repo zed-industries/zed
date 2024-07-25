@@ -2016,7 +2016,7 @@ impl BufferSnapshot {
 
         let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
-        let mut done = false;
+        let mut done = start == end;
         std::iter::from_fn(move || {
             if done {
                 None
@@ -2029,24 +2029,34 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns the line indents in the given row range, exclusive of end row, in reversed order.
     pub fn reversed_line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end, 0)
-            .to_offset(self)
-            .saturating_sub(1);
+        let end = if row_range.end > row_range.start {
+            Point::new(row_range.end - 1, 0).to_offset(self)
+        } else {
+            start
+        };
 
-        let mut lines = self.as_rope().reversed_chunks_in_range(start..end).lines();
+        let mut chunks = self.as_rope().chunks_in_range(start..end);
+        chunks.seek(end);
         let mut row = row_range.end;
+        let mut done = start == end;
         std::iter::from_fn(move || {
-            if let Some(line) = lines.next() {
-                let indent = LineIndent::from(line);
-                row = row.saturating_sub(1);
-                Some((row, indent))
-            } else {
+            if done {
                 None
+            } else {
+                let initial_offset = chunks.offset();
+                let indent = (row, LineIndent::from_chunks(&mut chunks));
+                if chunks.offset() > initial_offset {
+                    chunks.prev_line();
+                }
+                done = !chunks.prev_line();
+                row -= 1;
+                Some(indent)
             }
         })
     }
