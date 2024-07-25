@@ -172,7 +172,7 @@ impl DebugPanel {
 
         let task = workspace.update(&mut cx, |workspace, cx| {
             let project_path = workspace.project().read_with(cx, |project, cx| {
-                project.project_path_for_full_path(&Path::new(&path), cx)
+                project.project_path_for_absolute_path(&Path::new(&path), cx)
             });
 
             if let Some(project_path) = project_path {
@@ -255,7 +255,7 @@ impl DebugPanel {
 
         let task = workspace.update(&mut cx, |workspace, cx| {
             let project_path = workspace.project().read_with(cx, |project, cx| {
-                project.project_path_for_full_path(&Path::new(&path), cx)
+                project.project_path_for_absolute_path(&Path::new(&path), cx)
             });
 
             if let Some(project_path) = project_path {
