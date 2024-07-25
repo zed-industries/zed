@@ -142,7 +142,6 @@ that you can't live without. You can restore them to their defaults by copying t
     "ctrl-v": "editor::Paste",         // vim default: visual block mode
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
-    "ctrl-o": "workspace::Open",       // vim default: go back
     "ctrl-a": "editor::SelectAll",     // vim default: increment
   }
 },

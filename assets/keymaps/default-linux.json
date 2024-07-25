@@ -23,7 +23,7 @@
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "ctrl-o": "workspace::Open",
+      "shift-ctrl-o": "workspace::Open",
       "ctrl-=": "zed::IncreaseBufferFontSize",
       "ctrl-+": "zed::IncreaseBufferFontSize",
       "ctrl--": "zed::DecreaseBufferFontSize",
