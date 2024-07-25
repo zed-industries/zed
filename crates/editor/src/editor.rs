@@ -594,7 +594,7 @@ pub struct EditorSnapshot {
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
@@ -614,18 +614,6 @@ impl GutterDimensions {
     /// right align content with the line numbers
     pub fn fold_area_width(&self) -> Pixels {
         self.margin + self.right_padding
-    }
-}
-
-impl Default for GutterDimensions {
-    fn default() -> Self {
-        Self {
-            left_padding: Pixels::ZERO,
-            right_padding: Pixels::ZERO,
-            width: Pixels::ZERO,
-            margin: Pixels::ZERO,
-            git_blame_entries_width: None,
-        }
     }
 }
 
@@ -5167,7 +5155,7 @@ impl Editor {
             }))
     }
 
-    fn render_close_hunk_diff_button(
+    fn close_hunk_diff_button(
         &self,
         hunk: HoveredHunk,
         row: DisplayRow,
@@ -11854,6 +11842,11 @@ impl Editor {
         let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
+
+    fn gutter_bounds(&self) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_bounds?;
+        Some(element::gutter_bounds(bounds, self.gutter_dimensions))
+    }
 }
 
 fn hunks_for_selections(
@@ -12240,7 +12233,7 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
-    pub fn gutter_dimensions(
+    fn gutter_dimensions(
         &self,
         font_id: FontId,
         font_size: Pixels,

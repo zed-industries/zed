@@ -5,7 +5,7 @@ use std::{
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{Action, AppContext, Hsla, Model, MouseButton, Subscription, Task, View};
+use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View};
 use language::Buffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
@@ -13,7 +13,7 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
+    div, h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
     ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
@@ -24,8 +24,8 @@ use crate::{
     hunk_status, hunks_for_selections,
     mouse_context_menu::MouseContextMenu,
     BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, Editor,
-    EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint,
-    ToggleHunkDiff,
+    EditorElement, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks,
+    ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -430,7 +430,6 @@ impl Editor {
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let editor = cx.view().clone();
-        let editor_model = cx.model().clone();
         let hunk = hunk.clone();
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
@@ -439,37 +438,84 @@ impl Editor {
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
-                    let close_button = editor.update(cx.context, |editor, cx| {
-                        let editor_snapshot = editor.snapshot(cx);
-                        let hunk_start_row = hunk
-                            .multi_buffer_range
-                            .start
-                            .to_display_point(&editor_snapshot)
-                            .row();
-                        editor.render_close_hunk_diff_button(hunk.clone(), hunk_start_row, cx)
-                    });
-                    let gutter_dimensions = editor_model.read(cx).gutter_dimensions;
+                    let Some(gutter_bounds) = editor.read(cx).gutter_bounds() else {
+                        return div().into_any_element();
+                    };
+                    let (gutter_dimensions, hunk_bounds, close_button) =
+                        editor.update(cx.context, |editor, cx| {
+                            let editor_snapshot = editor.snapshot(cx);
+                            let hunk_display_range = hunk
+                                .multi_buffer_range
+                                .clone()
+                                .to_display_points(&editor_snapshot);
+                            let gutter_dimensions = editor.gutter_dimensions;
+                            let hunk_bounds = EditorElement::diff_hunk_bounds(
+                                &editor_snapshot,
+                                cx.line_height(),
+                                gutter_bounds,
+                                &DisplayDiffHunk::Unfolded {
+                                    diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                                    multi_buffer_range: hunk.multi_buffer_range.clone(),
+                                    display_row_range: hunk_display_range.start.row()
+                                        ..hunk_display_range.end.row(),
+                                    status: hunk.status,
+                                },
+                            );
+
+                            let close_button = editor.close_hunk_diff_button(
+                                hunk.clone(),
+                                hunk_display_range.start.row(),
+                                cx,
+                            );
+                            (gutter_dimensions, hunk_bounds, close_button)
+                        });
                     let click_editor = editor.clone();
+                    let clicked_hunk = hunk.clone();
                     h_flex()
+                        .id("gutter with editor")
                         .bg(deleted_hunk_color)
                         .size_full()
                         .child(
-                            v_flex()
+                            h_flex()
+                                .id("gutter")
                                 .max_w(gutter_dimensions.full_width())
                                 .min_w(gutter_dimensions.full_width())
                                 .size_full()
-                                .on_mouse_down(MouseButton::Left, {
-                                    let click_hunk = hunk.clone();
-                                    move |e, cx| {
-                                        let modifiers = e.modifiers;
-                                        if modifiers.control || modifiers.platform {
-                                            click_editor.update(cx, |editor, cx| {
-                                                editor.toggle_hovered_hunk(&click_hunk, cx);
-                                            });
-                                        }
-                                    }
-                                })
-                                .child(close_button),
+                                .child(
+                                    h_flex()
+                                        .id("gutter hunk")
+                                        .pl(hunk_bounds.origin.x)
+                                        .max_w(hunk_bounds.size.width)
+                                        .min_w(hunk_bounds.size.width)
+                                        .size_full()
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let click_hunk = hunk.clone();
+                                            move |e, cx| {
+                                                let modifiers = e.modifiers;
+                                                if modifiers.control || modifiers.platform {
+                                                    click_editor.update(cx, |editor, cx| {
+                                                        editor.toggle_hovered_hunk(&click_hunk, cx);
+                                                    });
+                                                } else {
+                                                    click_editor.update(cx, |editor, cx| {
+                                                        editor.open_hunk_context_menu(
+                                                            clicked_hunk.clone(),
+                                                            e.position,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    v_flex()
+                                        .size_full()
+                                        .pt(ui::rems(0.25))
+                                        .justify_start()
+                                        .child(close_button),
+                                ),
                         )
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
