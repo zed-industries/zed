@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use base64::prelude::*;
 use prometheus::{exponential_buckets, register_histogram, Histogram};
 pub use rpc::auth::random_token;
 use scrypt::{
@@ -155,10 +156,7 @@ pub async fn create_access_token(
 /// protection.
 pub fn hash_access_token(token: &str) -> String {
     let digest = sha2::Sha256::digest(token);
-    format!(
-        "$sha256${}",
-        base64::encode_config(digest, base64::URL_SAFE)
-    )
+    format!("$sha256${}", BASE64_URL_SAFE.encode(digest))
 }
 
 /// Encrypts the given access token with the given public key to avoid leaking it on the way

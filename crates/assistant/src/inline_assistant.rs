@@ -1420,27 +1420,34 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
-                        self.fs.clone(),
-                        IconButton::new("context", IconName::Settings)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    format!(
-                                        "Using {}",
-                                        LanguageModelCompletionProvider::read_global(cx)
-                                            .active_model()
-                                            .map(|model| model.name().0)
-                                            .unwrap_or_else(|| "No model selected".into()),
-                                    ),
-                                    None,
-                                    "Change Model",
-                                    cx,
-                                )
-                            }),
-                    ))
+                    .child(
+                        ModelSelector::new(
+                            self.fs.clone(),
+                            IconButton::new("context", IconName::SlidersAlt)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(
+                                        format!(
+                                            "Using {}",
+                                            LanguageModelCompletionProvider::read_global(cx)
+                                                .active_model()
+                                                .map(|model| model.name().0)
+                                                .unwrap_or_else(|| "No model selected".into()),
+                                        ),
+                                        None,
+                                        "Change Model",
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_info_text(
+                            "Inline edits use context\n\
+                            from the currently selected\n\
+                            assistant panel tab.",
+                        ),
+                    )
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());

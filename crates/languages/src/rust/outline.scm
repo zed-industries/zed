@@ -59,6 +59,11 @@
     "const" @context
     name: (_) @name) @item
 
+(static_item
+    (visibility_modifier)? @context
+    "static" @context
+    name: (_) @name) @item
+
 (field_declaration
     (visibility_modifier)? @context
     name: (_) @name) @item

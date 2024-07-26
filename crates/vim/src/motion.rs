@@ -437,7 +437,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     let active_operator = Vim::read(cx).active_operator();
     let mut waiting_operator: Option<Operator> = None;
     match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace => {
+        Mode::Normal | Mode::Replace | Mode::Insert => {
             if active_operator == Some(Operator::AddSurrounds { target: None }) {
                 waiting_operator = Some(Operator::AddSurrounds {
                     target: Some(SurroundsType::Motion(motion)),

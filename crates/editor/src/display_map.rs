@@ -109,6 +109,7 @@ pub struct DisplayMap {
     crease_map: CreaseMap,
     fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
+    pub(crate) masked: bool,
 }
 
 impl DisplayMap {
@@ -156,6 +157,7 @@ impl DisplayMap {
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
+            masked: false,
         }
     }
 
@@ -182,6 +184,7 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
+            masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
         }
     }
@@ -499,6 +502,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
+    masked: bool,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -650,6 +654,7 @@ impl DisplaySnapshot {
             .chunks(
                 display_row.0..self.max_point().row().next_row().0,
                 false,
+                self.masked,
                 Highlights::default(),
             )
             .map(|h| h.text)
@@ -657,9 +662,9 @@ impl DisplaySnapshot {
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
-        (0..=display_row.0).rev().flat_map(|row| {
+        (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, Highlights::default())
+                .chunks(row..row + 1, false, self.masked, Highlights::default())
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -676,6 +681,7 @@ impl DisplaySnapshot {
         self.block_snapshot.chunks(
             display_rows.start.0..display_rows.end.0,
             language_aware,
+            self.masked,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::prelude::*;
 use rand::{thread_rng, Rng as _};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};
 use rsa::traits::PaddingScheme;
@@ -44,7 +45,7 @@ pub fn random_token() -> String {
     for byte in token_bytes.iter_mut() {
         *byte = rng.gen();
     }
-    base64::encode_config(token_bytes, base64::URL_SAFE)
+    BASE64_URL_SAFE.encode(token_bytes)
 }
 
 impl PublicKey {
@@ -58,7 +59,7 @@ impl PublicKey {
             EncryptionFormat::V1 => self.0.encrypt(&mut rng, oaep_sha256_padding(), bytes),
         }
         .context("failed to encrypt string with public key")?;
-        let encrypted_string = base64::encode_config(&encrypted_bytes, base64::URL_SAFE);
+        let encrypted_string = BASE64_URL_SAFE.encode(&encrypted_bytes);
         Ok(encrypted_string)
     }
 }
@@ -66,7 +67,8 @@ impl PublicKey {
 impl PrivateKey {
     /// Decrypt a base64-encoded string that was encrypted by the corresponding public key.
     pub fn decrypt_string(&self, encrypted_string: &str) -> Result<String> {
-        let encrypted_bytes = base64::decode_config(encrypted_string, base64::URL_SAFE)
+        let encrypted_bytes = BASE64_URL_SAFE
+            .decode(encrypted_string)
             .context("failed to base64-decode encrypted string")?;
         let bytes = self
             .0
@@ -89,7 +91,7 @@ impl TryFrom<PublicKey> for String {
             .0
             .to_pkcs1_der()
             .context("failed to serialize public key")?;
-        let string = base64::encode_config(&bytes, base64::URL_SAFE);
+        let string = BASE64_URL_SAFE.encode(&bytes);
         Ok(string)
     }
 }
@@ -97,7 +99,8 @@ impl TryFrom<PublicKey> for String {
 impl TryFrom<String> for PublicKey {
     type Error = anyhow::Error;
     fn try_from(value: String) -> Result<Self> {
-        let bytes = base64::decode_config(&value, base64::URL_SAFE)
+        let bytes = BASE64_URL_SAFE
+            .decode(&value)
             .context("failed to base64-decode public key string")?;
         let key = Self(RsaPublicKey::from_pkcs1_der(&bytes).context("failed to parse public key")?);
         Ok(key)

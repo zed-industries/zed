@@ -27,6 +27,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
 use session::Session;
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
@@ -47,7 +48,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -169,7 +170,11 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     supermaven::init(app_state.client.clone(), cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-    repl::init(app_state.fs.clone(), cx);
+    repl::init(
+        app_state.fs.clone(),
+        app_state.client.telemetry().clone(),
+        cx,
+    );
     extension::init(
         app_state.fs.clone(),
         app_state.client.clone(),
@@ -533,7 +538,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
-            open_ssh_paths(
+            open_ssh_project(
                 connection_info,
                 request.open_paths,
                 app_state,
@@ -799,24 +804,21 @@ fn init_stdout_logger() {
     Builder::new()
         .parse_default_env()
         .format(|buf, record| {
-            use env_logger::fmt::Color;
+            use env_logger::fmt::style::{AnsiColor, Style};
 
-            let subtle = buf
-                .style()
-                .set_color(Color::Black)
-                .set_intense(true)
-                .clone();
-            write!(buf, "{}", subtle.value("["))?;
+            let subtle = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
+            write!(buf, "{subtle}[{subtle:#}")?;
             write!(
                 buf,
                 "{} ",
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
             )?;
-            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            let level_style = buf.default_level_style(record.level());
+            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
             if let Some(path) = record.module_path() {
                 write!(buf, " {path}")?;
             }
-            write!(buf, "{}", subtle.value("]"))?;
+            write!(buf, "{subtle}]{subtle:#}")?;
             writeln!(buf, " {}", record.args())
         })
         .init();

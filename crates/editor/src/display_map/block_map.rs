@@ -23,6 +23,7 @@ use text::Edit;
 use ui::ElementId;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const BULLETS: &str = "********************************************************************************************************************************";
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -285,6 +286,7 @@ pub struct BlockChunks<'a> {
     input_chunk: Chunk<'a>,
     output_row: u32,
     max_output_row: u32,
+    masked: bool,
 }
 
 #[derive(Clone)]
@@ -893,6 +895,7 @@ impl BlockSnapshot {
         self.chunks(
             0..self.transforms.summary().output_rows,
             false,
+            false,
             Highlights::default(),
         )
         .map(|chunk| chunk.text)
@@ -903,6 +906,7 @@ impl BlockSnapshot {
         &'a self,
         rows: Range<u32>,
         language_aware: bool,
+        masked: bool,
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
@@ -941,6 +945,7 @@ impl BlockSnapshot {
             transforms: cursor,
             output_row: rows.start,
             max_output_row,
+            masked,
         }
     }
 
@@ -1229,10 +1234,18 @@ impl<'a> Iterator for BlockChunks<'a> {
         let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
-        let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
+        let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
         if self.output_row == transform_end {
             self.transforms.next(&());
+        }
+
+        if self.masked {
+            // Not great for multibyte text because to keep cursor math correct we
+            // need to have the same number of bytes in the input as output.
+            let chars = prefix.chars().count();
+            let bullet_len = chars;
+            prefix = &BULLETS[..bullet_len];
         }
 
         Some(Chunk {
@@ -2047,6 +2060,7 @@ mod tests {
                 let actual_text = blocks_snapshot
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
+                        false,
                         false,
                         Highlights::default(),
                     )

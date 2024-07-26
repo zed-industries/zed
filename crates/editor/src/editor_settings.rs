@@ -305,7 +305,7 @@ pub struct ScrollbarContent {
 }
 
 /// Gutter related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///

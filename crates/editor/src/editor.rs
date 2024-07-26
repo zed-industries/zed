@@ -482,7 +482,6 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    redact_all: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -1807,7 +1806,6 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_wrap_guides: None,
-            redact_all: false,
             show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
@@ -10427,9 +10425,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_redact_all(&mut self, redact_all: bool, cx: &mut ViewContext<Self>) {
-        self.redact_all = redact_all;
-        cx.notify();
+    pub fn set_masked(&mut self, masked: bool, cx: &mut ViewContext<Self>) {
+        if self.display_map.read(cx).masked != masked {
+            self.display_map.update(cx, |map, _| map.masked = masked);
+        }
+        cx.notify()
     }
 
     pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
@@ -11115,10 +11115,6 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         cx: &WindowContext,
     ) -> Vec<Range<DisplayPoint>> {
-        if self.redact_all {
-            return vec![DisplayPoint::zero()..display_snapshot.max_point()];
-        }
-
         display_snapshot
             .buffer_snapshot
             .redacted_ranges(search_range, |file| {
