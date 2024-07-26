@@ -15,12 +15,14 @@ pub fn test_settings() -> String {
     .unwrap();
     util::merge_non_null_json_value_into(
         serde_json::json!({
-            "ui_font_family": ["Courier"],
+            "ui_font_family": "Courier",
             "ui_font_features": {},
             "ui_font_size": 14,
-            "buffer_font_family": ["Courier"],
+            "ui_font_fallback": [],
+            "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
+            "buffer_font_fallback": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
