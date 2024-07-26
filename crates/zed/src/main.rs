@@ -808,7 +808,8 @@ fn init_stdout_logger() {
                 "{} ",
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
             )?;
-            write!(buf, "{:<5}", buf.default_level_style(record.level()))?;
+            let level_style = buf.default_level_style(record.level());
+            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
             if let Some(path) = record.module_path() {
                 write!(buf, " {path}")?;
             }
