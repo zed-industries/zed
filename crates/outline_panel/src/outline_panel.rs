@@ -172,46 +172,6 @@ enum EntryOwned {
     Outline(BufferId, ExcerptId, Outline),
 }
 
-impl EntryOwned {
-    fn to_ref_entry(&self) -> EntryRef<'_> {
-        match self {
-            Self::Entry(entry) => EntryRef::Entry(entry),
-            Self::FoldedDirs(worktree_id, dirs) => EntryRef::FoldedDirs(*worktree_id, dirs),
-            Self::Excerpt(buffer_id, excerpt_id, range) => {
-                EntryRef::Excerpt(*buffer_id, *excerpt_id, range)
-            }
-            Self::Outline(buffer_id, excerpt_id, outline) => {
-                EntryRef::Outline(*buffer_id, *excerpt_id, outline)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntryRef<'a> {
-    Entry(&'a FsEntry),
-    FoldedDirs(WorktreeId, &'a [Entry]),
-    Excerpt(BufferId, ExcerptId, &'a ExcerptRange<language::Anchor>),
-    Outline(BufferId, ExcerptId, &'a Outline),
-}
-
-impl EntryRef<'_> {
-    fn to_owned_entry(&self) -> EntryOwned {
-        match self {
-            &Self::Entry(entry) => EntryOwned::Entry(entry.clone()),
-            &Self::FoldedDirs(worktree_id, dirs) => {
-                EntryOwned::FoldedDirs(worktree_id, dirs.to_vec())
-            }
-            &Self::Excerpt(buffer_id, excerpt_id, range) => {
-                EntryOwned::Excerpt(buffer_id, excerpt_id, range.clone())
-            }
-            &Self::Outline(buffer_id, excerpt_id, outline) => {
-                EntryOwned::Outline(buffer_id, excerpt_id, outline.clone())
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq)]
 enum FsEntry {
     ExternalFile(BufferId, Vec<ExcerptId>),
@@ -763,13 +723,13 @@ impl OutlinePanel {
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
-        entry: EntryRef<'_>,
+        entry: EntryOwned,
         cx: &mut ViewContext<Self>,
     ) {
-        self.selected_entry = Some(entry.to_owned_entry());
-        let is_root = match entry {
-            EntryRef::Entry(FsEntry::File(worktree_id, entry, ..))
-            | EntryRef::Entry(FsEntry::Directory(worktree_id, entry)) => self
+        self.selected_entry = Some(entry.clone());
+        let is_root = match &entry {
+            EntryOwned::Entry(FsEntry::File(worktree_id, entry, ..))
+            | EntryOwned::Entry(FsEntry::Directory(worktree_id, entry)) => self
                 .project
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
@@ -777,30 +737,30 @@ impl OutlinePanel {
                     worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
                 })
                 .unwrap_or(false),
-            EntryRef::FoldedDirs(worktree_id, entries) => entries
+            EntryOwned::FoldedDirs(worktree_id, entries) => entries
                 .first()
                 .and_then(|entry| {
                     self.project
                         .read(cx)
-                        .worktree_for_id(worktree_id, cx)
+                        .worktree_for_id(*worktree_id, cx)
                         .map(|worktree| {
                             worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
                         })
                 })
                 .unwrap_or(false),
-            EntryRef::Entry(FsEntry::ExternalFile(..)) => false,
-            EntryRef::Excerpt(..) => {
+            EntryOwned::Entry(FsEntry::ExternalFile(..)) => false,
+            EntryOwned::Excerpt(..) => {
                 cx.notify();
                 return;
             }
-            EntryRef::Outline(..) => {
+            EntryOwned::Outline(..) => {
                 cx.notify();
                 return;
             }
         };
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let is_foldable = auto_fold_dirs && !is_root && self.is_foldable(entry);
-        let is_unfoldable = auto_fold_dirs && !is_root && self.is_unfoldable(entry);
+        let is_foldable = auto_fold_dirs && !is_root && self.is_foldable(&entry);
+        let is_unfoldable = auto_fold_dirs && !is_root && self.is_unfoldable(&entry);
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
@@ -830,13 +790,13 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn is_unfoldable(&self, entry: EntryRef) -> bool {
-        matches!(entry, EntryRef::FoldedDirs(..))
+    fn is_unfoldable(&self, entry: &EntryOwned) -> bool {
+        matches!(entry, EntryOwned::FoldedDirs(..))
     }
 
-    fn is_foldable(&self, entry: EntryRef) -> bool {
+    fn is_foldable(&self, entry: &EntryOwned) -> bool {
         let (directory_worktree, directory_entry) = match entry {
-            EntryRef::Entry(FsEntry::Directory(directory_worktree, directory_entry)) => {
+            EntryOwned::Entry(FsEntry::Directory(directory_worktree, directory_entry)) => {
                 (*directory_worktree, Some(directory_entry))
             }
             _ => return false,
@@ -1266,7 +1226,7 @@ impl OutlinePanel {
         .into_any_element();
 
         Some(self.entry_element(
-            EntryRef::Excerpt(buffer_id, excerpt_id, range),
+            EntryOwned::Excerpt(buffer_id, excerpt_id, range.clone()),
             item_id,
             depth,
             Some(icon),
@@ -1313,7 +1273,7 @@ impl OutlinePanel {
             Some(empty_icon())
         };
         self.entry_element(
-            EntryRef::Outline(buffer_id, excerpt_id, rendered_outline),
+            EntryOwned::Outline(buffer_id, excerpt_id, rendered_outline.clone()),
             item_id,
             depth,
             icon,
@@ -1422,7 +1382,7 @@ impl OutlinePanel {
         };
 
         self.entry_element(
-            EntryRef::Entry(rendered_entry),
+            EntryOwned::Entry(rendered_entry.clone()),
             item_id,
             depth,
             Some(icon),
@@ -1485,7 +1445,7 @@ impl OutlinePanel {
         };
 
         self.entry_element(
-            EntryRef::FoldedDirs(worktree_id, dir_entries),
+            EntryOwned::FoldedDirs(worktree_id, dir_entries.to_vec()),
             item_id,
             depth,
             Some(icon),
@@ -1498,7 +1458,7 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
-        rendered_entry: EntryRef<'_>,
+        rendered_entry: EntryOwned,
         item_id: ElementId,
         depth: usize,
         icon_element: Option<AnyElement>,
@@ -1507,7 +1467,6 @@ impl OutlinePanel {
         cx: &mut ViewContext<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
-        let rendered_entry = rendered_entry.to_owned_entry();
         div()
             .text_ui(cx)
             .id(item_id.clone())
@@ -1536,7 +1495,7 @@ impl OutlinePanel {
                             cx.stop_propagation();
                             outline_panel.deploy_context_menu(
                                 event.position,
-                                rendered_entry.to_ref_entry(),
+                                rendered_entry.clone(),
                                 cx,
                             )
                         },
@@ -2951,11 +2910,11 @@ impl Render for OutlinePanel {
                 MouseButton::Right,
                 cx.listener(move |outline_panel, event: &MouseDownEvent, cx| {
                     if let Some(entry) = outline_panel.selected_entry.clone() {
-                        outline_panel.deploy_context_menu(event.position, entry.to_ref_entry(), cx)
+                        outline_panel.deploy_context_menu(event.position, entry, cx)
                     } else if let Some(entry) = outline_panel.fs_entries.first().cloned() {
                         outline_panel.deploy_context_menu(
                             event.position,
-                            EntryRef::Entry(&entry),
+                            EntryOwned::Entry(entry),
                             cx,
                         )
                     }
