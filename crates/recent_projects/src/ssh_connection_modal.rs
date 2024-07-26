@@ -12,25 +12,29 @@ use gpui::{
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshSession};
 use ui::{
-    v_flex, FluentBuilder as _, InteractiveElement, Label, LabelCommon, Styled, StyledExt as _,
-    ViewContext, VisualContext, WindowContext,
+    v_flex, FluentBuilder as _, InteractiveElement, IntoElement, Label, LabelCommon, Styled,
+    StyledExt as _, ViewContext, VisualContext, WindowContext,
 };
 use util::paths::PathLikeWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
-pub struct SshConnectionModal {
+pub struct SshPrompt {
     host: SharedString,
     status_message: Option<SharedString>,
     prompt: Option<(SharedString, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
 }
 
-impl SshConnectionModal {
-    pub fn new(host: String, cx: &mut ViewContext<Self>) -> Self {
+pub struct SshConnectionModal {
+    prompt: View<SshPrompt>,
+}
+impl SshPrompt {
+    pub fn new(host: impl Into<SharedString>, cx: &mut ViewContext<Self>) -> Self {
+        let host = host.into();
         Self {
-            host: host.into(),
-            prompt: None,
+            host,
             status_message: None,
+            prompt: None,
             editor: cx.new_view(|cx| Editor::single_line(cx)),
         }
     }
@@ -48,6 +52,7 @@ impl SshConnectionModal {
                 editor.set_redact_all(true, cx);
             }
         });
+        dbg!("prompt", &prompt);
         self.prompt = Some((prompt.into(), tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
@@ -55,11 +60,12 @@ impl SshConnectionModal {
     }
 
     pub fn set_status(&mut self, status: Option<String>, cx: &mut ViewContext<Self>) {
+        dbg!("status", &status);
         self.status_message = status.map(|s| s.into());
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    pub fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.editor.update(cx, |editor, cx| {
                 tx.send(Ok(editor.text(cx))).ok();
@@ -67,22 +73,14 @@ impl SshConnectionModal {
             });
         }
     }
-
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
-    }
 }
 
-impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+impl Render for SshPrompt {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("PasswordPrompt")
-            .elevation_3(cx)
             .p_4()
-            .gap_2()
-            .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::confirm))
-            .w(px(400.))
+            .size_full()
             .child(Label::new(format!("SSH: {}", self.host)).size(ui::LabelSize::Large))
             .when_some(self.status_message.as_ref(), |el, status| {
                 el.child(Label::new(status.clone()))
@@ -94,9 +92,38 @@ impl Render for SshConnectionModal {
     }
 }
 
+impl SshConnectionModal {
+    pub fn new(host: String, cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            prompt: cx.new_view(|cx| SshPrompt::new(host, cx)),
+        }
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        self.prompt.update(cx, |prompt, cx| prompt.confirm(cx))
+    }
+
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.remove_window();
+    }
+}
+
+impl Render for SshConnectionModal {
+    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        v_flex()
+            .elevation_3(cx)
+            .p_4()
+            .gap_2()
+            .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::confirm))
+            .w(px(400.))
+            .child(self.prompt.clone())
+    }
+}
+
 impl FocusableView for SshConnectionModal {
     fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
-        self.editor.focus_handle(cx)
+        self.prompt.read(cx).editor.focus_handle(cx)
     }
 }
 
@@ -107,7 +134,7 @@ impl ModalView for SshConnectionModal {}
 #[derive(Clone)]
 pub struct SshClientDelegate {
     window: AnyWindowHandle,
-    modal: View<SshConnectionModal>,
+    ui: View<SshPrompt>,
     known_password: Option<String>,
 }
 
@@ -124,7 +151,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         } else {
             self.window
                 .update(cx, |_, cx| {
-                    self.modal.update(cx, |modal, cx| {
+                    self.ui.update(cx, |modal, cx| {
                         modal.set_prompt(prompt, tx, cx);
                     })
                 })
@@ -162,7 +189,7 @@ impl SshClientDelegate {
     fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
         self.window
             .update(cx, |_, cx| {
-                self.modal.update(cx, |modal, cx| {
+                self.ui.update(cx, |modal, cx| {
                     modal.set_status(status.map(|s| s.to_string()), cx);
                 })
             })
@@ -220,41 +247,24 @@ impl SshClientDelegate {
 
 pub fn connect_over_ssh(
     connection_options: SshConnectionOptions,
+    ui: View<SshPrompt>,
     app_state: Arc<AppState>,
     cx: &mut WindowContext,
 ) -> Task<Result<Arc<SshSession>>> {
-    let mut options = (app_state.build_window_options)(None, cx);
-
-    let bounds = cx.window_bounds().get_bounds();
-    let size = size(px(400.), px(400.));
-    options
-        .window_bounds
-        .replace(WindowBounds::Windowed(Bounds::centered_at(
-            bounds.center(),
-            size,
-        )));
-    options.focus = true;
-    options.show = true;
-    let Ok(window) = cx.open_window(options, |cx| {
-        cx.new_view(|cx| SshConnectionModal::new(connection_options.host.clone(), cx))
-    }) else {
-        return Task::ready(Err(anyhow::anyhow!("failed to open window")));
-    };
-
+    let window = cx.window_handle();
     let known_password = connection_options.password.clone();
 
     cx.spawn(|mut cx| async move {
-        let session = remote::SshSession::client(
+        remote::SshSession::client(
             connection_options,
             Arc::new(SshClientDelegate {
-                modal: window,
+                window,
+                ui,
                 known_password,
             }),
             &mut cx,
         )
-        .await;
-        window.update(&mut cx, |_, cx| cx.remove_window()).ok();
-        session
+        .await
     })
 }
 
@@ -278,30 +288,27 @@ pub async fn open_ssh_project(
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
     })?;
 
-    let modal = window.update(cx, |workspace, cx| {
-        cx.activate_window();
-        workspace.toggle_modal(cx, |cx| {
-            SshConnectionModal::new(connection_options.host.clone(), cx)
-        });
-        workspace.active_modal::<SshConnectionModal>(cx).unwrap()
-    })?;
+    let result = window
+        .update(cx, |workspace, cx| {
+            cx.activate_window();
+            workspace.toggle_modal(cx, |cx| {
+                SshConnectionModal::new(connection_options.host.clone(), cx)
+            });
+            let ui = workspace
+                .active_modal::<SshConnectionModal>(cx)
+                .unwrap()
+                .read(cx)
+                .prompt
+                .clone();
+            connect_over_ssh(connection_options, ui, workspace.app_state().clone(), cx)
+        })?
+        .await;
 
-    let session = remote::SshSession::client(
-        connection_options,
-        Arc::new(SshClientDelegate {
-            window: window.into(),
-            modal,
-            known_password: connection_options.password,
-        }),
-        cx,
-    )
-    .await;
-
-    if session.is_err() {
+    if result.is_err() {
         window.update(cx, |_, cx| cx.remove_window()).ok();
     }
 
-    let session = session?;
+    let session = result?;
 
     let project = cx.update(|cx| {
         project::Project::ssh(

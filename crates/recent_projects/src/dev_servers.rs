@@ -45,6 +45,7 @@ use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspac
 use crate::open_dev_server_project;
 use crate::ssh_connection_modal::connect_over_ssh;
 use crate::ssh_connection_modal::open_ssh_project;
+use crate::ssh_connection_modal::SshPrompt;
 use crate::ssh_remotes::RemoteSettingsContent;
 use crate::ssh_remotes::SshConnection;
 use crate::ssh_remotes::SshProject;
@@ -68,6 +69,7 @@ struct CreateDevServer {
     creating: Option<Task<()>>,
     dev_server_id: Option<DevServerId>,
     access_token: Option<String>,
+    ssh_prompt: Option<View<SshPrompt>>,
     kind: NewServerKind,
 }
 
@@ -307,16 +309,42 @@ impl DevServerProjects {
             port,
             password: None,
         };
-        let connection = connect_over_ssh(connection_options.clone(), app_state, cx);
-        cx.spawn(move |this, mut cx| async move {
-            connection.await?;
-            this.update(&mut cx, |this, cx| {
-                this.add_ssh_server(connection_options, cx);
-                this.mode = Mode::Default(None);
-                cx.notify()
-            })
-        })
-        .detach_and_log_err(cx)
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(connection_options.host.clone(), cx));
+        let connection = connect_over_ssh(
+            connection_options.clone(),
+            ssh_prompt.clone(),
+            app_state,
+            cx,
+        );
+        let ssh_prompt2 = ssh_prompt.clone();
+        let creating = cx.spawn(move |this, mut cx| async move {
+            match connection.await {
+                Ok(_) => this
+                    .update(&mut cx, |this, cx| {
+                        this.add_ssh_server(connection_options, cx);
+                        this.mode = Mode::Default(None);
+                        cx.notify()
+                    })
+                    .log_err(),
+                Err(e) => this
+                    .update(&mut cx, |this, cx| {
+                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                            ssh_prompt: Some(ssh_prompt2),
+                            creating: None,
+                            kind: NewServerKind::DirectSSH,
+                            ..Default::default()
+                        });
+                        cx.notify()
+                    })
+                    .log_err(),
+            };
+        });
+        self.mode = Mode::CreateDevServer(CreateDevServer {
+            kind: NewServerKind::DirectSSH,
+            ssh_prompt: Some(ssh_prompt.clone()),
+            creating: Some(creating),
+            ..Default::default()
+        });
     }
 
     fn create_or_update_dev_server(
@@ -421,10 +449,10 @@ impl DevServerProjects {
                             this.update(&mut cx, |this, cx| {
                                 this.focus_handle.focus(cx);
                                 this.mode = Mode::CreateDevServer(CreateDevServer {
-                                    creating: None,
                                     dev_server_id: Some(DevServerId(dev_server.dev_server_id)),
                                     access_token: Some(dev_server.access_token),
                                     kind,
+                                    ..Default::default()
                                 });
                                 cx.notify();
                             })?;
@@ -433,10 +461,10 @@ impl DevServerProjects {
                         Err(e) => {
                             this.update(&mut cx, |this, cx| {
                                 this.mode = Mode::CreateDevServer(CreateDevServer {
-                                    creating: None,
                                     dev_server_id: existing_id,
                                     access_token: None,
                                     kind,
+                                    ..Default::default()
                                 });
                                 cx.notify()
                             })
@@ -454,6 +482,7 @@ impl DevServerProjects {
             dev_server_id: existing_id,
             access_token,
             kind,
+            ..Default::default()
         });
         cx.notify()
     }
@@ -547,6 +576,12 @@ impl DevServerProjects {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(state) => {
+                if let Some(prompt) = state.ssh_prompt.as_ref() {
+                    prompt.update(cx, |prompt, cx| {
+                        prompt.confirm(cx);
+                    });
+                    return;
+                }
                 if state.kind == NewServerKind::DirectSSH {
                     self.create_ssh_server(cx);
                     return;
@@ -652,9 +687,8 @@ impl DevServerProjects {
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.mode = Mode::CreateDevServer(CreateDevServer {
                                                 dev_server_id: Some(dev_server_id),
-                                                creating: None,
-                                                access_token: None,
                                                 kind,
+                                                ..Default::default()
                                             });
                                             let dev_server_name = dev_server_name.clone();
                                             this.dev_server_name_input.update(
@@ -968,6 +1002,8 @@ impl DevServerProjects {
         let creating = state.creating.is_some();
         let dev_server_id = state.dev_server_id;
         let access_token = state.access_token.clone();
+        let ssh_prompt = state.ssh_prompt.clone();
+
         let kind = state.kind;
 
         let status = dev_server_id
@@ -1073,7 +1109,7 @@ impl DevServerProjects {
                                         }),
                                     )),
                             )
-                            .when(dev_server_id.is_none(), |el| {
+                            .when(dev_server_id.is_none() && ssh_prompt.is_none(), |el| {
                                 el.child(
                                     if kind == NewServerKind::Manual {
                                         Label::new(MANUAL_SETUP_MESSAGE)
@@ -1084,6 +1120,7 @@ impl DevServerProjects {
                                     .color(Color::Muted),
                                 )
                             })
+                            .when_some(ssh_prompt, |el, ssh_prompt| el.child(ssh_prompt))
                             .when(dev_server_id.is_some() && access_token.is_none(), |el| {
                                 el.child(
                                     if kind == NewServerKind::Manual {
