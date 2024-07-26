@@ -965,5 +965,21 @@
   // {
   //   "W": "workspace::Save"
   // }
-  "command_aliases": {}
+  "command_aliases": {},
+  // ssh_connections is an array of ssh connections.
+  // By default this setting is null, which disables the direct ssh connection support.
+  // You can configure these from `project: Open Remote` in the command palette.
+  // Zed's ssh support will pull configuration from your ~/.ssh too.
+  // Examples:
+  // [
+  //   {
+  //     "host": "example-box",
+  //     "projects": [
+  //       {
+  //         "paths": ["/home/user/code/zed"]
+  //       }
+  //     ]
+  //   }
+  // ]
+  "ssh_connections": null
 }

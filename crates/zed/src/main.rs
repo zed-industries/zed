@@ -27,6 +27,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
 use session::Session;
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
@@ -47,7 +48,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -537,7 +538,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
-            open_ssh_paths(
+            open_ssh_project(
                 connection_info,
                 request.open_paths,
                 app_state,
