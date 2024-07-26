@@ -582,24 +582,15 @@ fn handle_mouse_horizontal_wheel_msg(
 }
 
 fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let mut input_handler = lock.input_handler.take()?;
-    let scale_factor = lock.scale_factor;
-    drop(lock);
-    let Some(caret_range) = input_handler.selected_text_range() else {
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        return None;
-    };
-    let Some(caret_position) = input_handler.bounds_for_range(caret_range) else {
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        return None;
-    };
-    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-    Some(POINT {
-        // logical to physical
-        x: (caret_position.origin.x.0 * scale_factor) as i32,
-        y: (caret_position.origin.y.0 * scale_factor) as i32
-            + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
+    with_input_handler_and_scale_factor(state_ptr, |input_handler, scale_factor| {
+        let caret_range = input_handler.selected_text_range()?;
+        let caret_position = input_handler.bounds_for_range(caret_range)?;
+        Some(POINT {
+            // logical to physical
+            x: (caret_position.origin.x.0 * scale_factor) as i32,
+            y: (caret_position.origin.y.0 * scale_factor) as i32
+                + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
+        })
     })
 }
 
@@ -649,31 +640,31 @@ fn handle_ime_composition_inner(
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(
-            None,
-            &comp_string,
-            Some(string_len..string_len),
-        );
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                &comp_string,
+                Some(string_len..string_len),
+            );
+        })?;
         ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
         let comp_string = &ime_input?;
         let caret_pos = retrieve_composition_cursor_position(ctx);
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                comp_string,
+                Some(caret_pos..caret_pos),
+            );
+        })?;
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
         let comp_result = parse_ime_compostion_result(ctx)?;
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        drop(lock);
-        input_handler.replace_text_in_range(None, &comp_result);
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_text_in_range(None, &comp_result);
+        })?;
         return Some(0);
     }
     // currently, we don't care other stuff
@@ -1340,4 +1331,32 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler) -> R,
+{
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    drop(lock);
+    let result = f(&mut input_handler);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    Some(result)
+}
+
+fn with_input_handler_and_scale_factor<F, R>(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
+{
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+    let result = f(&mut input_handler, scale_factor);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    result
 }
