@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/anthropic",
@@ -157,11 +158,9 @@ members = [
     "tooling/xtask",
 ]
 default-members = ["crates/zed"]
-resolver = "2"
 
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
-aho-corasick = "1.1"
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
@@ -285,6 +284,7 @@ worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+aho-corasick = "1.1"
 alacritty_terminal = "0.23"
 any_vec = "0.14"
 anyhow = "1.0.86"
@@ -388,6 +388,7 @@ smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
+sys-locale = "0.3.1"
 sysinfo = "0.30.7"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
@@ -442,7 +443,6 @@ wasmtime = { version = "21.0.1", default-features = false, features = [
 wasmtime-wasi = "21.0.1"
 which = "6.0.0"
 wit-component = "0.201"
-sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
 version = "0.58"
