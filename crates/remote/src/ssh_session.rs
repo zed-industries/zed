@@ -73,7 +73,7 @@ pub struct SshConnectionOptions {
 }
 
 impl SshConnectionOptions {
-    fn ssh_url(&self) -> String {
+    pub fn ssh_url(&self) -> String {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
             result.push_str(username);
@@ -92,6 +92,19 @@ impl SshConnectionOptions {
             format!("{}@{}", username, self.host)
         } else {
             self.host.clone()
+        }
+    }
+
+    pub fn connection_string(&self) -> String {
+        let host = if let Some(username) = &self.username {
+            format!("{}@{}", username, self.host)
+        } else {
+            self.host.clone()
+        };
+        if let Some(port) = &self.port {
+            format!("{}:{}", host, port)
+        } else {
+            host
         }
     }
 }

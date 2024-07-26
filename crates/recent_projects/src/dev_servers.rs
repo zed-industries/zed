@@ -8,6 +8,7 @@ use client::Client;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
 use gpui::AsyncWindowContext;
+use gpui::PromptLevel;
 use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
@@ -43,13 +44,13 @@ use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::open_dev_server_project;
-use crate::ssh_connection_modal::connect_over_ssh;
-use crate::ssh_connection_modal::open_ssh_project;
-use crate::ssh_connection_modal::SshPrompt;
-use crate::ssh_remotes::RemoteSettingsContent;
-use crate::ssh_remotes::SshConnection;
-use crate::ssh_remotes::SshProject;
-use crate::ssh_remotes::SshSettings;
+use crate::ssh_connections::connect_over_ssh;
+use crate::ssh_connections::open_ssh_project;
+use crate::ssh_connections::RemoteSettingsContent;
+use crate::ssh_connections::SshConnection;
+use crate::ssh_connections::SshProject;
+use crate::ssh_connections::SshPrompt;
+use crate::ssh_connections::SshSettings;
 use crate::OpenRemote;
 
 pub struct DevServerProjects {
@@ -296,27 +297,14 @@ impl DevServerProjects {
             port = p.parse().ok() // todo!()
         }
 
-        let Some(app_state) = self
-            .workspace
-            .update(cx, |workspace, _| workspace.app_state().clone())
-            .log_err()
-        else {
-            return;
-        };
         let connection_options = remote::SshConnectionOptions {
             host: host.to_string(),
             username,
             port,
             password: None,
         };
-        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(connection_options.host.clone(), cx));
-        let connection = connect_over_ssh(
-            connection_options.clone(),
-            ssh_prompt.clone(),
-            app_state,
-            cx,
-        );
-        let ssh_prompt2 = ssh_prompt.clone();
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
+        let connection = connect_over_ssh(connection_options.clone(), ssh_prompt.clone(), cx);
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
                 Ok(_) => this
@@ -326,17 +314,24 @@ impl DevServerProjects {
                         cx.notify()
                     })
                     .log_err(),
-                Err(e) => this
-                    .update(&mut cx, |this, cx| {
+                Err(e) => {
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        "Failed to connect",
+                        Some(&e.to_string()),
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                    this.update(&mut cx, |this, cx| {
                         this.mode = Mode::CreateDevServer(CreateDevServer {
-                            ssh_prompt: Some(ssh_prompt2),
-                            creating: None,
                             kind: NewServerKind::DirectSSH,
                             ..Default::default()
                         });
                         cx.notify()
                     })
-                    .log_err(),
+                    .log_err()
+                }
             };
         });
         self.mode = Mode::CreateDevServer(CreateDevServer {
@@ -599,8 +594,16 @@ impl DevServerProjects {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        match self.mode {
+        match &self.mode {
             Mode::Default(None) => cx.emit(DismissEvent),
+            Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
+                self.mode = Mode::CreateDevServer(CreateDevServer {
+                    kind: NewServerKind::DirectSSH,
+                    ..Default::default()
+                });
+                cx.notify();
+                return;
+            }
             _ => {
                 self.mode = Mode::Default(None);
                 self.focus_handle(cx).focus(cx);
@@ -1003,8 +1006,12 @@ impl DevServerProjects {
         let dev_server_id = state.dev_server_id;
         let access_token = state.access_token.clone();
         let ssh_prompt = state.ssh_prompt.clone();
+        let use_direct_ssh = SshSettings::get_global(cx).use_direct_ssh();
 
-        let kind = state.kind;
+        let mut kind = state.kind;
+        if use_direct_ssh && kind == NewServerKind::LegacySSH {
+            kind = NewServerKind::DirectSSH;
+        }
 
         let status = dev_server_id
             .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
@@ -1014,9 +1021,7 @@ impl DevServerProjects {
             input.editor().update(cx, |editor, cx| {
                 if editor.text(cx).is_empty() {
                     match kind {
-                        NewServerKind::DirectSSH => {
-                            editor.set_placeholder_text("[user@]host[:port]", cx)
-                        }
+                        NewServerKind::DirectSSH => editor.set_placeholder_text("ssh host", cx),
                         NewServerKind::LegacySSH => editor.set_placeholder_text("ssh host", cx),
                         NewServerKind::Manual => editor.set_placeholder_text("example-host", cx),
                     }
@@ -1026,7 +1031,8 @@ impl DevServerProjects {
         });
 
         const MANUAL_SETUP_MESSAGE: &str = "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine.";
-        const SSH_SETUP_MESSAGE: &str = "Enter the command you use to ssh into this server.\nFor example: `ssh me@my.server` or `gh cs ssh -c example`.";
+        const SSH_SETUP_MESSAGE: &str =
+            "Enter the command you use to ssh into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
 
         Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
             .header(
@@ -1054,61 +1060,63 @@ impl DevServerProjects {
                         v_flex()
                             .w_full()
                             .gap_y(Spacing::Large.rems(cx))
-                            .child(
-                                v_flex()
-                                    .when(true, |el| {
-                                        el.child(RadioWithLabel::new(
+                            .when(ssh_prompt.is_none(), |el| {
+                                el.child(
+                                    v_flex()
+                                        .when(use_direct_ssh, |el| {
+                                            el.child(RadioWithLabel::new(
+                                                "use-server-name-in-ssh",
+                                                Label::new("Connect via SSH (default)"),
+                                                NewServerKind::DirectSSH == kind,
+                                                cx.listener({
+                                                    move |this, _, cx| {
+                                                        if let Mode::CreateDevServer(
+                                                            CreateDevServer { kind, .. },
+                                                        ) = &mut this.mode
+                                                        {
+                                                            *kind = NewServerKind::DirectSSH;
+                                                        }
+                                                        cx.notify()
+                                                    }
+                                                }),
+                                            ))
+                                        })
+                                        .when(!use_direct_ssh, |el| {
+                                            el.child(RadioWithLabel::new(
+                                                "use-server-name-in-ssh",
+                                                Label::new("Configure over SSH (default)"),
+                                                kind == NewServerKind::LegacySSH,
+                                                cx.listener({
+                                                    move |this, _, cx| {
+                                                        if let Mode::CreateDevServer(
+                                                            CreateDevServer { kind, .. },
+                                                        ) = &mut this.mode
+                                                        {
+                                                            *kind = NewServerKind::LegacySSH;
+                                                        }
+                                                        cx.notify()
+                                                    }
+                                                }),
+                                            ))
+                                        })
+                                        .child(RadioWithLabel::new(
                                             "use-server-name-in-ssh",
-                                            Label::new("SSH directly"),
-                                            NewServerKind::DirectSSH == kind,
+                                            Label::new("Configure manually"),
+                                            kind == NewServerKind::Manual,
                                             cx.listener({
                                                 move |this, _, cx| {
                                                     if let Mode::CreateDevServer(
                                                         CreateDevServer { kind, .. },
                                                     ) = &mut this.mode
                                                     {
-                                                        *kind = NewServerKind::DirectSSH;
+                                                        *kind = NewServerKind::Manual;
                                                     }
                                                     cx.notify()
                                                 }
                                             }),
-                                        ))
-                                    })
-                                    .child(RadioWithLabel::new(
-                                        "use-server-name-in-ssh",
-                                        Label::new("Connect via SSH (default)"),
-                                        kind == NewServerKind::LegacySSH,
-                                        cx.listener({
-                                            move |this, _, cx| {
-                                                if let Mode::CreateDevServer(CreateDevServer {
-                                                    kind,
-                                                    ..
-                                                }) = &mut this.mode
-                                                {
-                                                    *kind = NewServerKind::LegacySSH;
-                                                }
-                                                cx.notify()
-                                            }
-                                        }),
-                                    ))
-                                    .child(RadioWithLabel::new(
-                                        "use-server-name-in-ssh",
-                                        Label::new("Manual Setup"),
-                                        kind == NewServerKind::Manual,
-                                        cx.listener({
-                                            move |this, _, cx| {
-                                                if let Mode::CreateDevServer(CreateDevServer {
-                                                    kind,
-                                                    ..
-                                                }) = &mut this.mode
-                                                {
-                                                    *kind = NewServerKind::Manual;
-                                                }
-                                                cx.notify()
-                                            }
-                                        }),
-                                    )),
-                            )
+                                        )),
+                                )
+                            })
                             .when(dev_server_id.is_none() && ssh_prompt.is_none(), |el| {
                                 el.child(
                                     if kind == NewServerKind::Manual {
@@ -1128,10 +1136,7 @@ impl DevServerProjects {
                                             "Note: updating the dev server generate a new token",
                                         )
                                     } else {
-                                        Label::new(
-                                            "Enter the command you use to ssh into this server.\n\
-                                        For example: `ssh me@my.server` or `gh cs ssh -c example`.",
-                                        )
+                                        Label::new(SSH_SETUP_MESSAGE)
                                     }
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
@@ -1256,7 +1261,9 @@ impl DevServerProjects {
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
-        let ssh_connections = SshSettings::get_global(cx).ssh_connections.clone();
+        let ssh_connections = SshSettings::get_global(cx)
+            .ssh_connections()
+            .collect::<Vec<_>>();
 
         let Mode::Default(create_dev_server_project) = &self.mode else {
             unreachable!()
@@ -1314,16 +1321,19 @@ impl DevServerProjects {
                             List::new()
                                 .empty_message("No dev servers registered.")
                                 .header(Some(
-                                    ListHeader::new("Dev Servers").end_slot(
-                                        Button::new("register-dev-server-button", "New Server")
+                                    ListHeader::new("Connections").end_slot(
+                                        Button::new("register-dev-server-button", "Connect")
                                             .icon(IconName::Plus)
                                             .icon_position(IconPosition::Start)
                                             .tooltip(|cx| {
-                                                Tooltip::text("Register a new dev server", cx)
+                                                Tooltip::text("Connect to a new server", cx)
                                             })
                                             .on_click(cx.listener(|this, _, cx| {
                                                 this.mode = Mode::CreateDevServer(
-                                                    CreateDevServer::default(),
+                                                    CreateDevServer {
+                                                        kind: if SshSettings::get_global(cx).use_direct_ssh() { NewServerKind::DirectSSH } else { NewServerKind::LegacySSH },
+                                                        ..Default::default()
+                                                    }
                                                 );
                                                 this.dev_server_name_input.update(
                                                     cx,
