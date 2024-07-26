@@ -1,8 +1,10 @@
 use collections::HashMap;
-use gpui::{px, AbsoluteLength, AppContext, FontFeatures, FontWeight, Pixels};
+use gpui::{
+    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+};
 use schemars::{
     gen::SchemaGenerator,
-    schema::{InstanceType, RootSchema, Schema, SchemaObject},
+    schema::{ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject},
     JsonSchema,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -24,15 +26,16 @@ pub struct Toolbar {
     pub title: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>,
-    pub font_family: Option<String>,
-    pub line_height: TerminalLineHeight,
+    pub font_family: Option<SharedString>,
+    pub font_fallbacks: Option<FontFallbacks>,
     pub font_features: Option<FontFeatures>,
     pub font_weight: Option<FontWeight>,
+    pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
@@ -111,6 +114,13 @@ pub struct TerminalSettingsContent {
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
     pub font_family: Option<String>,
+
+    /// Sets the terminal's font fallbacks.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font fallbacks.
+    pub font_fallbacks: Option<Vec<String>>,
+
     /// Sets the terminal's line height.
     ///
     /// Default: comfortable
@@ -192,30 +202,51 @@ impl settings::Settings for TerminalSettings {
         _: &AppContext,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-        let available_fonts = params
+        let available_fonts: Vec<_> = params
             .font_names
             .iter()
             .cloned()
             .map(Value::String)
             .collect();
-        let fonts_schema = SchemaObject {
+
+        let font_family_schema = SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             enum_values: Some(available_fonts),
             ..Default::default()
         };
-        root_schema
-            .definitions
-            .extend([("FontFamilies".into(), fonts_schema.into())]);
+
+        let font_fallback_schema = SchemaObject {
+            instance_type: Some(InstanceType::Array.into()),
+            array: Some(Box::new(ArrayValidation {
+                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
+                    font_family_schema.clone().into(),
+                ))),
+                unique_items: Some(true),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        root_schema.definitions.extend([
+            ("FontFamilies".into(), font_family_schema.into()),
+            ("FontFallbacks".into(), font_fallback_schema.into()),
+        ]);
         root_schema
             .schema
             .object
             .as_mut()
             .unwrap()
             .properties
-            .extend([(
-                "font_family".to_owned(),
-                Schema::new_ref("#/definitions/FontFamilies".into()),
-            )]);
+            .extend([
+                (
+                    "font_family".to_owned(),
+                    Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
+                (
+                    "font_fallbacks".to_owned(),
+                    Schema::new_ref("#/definitions/FontFallbacks".into()),
+                ),
+            ]);
 
         root_schema
     }

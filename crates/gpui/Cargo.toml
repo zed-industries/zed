@@ -93,6 +93,7 @@ cbindgen = { version = "0.26.0", default-features = false }
 block = "0.1"
 cocoa.workspace = true
 core-foundation.workspace = true
+core-foundation-sys = "0.8"
 core-graphics = "0.23"
 core-text = "20.1"
 foreign-types = "0.5"
