@@ -1,8 +1,8 @@
-use gpui::{AnyElement, WeakView};
+use gpui::{AnyElement, Modifiers, WeakView};
 use markdown_preview::{
     markdown_preview_view::MarkdownPreviewView, OpenPreview, OpenPreviewToTheSide,
 };
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, text_for_keystroke, IconButtonShape, Tooltip};
 use workspace::Workspace;
 
 use crate::QuickActionBar;
@@ -27,9 +27,10 @@ impl QuickActionBar {
             return None;
         }
 
-        let tooltip_meta = match self.platform_style {
-            PlatformStyle::Mac => "Option+Click to open in a split",
-            _ => "Alt+Click to open in a split",
+        let alt_click = gpui::Keystroke {
+            key: "click".into(),
+            modifiers: Modifiers::alt(),
+            ..Default::default()
         };
 
         let button = IconButton::new("toggle-markdown-preview", IconName::Eye)
@@ -40,7 +41,10 @@ impl QuickActionBar {
                 Tooltip::with_meta(
                     "Preview Markdown",
                     Some(&markdown_preview::OpenPreview),
-                    tooltip_meta,
+                    format!(
+                        "{} to open in a split",
+                        text_for_keystroke(&alt_click, PlatformStyle::platform())
+                    ),
                     cx,
                 )
             })
