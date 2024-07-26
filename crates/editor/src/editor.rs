@@ -408,6 +408,7 @@ impl EditorActionId {
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
+#[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
     dirty: bool,
@@ -418,17 +419,6 @@ struct ScrollbarMarkerState {
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
         self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
-    }
-}
-
-impl Default for ScrollbarMarkerState {
-    fn default() -> Self {
-        Self {
-            scrollbar_size: Size::default(),
-            dirty: false,
-            markers: Arc::from([]),
-            pending_refresh: None,
-        }
     }
 }
 
@@ -594,7 +584,7 @@ pub struct EditorSnapshot {
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
@@ -614,18 +604,6 @@ impl GutterDimensions {
     /// right align content with the line numbers
     pub fn fold_area_width(&self) -> Pixels {
         self.margin + self.right_padding
-    }
-}
-
-impl Default for GutterDimensions {
-    fn default() -> Self {
-        Self {
-            left_padding: Pixels::ZERO,
-            right_padding: Pixels::ZERO,
-            width: Pixels::ZERO,
-            margin: Pixels::ZERO,
-            git_blame_entries_width: None,
-        }
     }
 }
 
@@ -5167,7 +5145,7 @@ impl Editor {
             }))
     }
 
-    fn render_close_hunk_diff_button(
+    fn close_hunk_diff_button(
         &self,
         hunk: HoveredHunk,
         row: DisplayRow,
@@ -5742,7 +5720,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     deletion_ranges
                         .into_iter()
@@ -5808,7 +5786,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     edit_ranges
                         .into_iter()
@@ -8109,7 +8087,7 @@ impl Editor {
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             let snapshot = this.buffer.read(cx).read(cx);
-            let empty_str: Arc<str> = "".into();
+            let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
 
             fn comment_prefix_range(
@@ -11854,6 +11832,11 @@ impl Editor {
         let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
+
+    fn gutter_bounds(&self) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_bounds?;
+        Some(element::gutter_bounds(bounds, self.gutter_dimensions))
+    }
 }
 
 fn hunks_for_selections(
@@ -12240,7 +12223,7 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
-    pub fn gutter_dimensions(
+    fn gutter_dimensions(
         &self,
         font_id: FontId,
         font_size: Pixels,

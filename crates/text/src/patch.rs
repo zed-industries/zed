@@ -562,6 +562,7 @@ mod tests {
     }
 
     #[track_caller]
+    #[allow(clippy::almost_complete_range)]
     fn assert_patch_composition(old: Patch<u32>, new: Patch<u32>, composed: Patch<u32>) {
         let original = ('a'..'z').collect::<Vec<_>>();
         let inserted = ('A'..'Z').collect::<Vec<_>>();

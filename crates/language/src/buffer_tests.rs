@@ -2463,7 +2463,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
             text.push(match rng.gen_range(0..10) {
                 0..=1 => ' ',
                 3 => '\t',
-                _ => rng.gen_range('a'..'z'),
+                _ => rng.gen_range('a'..='z'),
             });
         }
         text.push('\n');
