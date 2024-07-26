@@ -1204,6 +1204,15 @@ impl Project {
                 })
                 .await
                 .unwrap();
+
+            project.update(cx, |project, cx| {
+                let tree_id = tree.read(cx).id();
+                // In tests we always populate the environment to be empty so we don't run the shell
+                project
+                    .cached_shell_environments
+                    .insert(tree_id, HashMap::default());
+            });
+
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
