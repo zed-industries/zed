@@ -2,12 +2,16 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime};
+use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use gpui::{AppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use settings::watch_config_file;
 use strum::EnumIter;
+use util::ResultExt;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
     "https://api.githubcopilot.com/chat/completions";
@@ -112,6 +116,40 @@ pub struct ResponseDelta {
     pub role: Option<Role>,
 }
 
+pub struct CopilotChat {
+    pub oauth_token: Option<String>,
+}
+
+pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    cx.set_global(CopilotChat::new(fs, cx));
+}
+
+impl Global for CopilotChat {}
+
+impl CopilotChat {
+    pub fn new(fs: Arc<dyn Fs>, cx: &AppContext) -> Self {
+        let mut config_file_rx = watch_config_file(
+            cx.background_executor(),
+            fs,
+            paths::copilot_chat_config_path().clone(),
+        );
+
+        cx.spawn(|mut cx| async move {
+            while let Some(contents) = config_file_rx.next().await {
+                let oauth_token = extract_oauth_token(contents);
+
+                cx.update_global::<CopilotChat, _>(|this, _| {
+                    this.oauth_token = oauth_token;
+                })
+                .log_err();
+            }
+        })
+        .detach();
+
+        Self { oauth_token: None }
+    }
+}
+
 pub async fn request_api_token(
     oauth_token: &str,
     client: Arc<dyn HttpClient>,
@@ -154,22 +192,15 @@ pub async fn request_api_token(
     }
 }
 
-pub async fn fetch_copilot_oauth_token() -> Result<String, anyhow::Error> {
-    let path = paths::copilot_chat_config_path();
-    match async_fs::metadata(path).await {
-            Ok(_) => {
-                let contents = async_fs::read_to_string(path).await?;
-
-                let hosts: serde_json::Value  = serde_json::from_str(&contents)?;
-
-                let host = hosts.get("github.com").ok_or_else(|| anyhow::anyhow!("No host found for github.com"))?.clone();
-
-                let token = host.get("oauth_token").ok_or_else(|| anyhow::anyhow!("No OAuth token found for github.com"))?.as_str().unwrap();
-
-                Ok(token.to_string())
-            },
-            Err(_) => Err(anyhow::anyhow!("Failed to determine whether or not you have a file with the necessary token. Make sure you have read permissions for your config directory."))
-        }
+pub fn extract_oauth_token(contents: String) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&contents)
+        .map(|v| {
+            v["github.com"]["oauth_token"]
+                .as_str()
+                .map(|v| v.to_string())
+        })
+        .ok()
+        .flatten()
 }
 
 pub async fn stream_completion(

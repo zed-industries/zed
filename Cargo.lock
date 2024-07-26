@@ -2706,7 +2706,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
- "async-fs 1.6.0",
  "async-std",
  "async-tar",
  "chrono",
@@ -2735,6 +2734,7 @@ dependencies = [
  "settings",
  "smol",
  "strum",
+ "task",
  "theme",
  "ui",
  "util",

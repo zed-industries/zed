@@ -454,6 +454,7 @@ fn main() {
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);
+        copilot::copilot_chat::init(app_state.fs.clone(), cx);
         init_common(app_state.clone(), cx);
 
         let args = Args::parse();

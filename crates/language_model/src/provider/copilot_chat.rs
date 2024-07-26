@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use copilot::copilot_chat::{
-    self, fetch_copilot_oauth_token, ChatMessage, Model as CopilotChatModel,
-    Request as CopilotChatRequest, Role as CopilotChatRole, COPILOT_CHAT_AUTH_URL,
+    request_api_token, stream_completion, ChatMessage, CopilotChat, Model as CopilotChatModel,
+    Request as CopilotChatRequest, Role as CopilotChatRole,
 };
 use copilot::{Copilot, Status};
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    bounce, ease_in_out, percentage, svg, Animation, AnimationExt, AppContext, AsyncAppContext,
-    Model, Render, Subscription, Task, Transformation, WeakModel,
+    percentage, svg, Animation, AnimationExt, AppContext, AsyncAppContext, Model, ReadGlobal,
+    Render, Subscription, Task, Transformation,
 };
 use http_client::HttpClient;
 use settings::SettingsStore;
@@ -47,77 +47,24 @@ pub struct State {
     api_key: Option<(String, NaiveDateTime)>,
     settings: CopilotChatSettings,
     _settings_subscription: Subscription,
-    _oauth_token_subscription: Option<Subscription>,
+    _chat_subscription: Subscription,
 }
 
 impl CopilotChatLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| {
-            let _oauth_token_subscription = if let Some(copilot) = Copilot::global(cx) {
-                Some(cx.observe(&copilot, |this: &mut State, model, cx| {
-                    match model.read(cx).status() {
-                        Status::Authorized => cx
-                            .spawn(|this: WeakModel<State>, mut cx| async move {
-                                let oauth_token = match cx
-                                    .update(|cx| cx.read_credentials(COPILOT_CHAT_AUTH_URL))?
-                                    .await?
-                                {
-                                    Some((_, creds)) => String::from_utf8(creds)?,
-                                    None => {
-                                        let oauth_token = fetch_copilot_oauth_token().await?;
+        let state = cx.new_model(|cx| State {
+            oauth_token: CopilotChat::global(cx).oauth_token.clone(),
+            api_key: None,
+            settings: CopilotChatSettings::default(),
+            _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                cx.notify();
+            }),
+            _chat_subscription: cx.observe_global::<CopilotChat>(|this: &mut State, cx| {
+                let chat = CopilotChat::global(cx);
 
-                                        cx.update(|cx| {
-                                            cx.write_credentials(
-                                                COPILOT_CHAT_AUTH_URL,
-                                                "Bearer",
-                                                oauth_token.as_bytes(),
-                                            )
-                                        })?
-                                        .await?;
-                                        oauth_token
-                                    }
-                                };
-
-                                this.update(&mut cx, |this, cx| {
-                                    this.oauth_token = Some(oauth_token);
-                                    cx.notify();
-                                })
-                            })
-                            .detach_and_log_err(cx),
-                        Status::SignedOut => {
-                            // If we don't have an OAuth Token, no need to do anything. This happens on startup
-                            // when a user hasn't logged in to Copilot yet.
-                            if this.oauth_token.is_none() {
-                                return;
-                            }
-                            let reset = cx.delete_credentials(COPILOT_CHAT_AUTH_URL);
-                            cx.spawn(|this: WeakModel<State>, mut cx| async move {
-                                reset.await?;
-
-                                this.update(&mut cx, |this, cx| {
-                                    this.oauth_token = None;
-                                    this.api_key = None;
-                                    cx.notify();
-                                })
-                            })
-                            .detach_and_log_err(cx);
-                        }
-                        _ => {}
-                    }
-                }))
-            } else {
-                None
-            };
-
-            State {
-                oauth_token: None,
-                api_key: None,
-                settings: CopilotChatSettings::default(),
-                _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                    cx.notify();
-                }),
-                _oauth_token_subscription,
-            }
+                this.oauth_token.clone_from(&chat.oauth_token);
+                cx.notify();
+            }),
         });
 
         Self { http_client, state }
@@ -131,8 +78,7 @@ impl CopilotChatLanguageModelProvider {
         state: &Model<State>,
     ) -> Result<String, anyhow::Error> {
         let (api_key, expires_at) =
-            copilot_chat::request_api_token(&oauth_token, http_client.clone(), low_speed_timeout)
-                .await?;
+            request_api_token(&oauth_token, http_client.clone(), low_speed_timeout).await?;
 
         cx.update_model(state, |state, cx| {
             state.api_key = Some((api_key.clone(), expires_at));
@@ -177,7 +123,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
         } else {
-            // We let the _copilot_subscription deal with fetching an OAuth
+            // We let the _chat_subscription deal with fetching an OAuth
             // token when necessary, so here we just need to provide a
             // helpful error message to the user
             let copilot = Copilot::global(cx).unwrap();
@@ -209,11 +155,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
         let state = self.state.clone();
         let copilot = Copilot::global(cx).clone();
-        let reset = cx.delete_credentials(COPILOT_CHAT_AUTH_URL);
 
         cx.spawn(|mut cx| async move {
-            reset.await?;
-
             cx.update_model(&copilot.unwrap(), |model, cx| model.sign_out(cx))?
                 .await?;
 
@@ -282,7 +225,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         gpui::Result<futures::stream::BoxStream<'static, gpui::Result<String>>>,
     > {
         if let Some(message) = request.messages.last() {
-            if message.content.is_empty() {
+            if message.content.trim().is_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
@@ -325,7 +268,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 },
                 None => CopilotChatLanguageModelProvider::get_new_api_token(&mut cx, oauth_token, http_client.clone(), low_speed_timeout, &state).await?
             };
-            let response = copilot_chat::stream_completion(
+            let response = stream_completion(
                 http_client,
                 api_key,
                 request,
@@ -409,9 +352,7 @@ impl Render for AuthenticationPrompt {
             .text_color(cx.text_style().color)
             .with_animation(
                 "icon_circle_arrow",
-                Animation::new(Duration::from_secs(2))
-                    .repeat()
-                    .with_easing(bounce(ease_in_out)),
+                Animation::new(Duration::from_secs(2)).repeat(),
                 |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
             );
 
