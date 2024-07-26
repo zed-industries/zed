@@ -609,12 +609,22 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
         let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
             return Some(0);
         };
-        let config = COMPOSITIONFORM {
-            dwStyle: CFS_POINT,
-            ptCurrentPos: caret_position,
-            ..Default::default()
-        };
-        ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
+        {
+            let config = COMPOSITIONFORM {
+                dwStyle: CFS_POINT,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
+        }
+        {
+            let config = CANDIDATEFORM {
+                dwStyle: CFS_CANDIDATEPOS,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        }
         ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
@@ -636,16 +646,6 @@ fn handle_ime_composition_inner(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
-        return Some(0);
-    };
-    let config = CANDIDATEFORM {
-        dwStyle: CFS_CANDIDATEPOS,
-        ptCurrentPos: caret_position,
-        ..Default::default()
-    };
-    unsafe { ImmSetCandidateWindow(ctx, &config as _).ok().log_err() };
-
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
