@@ -32,7 +32,6 @@ use session::Session;
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use std::borrow::BorrowMut;
 use std::{
     env,
     fs::OpenOptions,
