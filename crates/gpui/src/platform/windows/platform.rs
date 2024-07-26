@@ -23,7 +23,7 @@ use windows::{
         Globalization::u_memcpy,
         Graphics::{
             Gdi::*,
-            Imaging::{CLSID_WICImagingFactory2, D2D::IWICImagingFactory2},
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
         System::{
@@ -56,7 +56,7 @@ pub(crate) struct WindowsPlatform {
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
-    // bitmap_factory: IWICImagingFactory2,
+    bitmap_factory: IWICImagingFactory,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -95,12 +95,14 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        // let bitmap_factory: IWICImagingFactory2 = unsafe {
-        //     CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)
-        //         .expect("Error creating bitmap factory.")
-        // };
-        let text_system =
-            Arc::new(DirectWriteTextSystem::new().expect("Error creating DirectWriteTextSystem"));
+        let bitmap_factory: IWICImagingFactory = unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        };
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
@@ -119,7 +121,7 @@ impl WindowsPlatform {
             clipboard_hash_format,
             clipboard_metadata_format,
             windows_version,
-            // bitmap_factory,
+            bitmap_factory,
         }
     }
 

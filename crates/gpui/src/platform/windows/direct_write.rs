@@ -16,12 +16,9 @@ use windows::{
             DirectWrite::*,
             Dxgi::Common::*,
             Gdi::LOGFONTW,
-            Imaging::{D2D::IWICImagingFactory2, *},
+            Imaging::*,
         },
-        System::{
-            Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
-            SystemServices::LOCALE_NAME_MAX_LENGTH,
-        },
+        System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
 };
@@ -42,7 +39,7 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: AgileReference<IWICImagingFactory2>,
+    bitmap_factory: AgileReference<IWICImagingFactory>,
     d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
@@ -54,10 +51,6 @@ struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
     dc_target: ID2D1DeviceContext4,
 }
-
-// All use of the IUnknown methods should be "thread-safe".
-unsafe impl Sync for DirectWriteComponent {}
-unsafe impl Send for DirectWriteComponent {}
 
 struct DirectWriteState {
     components: DirectWriteComponent,
@@ -77,15 +70,10 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    // pub fn new(bitmap_factory: &IWICImagingFactory2) -> Result<Self> {
-    pub fn new() -> Result<Self> {
+    pub fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory: IWICImagingFactory2 = unsafe {
-                CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)
-                    .expect("Error creating bitmap factory.")
-            };
-            let bitmap_factory = AgileReference::new(&bitmap_factory).unwrap();
+            let bitmap_factory = AgileReference::new(bitmap_factory)?;
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
@@ -150,8 +138,8 @@ impl GlyphRenderContext {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new() -> Result<Self> {
-        let components = DirectWriteComponent::new()?;
+    pub(crate) fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
+        let components = DirectWriteComponent::new(bitmap_factory)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
