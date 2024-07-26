@@ -169,7 +169,11 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     supermaven::init(app_state.client.clone(), cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-    repl::init(app_state.fs.clone(), cx);
+    repl::init(
+        app_state.fs.clone(),
+        app_state.client.telemetry().clone(),
+        cx,
+    );
     extension::init(
         app_state.fs.clone(),
         app_state.client.clone(),
