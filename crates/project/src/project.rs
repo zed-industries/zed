@@ -9286,6 +9286,7 @@ impl Project {
         })?;
         let task_context = context_task.await.unwrap_or_default();
         Ok(proto::TaskContext {
+            project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
                 .cwd
                 .map(|cwd| cwd.to_string_lossy().to_string()),
@@ -10315,8 +10316,7 @@ impl Project {
             cx.background_executor().spawn(async move {
                 let task_context = task_context.await.log_err()?;
                 Some(TaskContext {
-                    // TODO: Implement this via protobuf
-                    project_env: HashMap::default(),
+                    project_env: task_context.project_env.into_iter().collect(),
                     cwd: task_context.cwd.map(PathBuf::from),
                     task_variables: task_context
                         .task_variables
