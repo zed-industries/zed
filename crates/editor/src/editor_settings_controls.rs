@@ -1,4 +1,6 @@
-use gpui::{AppContext, FontWeight};
+use std::sync::Arc;
+
+use gpui::{AppContext, FontFeatures, FontWeight};
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, ThemeSettings};
@@ -28,7 +30,8 @@ impl RenderOnce for EditorSettingsControls {
                             .child(BufferFontFamilyControl)
                             .child(BufferFontWeightControl),
                     )
-                    .child(BufferFontSizeControl),
+                    .child(BufferFontSizeControl)
+                    .child(BufferFontLigaturesControl),
             )
             .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
     }
@@ -187,6 +190,76 @@ impl RenderOnce for BufferFontWeightControl {
                     menu
                 }),
             ))
+    }
+}
+
+#[derive(IntoElement)]
+struct BufferFontLigaturesControl;
+
+impl EditableSettingControl for BufferFontLigaturesControl {
+    type Value = bool;
+    type Settings = ThemeSettings;
+
+    fn name(&self) -> SharedString {
+        "Buffer Font Ligatures".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = ThemeSettings::get_global(cx);
+        settings
+            .buffer_font
+            .features
+            .is_calt_enabled()
+            .unwrap_or(true)
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        let value = if value { 1 } else { 0 };
+
+        let mut features = settings
+            .buffer_font_features
+            .as_ref()
+            .map(|features| {
+                features
+                    .tag_value_list()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {
+            features[calt_index].1 = value;
+        } else {
+            features.push(("calt".into(), value));
+        }
+
+        settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+    }
+}
+
+impl RenderOnce for BufferFontLigaturesControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        CheckboxWithLabel::new(
+            "buffer-font-ligatures",
+            Label::new(self.name()),
+            value.into(),
+            |selection, cx| {
+                Self::write(
+                    match selection {
+                        Selection::Selected => true,
+                        Selection::Unselected | Selection::Indeterminate => false,
+                    },
+                    cx,
+                );
+            },
+        )
     }
 }
 
