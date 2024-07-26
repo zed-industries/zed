@@ -674,8 +674,8 @@ impl<'a> Chunks<'a> {
         }
 
         if let Some(chunk) = self.chunks.item() {
-            let mut end_ix = self.offset - *self.chunks.start();
-            if chunk.0.as_bytes()[end_ix - 1] == b'\n' {
+            let mut end_ix = self.offset.saturating_sub(*self.chunks.start());
+            if chunk.0.as_bytes()[end_ix.saturating_sub(1)] == b'\n' {
                 end_ix -= 1;
             }
 
