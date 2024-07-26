@@ -1220,6 +1220,7 @@ pub struct ReplEventRow {
     is_staff: Option<bool>,
     time: i64,
 
+    // ReplEventRow
     kernel_language: String,
     kernel_status: String,
     repl_session_id: String,
@@ -1250,11 +1251,8 @@ impl ReplEventRow {
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
             time: time.timestamp_millis(),
-
-            // kernel language that is launched
             kernel_language: event.kernel_language,
             kernel_status: event.kernel_status,
-            // right now this is the entity_id for the View<Editor>
             repl_session_id: event.repl_session_id,
         }
     }
