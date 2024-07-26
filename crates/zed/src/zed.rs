@@ -3459,7 +3459,11 @@ mod tests {
             terminal_view::init(cx);
             language_model::init(app_state.client.clone(), cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-            repl::init(app_state.fs.clone(), cx);
+            repl::init(
+                app_state.fs.clone(),
+                app_state.client.telemetry().clone(),
+                cx,
+            );
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

@@ -8657,6 +8657,7 @@ dependencies = [
  "anyhow",
  "async-dispatcher",
  "base64 0.13.1",
+ "client",
  "collections",
  "command_palette_hooks",
  "editor",
