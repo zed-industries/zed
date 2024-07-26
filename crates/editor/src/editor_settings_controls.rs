@@ -9,6 +9,8 @@ use ui::{
     SettingsGroup,
 };
 
+use crate::EditorSettings;
+
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
 
@@ -34,6 +36,15 @@ impl RenderOnce for EditorSettingsControls {
                     .child(BufferFontLigaturesControl),
             )
             .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
+            .child(
+                SettingsGroup::new("Gutter").child(
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(LineNumbersControl)
+                        .child(RelativeLineNumbersControl),
+                ),
+            )
     }
 }
 
@@ -312,6 +323,105 @@ impl RenderOnce for InlineGitBlameControl {
                     cx,
                 );
             },
+        )
+    }
+}
+
+#[derive(IntoElement)]
+struct LineNumbersControl;
+
+impl EditableSettingControl for LineNumbersControl {
+    type Value = bool;
+    type Settings = EditorSettings;
+
+    fn name(&self) -> SharedString {
+        "Line Numbers".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = EditorSettings::get_global(cx);
+        settings.gutter.line_numbers
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        if let Some(gutter) = settings.gutter.as_mut() {
+            gutter.line_numbers = Some(value);
+        } else {
+            settings.gutter = Some(crate::editor_settings::GutterContent {
+                line_numbers: Some(value),
+                ..Default::default()
+            });
+        }
+    }
+}
+
+impl RenderOnce for LineNumbersControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        CheckboxWithLabel::new(
+            "line-numbers",
+            Label::new(self.name()),
+            value.into(),
+            |selection, cx| {
+                Self::write(
+                    match selection {
+                        Selection::Selected => true,
+                        Selection::Unselected | Selection::Indeterminate => false,
+                    },
+                    cx,
+                );
+            },
+        )
+    }
+}
+
+#[derive(IntoElement)]
+struct RelativeLineNumbersControl;
+
+impl EditableSettingControl for RelativeLineNumbersControl {
+    type Value = bool;
+    type Settings = EditorSettings;
+
+    fn name(&self) -> SharedString {
+        "Relative Line Numbers".into()
+    }
+
+    fn read(cx: &AppContext) -> Self::Value {
+        let settings = EditorSettings::get_global(cx);
+        settings.relative_line_numbers
+    }
+
+    fn apply(
+        settings: &mut <Self::Settings as Settings>::FileContent,
+        value: Self::Value,
+        _cx: &AppContext,
+    ) {
+        settings.relative_line_numbers = Some(value);
+    }
+}
+
+impl RenderOnce for RelativeLineNumbersControl {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let value = Self::read(cx);
+
+        DropdownMenu::new(
+            "relative-line-numbers",
+            if value { "Relative" } else { "Ascending" },
+            ContextMenu::build(cx, |menu, _cx| {
+                menu.custom_entry(
+                    |_cx| Label::new("Ascending").into_any_element(),
+                    move |cx| Self::write(false, cx),
+                )
+                .custom_entry(
+                    |_cx| Label::new("Relative").into_any_element(),
+                    move |cx| Self::write(true, cx),
+                )
+            }),
         )
     }
 }
