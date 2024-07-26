@@ -190,7 +190,7 @@ impl TaskTemplate {
             let mut env = cx.project_env.clone();
 
             // Extend that environment with what's defined in the TaskTemplate
-            env.extend(self.env.clone().into_iter());
+            env.extend(self.env.clone());
 
             // Then we replace all task variables that could be set in environment varialbes
             let mut env = substitute_all_template_variables_in_map(
