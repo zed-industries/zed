@@ -10260,7 +10260,11 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local() {
-            let cwd = self.task_cwd(cx).log_err().flatten();
+            let cwd = self
+                .task_worktree(cx)
+                .map(|worktree| self.task_cwd(worktree, cx));
+
+            let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|project, cx| async move {
                 let mut task_variables = cx
@@ -10277,7 +10281,21 @@ impl Project {
                     .flatten()?;
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
+
+                let project_env = if let Some(cwd) = cwd.as_ref() {
+                    load_shell_environment(cwd, &load_direnv)
+                        .await
+                        .with_context(|| {
+                            format!("failed to load login shell environment in {cwd:?}")
+                        })
+                        .log_err()
+                        .unwrap_or_default()
+                } else {
+                    HashMap::default()
+                };
+
                 Some(TaskContext {
+                    project_env,
                     cwd,
                     task_variables,
                 })
@@ -10297,6 +10315,8 @@ impl Project {
             cx.background_executor().spawn(async move {
                 let task_context = task_context.await.log_err()?;
                 Some(TaskContext {
+                    // TODO: Implement this via protobuf
+                    project_env: HashMap::default(),
                     cwd: task_context.cwd.map(PathBuf::from),
                     task_variables: task_context
                         .task_variables
@@ -10441,7 +10461,7 @@ impl Project {
         })
     }
 
-    fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
+    fn task_worktree(&self, cx: &AppContext) -> Option<Model<Worktree>> {
         let available_worktrees = self
             .worktrees(cx)
             .filter(|worktree| {
@@ -10451,28 +10471,24 @@ impl Project {
                     && worktree.root_entry().map_or(false, |e| e.is_dir())
             })
             .collect::<Vec<_>>();
-        let cwd = match available_worktrees.len() {
+
+        match available_worktrees.len() {
             0 => None,
-            1 => Some(available_worktrees[0].read(cx).abs_path()),
-            _ => {
-                let cwd_for_active_entry = self.active_entry().and_then(|entry_id| {
-                    available_worktrees.into_iter().find_map(|worktree| {
-                        let worktree = worktree.read(cx);
-                        if worktree.contains_entry(entry_id) {
-                            Some(worktree.abs_path())
-                        } else {
-                            None
-                        }
-                    })
-                });
-                anyhow::ensure!(
-                    cwd_for_active_entry.is_some(),
-                    "Cannot determine task cwd for multiple worktrees"
-                );
-                cwd_for_active_entry
-            }
-        };
-        Ok(cwd.map(|path| path.to_path_buf()))
+            1 => Some(available_worktrees[0].clone()),
+            _ => self.active_entry().and_then(|entry_id| {
+                available_worktrees.into_iter().find_map(|worktree| {
+                    if worktree.read(cx).contains_entry(entry_id) {
+                        Some(worktree)
+                    } else {
+                        None
+                    }
+                })
+            }),
+        }
+    }
+
+    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
+        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 

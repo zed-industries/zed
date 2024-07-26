@@ -184,8 +184,12 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
+
+        let mut env = cx.project_env.clone();
+        env.extend(self.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+
         let mut env = substitute_all_template_variables_in_map(
-            &self.env,
+            &env,
             &task_variables,
             &variable_names,
             &mut substituted_variables,
@@ -392,6 +396,7 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_without_cwd, &cx).cwd,
@@ -403,6 +408,7 @@ mod tests {
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_without_cwd, &cx)
@@ -421,6 +427,7 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
@@ -434,6 +441,7 @@ mod tests {
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
@@ -512,6 +520,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
+                    project_env: HashMap::default(),
                 },
             ).unwrap_or_else(|| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}"));
 
@@ -599,6 +608,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
+                    project_env: HashMap::default(),
                 },
             );
             assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
@@ -651,6 +661,7 @@ mod tests {
                 VariableName::Symbol,
                 "test_symbol".to_string(),
             ))),
+            project_env: HashMap::default(),
         };
 
         for (i, symbol_dependent_task) in [
