@@ -192,7 +192,7 @@ impl TaskTemplate {
             // Extend that environment with what's defined in the TaskTemplate
             env.extend(self.env.clone());
 
-            // Then we replace all task variables that could be set in environment varialbes
+            // Then we replace all task variables that could be set in environment variables
             let mut env = substitute_all_template_variables_in_map(
                 &env,
                 &task_variables,
