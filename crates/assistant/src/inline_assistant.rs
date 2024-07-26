@@ -66,6 +66,13 @@ pub struct InlineAssistant {
     fs: Arc<dyn Fs>,
 }
 
+#[derive(Debug)]
+
+pub enum InitialInsertion {
+    NewlineBefore,
+    NewlineAfter,
+}
+
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
@@ -151,7 +158,7 @@ impl InlineAssistant {
                 Codegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
-                    None,
+                    InitialInsertion::None,
                     self.telemetry.clone(),
                     cx,
                 )
@@ -227,7 +234,7 @@ impl InlineAssistant {
         editor: &View<Editor>,
         mut range: Range<Anchor>,
         initial_prompt: String,
-        initial_insertion: Option<String>,
+        initial_insertion: Option<InitialInsertion>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
@@ -237,16 +244,7 @@ impl InlineAssistant {
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let assist_id = self.next_assist_id.post_inc();
-
         let buffer = editor.read(cx).buffer().clone();
-        let prepend_transaction_id = initial_insertion.and_then(|initial_insertion| {
-            buffer.update(cx, |buffer, cx| {
-                buffer.start_transaction(cx);
-                buffer.edit([(range.start..range.start, initial_insertion)], None, cx);
-                buffer.end_transaction(cx)
-            })
-        });
-
         range.start = range.start.bias_left(&buffer.read(cx).read(cx));
         range.end = range.end.bias_right(&buffer.read(cx).read(cx));
 
@@ -254,7 +252,7 @@ impl InlineAssistant {
             Codegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
-                prepend_transaction_id,
+                initial_insertion,
                 self.telemetry.clone(),
                 cx,
             )
@@ -1974,13 +1972,13 @@ pub struct Codegen {
     range: Range<Anchor>,
     edit_position: Anchor,
     last_equal_ranges: Vec<Range<Anchor>>,
-    prepend_transaction_id: Option<TransactionId>,
     generation_transaction_id: Option<TransactionId>,
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
+    initial_insertion: Option<InitialInsertion>,
 }
 
 enum CodegenStatus {
@@ -2004,7 +2002,7 @@ impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
-        prepend_transaction_id: Option<TransactionId>,
+        initial_insertion: InitialInsertion,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2037,13 +2035,13 @@ impl Codegen {
             range,
             snapshot,
             last_equal_ranges: Default::default(),
-            prepend_transaction_id,
             generation_transaction_id: None,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+            initial_insertion,
         }
     }
 
@@ -2055,11 +2053,6 @@ impl Codegen {
     ) {
         if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
             if self.generation_transaction_id == Some(*transaction_id) {
-                self.generation_transaction_id = None;
-                self.generation = Task::ready(());
-                cx.emit(CodegenEvent::Undone);
-            } else if self.prepend_transaction_id == Some(*transaction_id) {
-                self.prepend_transaction_id = None;
                 self.generation_transaction_id = None;
                 self.generation = Task::ready(());
                 cx.emit(CodegenEvent::Undone);
@@ -2077,6 +2070,22 @@ impl Codegen {
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
+        self.undo(cx);
+        self.generation_transaction_id = match self.initial_insertion {
+            InitialInsertion::None => None,
+            InitialInsertion::NewlineBefore => self.buffer.update(cx, |buffer, cx| {
+                buffer.start_transaction(cx);
+                buffer.edit([(self.range.start..self.range.start, "\n")], None, cx);
+                buffer.end_transaction(cx)
+            }),
+            InitialInsertion::NewlineAfter => self.buffer.update(cx, |buffer, cx| {
+                buffer.start_transaction(cx);
+                buffer.edit([(self.range.end..self.range.end, "\n")], None, cx);
+                buffer.end_transaction(cx)
+            }),
+        };
+        self.snapshot = self.buffer.read(cx).snapshot(cx);
+
         let range = self.range.clone();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
@@ -2310,11 +2319,6 @@ impl Codegen {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(transaction_id) = self.prepend_transaction_id.take() {
-            self.buffer
-                .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        }
-
         if let Some(transaction_id) = self.generation_transaction_id.take() {
             self.buffer
                 .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
@@ -2618,8 +2622,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
-
+        let codegen = cx
+            .new_model(|cx| Codegen::new(buffer.clone(), range, InitialInsertion::None, None, cx));
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.start(
@@ -2679,7 +2683,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen = cx
+            .new_model(|cx| Codegen::new(buffer.clone(), range, InitialInsertion::None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
@@ -2744,7 +2749,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen = cx
+            .new_model(|cx| Codegen::new(buffer.clone(), range, InitialInsertion::None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
@@ -2808,7 +2814,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen = cx
+            .new_model(|cx| Codegen::new(buffer.clone(), range, InitialInsertion::None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
