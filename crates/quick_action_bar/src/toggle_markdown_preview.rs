@@ -27,41 +27,29 @@ impl QuickActionBar {
             return None;
         }
 
-        let preview_visible = false;
-
-        let button = IconButton::new(
-            "toggle-markdown-preview",
-            if preview_visible {
-                IconName::Code
-            } else {
-                IconName::FileText
-            },
-        )
-        .shape(IconButtonShape::Square)
-        .icon_size(IconSize::Small)
-        .style(ButtonStyle::Subtle)
-        .tooltip(move |cx| {
-            Tooltip::with_meta(
-                format!(
-                    "{} Markdown Preview",
-                    if preview_visible { "Hide" } else { "Show" }
-                ),
-                Some(&markdown_preview::OpenPreview),
-                "Option+Click to open in a split",
-                cx,
-            )
-        })
-        .on_click(move |_, cx| {
-            if let Some(workspace) = workspace.upgrade() {
-                workspace.update(cx, |_, cx| {
-                    if cx.modifiers().alt {
-                        cx.dispatch_action(Box::new(OpenPreviewToTheSide));
-                    } else {
-                        cx.dispatch_action(Box::new(OpenPreview));
-                    }
-                });
-            }
-        });
+        let button = IconButton::new("toggle-markdown-preview", IconName::Eye)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .tooltip(move |cx| {
+                Tooltip::with_meta(
+                    "Preview Markdown",
+                    Some(&markdown_preview::OpenPreview),
+                    "Option+Click to open in a split",
+                    cx,
+                )
+            })
+            .on_click(move |_, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |_, cx| {
+                        if cx.modifiers().alt {
+                            cx.dispatch_action(Box::new(OpenPreviewToTheSide));
+                        } else {
+                            cx.dispatch_action(Box::new(OpenPreview));
+                        }
+                    });
+                }
+            });
 
         Some(button.into_any_element())
     }
