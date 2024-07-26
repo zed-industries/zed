@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use std::str::FromStr;
 use gpui::Render;
 use story::{StoryContainer, StoryItem, StorySection};
 
@@ -9,6 +11,12 @@ pub struct AvatarStory;
 impl Render for AvatarStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         StoryContainer::new("Avatar", "crates/ui/src/components/stories/avatar.rs")
+            .child(
+                StorySection::new().child(StoryItem::new(
+                    "Avatar asset from local file",
+                    Avatar::new(PathBuf::from_str("icons/copilot.svg").unwrap()),
+                )),
+            )
             .child(
                 StorySection::new()
                     .child(StoryItem::new(

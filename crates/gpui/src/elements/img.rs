@@ -366,9 +366,16 @@ impl Asset for Image {
         let client = cx.http_client();
         let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
+        let asset_source = cx.asset_source().clone();
         async move {
             let bytes = match source.clone() {
-                UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
+                UriOrPath::Path(uri) => {
+                    let asset_source_uri = uri.as_ref().to_str().unwrap();
+                    match asset_source.load(asset_source_uri) {
+                        Ok(Some(data)) => data.into(),
+                        _ => fs::read(uri.as_ref())?,
+                    }
+                },
                 UriOrPath::Uri(uri) => {
                     let mut response = client.get(uri.as_ref(), ().into(), true).await?;
                     let mut body = Vec::new();
