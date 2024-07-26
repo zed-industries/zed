@@ -17,7 +17,7 @@ use gpui::{
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+    WindowContext, ClipboardItem
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -152,6 +152,8 @@ actions!(
         SplitRight,
         SplitDown,
         TogglePreviewTab,
+        CopyPath,
+        CopyRelativePath
     ]
 );
 
@@ -1119,6 +1121,36 @@ impl Pane {
         )
     }
 
+    fn copy_path(
+        &mut self,
+        _: &CopyPath,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(clipboard_text) = self
+            .active_item()
+            .as_ref()
+            .and_then(|entry| entry.project_path(cx))
+            .map(|p| p.path.to_string_lossy().to_string())
+        {
+            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+        }
+    }
+
+    fn copy_relative_path(
+        &mut self,
+        _: &CopyRelativePath,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(clipboard_text) = self
+            .active_item()
+            .as_ref()
+            .and_then(|entry| entry.project_path(cx))
+            .map(|p| p.path.to_string_lossy().to_string())
+        {
+            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+        }
+    }
+
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
         all_dirty_items: usize,
@@ -1758,7 +1790,23 @@ impl Pane {
                                     task.detach_and_log_err(cx)
                                 }
                             }),
-                        );
+                        )
+                        .separator()
+                        .entry(
+                            "Copy Path",
+                            Some(Box::new(CopyPath)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.copy_path(&CopyPath, cx);
+                            }),
+                        )
+                        .entry(
+                            "Copy Relative Path",
+                            Some(Box::new(CopyRelativePath)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.copy_relative_path(&CopyRelativePath, cx);
+                            }),
+                        )
+                    ;
 
                     if let Some(entry) = single_entry_to_resolve {
                         let parent_abs_path = pane
