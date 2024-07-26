@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
 use language_model::{
     LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
@@ -143,11 +143,11 @@ impl LanguageModelCompletionProvider {
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> Option<BoxFuture<'static, Result<usize>>> {
         if let Some(model) = self.active_model() {
-            model.count_tokens(request, cx)
+            Some(model.count_tokens(request, cx))
         } else {
-            std::future::ready(Err(anyhow!("No active model set"))).boxed()
+            None
         }
     }
 

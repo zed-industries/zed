@@ -1628,15 +1628,18 @@ impl PromptEditor {
                 })?
                 .await?;
 
-            let token_count = cx
-                .update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                })?
-                .await?;
-            this.update(&mut cx, |this, cx| {
-                this.token_count = Some(token_count);
-                cx.notify();
-            })
+            if let Some(token_count) = cx.update(|cx| {
+                LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+            })? {
+                let token_count = token_count.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.token_count = Some(token_count);
+                    cx.notify();
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 

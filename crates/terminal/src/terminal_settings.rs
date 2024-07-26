@@ -10,7 +10,7 @@ use schemars::{
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use task::Shell;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
