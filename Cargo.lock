@@ -13734,15 +13734,6 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5c51cad4152bb5eb35b20dccdcbfb36f48d8952a2ed2d3e25b70361007d953b"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
-name = "zed_extension_api"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ca8bcaea3feb2d2ce9dbeb061ee48365312a351faa7014c417b0365fe9e459"
@@ -13879,7 +13870,7 @@ dependencies = [
 name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
