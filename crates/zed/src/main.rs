@@ -803,24 +803,21 @@ fn init_stdout_logger() {
     Builder::new()
         .parse_default_env()
         .format(|buf, record| {
-            use env_logger::fmt::Color;
+            use env_logger::fmt::style::{AnsiColor, Style};
 
-            let subtle = buf
-                .style()
-                .set_color(Color::Black)
-                .set_intense(true)
-                .clone();
-            write!(buf, "{}", subtle.value("["))?;
+            let subtle = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
+            write!(buf, "{subtle}[{subtle:#}")?;
             write!(
                 buf,
                 "{} ",
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
             )?;
-            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            let level_style = buf.default_level_style(record.level());
+            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
             if let Some(path) = record.module_path() {
                 write!(buf, " {path}")?;
             }
-            write!(buf, "{}", subtle.value("]"))?;
+            write!(buf, "{subtle}]{subtle:#}")?;
             writeln!(buf, " {}", record.args())
         })
         .init();
