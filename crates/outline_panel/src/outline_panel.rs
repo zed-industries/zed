@@ -15,17 +15,17 @@ use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
-    DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
+    AnchorRangeExt, DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, Element, ElementId,
+    EntityId, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
+    KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -96,8 +96,16 @@ pub struct OutlinePanel {
     cached_entries_update_task: Task<()>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
+    search_matches: Vec<Range<editor::Anchor>>,
     cached_entries_with_depth: Vec<CachedEntry>,
     filter_editor: View<Editor>,
+    mode: ItemsDisplayMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemsDisplayMode {
+    Search,
+    Outline,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -326,6 +334,7 @@ impl OutlinePanel {
             });
 
             let mut outline_panel = Self {
+                mode: ItemsDisplayMode::Outline,
                 active: false,
                 workspace: workspace_handle,
                 project,
@@ -334,6 +343,7 @@ impl OutlinePanel {
                 focus_handle,
                 filter_editor,
                 fs_entries: Vec::new(),
+                search_matches: Vec::new(),
                 fs_entries_depth: HashMap::default(),
                 fs_children_count: HashMap::default(),
                 collapsed_entries: HashSet::default(),
@@ -1158,8 +1168,38 @@ impl OutlinePanel {
                 })
             }
             PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
-            // TODO kb is it correct?
-            PanelEntry::Search(_) => None,
+            PanelEntry::Search(match_range) => {
+                let ids = if let Some(buffer_id) = match_range.start.buffer_id {
+                    Some((buffer_id, match_range.start.excerpt_id))
+                } else if let Some(buffer_id) = match_range.end.buffer_id {
+                    Some((buffer_id, match_range.end.excerpt_id))
+                } else {
+                    None
+                };
+
+                ids.and_then(|(buffer_id, excerpt_id)| {
+                    self.collapsed_entries
+                        .remove(&CollapsedEntry::ExternalFile(buffer_id));
+                    self.collapsed_entries
+                        .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+                    let project = self.project.read(cx);
+                    let entry_id = project
+                        .buffer_for_id(buffer_id, cx)
+                        .and_then(|buffer| buffer.read(cx).entry_id(cx));
+
+                    entry_id.and_then(|entry_id| {
+                        project
+                            .worktree_for_entry(entry_id, cx)
+                            .and_then(|worktree| {
+                                let worktree_id = worktree.read(cx).id();
+                                self.collapsed_entries
+                                    .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                                Some((worktree, entry))
+                            })
+                    })
+                })
+            }
             _ => return,
         };
         if let Some((worktree, buffer_entry)) = related_buffer_entry {
@@ -1494,6 +1534,50 @@ impl OutlinePanel {
         )
     }
 
+    fn render_search_match(
+        &self,
+        match_range: &Range<editor::Anchor>,
+        depth: usize,
+        as_ref: Option<&StringMatch>,
+        cx: &mut ViewContext<Self>,
+    ) -> Stateful<Div> {
+        let Some(match_text) = self.text_for_match(&match_range, cx) else {
+            return div().id("empty-match-range");
+        };
+        let Some(active_editor) = self
+            .active_item
+            .as_ref()
+            .and_then(|active_item| active_item.active_editor.upgrade())
+        else {
+            return div().id("empty-match-range");
+        };
+        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
+        let match_point_range = match_range.to_point(&multi_buffer_snapshot);
+
+        let is_active = match &self.selected_entry {
+            Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
+            _ => false,
+        };
+
+        let label_element = Label::new(format!(
+            "match_text (lines {} -{})",
+            match_point_range.start.row + 1,
+            match_point_range.end.row + 1,
+        ))
+        .single_line()
+        .into_any_element();
+
+        self.entry_element(
+            PanelEntry::Search(match_range.clone()),
+            ElementId::from(SharedString::from(format!("{match_range:?}"))),
+            depth,
+            None,
+            is_active,
+            label_element,
+            cx,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
@@ -1669,11 +1753,11 @@ impl OutlinePanel {
                             match &worktree {
                                 Some(worktree) => {
                                     new_collapsed_entries
-                                        .insert(CollapsedEntry::File(worktree.id(), buffer_id));
+                                        .remove(&CollapsedEntry::File(worktree.id(), buffer_id));
                                 }
                                 None => {
                                     new_collapsed_entries
-                                        .insert(CollapsedEntry::ExternalFile(buffer_id));
+                                        .remove(&CollapsedEntry::ExternalFile(buffer_id));
                                 }
                             }
                         }
@@ -2682,7 +2766,7 @@ impl OutlinePanel {
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
-        cx: &AppContext,
+        cx: &mut WindowContext,
     ) {
         if track_matches {
             let id = entries.len();
@@ -2718,8 +2802,14 @@ impl OutlinePanel {
                     }
                     OutlineEntry::Excerpt(..) => {}
                 },
-                PanelEntry::Search(_) => {
-                    // TODO kb
+                PanelEntry::Search(match_range) => {
+                    if let Some(match_text) = self.text_for_match(match_range, cx) {
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            char_bag: match_text.chars().collect(),
+                            string: match_text,
+                        });
+                    }
                 }
             }
         }
@@ -2728,6 +2818,21 @@ impl OutlinePanel {
             entry,
             string_match: None,
         });
+    }
+
+    fn text_for_match(
+        &self,
+        match_range: &Range<editor::Anchor>,
+        cx: &mut WindowContext,
+    ) -> Option<String> {
+        let active_editor = self
+            .active_item
+            .as_ref()
+            .and_then(|active_item| active_item.active_editor.upgrade())?;
+        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
+        active_editor.update(cx, |active_editor, cx| {
+            active_editor.text_for_range(match_range.to_offset(&multi_buffer_snapshot), cx)
+        })
     }
 
     fn dir_names_string(
@@ -2764,8 +2869,8 @@ impl OutlinePanel {
     }
 
     fn update_non_fs_items(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        self.fetch_outdated_outlines(cx);
         self.update_search_matches(cx);
+        self.fetch_outdated_outlines(cx);
         self.autoscroll(cx);
     }
 
@@ -2785,6 +2890,24 @@ impl OutlinePanel {
             .and_then(|active_item| active_item.active_editor.upgrade())
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
+
+        if !buffer_search_matches.is_empty() {
+            self.search_matches = buffer_search_matches;
+        } else if !project_search_matches.is_empty() {
+            self.search_matches = project_search_matches;
+        } else {
+            self.search_matches.clear();
+        }
+
+        // TODO kb consider pinned case
+        if !self.search_matches.is_empty() {
+            self.mode = ItemsDisplayMode::Search;
+        } else {
+            self.mode = ItemsDisplayMode::Outline;
+        }
+
+        self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
+
         dbg!(
             "????????????? TODO kb actually update and display the matches",
             project_search_matches.len(),
@@ -3052,9 +3175,13 @@ impl Render for OutlinePanel {
                                         cx,
                                     ))
                                 }
-                                PanelEntry::Search(_) => {
-                                    // TODO kb render the search results
-                                    None
+                                PanelEntry::Search(match_range) => {
+                                    Some(outline_panel.render_search_match(
+                                        &match_range,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        cx,
+                                    ))
                                 },
 
                             })
@@ -3128,15 +3255,11 @@ fn subscribe_for_editor_events(
             }
             EditorEvent::ExcerptsExpanded { ids } => {
                 outline_panel.invalidate_outlines(ids);
-                outline_panel.fetch_outdated_outlines(cx);
-                outline_panel.update_search_matches(cx);
-                outline_panel.autoscroll(cx);
+                outline_panel.update_non_fs_items(cx);
             }
             EditorEvent::ExcerptsEdited { ids } => {
                 outline_panel.invalidate_outlines(ids);
-                outline_panel.fetch_outdated_outlines(cx);
-                outline_panel.update_search_matches(cx);
-                outline_panel.autoscroll(cx);
+                outline_panel.update_non_fs_items(cx);
             }
             EditorEvent::Reparsed(buffer_id) => {
                 if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
