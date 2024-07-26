@@ -8270,6 +8270,7 @@ dependencies = [
  "assistant",
  "editor",
  "gpui",
+ "markdown_preview",
  "repl",
  "search",
  "settings",
