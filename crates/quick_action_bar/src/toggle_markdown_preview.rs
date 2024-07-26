@@ -29,10 +29,7 @@ impl QuickActionBar {
 
         let alt_click = gpui::Keystroke {
             key: "click".into(),
-            modifiers: Modifiers {
-                alt: true,
-                ..Default::default()
-            },
+            modifiers: Modifiers::alt(),
             ..Default::default()
         };
 
