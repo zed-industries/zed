@@ -47,15 +47,14 @@ pub(crate) struct TestPrompts {
 impl TestPlatform {
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
         #[cfg(target_os = "windows")]
-        unsafe {
+        let bitmap_factory = unsafe {
             windows::Win32::System::Ole::OleInitialize(None)
                 .expect("unable to initialize Windows OLE");
-        }
-        #[cfg(target_os = "windows")]
-        let bitmap_factory = std::mem::ManuallyDrop::new(unsafe {
-            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .expect("Error creating bitmap factory.")
-        });
+            std::mem::ManuallyDrop::new(
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                    .expect("Error creating bitmap factory."),
+            )
+        };
 
         #[cfg(target_os = "macos")]
         let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
