@@ -8,7 +8,7 @@ use client::Client;
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
 use gpui::AsyncWindowContext;
-use gpui::PromptLevel;
+use gpui::PathPromptOptions;
 use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
@@ -48,6 +48,7 @@ use crate::ssh_connections::connect_over_ssh;
 use crate::ssh_connections::open_ssh_project;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
+use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
@@ -67,7 +68,7 @@ pub struct DevServerProjects {
 
 #[derive(Default)]
 struct CreateDevServer {
-    creating: Option<Task<()>>,
+    creating: Option<Task<Option<()>>>,
     dev_server_id: Option<DevServerId>,
     access_token: Option<String>,
     ssh_prompt: Option<View<SshPrompt>>,
@@ -294,7 +295,12 @@ impl DevServerProjects {
         }
         if let Some((rest, p)) = host.split_once(':') {
             host = rest;
-            port = p.parse().ok() // todo!()
+            port = p.parse().ok()
+        }
+
+        if let Some((rest, p)) = host.split_once(" -p") {
+            host = rest;
+            port = p.trim().parse().ok()
         }
 
         let connection_options = remote::SshConnectionOptions {
@@ -304,35 +310,29 @@ impl DevServerProjects {
             password: None,
         };
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
-        let connection = connect_over_ssh(connection_options.clone(), ssh_prompt.clone(), cx);
+        let connection = connect_over_ssh(connection_options.clone(), ssh_prompt.clone(), cx)
+            .prompt_err("Failed to connect", cx, |_, _| None);
+
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
-                Ok(_) => this
+                Some(_) => this
                     .update(&mut cx, |this, cx| {
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::Default(None);
                         cx.notify()
                     })
                     .log_err(),
-                Err(e) => {
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        "Failed to connect",
-                        Some(&e.to_string()),
-                        &["Ok"],
-                    )
-                    .await
-                    .ok();
-                    this.update(&mut cx, |this, cx| {
+                None => this
+                    .update(&mut cx, |this, cx| {
                         this.mode = Mode::CreateDevServer(CreateDevServer {
                             kind: NewServerKind::DirectSSH,
                             ..Default::default()
                         });
                         cx.notify()
                     })
-                    .log_err()
-                }
+                    .log_err(),
             };
+            None
         });
         self.mode = Mode::CreateDevServer(CreateDevServer {
             kind: NewServerKind::DirectSSH,
@@ -340,6 +340,137 @@ impl DevServerProjects {
             creating: Some(creating),
             ..Default::default()
         });
+    }
+
+    fn create_ssh_project(
+        &mut self,
+        ix: usize,
+        ssh_connection: SshConnection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let connection_options = ssh_connection.into();
+        workspace.update(cx, |_, cx| {
+            cx.defer(move |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                let prompt = workspace
+                    .active_modal::<SshConnectionModal>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .prompt
+                    .clone();
+
+                let connect = connect_over_ssh(connection_options, prompt, cx).prompt_err(
+                    "Failed to connect",
+                    cx,
+                    |_, _| None,
+                );
+                cx.spawn(|workspace, mut cx| async move {
+                    let Some(session) = connect.await else {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                let weak = cx.view().downgrade();
+                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
+                            })
+                            .log_err();
+                        return;
+                    };
+                    let Ok((app_state, project, paths)) =
+                        workspace.update(&mut cx, |workspace, cx| {
+                            let app_state = workspace.app_state().clone();
+                            let project = project::Project::ssh(
+                                session,
+                                app_state.client.clone(),
+                                app_state.node_runtime.clone(),
+                                app_state.user_store.clone(),
+                                app_state.languages.clone(),
+                                app_state.fs.clone(),
+                                cx,
+                            );
+                            let paths = workspace.prompt_for_open_path(
+                                PathPromptOptions {
+                                    files: true,
+                                    directories: true,
+                                    multiple: true,
+                                },
+                                project::DirectoryLister::Project(project.clone()),
+                                cx,
+                            );
+                            (app_state, project, paths)
+                        })
+                    else {
+                        return;
+                    };
+
+                    let Ok(Some(paths)) = paths.await else {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                let weak = cx.view().downgrade();
+                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
+                            })
+                            .log_err();
+                        return;
+                    };
+
+                    let Some(options) = cx
+                        .update(|cx| (app_state.build_window_options)(None, cx))
+                        .log_err()
+                    else {
+                        return;
+                    };
+
+                    cx.open_window(options, |cx| {
+                        cx.activate_window();
+
+                        let fs = app_state.fs.clone();
+                        update_settings_file::<SshSettings>(fs, cx, {
+                            let paths = paths
+                                .iter()
+                                .map(|path| path.to_string_lossy().to_string())
+                                .collect();
+                            move |setting, _| {
+                                if let Some(server) = setting
+                                    .ssh_connections
+                                    .as_mut()
+                                    .and_then(|connections| connections.get_mut(ix))
+                                {
+                                    server.projects.push(SshProject { paths })
+                                }
+                            }
+                        });
+
+                        let tasks = paths
+                            .into_iter()
+                            .map(|path| {
+                                project.update(cx, |project, cx| {
+                                    project.find_or_create_worktree(&path, true, cx)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        cx.spawn(|_| async move {
+                            for task in tasks {
+                                task.await?;
+                            }
+                            Ok(())
+                        })
+                        .detach_and_prompt_err(
+                            "Failed to open path",
+                            cx,
+                            |_, _| None,
+                        );
+
+                        cx.new_view(|cx| {
+                            Workspace::new(None, project.clone(), app_state.clone(), cx)
+                        })
+                    })
+                    .log_err();
+                })
+                .detach()
+            })
+        })
     }
 
     fn create_or_update_dev_server(
@@ -770,7 +901,7 @@ impl DevServerProjects {
     fn render_ssh_connection(
         &mut self,
         ix: usize,
-        ssh_connection: &SshConnection,
+        ssh_connection: SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         v_flex()
@@ -815,14 +946,14 @@ impl DevServerProjects {
                         List::new()
                             .empty_message("No projects.")
                             .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
-                                self.render_ssh_project(ix, ssh_connection, pix, p, cx)
+                                self.render_ssh_project(ix, &ssh_connection, pix, p, cx)
                             }))
                             .child(
                                 ListItem::new("new-remote_project")
                                     .start_slot(Icon::new(IconName::Plus))
                                     .child(Label::new("Open folder…"))
-                                    .on_click(cx.listener(move |_this, _, _cx| {
-                                        todo!();
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.create_ssh_project(ix, ssh_connection.clone(), cx);
                                     })),
                             ),
                     ),
@@ -1350,7 +1481,7 @@ impl DevServerProjects {
                                             })),
                                     ),
                                 ))
-                                .children(ssh_connections.iter().enumerate().map(|(ix, connection)| {
+                                .children(ssh_connections.iter().cloned().enumerate().map(|(ix, connection)| {
                                     self.render_ssh_connection(ix, connection, cx)
                                         .into_any_element()
                                 }))

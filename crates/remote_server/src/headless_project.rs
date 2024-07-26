@@ -12,6 +12,7 @@ use rpc::{
     TypedEnvelope,
 };
 use settings::{Settings as _, SettingsStore};
+use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
@@ -44,6 +45,7 @@ impl HeadlessProject {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
 
+        session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
         session.add_request_handler(this.clone(), Self::handle_update_buffer);
@@ -173,6 +175,24 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub async fn handle_list_remote_directory(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ListRemoteDirectory>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::ListRemoteDirectoryResponse> {
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+
+        let mut entries = Vec::new();
+        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        while let Some(path) = response.next().await {
+            if let Some(file_name) = path?.file_name() {
+                entries.push(file_name.to_string_lossy().to_string());
+            }
+        }
+        Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
     pub fn on_buffer_store_event(

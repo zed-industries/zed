@@ -85,7 +85,7 @@ pub struct SshPrompt {
 }
 
 pub struct SshConnectionModal {
-    prompt: View<SshPrompt>,
+    pub(crate) prompt: View<SshPrompt>,
 }
 impl SshPrompt {
     pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {

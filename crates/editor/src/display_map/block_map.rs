@@ -895,7 +895,7 @@ impl BlockSnapshot {
         self.chunks(
             0..self.transforms.summary().output_rows,
             false,
-            None,
+            false,
             Highlights::default(),
         )
         .map(|chunk| chunk.text)
@@ -2061,7 +2061,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
-                        None,
+                        false,
                         Highlights::default(),
                     )
                     .map(|chunk| chunk.text)
