@@ -33,7 +33,7 @@ pub enum DebugPanelEvent {
     Thread((DebugAdapterClientId, ThreadEvent)),
 }
 
-actions!(debug_panel, [TogglePanel]);
+actions!(debug_panel, [ToggleFocus]);
 
 pub struct DebugPanel {
     size: Pixels,
@@ -570,7 +570,7 @@ impl Panel for DebugPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(TogglePanel)
+        Box::new(ToggleFocus)
     }
 
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
