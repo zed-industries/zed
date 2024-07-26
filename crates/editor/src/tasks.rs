@@ -3,7 +3,7 @@ use crate::Editor;
 use gpui::{Task as AsyncTask, WindowContext};
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
-use text::{Point, ToOffset, ToPoint};
+use text::{ToOffset, ToPoint};
 use workspace::Workspace;
 
 fn task_context_with_editor(
