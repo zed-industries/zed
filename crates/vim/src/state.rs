@@ -292,7 +292,7 @@ impl EditorState {
             }
         }
 
-        if mode != "waiting" && mode != "insert" && mode != "replace" {
+        if mode != "waiting" && mode != "insert" && mode != "replace" && mode != "easy_motion" {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
