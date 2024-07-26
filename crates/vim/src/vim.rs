@@ -1057,9 +1057,6 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
-    // all vim uses vim clipboard
-    // vim always uses system cliupbaord
-    // some magic where yy is system and dd is not.
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,

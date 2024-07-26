@@ -6,7 +6,6 @@ pub(crate) mod linux_prompts;
 pub(crate) mod only_instance;
 mod open_listener;
 pub(crate) mod session;
-mod ssh_connection_modal;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
