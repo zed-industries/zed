@@ -13,11 +13,11 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
+    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext, ClipboardItem
+    WindowContext,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -1121,11 +1121,7 @@ impl Pane {
         )
     }
 
-    fn copy_path(
-        &mut self,
-        _: &CopyPath,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some(clipboard_text) = self
             .active_item()
             .as_ref()
@@ -1136,11 +1132,7 @@ impl Pane {
         }
     }
 
-    fn copy_relative_path(
-        &mut self,
-        _: &CopyRelativePath,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some(clipboard_text) = self
             .active_item()
             .as_ref()
@@ -1805,8 +1797,7 @@ impl Pane {
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.copy_relative_path(&CopyRelativePath, cx);
                             }),
-                        )
-                    ;
+                        );
 
                     if let Some(entry) = single_entry_to_resolve {
                         let parent_abs_path = pane
