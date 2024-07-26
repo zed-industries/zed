@@ -449,9 +449,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
         }
-        Mode::Insert | Mode::EasyMotion => {
-            // Shouldn't execute in these modes. Ignoring
-        }
+        Mode::EasyMotion => {}
     }
     Vim::update(cx, |vim, cx| {
         vim.clear_operator(cx);
