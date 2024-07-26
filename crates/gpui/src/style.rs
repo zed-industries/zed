@@ -181,7 +181,7 @@ pub struct TextStyle {
     pub font_features: FontFeatures,
 
     /// The fallback fonts to use
-    pub font_fallbacks: FontFallbacks,
+    pub font_fallbacks: Option<FontFallbacks>,
 
     /// The font size to use, in pixels or rems.
     pub font_size: AbsoluteLength,
@@ -221,7 +221,7 @@ impl Default for TextStyle {
                 "Helvetica".into()
             },
             font_features: FontFeatures::default(),
-            font_fallbacks: FontFallbacks::default(),
+            font_fallbacks: None,
             font_size: rems(1.).into(),
             line_height: phi(),
             font_weight: FontWeight::default(),

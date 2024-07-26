@@ -244,7 +244,10 @@ pub struct ThemeSettingsContent {
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
     #[serde(default)]
-    pub ui_font_family: Option<Vec<String>>,
+    pub ui_font_family: Option<String>,
+    /// The font fallbacks to use for rendering in the UI.
+    #[serde(default)]
+    pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
@@ -253,7 +256,10 @@ pub struct ThemeSettingsContent {
     pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
-    pub buffer_font_family: Option<Vec<String>>,
+    pub buffer_font_family: Option<String>,
+    /// The font fallbacks to use for rendering in text buffers.
+    #[serde(default)]
+    pub buffer_font_fallbacks: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
@@ -511,18 +517,22 @@ impl settings::Settings for ThemeSettings {
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: defaults.ui_font_family.as_ref().unwrap()[0].clone().into(),
+                family: defaults.ui_font_family.as_ref().unwrap().clone().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                fallbacks: get_fallbacks(defaults.ui_font_family.as_ref().unwrap()),
+                fallbacks: defaults
+                    .ui_font_fallbacks
+                    .as_ref()
+                    .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
-                family: defaults.buffer_font_family.as_ref().unwrap()[0]
-                    .clone()
-                    .into(),
+                family: defaults.buffer_font_family.as_ref().unwrap().clone().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
-                fallbacks: get_fallbacks(defaults.buffer_font_family.as_ref().unwrap()),
+                fallbacks: defaults
+                    .buffer_font_fallbacks
+                    .as_ref()
+                    .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
@@ -543,23 +553,26 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = value.buffer_font_family.clone() {
-                this.buffer_font.family = value[0].clone().into();
-                this.buffer_font.fallbacks = get_fallbacks(&value);
+                this.buffer_font.family = value.into();
             }
             if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
             }
-
+            if let Some(value) = value.buffer_font_fallbacks.clone() {
+                this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
+            }
             if let Some(value) = value.buffer_font_weight {
                 this.buffer_font.weight = FontWeight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
-                this.ui_font.family = value[0].clone().into();
-                this.ui_font.fallbacks = get_fallbacks(&value);
+                this.ui_font.family = value.into();
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
+            }
+            if let Some(value) = value.ui_font_fallbacks.clone() {
+                this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
                 this.ui_font.weight = FontWeight(value);
@@ -618,20 +631,22 @@ impl settings::Settings for ThemeSettings {
             enum_values: Some(available_fonts),
             ..Default::default()
         };
-        let fonts_schema = SchemaObject {
+        let font_fallback_schema = SchemaObject {
             instance_type: Some(InstanceType::Array.into()),
             array: Some(Box::new(ArrayValidation {
                 items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    font_family_schema.into(),
+                    font_family_schema.clone().into(),
                 ))),
                 unique_items: Some(true),
                 ..Default::default()
             })),
             ..Default::default()
         };
+
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
-            ("FontFamilies".into(), fonts_schema.into()),
+            ("FontFamilies".into(), font_family_schema.into()),
+            ("FontFallbacks".into(), font_fallback_schema.into()),
         ]);
 
         root_schema
@@ -646,8 +661,16 @@ impl settings::Settings for ThemeSettings {
                     Schema::new_ref("#/definitions/FontFamilies".into()),
                 ),
                 (
+                    "buffer_font_fallbacks".to_owned(),
+                    Schema::new_ref("#/definitions/FontFallbacks".into()),
+                ),
+                (
                     "ui_font_family".to_owned(),
                     Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
+                (
+                    "ui_font_fallbacks".to_owned(),
+                    Schema::new_ref("#/definitions/FontFallbacks".into()),
                 ),
             ]);
 
@@ -658,13 +681,5 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
-    }
-}
-
-fn get_fallbacks(families: &[String]) -> FontFallbacks {
-    if families.len() > 1 {
-        FontFallbacks(Arc::new(families[1..].to_vec()))
-    } else {
-        FontFallbacks::default()
     }
 }

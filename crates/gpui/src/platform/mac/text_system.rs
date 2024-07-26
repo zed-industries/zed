@@ -7,13 +7,11 @@ use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
-    array::CFArray,
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
     string::CFString,
 };
-use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
@@ -56,7 +54,7 @@ pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 struct FontKey {
     font_family: SharedString,
     font_features: FontFeatures,
-    font_fallbacks: FontFallbacks,
+    font_fallbacks: Option<FontFallbacks>,
 }
 
 struct MacTextSystemState {
@@ -131,7 +129,8 @@ impl PlatformTextSystem for MacTextSystem {
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features, &font.fallbacks)?;
+                let font_ids =
+                    lock.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -216,7 +215,7 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
-        fallbacks: &FontFallbacks,
+        fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"

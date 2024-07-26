@@ -32,17 +32,19 @@ use std::ptr;
 pub fn apply_features_and_fallbacks(
     font: &mut FontKitFont,
     features: &FontFeatures,
-    fallbacks: &FontFallbacks,
+    fallbacks: Option<&FontFallbacks>,
 ) -> anyhow::Result<()> {
     unsafe {
         let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
-        for user_fallback in fallbacks.fallback_list() {
-            let name = CFString::from(user_fallback.as_str());
-            let fallback_desc =
-                CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
-            CFArrayAppendValue(fallback_array, fallback_desc as _);
-            CFRelease(fallback_desc as _);
+        if let Some(fallbacks) = fallbacks {
+            for user_fallback in fallbacks.fallback_list() {
+                let name = CFString::from(user_fallback.as_str());
+                let fallback_desc =
+                    CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
+                CFArrayAppendValue(fallback_array, fallback_desc as _);
+                CFRelease(fallback_desc as _);
+            }
         }
 
         {

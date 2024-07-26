@@ -685,7 +685,7 @@ pub struct Font {
     pub features: FontFeatures,
 
     /// The fallbacks fonts to use.
-    pub fallbacks: FontFallbacks,
+    pub fallbacks: Option<FontFallbacks>,
 
     /// The font weight.
     pub weight: FontWeight,
@@ -701,7 +701,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
-        fallbacks: FontFallbacks::default(),
+        fallbacks: None,
     }
 }
 

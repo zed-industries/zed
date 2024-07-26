@@ -25,7 +25,10 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": ["Zed Plex Mono"],
+  "buffer_font_family": "Zed Plex Mono",
+  // Set the buffer text's font fallbacks, this will be merged with
+  // the platform's default fallbacks.
+  // "buffer_font_fallbacks": ["FiraCode Nerd Fonts"],
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -48,7 +51,10 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": ["Zed Plex Sans"],
+  "ui_font_family": "Zed Plex Sans",
+  // Set the UI's font fallbacks, this will be merged with the platform's
+  // default font fallbacks.
+  // "ui_font_fallbacks": ["FiraCode Nerd Fonts"],
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -136,14 +142,7 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -681,7 +680,11 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": ["Zed Plex Mono"],
+    // "font_family": "Zed Plex Mono",
+    // Set the terminal's font fallbacks. If this option is not included,
+    // the terminal will default to matching the buffer's font fallbacks.
+    // This will be merged with the platform's default font fallbacks
+    // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.

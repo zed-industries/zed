@@ -186,7 +186,7 @@ impl EditableSettingControl for UiFontFamilyControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        settings.ui_font_family = Some(vec![value.to_string()]);
+        settings.ui_font_family = Some(value.to_string());
     }
 }
 

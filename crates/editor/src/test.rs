@@ -5,9 +5,7 @@ use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
-use gpui::{
-    Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext,
-};
+use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
@@ -29,7 +27,7 @@ pub fn marked_display_snapshot(
     let font = Font {
         family: "Zed Plex Mono".into(),
         features: FontFeatures::default(),
-        fallbacks: FontFallbacks::default(),
+        fallbacks: None,
         weight: FontWeight::default(),
         style: FontStyle::default(),
     };

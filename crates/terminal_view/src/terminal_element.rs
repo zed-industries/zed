@@ -614,20 +614,24 @@ impl Element for TerminalElement {
                 let buffer_font_size = settings.buffer_font_size(cx);
 
                 let terminal_settings = TerminalSettings::get_global(cx);
+
                 let font_family = terminal_settings
                     .font_family
-                    .clone()
-                    .unwrap_or(settings.buffer_font.family);
-
-                let font_features = terminal_settings
-                    .font_features
-                    .clone()
-                    .unwrap_or(settings.buffer_font.features.clone());
+                    .as_ref()
+                    .unwrap_or(&settings.buffer_font.family)
+                    .clone();
 
                 let font_fallbacks = terminal_settings
                     .font_fallbacks
-                    .clone()
-                    .unwrap_or(settings.buffer_font.fallbacks.clone());
+                    .as_ref()
+                    .or(settings.buffer_font.fallbacks.as_ref())
+                    .map(|fallbacks| fallbacks.clone());
+
+                let font_features = terminal_settings
+                    .font_features
+                    .as_ref()
+                    .unwrap_or(&settings.buffer_font.features)
+                    .clone();
 
                 let font_weight = terminal_settings.font_weight.unwrap_or_default();
 
