@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Result};
@@ -39,7 +39,7 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: IWICImagingFactory2,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory2>,
     d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
@@ -79,6 +79,7 @@ impl DirectWriteComponent {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let bitmap_factory: IWICImagingFactory2 =
                 CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
+            let bitmap_factory = ManuallyDrop::new(bitmap_factory);
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
@@ -169,6 +170,11 @@ impl DirectWriteTextSystem {
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
         })))
+    }
+
+    pub(crate) fn destroy(&self) {
+        let mut lock = self.0.write();
+        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
     }
 }
 
@@ -918,7 +924,7 @@ struct RendererContext<'t, 'a, 'b> {
 }
 
 #[allow(non_snake_case)]
-impl IDWritePixelSnapping_Impl for TextRenderer {
+impl IDWritePixelSnapping_Impl for TextRenderer_Impl {
     fn IsPixelSnappingDisabled(
         &self,
         _clientdrawingcontext: *const ::core::ffi::c_void,
@@ -953,7 +959,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
 }
 
 #[allow(non_snake_case)]
-impl IDWriteTextRenderer_Impl for TextRenderer {
+impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,

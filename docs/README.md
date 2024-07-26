@@ -18,5 +18,5 @@ Putting binary assets such as images in the Git repository will bloat the reposi
 
 ## Internal notes:
 
-- We have a Cloudflare router called `docs-proxy`that intercepts requests to `zed.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
+- We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
 - CI uploads a new version to the Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.

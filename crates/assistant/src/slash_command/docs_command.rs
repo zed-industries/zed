@@ -1,14 +1,16 @@
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use gpui::{AppContext, Model, Task, WeakView};
+use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
-    IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName, ProviderId, RustdocIndexer,
+    DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
+    ProviderId,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -22,7 +24,7 @@ impl DocsSlashCommand {
     pub const NAME: &'static str = "docs";
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
-        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
         let path = ProjectPath {
@@ -34,22 +36,22 @@ impl DocsSlashCommand {
         ))
     }
 
-    /// Ensures that the rustdoc provider is registered.
+    /// Ensures that the indexed doc providers for Rust are registered.
     ///
     /// Ideally we would do this sooner, but we need to wait until we're able to
     /// access the workspace so we can read the project.
-    fn ensure_rustdoc_provider_is_registered(
+    fn ensure_rust_doc_providers_are_registered(
         &self,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) {
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         if indexed_docs_registry
-            .get_provider_store(ProviderId::rustdoc())
+            .get_provider_store(LocalRustdocProvider::id())
             .is_none()
         {
             let index_provider_deps = maybe!({
-                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+                let workspace = workspace.clone().ok_or_else(|| anyhow!("no workspace"))?;
                 let workspace = workspace
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace was dropped"))?;
@@ -63,11 +65,80 @@ impl DocsSlashCommand {
             });
 
             if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                indexed_docs_registry.register_provider(Box::new(RustdocIndexer::new(Box::new(
-                    LocalProvider::new(fs, cargo_workspace_root),
-                ))));
+                indexed_docs_registry.register_provider(Box::new(LocalRustdocProvider::new(
+                    fs,
+                    cargo_workspace_root,
+                )));
             }
         }
+
+        if indexed_docs_registry
+            .get_provider_store(DocsDotRsProvider::id())
+            .is_none()
+        {
+            let http_client = maybe!({
+                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                let project = workspace.read(cx).project().clone();
+                anyhow::Ok(project.read(cx).client().http_client().clone())
+            });
+
+            if let Some(http_client) = http_client.log_err() {
+                indexed_docs_registry
+                    .register_provider(Box::new(DocsDotRsProvider::new(http_client)));
+            }
+        }
+    }
+
+    /// Runs just-in-time indexing for a given package, in case the slash command
+    /// is run without any entries existing in the index.
+    fn run_just_in_time_indexing(
+        store: Arc<IndexedDocsStore>,
+        key: String,
+        package: PackageName,
+        executor: BackgroundExecutor,
+    ) -> Task<()> {
+        executor.clone().spawn(async move {
+            let (prefix, needs_full_index) = if let Some((prefix, _)) = key.split_once('*') {
+                // If we have a wildcard in the search, we want to wait until
+                // we've completely finished indexing so we get a full set of
+                // results for the wildcard.
+                (prefix.to_string(), true)
+            } else {
+                (key, false)
+            };
+
+            // If we already have some entries, we assume that we've indexed the package before
+            // and don't need to do it again.
+            let has_any_entries = store
+                .any_with_prefix(prefix.clone())
+                .await
+                .unwrap_or_default();
+            if has_any_entries {
+                return ();
+            };
+
+            let index_task = store.clone().index(package.clone());
+
+            if needs_full_index {
+                _ = index_task.await;
+            } else {
+                loop {
+                    executor.timer(Duration::from_millis(200)).await;
+
+                    if store
+                        .any_with_prefix(prefix.clone())
+                        .await
+                        .unwrap_or_default()
+                        || !store.is_indexing(&package)
+                    {
+                        break;
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -95,7 +166,7 @@ impl SlashCommand for DocsSlashCommand {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        self.ensure_rustdoc_provider_is_registered(workspace, cx);
+        self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         let args = DocsSlashCommandArgs::parse(&query);
@@ -148,7 +219,7 @@ impl SlashCommand for DocsSlashCommand {
                     if index {
                         // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
                         // until it completes.
-                        let _ = store.clone().index(package.as_str().into());
+                        drop(store.clone().index(package.as_str().into()));
                     }
 
                     let items = store.search(package).await;
@@ -179,46 +250,72 @@ impl SlashCommand for DocsSlashCommand {
         };
 
         let args = DocsSlashCommandArgs::parse(argument);
-        let text = cx.background_executor().spawn({
+        let executor = cx.background_executor().clone();
+        let task = cx.background_executor().spawn({
             let store = args
                 .provider()
                 .ok_or_else(|| anyhow!("no docs provider specified"))
                 .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
-                match args {
+                let (provider, key) = match args.clone() {
                     DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
                     DocsSlashCommandArgs::SearchPackageDocs {
                         provider, package, ..
-                    } => {
-                        let store = store?;
-                        let item_docs = store.load(package.clone()).await?;
-
-                        anyhow::Ok((provider, package, item_docs.to_string()))
-                    }
+                    } => (provider, package),
                     DocsSlashCommandArgs::SearchItemDocs {
                         provider,
                         item_path,
                         ..
-                    } => {
-                        let store = store?;
-                        let item_docs = store.load(item_path.clone()).await?;
+                    } => (provider, item_path),
+                };
 
-                        anyhow::Ok((provider, item_path, item_docs.to_string()))
-                    }
+                let store = store?;
+
+                if let Some(package) = args.package() {
+                    Self::run_just_in_time_indexing(store.clone(), key.clone(), package, executor)
+                        .await;
                 }
+
+                let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
+                    let docs = store.load_many_by_prefix(prefix.to_string()).await?;
+
+                    let mut text = String::new();
+                    let mut ranges = Vec::new();
+
+                    for (key, docs) in docs {
+                        let prev_len = text.len();
+
+                        text.push_str(&docs.0);
+                        text.push_str("\n");
+                        ranges.push((key, prev_len..text.len()));
+                        text.push_str("\n");
+                    }
+
+                    (text, ranges)
+                } else {
+                    let item_docs = store.load(key.clone()).await?;
+                    let text = item_docs.to_string();
+                    let range = 0..text.len();
+
+                    (text, vec![(key, range)])
+                };
+
+                anyhow::Ok((provider, text, ranges))
             }
         });
 
         cx.foreground_executor().spawn(async move {
-            let (provider, path, text) = text.await?;
-            let range = 0..text.len();
+            let (provider, text, ranges) = task.await?;
             Ok(SlashCommandOutput {
                 text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
-                    icon: IconName::FileDoc,
-                    label: format!("docs ({provider}): {path}",).into(),
-                }],
+                sections: ranges
+                    .into_iter()
+                    .map(|(key, range)| SlashCommandOutputSection {
+                        range,
+                        icon: IconName::FileDoc,
+                        label: format!("docs ({provider}): {key}",).into(),
+                    })
+                    .collect(),
                 run_commands_in_text: false,
             })
         })
@@ -229,7 +326,7 @@ fn is_item_path_delimiter(char: char) -> bool {
     !char.is_alphanumeric() && char != '-' && char != '_'
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum DocsSlashCommandArgs {
     NoProvider,
     SearchPackageDocs {

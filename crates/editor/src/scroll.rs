@@ -476,7 +476,10 @@ impl Editor {
         }
 
         let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + point(0., amount.lines(self));
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let new_pos = cur_position + point(0., amount.lines(visible_line_count));
         self.set_scroll_position(new_pos, cx);
     }
 

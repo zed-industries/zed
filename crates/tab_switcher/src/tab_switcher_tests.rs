@@ -273,7 +273,7 @@ async fn open_buffer(
 ) -> Box<dyn ItemHandle> {
     let project = workspace.update(cx, |workspace, _| workspace.project().clone());
     let worktree_id = project.update(cx, |project, cx| {
-        let worktree = project.worktrees().last().expect("worktree not found");
+        let worktree = project.worktrees(cx).last().expect("worktree not found");
         worktree.read(cx).id()
     });
     let project_path = ProjectPath {

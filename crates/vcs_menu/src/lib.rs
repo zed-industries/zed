@@ -273,6 +273,7 @@ impl PickerDelegate for BranchListDelegate {
         let label = if self.last_query.is_empty() {
             Label::new("Recent Branches")
                 .size(LabelSize::Small)
+                .mt_1()
                 .ml_3()
                 .into_any_element()
         } else {

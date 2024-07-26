@@ -18,7 +18,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -37,7 +37,7 @@ jobs:
     needs: style
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -71,7 +71,7 @@ jobs:
         run: doctl registry login
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 

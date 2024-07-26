@@ -1,6 +1,5 @@
 use std::fs;
-use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, serde_json, settings::LspSettings, LanguageServerId, Result};
 
 struct ZigExtension {
     cached_binary_path: Option<String>,
@@ -9,6 +8,7 @@ struct ZigExtension {
 #[derive(Clone)]
 struct ZlsBinary {
     path: String,
+    args: Option<Vec<String>>,
     environment: Option<Vec<(String, String)>>,
 }
 
@@ -18,11 +18,32 @@ impl ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
+        let mut args: Option<Vec<String>> = None;
+
+        let (platform, arch) = zed::current_platform();
+        let environment = match platform {
+            zed::Os::Mac | zed::Os::Linux => Some(worktree.shell_env()),
+            zed::Os::Windows => None,
+        };
+
+        if let Ok(lsp_settings) = LspSettings::for_worktree("zls", worktree) {
+            if let Some(binary) = lsp_settings.binary {
+                args = binary.arguments;
+                if let Some(path) = binary.path {
+                    return Ok(ZlsBinary {
+                        path: path.clone(),
+                        args,
+                        environment,
+                    });
+                }
+            }
+        }
+
         if let Some(path) = worktree.which("zls") {
-            let environment = worktree.shell_env();
             return Ok(ZlsBinary {
                 path,
-                environment: Some(environment),
+                args,
+                environment,
             });
         }
 
@@ -30,7 +51,8 @@ impl ZigExtension {
             if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
                 return Ok(ZlsBinary {
                     path: path.clone(),
-                    environment: None,
+                    args,
+                    environment,
                 });
             }
         }
@@ -39,13 +61,22 @@ impl ZigExtension {
             &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
+        // TODO: Once we're ready to release v0.0.7 of the Zed extension API we want to pin
+        // ZLS to a specific version with `zed::github_release_by_tag_name`.
         // We're pinning ZLS to a release that has `.tar.gz` assets, since the latest release does not have
         // them, at time of writing.
         //
         // ZLS tracking issue: https://github.com/zigtools/zls/issues/1879
-        let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
+        // let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
 
-        let (platform, arch) = zed::current_platform();
+        let release = zed::latest_github_release(
+            "zigtools/zls",
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
+
         let asset_name = format!(
             "zls-{arch}-{os}.{extension}",
             arch = match arch {
@@ -71,7 +102,10 @@ impl ZigExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("zls-{}", release.version);
-        let binary_path = format!("{version_dir}/bin/zls");
+        let binary_path = match platform {
+            zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/bin/zls"),
+            zed::Os::Windows => format!("{version_dir}/zls.exe"),
+        };
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
@@ -104,7 +138,8 @@ impl ZigExtension {
         self.cached_binary_path = Some(binary_path.clone());
         Ok(ZlsBinary {
             path: binary_path,
-            environment: None,
+            args,
+            environment,
         })
     }
 }
@@ -124,9 +159,21 @@ impl zed::Extension for ZigExtension {
         let zls_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
             command: zls_binary.path,
-            args: vec![],
+            args: zls_binary.args.unwrap_or_default(),
             env: zls_binary.environment.unwrap_or_default(),
         })
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("zls", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 }
 

@@ -25,7 +25,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -545,6 +545,7 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
@@ -1017,6 +1018,10 @@ impl PlatformWindow for WaylandWindow {
         let client = state.client.clone();
         drop(state);
         client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.borrow().renderer.gpu_specs().into()
     }
 }
 

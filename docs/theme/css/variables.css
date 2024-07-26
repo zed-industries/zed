@@ -35,9 +35,11 @@
   --theme-hover: #e6e6e6;
 
   --quote-bg: hsl(197, 37%, 96%);
-  --quote-border: hsl(197, 37%, 91%);
+  --quote-border: hsl(197, 37%, 88%);
 
-  --warning-border: #ff8e00;
+  --warning-border: hsl(25, 100%, 85%);
+  --warning-bg: hsl(42, 100%, 60%, 0.1);
+  --warning-icon: hsl(42, 100%, 30%);
 
   --table-border-color: hsl(219, 93%, 42%, 0.15);
   --table-header-bg: hsl(0, 0%, 80%);

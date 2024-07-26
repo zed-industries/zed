@@ -4,9 +4,6 @@
 mod app_menu;
 mod keystroke;
 
-#[cfg(not(target_os = "macos"))]
-mod cosmic_text;
-
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -24,8 +21,8 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
-    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
@@ -51,8 +48,6 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keystroke::*;
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
@@ -60,16 +55,20 @@ pub(crate) use mac::*;
 pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
-use time::UtcOffset;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new())
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless))
 }
+
 #[cfg(target_os = "linux")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    if headless {
+        return Rc::new(HeadlessClient::new());
+    }
+
     match guess_compositor() {
         "Wayland" => Rc::new(WaylandClient::new()),
         "X11" => Rc::new(X11Client::new()),
@@ -83,6 +82,9 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn guess_compositor() -> &'static str {
+    if std::env::var_os("ZED_HEADLESS").is_some() {
+        return "Headless";
+    }
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
     let x11_display = std::env::var_os("DISPLAY");
 
@@ -98,9 +100,8 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
 }
 
@@ -137,8 +138,8 @@ pub(crate) trait Platform: 'static {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn reveal_path(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
@@ -159,7 +160,6 @@ pub(crate) trait Platform: 'static {
         ""
     }
     fn app_path(&self) -> Result<PathBuf>;
-    fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
@@ -363,6 +363,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         }
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    fn gpu_specs(&self) -> Option<GPUSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
 

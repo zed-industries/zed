@@ -291,6 +291,10 @@ pub trait BorrowAppContext {
     fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: Global;
+    /// Updates the global state of the given type, creating a default if it didn't exist before.
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global + Default;
 }
 
 impl<C> BorrowAppContext for C
@@ -310,6 +314,14 @@ where
         self.borrow_mut().end_global_lease(global);
         result
     }
+
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global + Default,
+    {
+        self.borrow_mut().default_global::<G>();
+        self.update_global(f)
+    }
 }
 
 /// A flatten equivalent for anyhow `Result`s.
@@ -328,4 +340,17 @@ impl<T> Flatten<T> for Result<T> {
     fn flatten(self) -> Result<T> {
         self
     }
+}
+
+#[derive(Default, Debug)]
+/// Information about the GPU GPUI is running on
+pub struct GPUSpecs {
+    /// true if the GPU is really a fake (like llvmpipe) running on the CPU
+    pub is_software_emulated: bool,
+    /// Name of the device as reported by vulkan
+    pub device_name: String,
+    /// Name of the driver as reported by vulkan
+    pub driver_name: String,
+    /// Further driver info as reported by vulkan
+    pub driver_info: String,
 }

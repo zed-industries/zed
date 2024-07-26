@@ -213,22 +213,8 @@ fn show_hover(
     };
 
     if !ignore_timeout {
-        if editor
-            .hover_state
-            .info_popovers
-            .iter()
-            .any(|InfoPopover { symbol_range, .. }| {
-                symbol_range
-                    .as_text_range()
-                    .map(|range| {
-                        let hover_range = range.to_offset(&snapshot.buffer_snapshot);
-                        let offset = anchor.to_offset(&snapshot.buffer_snapshot);
-                        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                        // use an inclusive range here to check if we should dismiss the popover
-                        (hover_range.start..=hover_range.end).contains(&offset)
-                    })
-                    .unwrap_or(false)
-            })
+        if same_info_hover(editor, &snapshot, anchor)
+            || same_diagnostic_hover(editor, &snapshot, anchor)
         {
             // Hover triggered from same location as last time. Don't show again.
             return;
@@ -373,6 +359,43 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+}
+
+fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .info_popovers
+        .iter()
+        .any(|InfoPopover { symbol_range, .. }| {
+            symbol_range
+                .as_text_range()
+                .map(|range| {
+                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                    let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
+                    (hover_range.start..=hover_range.end).contains(&offset)
+                })
+                .unwrap_or(false)
+        })
+}
+
+fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .diagnostic_popover
+        .as_ref()
+        .map(|diagnostic| {
+            let hover_range = diagnostic
+                .local_diagnostic
+                .range
+                .to_offset(&snapshot.buffer_snapshot);
+            let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+
+            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
+            (hover_range.start..=hover_range.end).contains(&offset)
+        })
+        .unwrap_or(false)
 }
 
 async fn parse_blocks(
@@ -522,7 +545,7 @@ impl HoverState {
     pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            for markdown_view in &info_popover.parsed_content {
+            if let Some(markdown_view) = &info_popover.parsed_content {
                 if markdown_view.focus_handle(cx).is_focused(cx) {
                     hover_popover_is_focused = true;
                 }
@@ -636,8 +659,6 @@ impl DiagnosticPopover {
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .max_w(max_size.width)
-            .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
             .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             // Prevent a mouse move on the popover from being propagated to the editor,
@@ -651,6 +672,8 @@ impl DiagnosticPopover {
                 div()
                     .id("diagnostic-inner")
                     .overflow_y_scroll()
+                    .max_w(max_size.width)
+                    .max_h(max_size.height)
                     .px_2()
                     .py_1()
                     .bg(diagnostic_colors.background)

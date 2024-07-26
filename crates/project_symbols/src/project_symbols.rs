@@ -131,7 +131,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.active_pane().clone()
                     };
 
-                    let editor = workspace.open_project_item::<Editor>(pane, buffer, cx);
+                    let editor =
+                        workspace.open_project_item::<Editor>(pane, buffer, true, true, cx);
 
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::center()), cx, |s| {

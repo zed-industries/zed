@@ -3,7 +3,7 @@ pub mod terminal_element;
 pub mod terminal_panel;
 
 use collections::HashSet;
-use editor::{scroll::Autoscroll, Editor};
+use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
@@ -29,12 +29,12 @@ use terminal_element::{is_blank, TerminalElement};
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
-    register_deserializable_item,
+    register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, OpenVisible, Pane, ToolbarItemLocation, Workspace,
-    WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
+    Workspace, WorkspaceId,
 };
 
 use anyhow::Context;
@@ -47,6 +47,7 @@ use std::{
     cmp,
     ops::RangeInclusive,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -73,7 +74,7 @@ pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
     terminal::init(cx);
 
-    register_deserializable_item::<TerminalView>(cx);
+    register_serializable_item::<TerminalView>(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(TerminalView::deploy);
@@ -106,7 +107,7 @@ pub struct TerminalView {
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
     show_title: bool,
-    block_below_cursor: Option<Arc<BlockProperties>>,
+    block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
@@ -150,7 +151,7 @@ impl TerminalView {
                     cx,
                 )
             });
-            workspace.add_item_to_active_pane(Box::new(view), None, cx)
+            workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
         }
     }
 
@@ -214,7 +215,13 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         let context_menu = ContextMenu::build(cx, |menu, _| {
-            menu.action("Clear", Box::new(Clear))
+            menu.action("New Terminal", Box::new(NewTerminal))
+                .separator()
+                .action("Copy", Box::new(Copy))
+                .action("Paste", Box::new(Paste))
+                .action("Select All", Box::new(SelectAll))
+                .action("Clear", Box::new(Clear))
+                .separator()
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
 
@@ -258,7 +265,7 @@ impl TerminalView {
         }
     }
 
-    fn select_all(&mut self, _: &editor::actions::SelectAll, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
     }
@@ -453,7 +460,7 @@ impl TerminalView {
     }
 
     pub fn set_block_below_cursor(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
-        self.block_below_cursor = Some(Arc::new(block));
+        self.block_below_cursor = Some(Rc::new(block));
         self.scroll_to_bottom(&ScrollToBottom, cx);
         cx.notify();
     }
@@ -612,22 +619,6 @@ fn subscribe_for_terminal_events(
 
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
-                let terminal = this.terminal().read(cx);
-                if terminal.task().is_none() {
-                    if let Some(cwd) = terminal.get_cwd() {
-                        let item_id = cx.entity_id();
-                        if let Some(workspace_id) = this.workspace_id {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    TERMINAL_DB
-                                        .save_working_directory(item_id.as_u64(), workspace_id, cwd)
-                                        .await
-                                        .log_err();
-                                })
-                                .detach();
-                        }
-                    }
-                }
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
@@ -963,13 +954,13 @@ impl Item for TerminalView {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
 
-        let (icon, icon_color, rerun_btn) = match terminal.task() {
+        let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
                     let task_id = terminal_task.id.clone();
-                    let rerun_btn = IconButton::new("rerun-icon", IconName::Rerun)
+                    let rerun_button = IconButton::new("rerun-icon", IconName::Rerun)
                         .icon_size(IconSize::Small)
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Default)
@@ -983,9 +974,9 @@ impl Item for TerminalView {
                         });
 
                     if *success {
-                        (IconName::Check, Color::Success, Some(rerun_btn))
+                        (IconName::Check, Color::Success, Some(rerun_button))
                     } else {
-                        (IconName::XCircle, Color::Error, Some(rerun_btn))
+                        (IconName::XCircle, Color::Error, Some(rerun_button))
                     }
                 }
             },
@@ -1000,25 +991,21 @@ impl Item for TerminalView {
                     .group("term-tab-icon")
                     .child(
                         div()
-                            .when(rerun_btn.is_some(), |this| {
+                            .when(rerun_button.is_some(), |this| {
                                 this.hover(|style| style.invisible().w_0())
                             })
                             .child(Icon::new(icon).color(icon_color)),
                     )
-                    .when_some(rerun_btn, |this, rerun_btn| {
+                    .when_some(rerun_button, |this, rerun_button| {
                         this.child(
                             div()
                                 .absolute()
                                 .visible_on_hover("term-tab-icon")
-                                .child(rerun_btn),
+                                .child(rerun_button),
                         )
                     }),
             )
-            .child(Label::new(title).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
+            .child(Label::new(title).color(params.text_color()))
             .into_any()
     }
 
@@ -1076,8 +1063,60 @@ impl Item for TerminalView {
         }])
     }
 
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("Terminal")
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        if self.terminal().read(cx).task().is_none() {
+            if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
+                cx.background_executor()
+                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
+                    .detach();
+            }
+            self.workspace_id = workspace.database_id();
+        }
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        f(*event)
+    }
+}
+
+impl SerializableItem for TerminalView {
+    fn serialized_item_kind() -> &'static str {
+        "Terminal"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<gpui::Result<()>> {
+        cx.spawn(|_| TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items))
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let terminal = self.terminal().read(cx);
+        if terminal.task().is_some() {
+            return None;
+        }
+
+        if let Some((cwd, workspace_id)) = terminal.get_cwd().zip(self.workspace_id) {
+            Some(cx.background_executor().spawn(async move {
+                TERMINAL_DB
+                    .save_working_directory(item_id, workspace_id, cwd)
+                    .await
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(event, ItemEvent::UpdateTab)
     }
 
     fn deserialize(
@@ -1119,21 +1158,6 @@ impl Item for TerminalView {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })
-    }
-
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if self.terminal().read(cx).task().is_none() {
-            if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
-                cx.background_executor()
-                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
-                    .detach();
-            }
-            self.workspace_id = workspace.database_id();
-        }
-    }
-
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
-        f(*event)
     }
 }
 
@@ -1469,7 +1493,7 @@ mod tests {
     ) -> (Model<Worktree>, Entry) {
         let (wt, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(path, true, cx)
+                project.find_or_create_worktree(path, true, cx)
             })
             .await
             .unwrap();

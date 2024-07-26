@@ -323,14 +323,14 @@ impl Interactivity {
     pub fn on_boxed_action(
         &mut self,
         action: &dyn Action,
-        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut WindowContext) + 'static,
     ) {
         let action = action.boxed_clone();
         self.action_listeners.push((
             (*action).type_id(),
             Box::new(move |_, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener)(&action, cx)
+                    (listener)(&*action, cx)
                 }
             }),
         ));
@@ -757,7 +757,7 @@ pub trait InteractiveElement: Sized {
     fn on_boxed_action(
         mut self,
         action: &dyn Action,
-        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
         self
@@ -1359,6 +1359,9 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut WindowContext) -> R,
     ) -> R {
         self.content_size = content_size;
+        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+            cx.set_focus_handle(&focus_handle);
+        }
         cx.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, cx| {
@@ -1866,6 +1869,11 @@ impl Interactivity {
                 });
             }
 
+            // Ensure to remove active tooltip if tooltip builder is none
+            if self.tooltip_builder.is_none() {
+                element_state.active_tooltip.take();
+            }
+
             if let Some(tooltip_builder) = self.tooltip_builder.take() {
                 let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let active_tooltip = element_state
@@ -1997,9 +2005,6 @@ impl Interactivity {
         let action_listeners = mem::take(&mut self.action_listeners);
         if let Some(context) = self.key_context.clone() {
             cx.set_key_context(context);
-        }
-        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(focus_handle);
         }
 
         for listener in key_down_listeners {

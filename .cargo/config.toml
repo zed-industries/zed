@@ -12,3 +12,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 [target.aarch64-unknown-linux-gnu]
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# This cfg will reduce the size of `windows::core::Error` from 16 bytes to 4 bytes
+[target.'cfg(target_os = "windows")']
+rustflags = ["--cfg", "windows_slim_errors"]

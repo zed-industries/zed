@@ -7,22 +7,25 @@ pub mod user;
 use anyhow::{anyhow, Context as _, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
+    client::IntoClientRequest,
     error::Error as WebsocketError,
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
+use proto::ProtoClient;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -231,7 +234,9 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    Http(#[from] http_client::Error),
+    #[error("{0}")]
+    InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -1157,19 +1162,24 @@ impl Client {
             .ok()
             .unwrap_or_default();
 
-        let request = Request::builder()
-            .header("Authorization", credentials.authorization_header())
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION)
-            .header("x-zed-app-version", app_version)
-            .header(
-                "x-zed-release-channel",
-                release_channel.map(|r| r.dev_name()).unwrap_or("unknown"),
-            );
-
         let http = self.http.clone();
+        let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
+            use HttpOrHttps::*;
+
+            #[derive(Debug)]
+            enum HttpOrHttps {
+                Http,
+                Https,
+            }
+
             let mut rpc_url = rpc_url.await?;
+            let url_scheme = match rpc_url.scheme() {
+                "https" => Https,
+                "http" => Http,
+                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
+            };
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
@@ -1178,10 +1188,37 @@ impl Client {
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
-            match rpc_url.scheme() {
-                "https" => {
-                    rpc_url.set_scheme("wss").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+            rpc_url
+                .set_scheme(match url_scheme {
+                    Https => "wss",
+                    Http => "ws",
+                })
+                .unwrap();
+
+            // We call `into_client_request` to let `tungstenite` construct the WebSocket request
+            // for us from the RPC URL.
+            //
+            // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
+            let mut request = rpc_url.into_client_request()?;
+
+            // We then modify the request to add our desired headers.
+            let request_headers = request.headers_mut();
+            request_headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&credentials.authorization_header())?,
+            );
+            request_headers.insert(
+                "x-zed-protocol-version",
+                HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
+            );
+            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
+            request_headers.insert(
+                "x-zed-release-channel",
+                HeaderValue::from_str(&release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+            );
+
+            match url_scheme {
+                Https => {
                     let (stream, _) =
                         async_tungstenite::async_std::client_async_tls(request, stream).await?;
                     Ok(Connection::new(
@@ -1190,9 +1227,7 @@ impl Client {
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                "http" => {
-                    rpc_url.set_scheme("ws").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+                Http => {
                     let (stream, _) = async_tungstenite::client_async(request, stream).await?;
                     Ok(Connection::new(
                         stream
@@ -1200,7 +1235,6 @@ impl Client {
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             }
         })
     }
@@ -1349,7 +1383,7 @@ impl Client {
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
-        let request = Request::get(url.as_str())
+        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
 
@@ -1406,6 +1440,11 @@ impl Client {
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
         log::debug!("rpc send. client_id:{}, name:{}", self.id(), T::NAME);
         self.peer.send(self.connection_id()?, message)
+    }
+
+    pub fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
     }
 
     pub fn request<T: RequestMessage>(
@@ -1606,6 +1645,20 @@ impl Client {
     }
 }
 
+impl ProtoClient for Client {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+        self.send_dynamic(envelope)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct DevelopmentCredentials {
     user_id: u64,
@@ -1762,7 +1815,7 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;

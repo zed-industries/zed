@@ -1096,6 +1096,10 @@ impl PlatformWindow for MacWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
+
+    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+        None
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {

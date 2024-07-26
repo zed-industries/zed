@@ -16,7 +16,7 @@ jobs:
           fi
           echo "::set-output name=URL::$URL"
       - name: Get content
-        uses: 2428392/gh-truncate-string-action@v1.3.0
+        uses: 2428392/gh-truncate-string-action@67b1b814955634208b103cff064be3cb1c7a19be # v1.3.0
         id: get-content
         with:
           stringToTruncate: |
@@ -26,7 +26,7 @@ jobs:
           maxLength: 2000
           truncationSymbol: "..."
       - name: Discord Webhook Action
-        uses: tsickert/discord-webhook@v5.3.0
+        uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           content: ${{ steps.get-content.outputs.string }}

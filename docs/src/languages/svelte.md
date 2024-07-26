@@ -22,7 +22,7 @@ Zed sets the following initialization options for inlay Hints:
   "propertyDeclarationTypes": {
     "enabled": true
   },
-  "functionLikeReturnType": {
+  "functionLikeReturnTypes": {
     "enabled": true
   },
   "enumMemberValues": {

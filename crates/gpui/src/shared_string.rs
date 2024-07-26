@@ -10,7 +10,7 @@ pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {
     fn default() -> Self {
-        Self(ArcCow::Owned("".into()))
+        Self(ArcCow::Owned(Arc::default()))
     }
 }
 

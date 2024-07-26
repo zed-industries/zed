@@ -117,6 +117,21 @@ impl RenderOnce for Tab {
             ),
         };
 
+        let (start_slot, end_slot) = {
+            let start_slot = h_flex().size_3().justify_center().children(self.start_slot);
+
+            let end_slot = h_flex()
+                .size_3()
+                .justify_center()
+                .visible_on_hover("")
+                .children(self.end_slot);
+
+            match self.close_side {
+                TabCloseSide::End => (start_slot, end_slot),
+                TabCloseSide::Start => (end_slot, start_slot),
+            }
+        };
+
         self.div
             .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
             .bg(tab_bg)
@@ -146,35 +161,12 @@ impl RenderOnce for Tab {
                     .group("")
                     .relative()
                     .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
-                    .px(crate::custom_spacing(cx, 20.))
+                    .px(crate::custom_spacing(cx, 4.))
                     .gap(Spacing::Small.rems(cx))
                     .text_color(text_color)
-                    // .hover(|style| style.bg(tab_hover_bg))
-                    // .active(|style| style.bg(tab_active_bg))
-                    .child(
-                        h_flex()
-                            .size_3()
-                            .justify_center()
-                            .absolute()
-                            .map(|this| match self.close_side {
-                                TabCloseSide::Start => this.right(Spacing::Small.rems(cx)),
-                                TabCloseSide::End => this.left(Spacing::Small.rems(cx)),
-                            })
-                            .children(self.start_slot),
-                    )
-                    .child(
-                        h_flex()
-                            .size_3()
-                            .justify_center()
-                            .absolute()
-                            .map(|this| match self.close_side {
-                                TabCloseSide::Start => this.left(Spacing::Small.rems(cx)),
-                                TabCloseSide::End => this.right(Spacing::Small.rems(cx)),
-                            })
-                            .visible_on_hover("")
-                            .children(self.end_slot),
-                    )
-                    .children(self.children),
+                    .child(start_slot)
+                    .children(self.children)
+                    .child(end_slot),
             )
     }
 }

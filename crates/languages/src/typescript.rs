@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http::github::{build_tarball_url, GitHubLspBinaryVersion};
+use http_client::github::{build_tarball_url, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -310,6 +310,13 @@ impl EsLintLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::new("source.fixAll.eslint"),
+        ])
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,

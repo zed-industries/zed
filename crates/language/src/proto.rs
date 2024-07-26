@@ -5,7 +5,8 @@ use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
-use std::{ops::Range, sync::Arc};
+use serde_json::Value;
+use std::{ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
 pub use proto::{BufferState, Operation};
@@ -213,6 +214,7 @@ pub fn serialize_diagnostics<'a>(
             code: entry.diagnostic.code.clone(),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
+            data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
         })
         .collect()
 }
@@ -396,6 +398,11 @@ pub fn deserialize_diagnostics(
     diagnostics
         .into_iter()
         .filter_map(|diagnostic| {
+            let data = if let Some(data) = diagnostic.data {
+                Some(Value::from_str(&data).ok()?)
+            } else {
+                None
+            };
             Some(DiagnosticEntry {
                 range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 diagnostic: Diagnostic {
@@ -413,6 +420,7 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
+                    data,
                 },
             })
         })

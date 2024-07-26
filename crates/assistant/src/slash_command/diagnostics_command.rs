@@ -33,7 +33,7 @@ impl DiagnosticsSlashCommand {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = "".into();
+            let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
@@ -284,7 +284,7 @@ fn collect_diagnostics(
         PathBuf::try_from(path)
             .ok()
             .and_then(|path| {
-                project.read(cx).worktrees().find_map(|worktree| {
+                project.read(cx).worktrees(cx).find_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let worktree_root_path = Path::new(worktree.root_name());
                     let relative_path = path.strip_prefix(worktree_root_path).ok()?;

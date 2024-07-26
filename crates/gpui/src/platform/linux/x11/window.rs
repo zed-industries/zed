@@ -2,9 +2,9 @@ use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
     X11ClientStatePtr,
 };
@@ -1391,5 +1391,9 @@ impl PlatformWindow for X11Window {
         let client = state.client.clone();
         drop(state);
         client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.0.state.borrow().renderer.gpu_specs().into()
     }
 }
