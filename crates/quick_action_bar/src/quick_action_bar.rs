@@ -24,14 +24,15 @@ mod repl_menu;
 mod toggle_markdown_preview;
 
 pub struct QuickActionBar {
-    buffer_search_bar: View<BufferSearchBar>,
-    repl_menu: Option<View<ContextMenu>>,
-    toggle_settings_menu: Option<View<ContextMenu>>,
-    toggle_selections_menu: Option<View<ContextMenu>>,
-    active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
-    workspace: WeakView<Workspace>,
+    active_item: Option<Box<dyn ItemHandle>>,
+    buffer_search_bar: View<BufferSearchBar>,
+    platform_style: PlatformStyle,
+    repl_menu: Option<View<ContextMenu>>,
     show: bool,
+    toggle_selections_menu: Option<View<ContextMenu>>,
+    toggle_settings_menu: Option<View<ContextMenu>>,
+    workspace: WeakView<Workspace>,
 }
 
 impl QuickActionBar {
@@ -41,14 +42,15 @@ impl QuickActionBar {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
-            buffer_search_bar,
-            toggle_settings_menu: None,
-            toggle_selections_menu: None,
-            repl_menu: None,
-            active_item: None,
             _inlay_hints_enabled_subscription: None,
-            workspace: workspace.weak_handle(),
+            active_item: None,
+            buffer_search_bar,
+            platform_style: PlatformStyle::platform(),
+            repl_menu: None,
             show: true,
+            toggle_selections_menu: None,
+            toggle_settings_menu: None,
+            workspace: workspace.weak_handle(),
         };
         this.apply_settings(cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))

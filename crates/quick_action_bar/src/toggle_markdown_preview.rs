@@ -27,6 +27,11 @@ impl QuickActionBar {
             return None;
         }
 
+        let tooltip_meta = match self.platform_style {
+            PlatformStyle::Mac => "Option+Click to open in a split",
+            _ => "Alt+Click to open in a split",
+        };
+
         let button = IconButton::new("toggle-markdown-preview", IconName::Eye)
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -35,7 +40,7 @@ impl QuickActionBar {
                 Tooltip::with_meta(
                     "Preview Markdown",
                     Some(&markdown_preview::OpenPreview),
-                    "Option+Click to open in a split",
+                    tooltip_meta,
                     cx,
                 )
             })
