@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Result};
@@ -18,7 +18,10 @@ use windows::{
             Gdi::LOGFONTW,
             Imaging::{D2D::IWICImagingFactory2, *},
         },
-        System::{Com::*, SystemServices::LOCALE_NAME_MAX_LENGTH},
+        System::{
+            Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+            SystemServices::LOCALE_NAME_MAX_LENGTH,
+        },
         UI::WindowsAndMessaging::*,
     },
 };
@@ -39,7 +42,7 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: ManuallyDrop<IWICImagingFactory2>,
+    bitmap_factory: AgileReference<IWICImagingFactory2>,
     d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
@@ -74,12 +77,15 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
+    // pub fn new(bitmap_factory: &IWICImagingFactory2) -> Result<Self> {
     pub fn new() -> Result<Self> {
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory: IWICImagingFactory2 =
-                CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
-            let bitmap_factory = ManuallyDrop::new(bitmap_factory);
+            let bitmap_factory: IWICImagingFactory2 = unsafe {
+                CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)
+                    .expect("Error creating bitmap factory.")
+            };
+            let bitmap_factory = AgileReference::new(&bitmap_factory).unwrap();
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
@@ -172,10 +178,10 @@ impl DirectWriteTextSystem {
         })))
     }
 
-    pub(crate) fn destroy(&self) {
-        let mut lock = self.0.write();
-        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
-    }
+    // pub(crate) fn destroy(&self) {
+    //     let mut lock = self.0.write();
+    //     unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
+    // }
 }
 
 impl PlatformTextSystem for DirectWriteTextSystem {
@@ -702,8 +708,9 @@ impl DirectWriteState {
             bitmap_dpi = 192.0;
         }
 
+        let bitmap_factory = self.components.bitmap_factory.resolve()?;
         unsafe {
-            let bitmap = self.components.bitmap_factory.CreateBitmap(
+            let bitmap = bitmap_factory.CreateBitmap(
                 bitmap_width,
                 bitmap_height,
                 bitmap_format,
@@ -805,7 +812,7 @@ impl DirectWriteState {
                     pixel[2] = (pixel[2] as f32 / a) as u8;
                 }
             } else {
-                let scaler = self.components.bitmap_factory.CreateBitmapScaler()?;
+                let scaler = bitmap_factory.CreateBitmapScaler()?;
                 scaler.Initialize(
                     &bitmap,
                     bitmap_size.width.0 as u32,

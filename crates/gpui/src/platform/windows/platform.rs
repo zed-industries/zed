@@ -21,7 +21,10 @@ use windows::{
     Win32::{
         Foundation::*,
         Globalization::u_memcpy,
-        Graphics::Gdi::*,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory2, D2D::IWICImagingFactory2},
+        },
         Security::Credentials::*,
         System::{
             Com::*,
@@ -53,6 +56,7 @@ pub(crate) struct WindowsPlatform {
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
+    // bitmap_factory: IWICImagingFactory2,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -91,6 +95,10 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
+        // let bitmap_factory: IWICImagingFactory2 = unsafe {
+        //     CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)
+        //         .expect("Error creating bitmap factory.")
+        // };
         let text_system =
             Arc::new(DirectWriteTextSystem::new().expect("Error creating DirectWriteTextSystem"));
         let icon = load_icon().unwrap_or_default();
@@ -111,6 +119,7 @@ impl WindowsPlatform {
             clipboard_hash_format,
             clipboard_metadata_format,
             windows_version,
+            // bitmap_factory,
         }
     }
 
@@ -584,7 +593,7 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        self.text_system.destroy();
+        // self.text_system.destroy();
         unsafe { OleUninitialize() };
     }
 }
