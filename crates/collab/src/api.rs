@@ -19,9 +19,9 @@ use axum::{
     Extension, Json, Router,
 };
 use axum_extra::response::ErasedJson;
-use chrono::SecondsFormat;
+use chrono::{NaiveDateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tower::ServiceBuilder;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
@@ -162,6 +162,17 @@ async fn check_is_contributor(
     Query(params): Query<CheckIsContributorParams>,
 ) -> Result<Json<CheckIsContributorResponse>> {
     let params = params.as_contributor_selector()?;
+
+    if RenovateBot::is_renovate_bot(&params) {
+        return Ok(Json(CheckIsContributorResponse {
+            signed_at: Some(
+                RenovateBot::created_at()
+                    .and_utc()
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            ),
+        }));
+    }
+
     Ok(Json(CheckIsContributorResponse {
         signed_at: app
             .db
@@ -169,6 +180,36 @@ async fn check_is_contributor(
             .await?
             .map(|ts| ts.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)),
     }))
+}
+
+/// The Renovate bot GitHub user (`renovate[bot]`).
+///
+/// https://api.github.com/users/renovate[bot]
+struct RenovateBot;
+
+impl RenovateBot {
+    const LOGIN: &'static str = "renovate[bot]";
+    const USER_ID: i32 = 29139614;
+
+    /// Returns the `created_at` timestamp for the Renovate bot user.
+    fn created_at() -> &'static NaiveDateTime {
+        static CREATED_AT: OnceLock<NaiveDateTime> = OnceLock::new();
+        CREATED_AT.get_or_init(|| {
+            chrono::DateTime::parse_from_rfc3339("2017-06-02T07:04:12Z")
+                .expect("failed to parse 'created_at' for 'renovate[bot]'")
+                .naive_utc()
+        })
+    }
+
+    /// Returns whether the given contributor selector corresponds to the Renovate bot user.
+    fn is_renovate_bot(contributor: &ContributorSelector) -> bool {
+        match contributor {
+            ContributorSelector::GitHubLogin { github_login } => github_login == Self::LOGIN,
+            ContributorSelector::GitHubUserId { github_user_id } => {
+                github_user_id == &Self::USER_ID
+            }
+        }
+    }
 }
 
 async fn add_contributor(
