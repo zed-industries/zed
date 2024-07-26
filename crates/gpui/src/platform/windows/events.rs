@@ -217,7 +217,13 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         callback();
     }
     unsafe {
-        PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0 as isize)).log_err();
+        PostMessageW(
+            None,
+            CLOSE_ONE_WINDOW,
+            WPARAM(state_ptr.validation_number),
+            LPARAM(handle.0 as isize),
+        )
+        .log_err();
     }
     Some(0)
 }
