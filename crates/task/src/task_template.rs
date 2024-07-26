@@ -185,16 +185,26 @@ impl TaskTemplate {
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
 
-        let mut env = cx.project_env.clone();
-        env.extend(self.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        let env = {
+            // Start with the project environment as the base.
+            let mut env = cx.project_env.clone();
 
-        let mut env = substitute_all_template_variables_in_map(
-            &env,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
-        env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+            // Extend that environment with what's defined in the TaskTemplate
+            env.extend(self.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+
+            // Then we replace all task variables that could be set in environment varialbes
+            let mut env = substitute_all_template_variables_in_map(
+                &env,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?;
+
+            // Last step: set the task variables as environment variables too
+            env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+            env
+        };
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -735,5 +745,75 @@ mod tests {
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
         assert!(faulty_go_test.resolve_task("base", &context).is_some());
+    }
+
+    #[test]
+    fn test_project_env() {
+        let all_variables = [
+            (VariableName::Row, "1234".to_string()),
+            (VariableName::Column, "5678".to_string()),
+            (VariableName::File, "test_file".to_string()),
+            (VariableName::Symbol, "my symbol".to_string()),
+        ];
+
+        let template = TaskTemplate {
+            label: "my task".to_string(),
+            command: format!(
+                "echo {} {}",
+                VariableName::File.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            args: vec![],
+            env: HashMap::from_iter([
+                (
+                    "TASK_ENV_VAR1".to_string(),
+                    "TASK_ENV_VAR1_VALUE".to_string(),
+                ),
+                (
+                    "TASK_ENV_VAR2".to_string(),
+                    format!(
+                        "env_var_2 {} {}",
+                        VariableName::Row.template_value(),
+                        VariableName::Column.template_value()
+                    ),
+                ),
+                (
+                    "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                    "overwritten".to_string(),
+                ),
+            ]),
+            ..TaskTemplate::default()
+        };
+
+        let project_env = HashMap::from_iter([
+            (
+                "PROJECT_ENV_VAR1".to_string(),
+                "PROJECT_ENV_VAR1_VALUE".to_string(),
+            ),
+            (
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN_VALUE".to_string(),
+            ),
+        ]);
+
+        let context = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(all_variables.clone()),
+            project_env,
+        };
+
+        let resolved = template
+            .resolve_task(TEST_ID_BASE, &context)
+            .unwrap()
+            .resolved
+            .unwrap();
+
+        assert_eq!(resolved.env["TASK_ENV_VAR1"], "TASK_ENV_VAR1_VALUE");
+        assert_eq!(resolved.env["TASK_ENV_VAR2"], "env_var_2 1234 5678");
+        assert_eq!(resolved.env["PROJECT_ENV_VAR1"], "PROJECT_ENV_VAR1_VALUE");
+        assert_eq!(
+            resolved.env["PROJECT_ENV_WILL_BE_OVERWRITTEN"],
+            "overwritten"
+        );
     }
 }
