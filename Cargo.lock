@@ -7153,28 +7153,32 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
 name = "oo7"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37558cac1af63a81fd2ff7f3469c02a4da06b163c5671791553b8dac10f07c82"
+checksum = "8fc6ce4692fbfd044ce22ca07dcab1a30fa12432ca2aa5b1294eca50d3332a24"
 dependencies = [
  "aes",
  "async-fs 2.1.1",
  "async-io 2.3.1",
  "async-lock 3.3.0",
+ "async-net 2.0.0",
  "blocking",
  "cbc",
  "cipher",
  "digest",
+ "endi",
  "futures-lite 2.2.0",
  "futures-util",
  "hkdf",
  "hmac",
+ "md-5",
  "num",
  "num-bigint-dig",
  "pbkdf2",
  "rand 0.8.5",
  "serde",
  "sha2",
+ "subtle",
  "zbus",
  "zeroize",
  "zvariant",
