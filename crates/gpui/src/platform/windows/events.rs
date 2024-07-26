@@ -386,22 +386,18 @@ fn handle_char_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-
     let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         return Some(0);
     }
     let Some(ime_char) = ime_key else {
         return Some(1);
     };
-    let Some(mut input_handler) = lock.input_handler.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    input_handler.replace_text_in_range(None, &ime_char);
-    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    with_input_handler(&state_ptr, |input_handler| {
+        input_handler.replace_text_in_range(None, &ime_char);
+    });
 
     Some(0)
 }
@@ -1337,9 +1333,7 @@ fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Opti
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
-    let mut lock = state_ptr.state.borrow_mut();
-    let mut input_handler = lock.input_handler.take()?;
-    drop(lock);
+    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
     let result = f(&mut input_handler);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     Some(result)
