@@ -126,6 +126,10 @@ members = [
     "crates/zed",
     "crates/zed_actions",
 
+    #
+    # Extensions
+    #
+
     "extensions/astro",
     "extensions/clojure",
     "extensions/csharp",
@@ -155,11 +159,19 @@ members = [
     "extensions/vue",
     "extensions/zig",
 
+    #
+    # Tooling
+    #
+
     "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
 [workspace.dependencies]
+#
+# Workspace member crates
+#
+
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
@@ -239,6 +251,7 @@ project_symbols = { path = "crates/project_symbols" }
 proto = { path = "crates/proto" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
+refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
@@ -284,19 +297,23 @@ worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+#
+# External crates
+#
+
 aho-corasick = "1.1"
 alacritty_terminal = "0.23"
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
-async-dispatcher = { version = "0.1" }
+async-dispatcher = "0.1"
 async-fs = "1.6"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
-async-tungstenite = { version = "0.23" }
+async-tungstenite = "0.23"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.13"
@@ -308,9 +325,9 @@ cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
-clickhouse = { version = "0.11.6" }
+clickhouse = "0.11.6"
 cocoa = "0.25"
-core-foundation = { version = "0.9.3" }
+core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
 dashmap = "5.5.3"
@@ -358,7 +375,6 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
-refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
 rsa = "0.9.6"
@@ -412,7 +428,7 @@ tree-sitter-css = "0.21"
 tree-sitter-elixir = "0.2"
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = "0.21"
-tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod"}
+tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work", rev = "dcbabff454703c3a4bc98a23cf8778d4be46fd22" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
 tree-sitter-html = "0.20"
