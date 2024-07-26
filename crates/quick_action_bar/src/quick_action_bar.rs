@@ -303,25 +303,17 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(Spacing::XXLarge.rems(cx))
-            .child(
-                h_flex()
-                    .gap(Spacing::Medium.rems(cx))
-                    .children(self.render_repl_menu(cx))
-                    .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
-                    .children(search_button)
-                    .when(
-                        AssistantSettings::get_global(cx).enabled
-                            && AssistantSettings::get_global(cx).button,
-                        |bar| bar.child(assistant_button),
-                    ),
+            .gap(Spacing::Medium.rems(cx))
+            .children(self.render_repl_menu(cx))
+            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(search_button)
+            .when(
+                AssistantSettings::get_global(cx).enabled
+                    && AssistantSettings::get_global(cx).button,
+                |bar| bar.child(assistant_button),
             )
-            .child(
-                h_flex()
-                    .gap(Spacing::Medium.rems(cx))
-                    .children(editor_selections_dropdown)
-                    .child(editor_settings_dropdown),
-            )
+            .children(editor_selections_dropdown)
+            .child(editor_settings_dropdown)
             .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
                 el.child(Self::render_menu_overlay(repl_menu))
             })
