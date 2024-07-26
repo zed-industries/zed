@@ -625,6 +625,11 @@ impl ToUpload {
             .await
             .with_context(|| format!("failed to upload to table '{ACTION_EVENTS_TABLE}'"))?;
 
+        const REPL_EVENTS_TABLE: &str = "repl_events";
+        Self::upload_to_table(REPL_EVENTS_TABLE, &self.repl_events, clickhouse_client)
+            .await
+            .with_context(|| format!("failed to upload to table '{REPL_EVENTS_TABLE}'"))?;
+
         Ok(())
     }
 
