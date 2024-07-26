@@ -13,6 +13,11 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
+#[cfg(target_os = "windows")]
+use windows::Win32::{
+    Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+    System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+};
 
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
@@ -28,6 +33,8 @@ pub(crate) struct TestPlatform {
     pub(crate) prompts: RefCell<TestPrompts>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
+    #[cfg(target_os = "windows")]
+    bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
 }
 
@@ -44,6 +51,11 @@ impl TestPlatform {
             windows::Win32::System::Ole::OleInitialize(None)
                 .expect("unable to initialize Windows OLE");
         }
+        #[cfg(target_os = "windows")]
+        let bitmap_factory = std::mem::ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
 
         #[cfg(target_os = "macos")]
         let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
@@ -52,7 +64,10 @@ impl TestPlatform {
         let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
 
         #[cfg(target_os = "windows")]
-        let text_system = Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
+        let text_system = Arc::new(
+            crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Unable to initialize direct write."),
+        );
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -66,6 +81,8 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
+            #[cfg(target_os = "windows")]
+            bitmap_factory,
             text_system,
         })
     }
@@ -301,5 +318,15 @@ impl Platform for TestPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         unimplemented!()
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for TestPlatform {
+    fn drop(&mut self) {
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
+            windows::Win32::System::Ole::OleUninitialize();
+        }
     }
 }

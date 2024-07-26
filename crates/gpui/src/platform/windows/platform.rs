@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
+    mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
@@ -56,7 +57,7 @@ pub(crate) struct WindowsPlatform {
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
-    bitmap_factory: IWICImagingFactory,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -95,10 +96,10 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let bitmap_factory: IWICImagingFactory = unsafe {
+        let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
                 .expect("Error creating bitmap factory.")
-        };
+        });
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&bitmap_factory)
                 .expect("Error creating DirectWriteTextSystem"),
@@ -595,8 +596,10 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        // self.text_system.destroy();
-        unsafe { OleUninitialize() };
+        unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
+            OleUninitialize();
+        }
     }
 }
 
