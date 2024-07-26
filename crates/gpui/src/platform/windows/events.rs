@@ -581,33 +581,40 @@ fn handle_mouse_horizontal_wheel_msg(
     }
 }
 
+fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+    let Some(caret_range) = input_handler.selected_text_range() else {
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        return None;
+    };
+    let Some(caret_position) = input_handler.bounds_for_range(caret_range) else {
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        return None;
+    };
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    Some(POINT {
+        // logical to physical
+        x: (caret_position.origin.x.0 * scale_factor) as i32,
+        y: (caret_position.origin.y.0 * scale_factor) as i32
+            + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
+    })
+}
+
 fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     unsafe {
-        let mut lock = state_ptr.state.borrow_mut();
         let ctx = ImmGetContext(handle);
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-
-        let Some(caret_range) = input_handler.selected_text_range() else {
-            state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
             return Some(0);
         };
-        let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        let config = CANDIDATEFORM {
-            dwStyle: CFS_CANDIDATEPOS,
-            // logical to physical
-            ptCurrentPos: POINT {
-                x: (caret_position.origin.x.0 * scale_factor) as i32,
-                y: (caret_position.origin.y.0 * scale_factor) as i32
-                    + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
-            },
+        let config = COMPOSITIONFORM {
+            dwStyle: CFS_POINT,
+            ptCurrentPos: caret_position,
             ..Default::default()
         };
-        ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
         ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
@@ -618,9 +625,30 @@ fn handle_ime_composition(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let ctx = unsafe { ImmGetContext(handle) };
+    let result = handle_ime_composition_inner(ctx, lparam, state_ptr);
+    unsafe { ImmReleaseContext(handle, ctx).ok().log_err() };
+    result
+}
+
+fn handle_ime_composition_inner(
+    ctx: HIMC,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
+        return Some(0);
+    };
+    let config = CANDIDATEFORM {
+        dwStyle: CFS_CANDIDATEPOS,
+        ptCurrentPos: caret_position,
+        ..Default::default()
+    };
+    unsafe { ImmSetCandidateWindow(ctx, &config as _).ok().log_err() };
+
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
+        let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
         let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
         input_handler.replace_and_mark_text_in_range(
             None,
@@ -632,13 +660,13 @@ fn handle_ime_composition(
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
         let comp_string = &ime_input?;
-        let caret_pos = retrieve_composition_cursor_position(handle);
+        let caret_pos = retrieve_composition_cursor_position(ctx);
         let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
         input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let comp_result = parse_ime_compostion_result(handle)?;
+        let comp_result = parse_ime_compostion_result(ctx)?;
         let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
@@ -1218,11 +1246,10 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
+fn parse_ime_compostion_string(ctx: HIMC) -> Option<(String, usize)> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1238,26 +1265,19 @@ fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
             Some((string, string_len as usize / 2))
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
-fn retrieve_composition_cursor_position(handle: HWND) -> usize {
-    unsafe {
-        let ctx = ImmGetContext(handle);
-        let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        ret as usize
-    }
+#[inline]
+fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
+    unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
 }
 
-fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
+fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1273,9 +1293,7 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
             Some(string)
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
