@@ -312,7 +312,7 @@
     "auto_reveal_entries": true,
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
-    "auto_fold_dirs": false,
+    "auto_fold_dirs": true,
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
