@@ -5,7 +5,7 @@ use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    px, size, AsyncAppContext, Bounds, DismissEvent, EventEmitter, FocusableView,
+    px, size, AnyWindowHandle, AsyncAppContext, Bounds, DismissEvent, EventEmitter, FocusableView,
     ParentElement as _, Render, SemanticVersion, SharedString, Task, View, WindowBounds,
     WindowHandle,
 };
@@ -106,7 +106,8 @@ impl ModalView for SshConnectionModal {}
 
 #[derive(Clone)]
 pub struct SshClientDelegate {
-    modal: WindowHandle<SshConnectionModal>,
+    window: AnyWindowHandle,
+    modal: View<SshConnectionModal>,
     known_password: Option<String>,
 }
 
@@ -121,9 +122,11 @@ impl remote::SshClientDelegate for SshClientDelegate {
         if let Some(password) = known_password.take() {
             tx.send(Ok(password)).ok();
         } else {
-            self.modal
-                .update(cx, |modal, cx| {
-                    modal.set_prompt(prompt, tx, cx);
+            self.window
+                .update(cx, |_, cx| {
+                    self.modal.update(cx, |modal, cx| {
+                        modal.set_prompt(prompt, tx, cx);
+                    })
                 })
                 .ok();
         }
@@ -157,9 +160,11 @@ impl remote::SshClientDelegate for SshClientDelegate {
 
 impl SshClientDelegate {
     fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
-        self.modal
-            .update(cx, |modal, cx| {
-                modal.set_status(status.map(|s| s.to_string()), cx);
+        self.window
+            .update(cx, |_, cx| {
+                self.modal.update(cx, |modal, cx| {
+                    modal.set_status(status.map(|s| s.to_string()), cx);
+                })
             })
             .ok();
     }
@@ -273,11 +278,24 @@ pub async fn open_ssh_project(
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
     })?;
 
-    let session = window
-        .update(cx, |_, cx| {
-            connect_over_ssh(connection_options, app_state.clone(), cx)
-        })?
-        .await;
+    let modal = window.update(cx, |workspace, cx| {
+        cx.activate_window();
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(connection_options.host.clone(), cx)
+        });
+        workspace.active_modal::<SshConnectionModal>(cx).unwrap()
+    })?;
+
+    let session = remote::SshSession::client(
+        connection_options,
+        Arc::new(SshClientDelegate {
+            window: window.into(),
+            modal,
+            known_password: connection_options.password,
+        }),
+        cx,
+    )
+    .await;
 
     if session.is_err() {
         window.update(cx, |_, cx| cx.remove_window()).ok();
