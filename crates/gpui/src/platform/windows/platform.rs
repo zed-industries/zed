@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
+    mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
@@ -21,7 +22,10 @@ use windows::{
     Win32::{
         Foundation::*,
         Globalization::u_memcpy,
-        Graphics::Gdi::*,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+        },
         Security::Credentials::*,
         System::{
             Com::*,
@@ -53,6 +57,7 @@ pub(crate) struct WindowsPlatform {
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -91,8 +96,14 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system =
-            Arc::new(DirectWriteTextSystem::new().expect("Error creating DirectWriteTextSystem"));
+        let bitmap_factory = ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
@@ -111,6 +122,7 @@ impl WindowsPlatform {
             clipboard_hash_format,
             clipboard_metadata_format,
             windows_version,
+            bitmap_factory,
         }
     }
 
@@ -584,8 +596,10 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        self.text_system.destroy();
-        unsafe { OleUninitialize() };
+        unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
+            OleUninitialize();
+        }
     }
 }
 

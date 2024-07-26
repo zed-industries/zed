@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Result};
@@ -16,9 +16,9 @@ use windows::{
             DirectWrite::*,
             Dxgi::Common::*,
             Gdi::LOGFONTW,
-            Imaging::{D2D::IWICImagingFactory2, *},
+            Imaging::*,
         },
-        System::{Com::*, SystemServices::LOCALE_NAME_MAX_LENGTH},
+        System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
 };
@@ -40,7 +40,7 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: ManuallyDrop<IWICImagingFactory2>,
+    bitmap_factory: AgileReference<IWICImagingFactory>,
     d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
@@ -52,10 +52,6 @@ struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
     dc_target: ID2D1DeviceContext4,
 }
-
-// All use of the IUnknown methods should be "thread-safe".
-unsafe impl Sync for DirectWriteComponent {}
-unsafe impl Send for DirectWriteComponent {}
 
 struct DirectWriteState {
     components: DirectWriteComponent,
@@ -75,12 +71,10 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new() -> Result<Self> {
+    pub fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory: IWICImagingFactory2 =
-                CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
-            let bitmap_factory = ManuallyDrop::new(bitmap_factory);
+            let bitmap_factory = AgileReference::new(bitmap_factory)?;
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
@@ -145,8 +139,8 @@ impl GlyphRenderContext {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new() -> Result<Self> {
-        let components = DirectWriteComponent::new()?;
+    pub(crate) fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
+        let components = DirectWriteComponent::new(bitmap_factory)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -171,11 +165,6 @@ impl DirectWriteTextSystem {
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
         })))
-    }
-
-    pub(crate) fn destroy(&self) {
-        let mut lock = self.0.write();
-        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
     }
 }
 
@@ -798,8 +787,9 @@ impl DirectWriteState {
             bitmap_dpi = 192.0;
         }
 
+        let bitmap_factory = self.components.bitmap_factory.resolve()?;
         unsafe {
-            let bitmap = self.components.bitmap_factory.CreateBitmap(
+            let bitmap = bitmap_factory.CreateBitmap(
                 bitmap_width,
                 bitmap_height,
                 bitmap_format,
@@ -901,7 +891,7 @@ impl DirectWriteState {
                     pixel[2] = (pixel[2] as f32 / a) as u8;
                 }
             } else {
-                let scaler = self.components.bitmap_factory.CreateBitmapScaler()?;
+                let scaler = bitmap_factory.CreateBitmapScaler()?;
                 scaler.Initialize(
                     &bitmap,
                     bitmap_size.width.0 as u32,
