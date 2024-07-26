@@ -229,6 +229,7 @@ pub struct Project {
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
+    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
 pub enum LanguageServerToQuery {
@@ -827,6 +828,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             }
         })
     }
@@ -1021,6 +1023,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -7886,6 +7889,7 @@ impl Project {
         }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
+        self.cached_shell_environments.remove(&id_to_remove);
 
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
@@ -10261,11 +10265,14 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local() {
-            let cwd = self
-                .task_worktree(cx)
-                .map(|worktree| self.task_cwd(worktree, cx));
-
-            let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+                (
+                    Some(worktree.read(cx).id()),
+                    Some(self.task_cwd(worktree, cx)),
+                )
+            } else {
+                (None, None)
+            };
 
             cx.spawn(|project, cx| async move {
                 let mut task_variables = cx
@@ -10283,20 +10290,16 @@ impl Project {
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
 
-                let project_env = if let Some(cwd) = cwd.as_ref() {
-                    load_shell_environment(cwd, &load_direnv)
-                        .await
-                        .with_context(|| {
-                            format!("failed to load login shell environment in {cwd:?}")
-                        })
-                        .log_err()
-                        .unwrap_or_default()
-                } else {
-                    HashMap::default()
+                let mut project_env = None;
+                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
+                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
+                    if let Some(env) = env {
+                        project_env.replace(env);
+                    }
                 };
 
                 Some(TaskContext {
-                    project_env,
+                    project_env: project_env.unwrap_or_default(),
                     cwd,
                     task_variables,
                 })
@@ -10335,6 +10338,50 @@ impl Project {
             })
         } else {
             Task::ready(None)
+        }
+    }
+
+    async fn get_worktree_shell_env(
+        this: WeakModel<Self>,
+        worktree_id: WorktreeId,
+        cwd: &PathBuf,
+        mut cx: AsyncAppContext,
+    ) -> Option<HashMap<String, String>> {
+        let cached_env = this
+            .update(&mut cx, |project, _| {
+                project.cached_shell_environments.get(&worktree_id).cloned()
+            })
+            .ok()?;
+
+        if let Some(env) = cached_env {
+            Some(env)
+        } else {
+            let load_direnv = this
+                .update(&mut cx, |_, cx| {
+                    ProjectSettings::get_global(cx).load_direnv.clone()
+                })
+                .ok()?;
+
+            let shell_env = cx
+                .background_executor()
+                .spawn({
+                    let cwd = cwd.clone();
+                    async move {
+                        load_shell_environment(&cwd, &load_direnv)
+                            .await
+                            .unwrap_or_default()
+                    }
+                })
+                .await;
+
+            this.update(&mut cx, |project, _| {
+                project
+                    .cached_shell_environments
+                    .insert(worktree_id, shell_env.clone());
+            })
+            .ok()?;
+
+            Some(shell_env)
         }
     }
 
