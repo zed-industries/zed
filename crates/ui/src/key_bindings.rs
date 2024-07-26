@@ -1,6 +1,33 @@
-use gpui::Keystroke;
+use gpui::{Action, FocusHandle, KeyBinding, Keystroke, WindowContext};
 
 use crate::PlatformStyle;
+
+/// Returns a textual representation of the key binding for the given [`Action`].
+pub fn text_for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<String> {
+    let key_binding = cx.bindings_for_action(action).last().cloned()?;
+    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
+}
+
+/// Returns a textual representation of the key binding for the given [`Action`]
+/// as if the provided [`FocusHandle`] was focused.
+pub fn text_for_action_in(
+    action: &dyn Action,
+    focus: &FocusHandle,
+    cx: &mut WindowContext,
+) -> Option<String> {
+    let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
+}
+
+/// Returns a textual representation of the given key binding for the specified platform.
+pub fn text_for_key_binding(key_binding: KeyBinding, platform_style: PlatformStyle) -> String {
+    key_binding
+        .keystrokes()
+        .into_iter()
+        .map(|keystroke| text_for_keystroke(keystroke, platform_style))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// Returns a textual representation of the given [`Keystroke`].
 pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) -> String {
