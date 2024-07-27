@@ -22,7 +22,10 @@ use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
-    channel::{mpsc, oneshot},
+    channel::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
@@ -37,7 +40,7 @@ use gpui::{
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-    ProjectItem,
+    ProjectItem, SerializableItem, SerializableItemHandle,
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -55,6 +58,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
+use session::Session;
 use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
@@ -85,17 +89,17 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
 
+use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
 };
-use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
@@ -280,6 +284,12 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+impl Into<i64> for WorkspaceId {
+    fn into(self) -> i64 {
+        self.0
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -427,34 +437,96 @@ impl FollowableViewRegistry {
     }
 }
 
-#[derive(Default, Deref, DerefMut)]
-struct ItemDeserializers(
-    HashMap<
-        Arc<str>,
-        fn(
-            Model<Project>,
-            WeakView<Workspace>,
-            WorkspaceId,
-            ItemId,
-            &mut ViewContext<Pane>,
-        ) -> Task<Result<Box<dyn ItemHandle>>>,
-    >,
-);
+#[derive(Copy, Clone)]
+struct SerializableItemDescriptor {
+    deserialize: fn(
+        Model<Project>,
+        WeakView<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
+    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>,
+    view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
+}
 
-impl Global for ItemDeserializers {}
+#[derive(Default)]
+struct SerializableItemRegistry {
+    descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
+    descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
+}
 
-pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
-    if let Some(serialized_item_kind) = I::serialized_item_kind() {
-        let deserializers = cx.default_global::<ItemDeserializers>();
-        deserializers.insert(
-            Arc::from(serialized_item_kind),
-            |project, workspace, workspace_id, item_id, cx| {
-                let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
-                cx.foreground_executor()
-                    .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
-            },
-        );
+impl Global for SerializableItemRegistry {}
+
+impl SerializableItemRegistry {
+    fn deserialize(
+        item_kind: &str,
+        project: Model<Project>,
+        workspace: WeakView<Workspace>,
+        workspace_id: WorkspaceId,
+        item_item: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot deserialize {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, cx)
     }
+
+    fn cleanup(
+        item_kind: &str,
+        workspace_id: WorkspaceId,
+        loaded_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        let Some(descriptor) = Self::descriptor(item_kind, cx) else {
+            return Task::ready(Err(anyhow!(
+                "cannot cleanup {}, descriptor not found",
+                item_kind
+            )));
+        };
+
+        (descriptor.cleanup)(workspace_id, loaded_items, cx)
+    }
+
+    fn view_to_serializable_item_handle(
+        view: AnyView,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>> {
+        let this = cx.try_global::<Self>()?;
+        let descriptor = this.descriptors_by_type.get(&view.entity_type())?;
+        Some((descriptor.view_to_serializable_item)(view))
+    }
+
+    fn descriptor(item_kind: &str, cx: &AppContext) -> Option<SerializableItemDescriptor> {
+        let this = cx.try_global::<Self>()?;
+        this.descriptors_by_kind.get(item_kind).copied()
+    }
+}
+
+pub fn register_serializable_item<I: SerializableItem>(cx: &mut AppContext) {
+    let serialized_item_kind = I::serialized_item_kind();
+
+    let registry = cx.default_global::<SerializableItemRegistry>();
+    let descriptor = SerializableItemDescriptor {
+        deserialize: |project, workspace, workspace_id, item_id, cx| {
+            let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+            cx.foreground_executor()
+                .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+        },
+        cleanup: |workspace_id, loaded_items, cx| I::cleanup(workspace_id, loaded_items, cx),
+        view_to_serializable_item: |view| Box::new(view.downcast::<I>().unwrap()),
+    };
+    registry
+        .descriptors_by_kind
+        .insert(Arc::from(serialized_item_kind), descriptor);
+    registry
+        .descriptors_by_type
+        .insert(TypeId::of::<I>(), descriptor);
 }
 
 pub struct AppState {
@@ -465,6 +537,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
+    pub session: Session,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -498,6 +571,7 @@ impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
+        use session::Session;
         use settings::SettingsStore;
         use ui::Context as _;
 
@@ -509,8 +583,9 @@ impl AppState {
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::default());
-        let http_client = http::FakeHttpClient::with_404_response();
+        let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
+        let session = Session::test();
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -526,6 +601,7 @@ impl AppState {
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
             build_window_options: |_, _| Default::default(),
+            session,
         })
     }
 }
@@ -584,7 +660,7 @@ pub enum Event {
     ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
-    SpawnTask(SpawnInTerminal),
+    SpawnTask(Box<SpawnInTerminal>),
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,
@@ -593,6 +669,7 @@ pub enum Event {
     ZoomChanged,
 }
 
+#[derive(Debug)]
 pub enum OpenVisible {
     All,
     None,
@@ -657,6 +734,9 @@ pub struct Workspace {
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     render_disconnected_overlay:
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
+    serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    _items_serializer: Task<Result<()>>,
+    session_id: Option<String>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -835,12 +915,20 @@ impl Workspace {
 
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
+        let session_id = app_state.session.id().to_owned();
+
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
             let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
+
+        let (serializable_items_tx, serializable_items_rx) =
+            mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
+        let _items_serializer = cx.spawn(|this, mut cx| async move {
+            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
+        });
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
@@ -942,6 +1030,9 @@ impl Workspace {
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
             render_disconnected_overlay: None,
+            serializable_items_tx,
+            _items_serializer,
+            session_id: Some(session_id),
         }
     }
 
@@ -986,8 +1077,8 @@ impl Workspace {
                     .collect::<Vec<_>>();
                 if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
-                        .update(&mut cx, |project, _| {
-                            project.set_worktrees_reordered(true);
+                        .update(&mut cx, |project, cx| {
+                            project.set_worktrees_reordered(true, cx);
                         })
                         .log_err();
                 }
@@ -1476,7 +1567,7 @@ impl Workspace {
     }
 
     pub fn worktrees<'a>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Model<Worktree>> {
-        self.project.read(cx).worktrees()
+        self.project.read(cx).worktrees(cx)
     }
 
     pub fn visible_worktrees<'a>(
@@ -1573,10 +1664,20 @@ impl Workspace {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
-                this.save_all_internal(SaveIntent::Close, cx)
-            })?
-            .await
+            let save_result = this
+                .update(&mut cx, |this, cx| {
+                    this.save_all_internal(SaveIntent::Close, cx)
+                })?
+                .await;
+
+            // If we're not quitting, but closing, we remove the workspace from
+            // the current session.
+            if !quitting && save_result.as_ref().map_or(false, |&res| res) {
+                this.update(&mut cx, |this, cx| this.remove_from_session(cx))?
+                    .await;
+            }
+
+            save_result
         })
     }
 
@@ -1649,27 +1750,52 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn(|workspace, mut cx| async move {
-            // Override save mode and display "Save all files" prompt
-            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-                let answer = workspace.update(&mut cx, |_, cx| {
-                    let (prompt, detail) = Pane::file_names_for_prompt(
-                        &mut dirty_items.iter().map(|(_, handle)| handle),
-                        dirty_items.len(),
-                        cx,
-                    );
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        &prompt,
-                        Some(&detail),
-                        &["Save all", "Discard all", "Cancel"],
-                    )
-                })?;
-                match answer.await.log_err() {
-                    Some(0) => save_intent = SaveIntent::SaveAll,
-                    Some(1) => save_intent = SaveIntent::Skip,
-                    _ => {}
+            let dirty_items = if save_intent == SaveIntent::Close && dirty_items.len() > 0 {
+                let (serialize_tasks, remaining_dirty_items) =
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let mut remaining_dirty_items = Vec::new();
+                        let mut serialize_tasks = Vec::new();
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, cx))
+                            {
+                                serialize_tasks.push(task);
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                        (serialize_tasks, remaining_dirty_items)
+                    })?;
+
+                futures::future::try_join_all(serialize_tasks).await?;
+
+                if remaining_dirty_items.len() > 1 {
+                    let answer = workspace.update(&mut cx, |_, cx| {
+                        let (prompt, detail) = Pane::file_names_for_prompt(
+                            &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
+                            remaining_dirty_items.len(),
+                            cx,
+                        );
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            Some(&detail),
+                            &["Save all", "Discard all", "Cancel"],
+                        )
+                    })?;
+                    match answer.await.log_err() {
+                        Some(0) => save_intent = SaveIntent::SaveAll,
+                        Some(1) => save_intent = SaveIntent::Skip,
+                        _ => {}
+                    }
                 }
-            }
+
+                remaining_dirty_items
+            } else {
+                dirty_items
+            };
+
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.update(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
@@ -1735,7 +1861,7 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let window = cx.window_handle().downcast::<Self>();
         let is_remote = self.project.read(cx).is_remote();
-        let has_worktree = self.project.read(cx).worktrees().next().is_some();
+        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
         let window_to_replace = if replace_current_window {
@@ -2274,9 +2400,17 @@ impl Workspace {
         &mut self,
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
+        focus_item: bool,
         cx: &mut WindowContext,
     ) {
-        self.add_item(self.active_pane.clone(), item, destination_index, cx)
+        self.add_item(
+            self.active_pane.clone(),
+            item,
+            destination_index,
+            false,
+            focus_item,
+            cx,
+        )
     }
 
     pub fn add_item(
@@ -2284,6 +2418,8 @@ impl Workspace {
         pane: View<Pane>,
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
+        activate_pane: bool,
+        focus_item: bool,
         cx: &mut WindowContext,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
@@ -2293,7 +2429,7 @@ impl Workspace {
         }
 
         pane.update(cx, |pane, cx| {
-            pane.add_item(item, true, true, destination_index, cx)
+            pane.add_item(item, activate_pane, focus_item, destination_index, cx)
         });
     }
 
@@ -2304,7 +2440,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-        self.add_item(new_pane, item, None, cx);
+        self.add_item(new_pane, item, None, true, true, cx);
     }
 
     pub fn open_abs_path(
@@ -2459,6 +2595,8 @@ impl Workspace {
         &mut self,
         pane: View<Pane>,
         project_item: Model<T::Item>,
+        activate_pane: bool,
+        focus_item: bool,
         cx: &mut ViewContext<Self>,
     ) -> View<T>
     where
@@ -2471,7 +2609,7 @@ impl Workspace {
             .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
-            self.activate_item(&item, cx);
+            self.activate_item(&item, activate_pane, focus_item, cx);
             return item;
         }
 
@@ -2490,7 +2628,14 @@ impl Workspace {
             pane.set_preview_item_id(Some(item.item_id()), cx)
         });
 
-        self.add_item(pane, Box::new(item.clone()), destination_index, cx);
+        self.add_item(
+            pane,
+            Box::new(item.clone()),
+            destination_index,
+            activate_pane,
+            focus_item,
+            cx,
+        );
         item
     }
 
@@ -2502,14 +2647,22 @@ impl Workspace {
         }
     }
 
-    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut WindowContext) -> bool {
+    pub fn activate_item(
+        &mut self,
+        item: &dyn ItemHandle,
+        activate_pane: bool,
+        focus_item: bool,
+        cx: &mut WindowContext,
+    ) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
                 .index_for_item(item)
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(ix, activate_pane, focus_item, cx)
+            });
             true
         } else {
             false
@@ -3705,6 +3858,11 @@ impl Workspace {
         }
     }
 
+    fn remove_from_session(&mut self, cx: &mut WindowContext) -> Task<()> {
+        self.session_id.take();
+        self.serialize_workspace_internal(cx)
+    }
+
     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
         self.panes.retain(|p| p != pane);
         self.panes
@@ -3743,12 +3901,14 @@ impl Workspace {
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
                     pane.items()
-                        .filter_map(|item_handle| {
+                        .filter_map(|handle| {
+                            let handle = handle.to_serializable_item_handle(cx)?;
+
                             Some(SerializedItem {
-                                kind: Arc::from(item_handle.serialized_item_kind()?),
-                                item_id: item_handle.item_id().as_u64(),
-                                active: Some(item_handle.item_id()) == active_item_id,
-                                preview: pane.is_active_preview_item(item_handle.item_id()),
+                                kind: Arc::from(handle.serialized_item_kind()),
+                                item_id: handle.item_id().as_u64(),
+                                active: Some(handle.item_id()) == active_item_id,
+                                preview: pane.is_active_preview_item(handle.item_id()),
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -3835,16 +3995,7 @@ impl Workspace {
 
         let location = if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                let (order, paths): (Vec<_>, Vec<_>) = local_paths
-                    .iter()
-                    .enumerate()
-                    .sorted_by(|a, b| a.1.cmp(b.1))
-                    .unzip();
-
-                Some(SerializedWorkspaceLocation::Local(
-                    LocalPaths::new(paths),
-                    LocalPathsOrder::new(order),
-                ))
+                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
             } else {
                 None
             }
@@ -3866,7 +4017,6 @@ impl Workspace {
             None
         };
 
-        // don't save workspace state for the empty workspace.
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
@@ -3879,10 +4029,57 @@ impl Workspace {
                 display: Default::default(),
                 docks,
                 centered_layout: self.centered_layout,
+                session_id: self.session_id.clone(),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
+    }
+
+    async fn serialize_items(
+        this: &WeakView<Self>,
+        items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        const CHUNK_SIZE: usize = 200;
+        const THROTTLE_TIME: Duration = Duration::from_millis(200);
+
+        let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
+
+        while let Some(items_received) = serializable_items.next().await {
+            let unique_items =
+                items_received
+                    .into_iter()
+                    .fold(HashMap::default(), |mut acc, item| {
+                        acc.entry(item.item_id()).or_insert(item);
+                        acc
+                    });
+
+            // We use into_iter() here so that the references to the items are moved into
+            // the tasks and not kept alive while we're sleeping.
+            for (_, item) in unique_items.into_iter() {
+                if let Ok(Some(task)) =
+                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
+                {
+                    cx.background_executor()
+                        .spawn(async move { task.await.log_err() })
+                        .detach();
+                }
+            }
+
+            cx.background_executor().timer(THROTTLE_TIME).await;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn enqueue_item_serialization(
+        &mut self,
+        item: Box<dyn SerializableItemHandle>,
+    ) -> Result<()> {
+        self.serializable_items_tx
+            .unbounded_send(item)
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
     }
 
     pub(crate) fn load_workspace(
@@ -3911,16 +4108,23 @@ impl Workspace {
                 center_group = Some((group, active_pane))
             }
 
-            let mut items_by_project_path = cx.update(|cx| {
-                center_items
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|item| {
-                        let item = item?;
-                        let project_path = item.project_path(cx)?;
-                        Some((project_path, item))
-                    })
-                    .collect::<HashMap<_, _>>()
+            let mut items_by_project_path = HashMap::default();
+            let mut item_ids_by_kind = HashMap::default();
+            let mut all_deserialized_items = Vec::default();
+            cx.update(|cx| {
+                for item in center_items.unwrap_or_default().into_iter().flatten() {
+                    if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
+                        item_ids_by_kind
+                            .entry(serializable_item_handle.serialized_item_kind())
+                            .or_insert(Vec::new())
+                            .push(item.item_id().as_u64() as ItemId);
+                    }
+
+                    if let Some(project_path) = item.project_path(cx) {
+                        items_by_project_path.insert(project_path, item.clone());
+                    }
+                    all_deserialized_items.push(item);
+                }
             })?;
 
             let opened_items = paths_to_open
@@ -3965,10 +4169,35 @@ impl Workspace {
                 cx.notify();
             })?;
 
-            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+            // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
+            // after loading the items, we might have different items and in order to avoid
+            // the database filling up, we delete items that haven't been loaded now.
+            //
+            // The items that have been loaded, have been saved after they've been added to the workspace.
+            let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
+                item_ids_by_kind
+                    .into_iter()
+                    .map(|(item_kind, loaded_items)| {
+                        SerializableItemRegistry::cleanup(
+                            item_kind,
+                            serialized_workspace.id,
+                            loaded_items,
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            futures::future::join_all(clean_up_tasks).await;
+
             workspace
                 .update(&mut cx, |workspace, cx| {
+                    // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     workspace.serialize_workspace_internal(cx).detach();
+
+                    // Ensure that we mark the window as edited if we did load dirty items
+                    workspace.update_window_edited(cx);
                 })
                 .ok();
 
@@ -4054,6 +4283,7 @@ impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         use node_runtime::FakeNodeRuntime;
+        use session::Session;
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
@@ -4068,6 +4298,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session: Session::test(),
         });
         let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
@@ -4667,6 +4898,11 @@ pub fn activate_workspace_for_project(
 
 pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
+}
+
+pub fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
+    DB.last_session_workspace_locations(last_session_id)
+        .log_err()
 }
 
 actions!(collab, [OpenChannelNotes]);
@@ -5391,7 +5627,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(0)));
 
@@ -5403,7 +5639,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
@@ -5417,7 +5653,7 @@ mod tests {
             item
         });
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
         });
         item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
         item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
@@ -5449,7 +5685,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
         let item1 = cx.new_view(|cx| {
@@ -5461,7 +5697,7 @@ mod tests {
 
         // Add an item to an empty pane
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1), None, cx)
+            workspace.add_item_to_active_pane(Box::new(item1), None, true, cx)
         });
         project.update(cx, |project, cx| {
             assert_eq!(
@@ -5475,7 +5711,7 @@ mod tests {
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item2), None, cx)
+            workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
         });
         assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
         project.update(cx, |project, cx| {
@@ -5530,7 +5766,7 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.new_view(|cx| TestItem::new(cx));
         workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item1.clone()), None, cx)
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx)
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
@@ -5544,8 +5780,8 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         workspace.update(cx, |w, cx| {
-            w.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
-            w.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+            w.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.executor().run_until_parked();
@@ -5555,6 +5791,41 @@ mod tests {
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Register TestItem as a serializable item
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        // When there are dirty untitled items, but they can serialize, then there is no prompt.
+        let item1 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        let item2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
+            w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        assert!(task.await.unwrap());
     }
 
     #[gpui::test]
@@ -5589,10 +5860,10 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
         });
         let pane = workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, cx);
-            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
+            workspace.add_item_to_active_pane(Box::new(item4.clone()), None, true, cx);
             workspace.active_pane().clone()
         });
 
@@ -5714,9 +5985,9 @@ mod tests {
         //     multi-entry items:   (3, 4)
         let left_pane = workspace.update(cx, |workspace, cx| {
             let left_pane = workspace.active_pane().clone();
-            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, true, cx);
             for item in single_entry_items {
-                workspace.add_item_to_active_pane(Box::new(item), None, cx);
+                workspace.add_item_to_active_pane(Box::new(item), None, true, cx);
             }
             left_pane.update(cx, |pane, cx| {
                 pane.activate_item(2, true, true, cx);
@@ -5787,7 +6058,7 @@ mod tests {
         });
         let item_id = item.entity_id();
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
         });
 
         // Autosave on window change.
@@ -5872,7 +6143,7 @@ mod tests {
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
         });
         item.update(cx, |item, cx| {
             item.project_items[0].update(cx, |item, _| {
@@ -5910,7 +6181,7 @@ mod tests {
         let toolbar_notify_count = Rc::new(RefCell::new(0));
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, cx);
             let toolbar_notification_count = toolbar_notify_count.clone();
             cx.observe(&toolbar, move |_, _, _| {
                 *toolbar_notification_count.borrow_mut() += 1
@@ -6352,7 +6623,6 @@ mod tests {
 
         use super::*;
 
-        const TEST_PNG_KIND: &str = "TestPngItemView";
         // View
         struct TestPngItemView {
             focus_handle: FocusHandle,
@@ -6384,10 +6654,6 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_PNG_KIND)
-            }
         }
         impl EventEmitter<()> for TestPngItemView {}
         impl FocusableView for TestPngItemView {
@@ -6419,7 +6685,6 @@ mod tests {
             }
         }
 
-        const TEST_IPYNB_KIND: &str = "TestIpynbItemView";
         // View
         struct TestIpynbItemView {
             focus_handle: FocusHandle,
@@ -6451,10 +6716,6 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_IPYNB_KIND)
-            }
         }
         impl EventEmitter<()> for TestIpynbItemView {}
         impl FocusableView for TestIpynbItemView {
@@ -6490,14 +6751,10 @@ mod tests {
             focus_handle: FocusHandle,
         }
 
-        const TEST_ALTERNATE_PNG_KIND: &str = "TestAlternatePngItemView";
         impl Item for TestAlternatePngItemView {
             type Event = ();
-
-            fn serialized_item_kind() -> Option<&'static str> {
-                Some(TEST_ALTERNATE_PNG_KIND)
-            }
         }
+
         impl EventEmitter<()> for TestAlternatePngItemView {}
         impl FocusableView for TestAlternatePngItemView {
             fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -6552,7 +6809,7 @@ mod tests {
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let worktree_id = project.update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
@@ -6564,7 +6821,10 @@ mod tests {
                 .unwrap();
 
             // Now we can check if the handle we got back errored or not
-            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_PNG_KIND);
+            assert_eq!(
+                handle.to_any().entity_type(),
+                TypeId::of::<TestPngItemView>()
+            );
 
             let handle = workspace
                 .update(cx, |workspace, cx| {
@@ -6574,7 +6834,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_IPYNB_KIND);
+            assert_eq!(
+                handle.to_any().entity_type(),
+                TypeId::of::<TestIpynbItemView>()
+            );
 
             let handle = workspace
                 .update(cx, |workspace, cx| {
@@ -6609,7 +6872,7 @@ mod tests {
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let worktree_id = project.update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             });
 
             let handle = workspace
@@ -6622,8 +6885,8 @@ mod tests {
 
             // This _must_ be the second item registered
             assert_eq!(
-                handle.serialized_item_kind().unwrap(),
-                TEST_ALTERNATE_PNG_KIND
+                handle.to_any().entity_type(),
+                TypeId::of::<TestAlternatePngItemView>()
             );
 
             let handle = workspace

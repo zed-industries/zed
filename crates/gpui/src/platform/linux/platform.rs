@@ -30,7 +30,6 @@ use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
-use time::UtcOffset;
 use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
@@ -397,10 +396,6 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
-    fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::UTC
-    }
-
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
@@ -729,7 +724,7 @@ impl Keystroke {
             // we only include the shift for upper-case letters by convention,
             // so don't include for numbers and symbols, but do include for
             // tab/enter, etc.
-            if key.chars().count() == 1 && key_utf8 == key {
+            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
                 modifiers.shift = false;
             }
         }

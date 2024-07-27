@@ -19,7 +19,12 @@ impl ZigExtension {
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
         let mut args: Option<Vec<String>> = None;
-        let environment = Some(worktree.shell_env());
+
+        let (platform, arch) = zed::current_platform();
+        let environment = match platform {
+            zed::Os::Mac | zed::Os::Linux => Some(worktree.shell_env()),
+            zed::Os::Windows => None,
+        };
 
         if let Ok(lsp_settings) = LspSettings::for_worktree("zls", worktree) {
             if let Some(binary) = lsp_settings.binary {
@@ -56,13 +61,22 @@ impl ZigExtension {
             &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
+        // TODO: Once we're ready to release v0.0.7 of the Zed extension API we want to pin
+        // ZLS to a specific version with `zed::github_release_by_tag_name`.
         // We're pinning ZLS to a release that has `.tar.gz` assets, since the latest release does not have
         // them, at time of writing.
         //
         // ZLS tracking issue: https://github.com/zigtools/zls/issues/1879
-        let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
+        // let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
 
-        let (platform, arch) = zed::current_platform();
+        let release = zed::latest_github_release(
+            "zigtools/zls",
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
+
         let asset_name = format!(
             "zls-{arch}-{os}.{extension}",
             arch = match arch {
@@ -88,7 +102,10 @@ impl ZigExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("zls-{}", release.version);
-        let binary_path = format!("{version_dir}/bin/zls");
+        let binary_path = match platform {
+            zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/bin/zls"),
+            zed::Os::Windows => format!("{version_dir}/zls.exe"),
+        };
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(

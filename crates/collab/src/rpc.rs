@@ -12,7 +12,7 @@ use crate::{
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::{anyhow, bail, Context as _};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -42,7 +42,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http::IsahcHttpClient;
+use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -1392,7 +1392,7 @@ pub async fn handle_websocket_request(
         let socket = socket
             .map_ok(to_tungstenite_message)
             .err_into()
-            .with(|message| async move { Ok(to_axum_message(message)) });
+            .with(|message| async move { to_axum_message(message) });
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
@@ -4514,7 +4514,7 @@ impl RateLimit for CompleteWithLanguageModelRateLimit {
 }
 
 async fn complete_with_language_model(
-    request: proto::CompleteWithLanguageModel,
+    mut request: proto::CompleteWithLanguageModel,
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
     session: Session,
     open_ai_api_key: Option<Arc<str>>,
@@ -4530,18 +4530,43 @@ async fn complete_with_language_model(
         .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
         .await?;
 
-    if request.model.starts_with("gpt") {
-        let api_key =
-            open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
-        complete_with_open_ai(request, response, session, api_key).await?;
-    } else if request.model.starts_with("gemini") {
-        let api_key = google_ai_api_key
-            .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
-        complete_with_google_ai(request, response, session, api_key).await?;
-    } else if request.model.starts_with("claude") {
-        let api_key = anthropic_api_key
-            .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
-        complete_with_anthropic(request, response, session, api_key).await?;
+    let mut provider_and_model = request.model.split('/');
+    let (provider, model) = match (
+        provider_and_model.next().unwrap(),
+        provider_and_model.next(),
+    ) {
+        (provider, Some(model)) => (provider, model),
+        (model, None) => {
+            if model.starts_with("gpt") {
+                ("openai", model)
+            } else if model.starts_with("gemini") {
+                ("google", model)
+            } else if model.starts_with("claude") {
+                ("anthropic", model)
+            } else {
+                ("unknown", model)
+            }
+        }
+    };
+    let provider = provider.to_string();
+    request.model = model.to_string();
+
+    match provider.as_str() {
+        "openai" => {
+            let api_key = open_ai_api_key.context("no OpenAI API key configured on the server")?;
+            complete_with_open_ai(request, response, session, api_key).await?;
+        }
+        "anthropic" => {
+            let api_key =
+                anthropic_api_key.context("no Anthropic AI API key configured on the server")?;
+            complete_with_anthropic(request, response, session, api_key).await?;
+        }
+        "google" => {
+            let api_key =
+                google_ai_api_key.context("no Google AI API key configured on the server")?;
+            complete_with_google_ai(request, response, session, api_key).await?;
+        }
+        provider => return Err(anyhow!("unknown provider {:?}", provider))?,
     }
 
     Ok(())
@@ -5129,8 +5154,8 @@ async fn get_private_user_info(
     Ok(())
 }
 
-fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
-    match message {
+fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
+    let message = match message {
         TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
         TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
@@ -5139,7 +5164,20 @@ fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
             code: frame.code.into(),
             reason: frame.reason,
         })),
-    }
+        // We should never receive a frame while reading the message, according
+        // to the `tungstenite` maintainers:
+        //
+        // > It cannot occur when you read messages from the WebSocket, but it
+        // > can be used when you want to send the raw frames (e.g. you want to
+        // > send the frames to the WebSocket without composing the full message first).
+        // >
+        // > — https://github.com/snapview/tungstenite-rs/issues/268
+        TungsteniteMessage::Frame(_) => {
+            bail!("received an unexpected frame while reading the message")
+        }
+    };
+
+    Ok(message)
 }
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {

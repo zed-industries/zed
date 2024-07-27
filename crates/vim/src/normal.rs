@@ -9,6 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
+mod toggle_comments;
 pub(crate) mod yank;
 
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
     indent::{indent_motion, indent_object, IndentDirection},
+    toggle_comments::{toggle_comments_motion, toggle_comments_object},
     yank::{yank_motion, yank_object},
 };
 
@@ -58,6 +60,7 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         YankLine,
+        YankToEndOfLine,
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
@@ -82,6 +85,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
+    workspace.register_action(yank_to_end_of_line);
     workspace.register_action(toggle_comments);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
@@ -153,10 +157,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.indent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.indent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
@@ -169,10 +176,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.outdent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.outdent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
@@ -235,6 +245,7 @@ pub fn normal_motion(
             Some(Operator::OppositeCase) => {
                 change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
             }
+            Some(Operator::ToggleComments) => toggle_comments_motion(vim, motion, times, cx),
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -271,6 +282,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                         target: Some(SurroundsType::Object(object)),
                     });
                 }
+                Some(Operator::ToggleComments) => toggle_comments_object(vim, object, around, cx),
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
@@ -459,6 +471,21 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
+    })
+}
+
+fn yank_to_end_of_line(_: &mut Workspace, _: &YankToEndOfLine, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx);
+        yank_motion(
+            vim,
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            cx,
+        )
     })
 }
 
@@ -1432,6 +1459,15 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("helˇlo\n").await;
+        cx.simulate_shared_keystrokes("shift-y").await;
+        cx.shared_clipboard().await.assert_eq("lo");
     }
 
     #[gpui::test]

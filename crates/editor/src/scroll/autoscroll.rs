@@ -27,7 +27,7 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center)
     }
 
-    /// scrolls so the neweset cursor is near the top
+    /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)

@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/open_ai.rs"
 
@@ -15,7 +18,7 @@ schemars = ["dep:schemars"]
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-http.workspace = true
+http_client.workspace = true
 isahc.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true

@@ -21,7 +21,7 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 6. On your laptop you can now open folders on the remote machine.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-## Toubleshooting
+## Troubleshooting
 
 ### UI is not showing up
 
@@ -90,3 +90,24 @@ If you'd like to install language-server extensions, you can add them to the lis
 ## Feedback
 
 Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/qSDQ8VWc7k).
+
+# Direct SSH Connections
+
+The current alpha release of Zed always connects via our servers. This was to get experience building the feature on top of our existing collaboration support. We plan to move to direct SSH connections for any machine that can be SSH'd into.
+
+We are working on a direct SSH connection feature, which you can try out if you'd like.
+
+> **Note:** Direct SSH support does not support most features yet! You cannot use project search, language servers, or basically do anything except edit files...
+
+To try this out you can either from the command line run:
+
+```
+zed ssh://user@host:port/path/to/project
+```
+
+Or you can (in your settings file) add:
+```
+"ssh_connections": []
+```
+
+And then from the command palette choose `projects: Open Remote` and configure an SSH connection from there.

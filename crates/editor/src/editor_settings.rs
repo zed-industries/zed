@@ -28,7 +28,6 @@ pub struct EditorSettings {
     pub search_wrap: bool,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
-    #[serde(default)]
     pub jupyter: Jupyter,
 }
 
@@ -69,13 +68,21 @@ pub enum DoubleClickInMultibuffer {
     Open,
 }
 
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
     ///
-    /// Default: `false`
+    /// Default: true
     pub enabled: bool,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct JupyterContent {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -247,7 +254,7 @@ pub struct EditorSettingsContent {
     pub show_signature_help_after_edits: Option<bool>,
 
     /// Jupyter REPL settings.
-    pub jupyter: Option<Jupyter>,
+    pub jupyter: Option<JupyterContent>,
 }
 
 // Toolbar related settings
@@ -298,7 +305,7 @@ pub struct ScrollbarContent {
 }
 
 /// Gutter related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -316,6 +323,12 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+}
+
+impl EditorSettings {
+    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).jupyter.enabled
+    }
 }
 
 impl Settings for EditorSettings {

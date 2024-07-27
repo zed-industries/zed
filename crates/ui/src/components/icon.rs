@@ -76,8 +76,12 @@ impl IconSize {
         }
     }
 
-    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+    /// Returns the individual components of the square that contains this [`IconSize`].
+    ///
+    /// The returned tuple contains:
+    ///   1. The length of one side of the square
+    ///   2. The padding of one side of the square
+    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
         let icon_size = self.rems() * cx.rem_size();
         let padding = match self {
             IconSize::Indicator => Spacing::None.px(cx),
@@ -85,6 +89,13 @@ impl IconSize {
             IconSize::Small => Spacing::XSmall.px(cx),
             IconSize::Medium => Spacing::XSmall.px(cx),
         };
+
+        (icon_size, padding)
+    }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let (icon_size, padding) = self.square_components(cx);
 
         icon_size + padding * 2.
     }
@@ -147,6 +158,7 @@ pub enum IconName {
     Exit,
     ExpandVertical,
     ExternalLink,
+    Eye,
     File,
     FileDoc,
     FileGeneric,
@@ -155,6 +167,8 @@ pub enum IconName {
     FileRust,
     FileToml,
     FileTree,
+    FileText,
+    FileCode,
     Filter,
     Folder,
     FolderOpen,
@@ -214,9 +228,11 @@ pub enum IconName {
     Settings,
     Shift,
     Sliders,
+    SlidersAlt,
     Snip,
     Space,
     Sparkle,
+    SparkleAlt,
     SparkleFilled,
     Spinner,
     Split,
@@ -297,6 +313,7 @@ impl IconName {
             IconName::Exit => "icons/exit.svg",
             IconName::ExpandVertical => "icons/expand_vertical.svg",
             IconName::ExternalLink => "icons/external_link.svg",
+            IconName::Eye => "icons/eye.svg",
             IconName::File => "icons/file.svg",
             IconName::FileDoc => "icons/file_icons/book.svg",
             IconName::FileGeneric => "icons/file_icons/file.svg",
@@ -305,6 +322,8 @@ impl IconName {
             IconName::FileRust => "icons/file_icons/rust.svg",
             IconName::FileToml => "icons/file_icons/toml.svg",
             IconName::FileTree => "icons/project.svg",
+            IconName::FileCode => "icons/file_code.svg",
+            IconName::FileText => "icons/file_text.svg",
             IconName::Filter => "icons/filter.svg",
             IconName::Folder => "icons/file_icons/folder.svg",
             IconName::FolderOpen => "icons/file_icons/folder_open.svg",
@@ -364,9 +383,11 @@ impl IconName {
             IconName::Settings => "icons/file_icons/settings.svg",
             IconName::Shift => "icons/shift.svg",
             IconName::Sliders => "icons/sliders.svg",
+            IconName::SlidersAlt => "icons/sliders-alt.svg",
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
             IconName::Sparkle => "icons/sparkle.svg",
+            IconName::SparkleAlt => "icons/sparkle_alt.svg",
             IconName::SparkleFilled => "icons/sparkle_filled.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",

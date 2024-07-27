@@ -33,3 +33,22 @@ if (!hasReleaseNotes) {
     ].join("\n"),
   );
 }
+
+const INCORRECT_ISSUE_LINK_PATTERN = new RegExp("-.*\\(#\\d+\\)", "g");
+
+const hasIncorrectIssueLinks = INCORRECT_ISSUE_LINK_PATTERN.test(
+  danger.github.pr.body,
+);
+if (hasIncorrectIssueLinks) {
+  warn(
+    [
+      "This PR has incorrectly formatted GitHub issue links in the release notes.",
+      "",
+      "GitHub issue links must be formatted as plain Markdown links:",
+      "",
+      "```",
+      "- Improved something ([#ISSUE](https://github.com/zed-industries/zed/issues/ISSUE)).",
+      "```",
+    ].join("\n"),
+  );
+}

@@ -41,13 +41,14 @@ pub fn init(
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("go", tree_sitter_go::language()),
-        ("gomod", tree_sitter_gomod::language()),
+        ("gomod", tree_sitter_go_mod::language()),
         ("gowork", tree_sitter_gowork::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("jsonc", tree_sitter_json::language()),
-        ("markdown", tree_sitter_markdown::language()),
-        ("proto", tree_sitter_proto::language()),
+        ("markdown", tree_sitter_md::language()),
+        ("markdown-inline", tree_sitter_md::inline_language()),
+        ("proto", protols_tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
         ("rust", tree_sitter_rust::language()),
@@ -136,6 +137,7 @@ pub fn init(
         json_task_context()
     );
     language!("markdown");
+    language!("markdown-inline");
     language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
