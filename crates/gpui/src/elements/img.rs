@@ -237,7 +237,7 @@ impl Img {
 /// The image state between frames
 struct ImgState {
     frame_index: usize,
-    last_frame_time: Instant,
+    last_frame_time: Option<Instant>,
 }
 
 impl Element for Img {
@@ -257,7 +257,7 @@ impl Element for Img {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
-                    last_frame_time: Instant::now(),
+                    last_frame_time: None,
                 })
             });
 
@@ -270,19 +270,19 @@ impl Element for Img {
                         if let Some(state) = &mut state {
                             let frame_count = data.frame_count();
                             if frame_count > 1 {
-                                if state.last_frame_time.elapsed()
-                                    >= Duration::from(data.delay(state.frame_index))
-                                {
-                                    let time_difference = state.last_frame_time.elapsed()
-                                        - Duration::from(data.delay(state.frame_index));
+                                let current_time = Instant::now();
+                                if let Some(last_frame_time) = state.last_frame_time {
+                                    let elapsed = current_time - last_frame_time;
+                                    let frame_duration =
+                                        Duration::from(data.delay(state.frame_index));
 
-                                    if state.frame_index == frame_count - 1 {
-                                        state.frame_index = 0;
-                                    } else {
-                                        state.frame_index = state.frame_index + 1;
-                                    };
-
-                                    state.last_frame_time = Instant::now() - time_difference
+                                    if elapsed >= frame_duration {
+                                        state.frame_index = (state.frame_index + 1) % frame_count;
+                                        state.last_frame_time =
+                                            Some(current_time - (elapsed - frame_duration));
+                                    }
+                                } else {
+                                    state.last_frame_time = Some(current_time);
                                 }
                             }
                         }
@@ -303,14 +303,7 @@ impl Element for Img {
                         }
 
                         if global_id.is_some() && data.frame_count() > 1 {
-                            let parent_id = cx.parent_view_id();
-                            cx.on_next_frame(move |cx| {
-                                if let Some(parent_id) = parent_id {
-                                    cx.notify(parent_id)
-                                } else {
-                                    cx.refresh()
-                                }
-                            })
+                            cx.request_animation_frame();
                         }
                     }
 
@@ -446,7 +439,7 @@ impl Asset for Image {
                 let data = match format {
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
-                        let mut small_vec = SmallVec::new();
+                        let mut frames = SmallVec::new();
 
                         for frame in decoder.into_frames() {
                             let mut frame = frame?;
@@ -454,10 +447,10 @@ impl Asset for Image {
                             for pixel in frame.buffer_mut().chunks_exact_mut(4) {
                                 pixel.swap(0, 2);
                             }
-                            small_vec.push(frame);
+                            frames.push(frame);
                         }
 
-                        small_vec
+                        frames
                     }
                     _ => {
                         let mut data =
