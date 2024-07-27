@@ -2,10 +2,10 @@ let scrollTimeout;
 
 const listenActive = () => {
   const elems = document.querySelector(".pagetoc").children;
-  [...elems].forEach(el => {
+  [...elems].forEach((el) => {
     el.addEventListener("click", (event) => {
       clearTimeout(scrollTimeout);
-      [...elems].forEach(el => el.classList.remove("active"));
+      [...elems].forEach((el) => el.classList.remove("active"));
       el.classList.add("active");
       // Prevent scroll updates for a short period
       scrollTimeout = setTimeout(() => {
@@ -15,16 +15,20 @@ const listenActive = () => {
   });
 };
 
-const getPagetoc = () => document.querySelector(".pagetoc") || autoCreatePagetoc();
+const getPagetoc = () =>
+  document.querySelector(".pagetoc") || autoCreatePagetoc();
 
 const autoCreatePagetoc = () => {
   const main = document.querySelector("#content > main");
   const content = Object.assign(document.createElement("div"), {
-    className: "content-wrap"
+    className: "content-wrap",
   });
   content.append(...main.childNodes);
   main.prepend(content);
-  main.insertAdjacentHTML("afterbegin", '<div class="sidetoc"><nav class="pagetoc"></nav></div>');
+  main.insertAdjacentHTML(
+    "afterbegin",
+    '<div class="sidetoc"><nav class="pagetoc"></nav></div>',
+  );
   return document.querySelector(".pagetoc");
 };
 const updateFunction = () => {
@@ -42,22 +46,24 @@ const updateFunction = () => {
   }
 
   const pagetocLinks = [...document.querySelector(".pagetoc").children];
-  pagetocLinks.forEach(link => link.classList.remove("active"));
+  pagetocLinks.forEach((link) => link.classList.remove("active"));
 
   if (lastHeader) {
-    const activeLink = pagetocLinks.find(link => lastHeader.href === link.href);
+    const activeLink = pagetocLinks.find(
+      (link) => lastHeader.href === link.href,
+    );
     if (activeLink) activeLink.classList.add("active");
   }
 };
 
-window.addEventListener('load', () => {
+window.addEventListener("load", () => {
   const pagetoc = getPagetoc();
   const headers = [...document.getElementsByClassName("header")];
-  headers.forEach(header => {
+  headers.forEach((header) => {
     const link = Object.assign(document.createElement("a"), {
       textContent: header.text,
       href: header.href,
-      className: `pagetoc-${header.parentElement.tagName}`
+      className: `pagetoc-${header.parentElement.tagName}`,
     });
     pagetoc.appendChild(link);
   });
@@ -65,4 +71,3 @@ window.addEventListener('load', () => {
   listenActive();
   window.addEventListener("scroll", updateFunction);
 });
-
