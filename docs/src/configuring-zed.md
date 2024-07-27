@@ -1739,8 +1739,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "enabled": true,
   "button": true,
   "dock": "right",
-  "default_width": "N/A - width in pixels"O,
-
+  "default_width": "N/A - width in pixels",
+  "version": "1",
 },
 ```
 
