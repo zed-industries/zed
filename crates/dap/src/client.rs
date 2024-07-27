@@ -324,62 +324,60 @@ impl DebugAdapterClient {
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         while let Ok(payload) = client_rx.recv().await {
-            cx.update(|cx| match payload {
-                Payload::Event(event) => event_handler(*event, cx),
+            match payload {
+                Payload::Event(event) => cx.update(|cx| event_handler(*event, cx))?,
                 Payload::Request(request) => {
                     if RunInTerminal::COMMAND == request.command {
-                        let server_tx = server_tx.clone();
-                        cx.spawn(|_| async move {
-                            let arguments: RunInTerminalRequestArguments =
-                                serde_json::from_value(request.arguments.unwrap_or_default())?;
-
-                            dbg!(&arguments);
-
-                            let envs: HashMap<String, String> = arguments
-                                .env
-                                .unwrap()
-                                .as_object()
-                                .unwrap()
-                                .iter()
-                                .map(|(key, value)| (key.clone(), value.clone().to_string()))
-                                .collect();
-
-                            let mut args = arguments.args.clone();
-
-                            let mut command = process::Command::new(args.remove(0));
-                            command.current_dir(arguments.cwd).envs(envs).args(args);
-
-                            let process = command
-                                .spawn()
-                                .with_context(|| "failed to spawn run in terminal command.")?;
-
-                            let json = serde_json::to_value(RunInTerminalResponse {
-                                process_id: Some(process.id() as u64),
-                                shell_process_id: None,
-                            })?;
-
-                            dbg!(&json);
-
-                            server_tx
-                                .send(Payload::Response(Response {
-                                    request_seq: request.seq,
-                                    success: true,
-                                    command: RunInTerminal::COMMAND.into(),
-                                    message: None,
-                                    body: Some(json),
-                                }))
-                                .await?;
-
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                        Self::handle_run_in_terminal_request(request, &server_tx).await?;
                     } else {
-                        log::error!("Unhandled Event: {:#?}", request.command);
+                        unreachable!("Unknown reverse request {}", request.command);
                     }
                 }
                 _ => unreachable!(),
-            })?;
+            }
         }
+
+        anyhow::Ok(())
+    }
+
+    async fn handle_run_in_terminal_request(
+        request: crate::transport::Request,
+        server_tx: &Sender<Payload>,
+    ) -> Result<()> {
+        let arguments: RunInTerminalRequestArguments =
+            serde_json::from_value(request.arguments.unwrap_or_default())?;
+
+        let mut args = arguments.args.clone();
+        let mut command = process::Command::new(args.remove(0));
+
+        let envs = arguments.env.as_ref().and_then(|e| e.as_object()).map(|e| {
+            e.iter()
+                .map(|(key, value)| (key.clone(), value.clone().to_string()))
+                .collect::<HashMap<String, String>>()
+        });
+
+        if let Some(envs) = envs {
+            command.envs(envs);
+        }
+
+        let process = command
+            .current_dir(arguments.cwd)
+            .args(args)
+            .spawn()
+            .with_context(|| "failed to spawn run in terminal command.")?;
+
+        server_tx
+            .send(Payload::Response(Response {
+                request_seq: request.seq,
+                success: true,
+                command: RunInTerminal::COMMAND.into(),
+                message: None,
+                body: Some(serde_json::to_value(RunInTerminalResponse {
+                    process_id: Some(process.id() as u64),
+                    shell_process_id: None,
+                })?),
+            }))
+            .await?;
 
         anyhow::Ok(())
     }
