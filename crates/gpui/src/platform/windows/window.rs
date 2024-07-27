@@ -1000,7 +1000,7 @@ fn get_module_handle() -> HMODULE {
 fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     let window_handle = state_ptr.hwnd;
     let handler = WindowsDragDropHandler(state_ptr);
-    // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
+    // The lifetime of `IDropTarget` is handled by Windows, it won't release until
     // we call `RevokeDragDrop`.
     // So, it's safe to drop it here.
     let drag_drop_handler: IDropTarget = handler.into();

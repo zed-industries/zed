@@ -2056,7 +2056,7 @@ impl<'a> WindowContext<'a> {
             })
     }
 
-    /// Provide elements in the called function with a new namespace in which their identiers must be unique.
+    /// Provide elements in the called function with a new namespace in which their identifiers must be unique.
     /// This can be used within a custom element to distinguish multiple sets of child elements.
     pub fn with_element_namespace<R>(
         &mut self,

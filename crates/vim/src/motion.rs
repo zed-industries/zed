@@ -99,7 +99,7 @@ pub enum Motion {
     WindowMiddle,
     WindowBottom,
 
-    // we don't have a good way to run a search syncronously, so
+    // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
     // calling back into motion with this
     ZedSearchResult {
