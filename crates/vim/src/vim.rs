@@ -1075,7 +1075,7 @@ struct VimSettings {
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
-    pub custom_digraphs: HashMap<String, String>,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1083,7 +1083,7 @@ struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, String>>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {
