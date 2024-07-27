@@ -5,11 +5,12 @@ on:
     paths:
       - "docs/**"
   push:
-    paths:
-      - "docs/**"
+    branches:
+      - main
 
 jobs:
   check_formatting:
+    name: "Check formatting"
     runs-on: ubuntu-latest
 
     steps:
