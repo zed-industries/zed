@@ -872,8 +872,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some((range, _)) = input_handler.selected_text_range(true) {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);

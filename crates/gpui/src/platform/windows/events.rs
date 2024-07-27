@@ -585,11 +585,11 @@ fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
         let scale_factor = lock.scale_factor;
         drop(lock);
 
-        let Some((caret_range, _)) = input_handler.selected_text_range(false) else {
+        let Some(selection) = input_handler.selected_text_range(false) else {
             state_ptr.state.borrow_mut().input_handler = Some(input_handler);
             return Some(0);
         };
-        let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
+        let caret_position = input_handler.bounds_for_range(selection.range).unwrap();
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
         let config = CANDIDATEFORM {
             dwStyle: CFS_CANDIDATEPOS,

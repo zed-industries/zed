@@ -1665,7 +1665,7 @@ extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
     })
     .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |(range, _)| range.into())
+    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
 }
 
 extern "C" fn first_rect_for_character_range(

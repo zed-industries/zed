@@ -5,7 +5,7 @@ use gpui::{
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -970,7 +970,7 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _ignore_disabled_input: bool,
         cx: &mut WindowContext,
-    ) -> Option<(std::ops::Range<usize>, bool)> {
+    ) -> Option<UTF16Selection> {
         if self
             .terminal
             .read(cx)
@@ -980,7 +980,10 @@ impl InputHandler for TerminalInputHandler {
         {
             None
         } else {
-            Some((0..0, false))
+            Some(UTF16Selection {
+                range: 0..0,
+                reversed: false,
+            })
         }
     }
 
