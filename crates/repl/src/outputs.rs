@@ -77,7 +77,7 @@ impl ImageView {
         let height = data.height();
         let width = data.width();
 
-        let gpui_image_data = ImageData::new(data);
+        let gpui_image_data = ImageData::new(vec![image::Frame::new(data)]);
 
         return Ok(ImageView {
             height,
