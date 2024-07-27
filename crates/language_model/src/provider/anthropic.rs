@@ -174,7 +174,7 @@ impl AnthropicModel {
         }
 
         Request {
-            model: self.model.clone(),
+            model: self.model.id().to_string(),
             messages: request
                 .messages
                 .iter()
