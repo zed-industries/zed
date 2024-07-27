@@ -297,16 +297,16 @@ pub struct EsLintLspAdapter {
 impl EsLintLspAdapter {
     const CURRENT_VERSION: &'static str = "release/2.4.4";
 
+    #[cfg(not(windows))]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    #[cfg(windows)]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: &'static str = "eslint";
 
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
         &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
-
-    #[cfg(not(windows))]
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
-    #[cfg(windows)]
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
 
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }

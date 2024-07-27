@@ -5,7 +5,6 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
-#[derive(Debug)]
 pub struct GitHubLspBinaryVersion {
     pub name: String,
     pub url: String,
