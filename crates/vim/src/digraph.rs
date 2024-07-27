@@ -142,4 +142,13 @@ mod test {
         cx.simulate_keystrokes("a ctrl-k : ) escape");
         cx.assert_state("ˇ👨‍💻", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_digraph_keymap_conflict(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("Hellˇo").await;
+        cx.simulate_shared_keystrokes("a ctrl-k s , escape").await;
+        cx.shared_state().await.assert_eq("Helloˇş");
+    }
 }
