@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http_client::github::{build_tarball_url, GitHubLspBinaryVersion};
+use http_client::github::{build_asset_url, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -406,7 +406,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+        let url = build_asset_url(
+            "microsoft/vscode-eslint",
+            Self::CURRENT_VERSION,
+            http_client::github::AssetKind::TarGz,
+        )?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
