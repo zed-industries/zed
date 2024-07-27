@@ -1568,6 +1568,7 @@ impl EditorElement {
         self.editor.update(cx, |editor, cx| {
             editor
                 .breakpoints
+                .read()
                 .iter()
                 .flat_map(|(_buffer_id, breakpoint_set)| breakpoint_set.iter())
                 .filter_map(|breakpoint| {

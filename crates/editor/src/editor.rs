@@ -97,6 +97,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
+use dap::client::Breakpoint;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
@@ -450,11 +451,6 @@ struct ResolvedTasks {
     position: Anchor,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct Breakpoint {
-    position: Anchor,
-}
-
 #[derive(Copy, Clone, Debug)]
 struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -574,7 +570,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    breakpoints: BTreeMap<BufferId, HashSet<Breakpoint>>,
+    breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
@@ -1788,6 +1784,15 @@ impl Editor {
             None
         };
 
+        let breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>> = Default::default();
+        // TODO: Figure out why the code below doesn't work
+        // if let Some(project) = project.as_ref() {
+        //     dbg!("Setting breakpoints from editor to project");
+        //     project.update(cx, |project, _cx| {
+        //         project.breakpoints = breakpoints.clone();
+        //     })
+        // }
+
         let mut this = Self {
             focus_handle,
             show_cursor_when_unfocused: false,
@@ -1890,7 +1895,7 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            breakpoints: Default::default(),
+            breakpoints,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -5994,6 +5999,12 @@ impl Editor {
         let Some(project) = &self.project else {
             return;
         };
+
+        // TODO: Figure out how to only clone breakpoints pointer once per editor
+        project.update(cx, |project, _cx| {
+            project.breakpoints = self.breakpoints.clone();
+        });
+
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
             return;
         };
@@ -6004,7 +6015,9 @@ impl Editor {
             position: breakpoint_position,
         };
 
-        let breakpoint_set = self.breakpoints.entry(buffer_id).or_default();
+        let mut write_guard = self.breakpoints.write();
+
+        let breakpoint_set = write_guard.entry(buffer_id).or_default();
 
         if !breakpoint_set.remove(&breakpoint) {
             breakpoint_set.insert(breakpoint);

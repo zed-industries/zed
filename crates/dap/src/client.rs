@@ -555,3 +555,8 @@ impl DebugAdapterClient {
             .await
     }
 }
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Breakpoint {
+    pub position: multi_buffer::Anchor,
+}
