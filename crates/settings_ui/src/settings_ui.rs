@@ -100,23 +100,25 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
             .gap_4()
             .child(Label::new("Settings").size(LabelSize::Large))
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(Label::new("Appearance"))
-                    .child(AppearanceSettingsControls::new()),
+                v_flex().gap_1().child(Label::new("Appearance")).child(
+                    v_flex()
+                        .elevation_2(cx)
+                        .child(AppearanceSettingsControls::new()),
+                ),
             )
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(Label::new("Editor"))
-                    .child(EditorSettingsControls::new()),
+                v_flex().gap_1().child(Label::new("Editor")).child(
+                    v_flex()
+                        .elevation_2(cx)
+                        .child(EditorSettingsControls::new()),
+                ),
             )
     }
 }
