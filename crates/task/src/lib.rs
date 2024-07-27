@@ -274,7 +274,7 @@ impl IntoIterator for TaskVariables {
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function).
 /// Keeps all Zed-related state inside, used to produce a resolved task out of its template.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,

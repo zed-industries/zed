@@ -12,6 +12,7 @@ use std::{
     env::{self},
     fs::File,
     io::Write,
+    iter,
     path::{Path, PathBuf},
 };
 use task::{Shell, SpawnInTerminal, SshCommand, TerminalWorkDir};
@@ -104,8 +105,6 @@ impl Project {
         // Alacritty uses parent project's working directory when no working directory is provided
         // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
 
-        let mut retained_script = None;
-
         let venv_base_directory = working_directory
             .as_ref()
             .and_then(|cwd| cwd.local_path())
@@ -114,16 +113,19 @@ impl Project {
         let (spawn_task, shell) = match working_directory.as_ref() {
             Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
                 log::debug!("Connecting to a remote server: {ssh_command:?}");
-                let tmp_dir = tempfile::tempdir()?;
-                let ssh_shell_result = prepare_ssh_shell(
-                    &mut env,
-                    tmp_dir.path(),
-                    spawn_task.as_ref(),
+
+                // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+                // to properly display colors.
+                // We do not have the luxury of assuming the host has it installed,
+                // so we set it to a default that does not break the highlighting via ssh.
+                env.entry("TERM".to_string())
+                    .or_insert_with(|| "xterm-256color".to_string());
+
+                let (program, args) = wrap_for_ssh(
                     ssh_command,
+                    spawn_task.as_ref().map(|st| (&st.command, &st.args)),
                     path.as_deref(),
                 );
-                retained_script = Some(tmp_dir);
-                let ssh_shell = ssh_shell_result?;
 
                 (
                     spawn_task.map(|spawn_task| TaskState {
@@ -135,7 +137,7 @@ impl Project {
                         status: TaskStatus::Running,
                         completion_rx,
                     }),
-                    ssh_shell,
+                    Shell::WithArguments { program, args },
                 )
             }
             _ => {
@@ -195,7 +197,6 @@ impl Project {
 
             let id = terminal_handle.entity_id();
             cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                drop(retained_script);
                 let handles = &mut project.terminals.local_handles;
 
                 if let Some(index) = handles
@@ -310,29 +311,15 @@ impl Project {
     }
 }
 
-fn prepare_ssh_shell(
-    env: &mut HashMap<String, String>,
-    tmp_dir: &Path,
-    spawn_task: Option<&SpawnInTerminal>,
+pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
+    command: Option<(&String, &Vec<String>)>,
     path: Option<&str>,
-) -> anyhow::Result<Shell> {
-    // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
-    // to properly display colors.
-    // We do not have the luxury of assuming the host has it installed,
-    // so we set it to a default that does not break the highlighting via ssh.
-    env.entry("TERM".to_string())
-        .or_insert_with(|| "xterm-256color".to_string());
-
-    let to_run = if let Some(spawn_task) = spawn_task {
-        Some(shlex::try_quote(&spawn_task.command)?)
-            .into_iter()
-            .chain(
-                spawn_task
-                    .args
-                    .iter()
-                    .filter_map(|arg| shlex::try_quote(arg).ok()),
-            )
+) -> (String, Vec<String>) {
+    let to_run = if let Some((command, args)) = command {
+        iter::once(command)
+            .chain(args)
+            .filter_map(|arg| shlex::try_quote(arg).ok())
             .join(" ")
     } else {
         "exec ${SHELL:-sh} -l".to_string()
@@ -343,47 +330,22 @@ fn prepare_ssh_shell(
     } else {
         format!("cd; {to_run}")
     };
-    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands)?);
+    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands).unwrap());
 
-    match ssh_command {
+    let (program, mut args) = match ssh_command {
         SshCommand::DevServer(ssh_command) => {
-            let real_ssh = which::which("ssh")?;
-            let ssh_path = tmp_dir.join("ssh");
-            let mut ssh_file = File::create(&ssh_path)?;
-
-            // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
-            // you have configured, but place our custom script on the path so that it will
-            // be run instead.
-            write!(
-                &mut ssh_file,
-                "#!/bin/sh\nexec {} \"$@\" {} {}",
-                real_ssh.to_string_lossy(),
-                if spawn_task.is_none() { "-t" } else { "" },
-                shlex::try_quote(&shell_invocation)?,
-            )?;
-
-            // todo(windows)
-            #[cfg(not(target_os = "windows"))]
-            std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
-
-            add_environment_path(env, tmp_dir)?;
-
             let mut args = shlex::split(&ssh_command).unwrap_or_default();
             let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
-            Ok(Shell::WithArguments { program, args })
+            (program, args)
         }
-        SshCommand::Direct(ssh_args) => {
-            let mut args = ssh_args.clone();
-            if spawn_task.is_none() {
-                args.push("-t".to_string())
-            }
-            args.push(shell_invocation);
-            Ok(Shell::WithArguments {
-                program: "ssh".to_string(),
-                args,
-            })
-        }
+        SshCommand::Direct(ssh_args) => ("ssh".to_string(), ssh_args.clone()),
+    };
+
+    if command.is_none() {
+        args.push("-t".to_string())
     }
+    args.push(shell_invocation);
+    (program, args)
 }
 
 fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {

@@ -18,6 +18,7 @@ use gpui::{
 };
 use markdown::Markdown;
 use markdown::MarkdownStyle;
+use project::terminals::wrap_for_ssh;
 use rpc::proto::RegenerateDevServerTokenResponse;
 use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
@@ -1639,6 +1640,11 @@ pub async fn spawn_ssh_task(
     ];
 
     let ssh_connection_string = ssh_connection_string.to_string();
+    let (command, args) = wrap_for_ssh(
+        &SshCommand::DevServer(ssh_connection_string.clone()),
+        Some((&command, &args)),
+        None,
+    );
 
     let terminal = terminal_panel
         .update(cx, |terminal_panel, cx| {
@@ -1650,15 +1656,14 @@ pub async fn spawn_ssh_task(
                     command,
                     args,
                     command_label: ssh_connection_string.clone(),
-                    cwd: Some(TerminalWorkDir::Ssh {
-                        ssh_command: SshCommand::DevServer(ssh_connection_string),
-                        path: None,
-                    }),
+                    cwd: None,
                     use_new_terminal: true,
                     allow_concurrent_runs: false,
                     reveal: RevealStrategy::Always,
                     hide: HideStrategy::Never,
-                    env: Default::default(),
+                    env: [("TERM".to_string(), "xterm-256color".to_string())]
+                        .into_iter()
+                        .collect(),
                     shell: Default::default(),
                 },
                 cx,
