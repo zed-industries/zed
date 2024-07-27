@@ -9,8 +9,10 @@
   --menu-bar-height: 50px;
   --font: "IA Writer Quattro S", sans-serif;
   --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
-  --code-font-size: 0.875em /* please adjust the ace font size accordingly in editor.js */;
+  --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    Liberation Mono, Courier New, monospace;
+  --code-font-size: 0.875em
+    /* please adjust the ace font size accordingly in editor.js */;
 
   --bg: rgb(246, 245, 240);
   --fg: rgb(75, 83, 97);
