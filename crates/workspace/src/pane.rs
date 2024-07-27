@@ -1568,7 +1568,7 @@ impl Pane {
         });
     }
 
-    fn get_absolute_path(
+    fn active_item_abs_path(
         pane: &View<Pane>,
         cx: &mut WindowContext,
         entry: ProjectEntryId,
@@ -1580,13 +1580,11 @@ impl Pane {
                     let worktree = worktree.read(cx);
                     let entry = worktree.entry_for_id(entry)?;
                     let abs_path = worktree.absolutize(&entry.path).ok()?;
-                    let path = if entry.is_symlink {
-                        abs_path.canonicalize().ok()?
+                    if entry.is_symlink {
+                        abs_path.canonicalize().ok()
                     } else {
-                        abs_path
-                    };
-
-                    Some(path)
+                        Some(abs_path)
+                    }
                 })
             })
         })
@@ -1798,20 +1796,22 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let absolute_path = Pane::get_absolute_path(&pane, cx, entry);
-                        let parent_abs_path = Pane::get_absolute_path(&pane, cx, entry)
-                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                        let item_abs_path = Pane::active_item_abs_path(&pane, cx, entry);
+                        let parent_abs_path = item_abs_path
+                            .as_deref()
+                            .and_then(|abs_path| abs_path.parent())
+                            .map(ToOwned::to_owned);
 
                         let entry_id = entry.to_proto();
                         menu = menu
                             .separator()
-                            .when_some(absolute_path, |menu, path| {
+                            .when_some(item_abs_path, |menu, abs_path| {
                                 menu.entry(
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new(
-                                            path.to_string_lossy().to_string(),
+                                            abs_path.to_string_lossy().to_string(),
                                         ));
                                     }),
                                 )
@@ -1837,14 +1837,14 @@ impl Pane {
                                     });
                                 }),
                             )
-                            .when_some(parent_abs_path, |menu, abs_path| {
+                            .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
                                     Some(Box::new(OpenInTerminal)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.dispatch_action(
                                             OpenTerminal {
-                                                working_directory: abs_path.clone(),
+                                                working_directory: parent_abs_path.clone(),
                                             }
                                             .boxed_clone(),
                                         );
