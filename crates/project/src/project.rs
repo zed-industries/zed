@@ -1219,28 +1219,26 @@ impl Project {
 
         let task = cx.spawn(|this, mut cx| async move {
             let project = this.clone();
-            let client = Arc::new(
-                DebugAdapterClient::new(
-                    id,
-                    adapter_config.clone(),
-                    &command,
-                    args.iter().map(|ele| &ele[..]).collect(),
-                    cwd.into(),
-                    move |event, cx| {
-                        project
-                            .update(cx, |_, cx| {
-                                cx.emit(Event::DebugClientEvent {
-                                    client_id: id,
-                                    event,
-                                })
+            let client = DebugAdapterClient::new(
+                id,
+                adapter_config.clone(),
+                &command,
+                args.iter().map(|ele| &ele[..]).collect(),
+                cwd.into(),
+                move |event, cx| {
+                    project
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                event,
                             })
-                            .log_err();
-                    },
-                    &mut cx,
-                )
-                .await
-                .log_err()?,
-            );
+                        })
+                        .log_err();
+                },
+                &mut cx,
+            )
+            .await
+            .log_err()?;
 
             this.update(&mut cx, |this, cx| {
                 let handle = this
