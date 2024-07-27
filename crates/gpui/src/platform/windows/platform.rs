@@ -162,8 +162,14 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND, validation_number: usize) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
         if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
             return false;
         }
         let mut lock = self.raw_window_handles.write();
@@ -212,8 +218,11 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0 as _), msg.wParam.0)
-                                    {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
