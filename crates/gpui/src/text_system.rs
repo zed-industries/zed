@@ -17,7 +17,7 @@ use crate::{
     StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::{BTreeSet, FxHashMap};
+use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;
 use itertools::Itertools;
@@ -78,18 +78,15 @@ impl TextSystem {
 
     /// Get a list of all available font names from the operating system.
     pub fn all_font_names(&self) -> Vec<String> {
-        let mut names: BTreeSet<_> = self
-            .platform_text_system
-            .all_font_names()
-            .into_iter()
-            .collect();
-        names.extend(self.platform_text_system.all_font_families());
+        let mut names = self.platform_text_system.all_font_names();
         names.extend(
             self.fallback_font_stack
                 .iter()
                 .map(|font| font.family.to_string()),
         );
-        names.into_iter().collect()
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Add a font's data to the text system.
