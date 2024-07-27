@@ -27,8 +27,8 @@ Zed supports running code in multiple languages. To get started, you need to ins
 
 **Currently supported languages:**
 
-* [Python (ipykernel)](#python)
-* [TypeScript (Deno)](#typescript-deno)
+- [Python (ipykernel)](#python)
+- [TypeScript (Deno)](#typescript-deno)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
 
@@ -105,18 +105,18 @@ deno jupyter --install
 
 The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
 
-* [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
-* R
+- [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
+- R
   - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
   - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-* [Scala (almond)](https://almond.sh/docs/quick-start-install)
+- [Scala (almond)](https://almond.sh/docs/quick-start-install)
 
 ## Changing which kernel is used per language {#changing-kernels}
 
 Zed automatically detects the available kernels on your system. If you need to configure a different default kernel for a
 language, you can assign a kernel for any supported language in your `settings.json`.
 
-```jsonc
+```json
 {
   "jupyter": {
     "kernel_selections": {

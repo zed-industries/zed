@@ -1,6 +1,5 @@
 # Building Zed for Windows
 
-> [!NOTE]
 > The following commands may be executed in any shell.
 
 ## Repository
@@ -23,12 +22,10 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with optional component `MSVC v*** - VS YYYY C++ x64/x86 build tools` and install Windows 11 or 10 SDK depending on your system
 
-> [!NOTE]
 > `v***` is your VS version and `YYYY` is year when your VS was released.
 
 ## Backend dependencies
 
-> [!WARNING]
 > This section is still in development. The instructions are not yet complete.
 
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
@@ -75,7 +72,6 @@ pacman -S mingw-w64-ucrt-x86_64-zed
 
 then you can run `zed` in a UCRT64 shell.
 
-> [!NOTE]
 > Please, report any issue in https://github.com/msys2/MINGW-packages/issues first.
 
 ## Troubleshooting

@@ -14,11 +14,11 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
-2. Click "New Server".
-3. Choose whether to setup via SSH, or to follow the manual setup.
+1. Click "New Server".
+1. Choose whether to setup via SSH, or to follow the manual setup.
    > **Note:** With both options your laptop and the remote machine will communicate
-     via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
-6. On your laptop you can now open folders on the remote machine.
+   > via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
+1. On your laptop you can now open folders on the remote machine.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
 ## Troubleshooting
@@ -106,6 +106,7 @@ zed ssh://user@host:port/path/to/project
 ```
 
 Or you can (in your settings file) add:
+
 ```
 "ssh_connections": []
 ```
