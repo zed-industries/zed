@@ -11167,7 +11167,8 @@ dependencies = [
 [[package]]
 name = "tokio-socks"
 version = "0.5.2"
-source = "git+https://github.com/sticnarf/tokio-socks?rev=16c02afd2767a1ec63fac918f04ef74b4323e6be#16c02afd2767a1ec63fac918f04ef74b4323e6be"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
 dependencies = [
  "either",
  "futures-io",

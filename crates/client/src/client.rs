@@ -50,7 +50,7 @@ use std::{
 };
 use telemetry::Telemetry;
 use thiserror::Error;
-use tokio_socks::io::FuturesIoCompatExt;
+use tokio_socks::io::Compat;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
@@ -1190,9 +1190,7 @@ impl Client {
             let stream = match socks_proxy {
                 Some((socks_proxy, SocksVersion::V4)) => SocksStream::Socks4(
                     tokio_socks::tcp::Socks4Stream::connect_with_socket(
-                        FuturesIoCompatExt::compat(
-                            smol::net::TcpStream::connect(socks_proxy).await?,
-                        ),
+                        Compat::new(smol::net::TcpStream::connect(socks_proxy).await?),
                         rpc_host,
                     )
                     .await
@@ -1200,9 +1198,7 @@ impl Client {
                 ),
                 Some((socks_proxy, SocksVersion::V5)) => SocksStream::Socks5(
                     tokio_socks::tcp::Socks5Stream::connect_with_socket(
-                        FuturesIoCompatExt::compat(
-                            smol::net::TcpStream::connect(socks_proxy).await?,
-                        ),
+                        Compat::new(smol::net::TcpStream::connect(socks_proxy).await?),
                         rpc_host,
                     )
                     .await
