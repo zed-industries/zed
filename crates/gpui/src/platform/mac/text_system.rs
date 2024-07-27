@@ -107,14 +107,6 @@ impl PlatformTextSystem for MacTextSystem {
         names.into_iter().collect()
     }
 
-    fn all_font_families(&self) -> Vec<String> {
-        self.0
-            .read()
-            .system_source
-            .all_families()
-            .expect("core text should never return an error")
-    }
-
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
