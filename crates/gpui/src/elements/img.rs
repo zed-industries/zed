@@ -1,3 +1,4 @@
+use smallvec::SmallVec;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{fs, io::Cursor};
@@ -444,18 +445,19 @@ impl Asset for Image {
             let data = if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
                     ImageFormat::Gif => {
-                        let mut gif = GifDecoder::new(Cursor::new(&bytes))?
-                            .into_frames()
-                            .collect_frames()?;
+                        let decoder = GifDecoder::new(Cursor::new(&bytes))?;
+                        let mut small_vec = SmallVec::new();
 
-                        for frame in &mut gif {
+                        for frame in decoder.into_frames() {
+                            let mut frame = frame?;
                             // Convert from RGBA to BGRA.
                             for pixel in frame.buffer_mut().chunks_exact_mut(4) {
                                 pixel.swap(0, 2);
                             }
+                            small_vec.push(frame);
                         }
 
-                        gif
+                        small_vec
                     }
                     _ => {
                         let mut data =
@@ -466,7 +468,7 @@ impl Asset for Image {
                             pixel.swap(0, 2);
                         }
 
-                        vec![Frame::new(data)]
+                        SmallVec::from_elem(Frame::new(data), 1)
                     }
                 };
 
@@ -478,7 +480,7 @@ impl Asset for Image {
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                ImageData::new(vec![Frame::new(buffer)])
+                ImageData::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };
 
             Ok(Arc::new(data))

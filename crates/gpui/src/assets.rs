@@ -1,4 +1,5 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
+use smallvec::SmallVec;
 
 use image::{Delay, Frame};
 use std::{
@@ -41,17 +42,17 @@ pub(crate) struct RenderImageParams {
 pub struct ImageData {
     /// The ID associated with this image
     pub id: ImageId,
-    data: Vec<Frame>,
+    data: SmallVec<[Frame; 1]>,
 }
 
 impl ImageData {
     /// Create a new image from the given data.
-    pub fn new(data: Vec<Frame>) -> Self {
+    pub fn new(data: impl Into<SmallVec<[Frame; 1]>>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {
             id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
-            data,
+            data: data.into(),
         }
     }
 
