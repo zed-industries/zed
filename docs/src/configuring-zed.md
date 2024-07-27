@@ -1740,6 +1740,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "button": true,
   "dock": "right",
   "default_width": "N/A - width in pixels",
+  "default_height": "N/A - height in pixels",
+  "provider": "openai",
   "version": "1",
 },
 ```
@@ -1752,13 +1754,15 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "outline_panel": {
-  "auto_fold_dirs": true,
-  "auto_reveal_entries": true,
+  "button": true,
   "default_width": "N/A - width in pixels",
   "dock": "left",
   "file_icons": true,
+  "folder_icons": true,
   "git_status": true,
   "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
 }
 ```
 
