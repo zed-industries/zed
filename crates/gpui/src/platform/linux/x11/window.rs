@@ -1230,6 +1230,14 @@ impl PlatformWindow for X11Window {
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
         let coords = self.get_root_position(position);
         let message = ClientMessageEvent::new(
             32,
