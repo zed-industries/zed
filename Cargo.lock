@@ -4790,8 +4790,10 @@ dependencies = [
  "anyhow",
  "futures 0.3.28",
  "http_client",
+ "schemars",
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -5967,6 +5969,7 @@ dependencies = [
  "env_logger",
  "feature_flags",
  "futures 0.3.28",
+ "google_ai",
  "gpui",
  "http_client",
  "language",

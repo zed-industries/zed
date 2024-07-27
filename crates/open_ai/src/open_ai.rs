@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
@@ -111,38 +111,27 @@ impl Model {
     }
 }
 
-fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match model {
-        Model::Custom { name, .. } => serializer.serialize_str(name),
-        _ => serializer.serialize_str(model.id()),
-    }
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    #[serde(serialize_with = "serialize_model")]
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub stop: Vec<String>,
     pub temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Map<String, Value>>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     #[allow(dead_code)]
@@ -213,21 +202,21 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
     pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
@@ -368,4 +357,15 @@ pub fn embed<'a>(
             ))
         }
     }
+}
+
+pub fn extract_text_from_events(
+    response: impl Stream<Item = Result<ResponseStreamEvent>>,
+) -> impl Stream<Item = Result<String>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
+            Err(error) => Some(Err(error)),
+        }
+    })
 }

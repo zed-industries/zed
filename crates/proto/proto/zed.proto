@@ -201,10 +201,8 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        CompleteWithLanguageModel complete_with_language_model = 166;
-        LanguageModelResponse language_model_response = 167;
-        CountTokensWithLanguageModel count_tokens_with_language_model = 168;
-        CountTokensResponse count_tokens_response = 169;
+        QueryLanguageModel query_language_model = 166;
+        QueryLanguageModelResponse query_language_model_response = 167;
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -2051,47 +2049,31 @@ message SetRoomParticipantRole {
     ChannelRole role = 3;
 }
 
-message CompleteWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-    repeated string stop = 3;
-    float temperature = 4;
-}
-
-// A message to the language model
-message LanguageModelRequestMessage {
-    LanguageModelRole role = 1;
-    string content = 2;
-}
-
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
 }
 
-message LanguageModelResponseMessage {
-    optional LanguageModelRole role = 1;
-    optional string content = 2;
+message QueryLanguageModel {
+    LanguageModelProvider provider = 1;
+    LanguageModelRequestKind kind = 2;
+    string request = 3;
 }
 
-message LanguageModelResponse {
-    repeated LanguageModelChoiceDelta choices = 1;
+enum LanguageModelProvider {
+    Anthropic = 0;
+    OpenAI = 1;
+    Google = 2;
 }
 
-message LanguageModelChoiceDelta {
-    uint32 index = 1;
-    LanguageModelResponseMessage delta = 2;
-    optional string finish_reason = 3;
+enum LanguageModelRequestKind {
+    Complete = 0;
+    CountTokens = 1;
 }
 
-message CountTokensWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-}
-
-message CountTokensResponse {
-    uint32 token_count = 1;
+message QueryLanguageModelResponse {
+    string response = 1;
 }
 
 message GetCachedEmbeddings {
