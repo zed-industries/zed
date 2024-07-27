@@ -116,7 +116,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>()?;
+        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
         let package_name = "typescript";
 
@@ -420,7 +420,7 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>()?;
+        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
 
@@ -561,7 +561,7 @@ mod tests {
 
         let buffer =
             cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None)?);
+        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items
