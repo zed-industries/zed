@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt, TryFutureExt};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
