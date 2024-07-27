@@ -6,7 +6,7 @@
   --sidebar-resize-indicator-space: 2px;
   --page-padding: 15px;
   --content-max-width: 750px;
-  --menu-bar-height: 50px;
+  --menu-bar-height: 64px;
   --font: "IA Writer Quattro S", sans-serif;
   --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
@@ -20,7 +20,8 @@
 
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
-  --sidebar-active: rgb(8, 76, 207);
+  --sidebar-active: hsl(219, 93%, 42%);
+  --sidebar-active-bg: hsl(219, 93%, 42%, 0.1);
   --sidebar-spacer: #f4f4f4;
 
   --scrollbar: #8f8f8f;

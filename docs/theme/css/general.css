@@ -113,7 +113,7 @@ h6:target::before {
 */
 :target {
   /* Safari does not support logical properties */
-  scroll-margin-top: calc(var(--menu-bar-height) + 0.5em);
+  scroll-margin-top: calc(var(--menu-bar-height) + 2rem);
 }
 
 .page {
@@ -141,7 +141,7 @@ h6:target::before {
 
 .content {
   overflow-y: auto;
-  padding: 24px 4px 48px 4px;
+  padding: 48px 4px;
 }
 .content main {
   margin-inline-start: auto;

@@ -560,7 +560,7 @@ ul#searchresults span.teaser em {
 
 .chapter li a.active {
   color: var(--sidebar-active);
-  background-color: rgba(8, 76, 207, 0.1);
+  background-color: var(--sidebar-active-bg);
 }
 
 .chapter li > a.toggle {
