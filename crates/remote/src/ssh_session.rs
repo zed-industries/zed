@@ -466,7 +466,7 @@ impl ProtoClient for SshSession {
 impl SshClientState {
     #[cfg(not(unix))]
     async fn new(
-        connection_options: SshConnectionOptions,
+        _connection_options: SshConnectionOptions,
         _delegate: Arc<dyn SshClientDelegate>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Self> {
