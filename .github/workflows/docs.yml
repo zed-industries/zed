@@ -1,6 +1,9 @@
 name: Docs
 
 on:
+  pull_request:
+    paths:
+      - "docs/**"
   push:
     paths:
       - "docs/**"
