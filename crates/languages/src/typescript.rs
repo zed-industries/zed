@@ -59,7 +59,6 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
-    // vec![server_path.into(), "--stdin".into()]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -117,7 +116,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
+        let latest_version = latest_version.downcast::<TypeScriptVersions>()?;
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
         let package_name = "typescript";
 
@@ -299,7 +298,6 @@ impl EsLintLspAdapter {
     const CURRENT_VERSION: &'static str = "release/2.4.4";
 
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
-    // const SERVER_PATH: &'static str = "vscode-eslint/node_modules/.bin/eslint.ps1";
     const SERVER_NAME: &'static str = "eslint";
 
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
@@ -422,7 +420,7 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version = version.downcast::<GitHubLspBinaryVersion>()?;
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
 
@@ -437,18 +435,17 @@ impl LspAdapter for EsLintLspAdapter {
 
             if version.url.ends_with(".zip") {
                 node_runtime::extract_zip(&destination_path, BufReader::new(response.body_mut()))
-                    .await
-                    .unwrap();
+                    .await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
                 archive.unpack(&destination_path).await?;
             }
 
-            let mut dir = fs::read_dir(&destination_path).await.unwrap();
+            let mut dir = fs::read_dir(&destination_path).await?;
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
-            fs::rename(first.path(), &repo_root).await.unwrap();
+            fs::rename(first.path(), &repo_root).await?;
 
             #[cfg(target_os = "windows")]
             {
@@ -564,7 +561,7 @@ mod tests {
 
         let buffer =
             cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None)?);
         assert_eq!(
             outline
                 .items
