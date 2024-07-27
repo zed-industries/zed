@@ -659,15 +659,18 @@ impl settings::Settings for ThemeSettings {
         ];
 
         for (property, definition) in properties_with_references {
-            let Some(property) = root_schema.schema.object().properties.get_mut(property) else {
+            let Some(schema) = root_schema.schema.object().properties.get_mut(property) else {
+                log::warn!("property '{property}' not found in JSON schema");
                 continue;
             };
 
-            match property {
+            match schema {
                 Schema::Object(schema) => {
                     schema.reference = Some(definition.into());
                 }
-                Schema::Bool(_) => {}
+                Schema::Bool(_) => {
+                    // Boolean schemas can't have references.
+                }
             }
         }
 
