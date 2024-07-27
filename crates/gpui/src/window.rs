@@ -1158,6 +1158,23 @@ impl<'a> WindowContext<'a> {
         RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
+    /// Schedule a frame to be drawn on the next animation frame.
+    ///
+    /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
+    /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
+    ///
+    /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    pub fn request_animation_frame(&mut self) {
+        let parent_id = self.parent_view_id();
+        self.on_next_frame(move |cx| {
+            if let Some(parent_id) = parent_id {
+                cx.notify(parent_id)
+            } else {
+                cx.refresh()
+            }
+        });
+    }
+
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
@@ -2602,6 +2619,7 @@ impl<'a> WindowContext<'a> {
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         data: Arc<ImageData>,
+        frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
         debug_assert_eq!(
@@ -2612,13 +2630,19 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        let params = RenderImageParams { image_id: data.id };
+        let params = RenderImageParams {
+            image_id: data.id,
+            frame_index,
+        };
 
         let tile = self
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+                Ok(Some((
+                    data.size(frame_index),
+                    Cow::Borrowed(data.as_bytes(frame_index)),
+                )))
             })?
             .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
