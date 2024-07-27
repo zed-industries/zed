@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, ResultExt, TryFutureExt};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
@@ -449,14 +449,49 @@ impl LspAdapter for EsLintLspAdapter {
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await.unwrap();
+            copy_dir_all(
+                repo_root.join("$shared"),
+                repo_root.join("server").join("src").join("shared"),
+            )
+            .await
+            .unwrap();
+            copy_dir_all(
+                repo_root.join("$shared"),
+                repo_root.join("client").join("src").join("shared"),
+            )
+            .await
+            .unwrap();
 
             self.node
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
-                .await?;
+                .await
+                .unwrap();
 
-            self.node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
-                .await?;
+            // self.node
+            //     .run_npm_subcommand(Some(&repo_root), "run-script", &["compile:server"])
+            //     .await
+            //     .log_err();
+
+            // let output = std::process::Command::new("powershell.exe")
+            //     .arg("npm install --proxy \"http://127.0.0.1:10809\"")
+            //     .current_dir(&repo_root)
+            //     .output()
+            //     .unwrap();
+            // if !output.status.success() {
+            //     println!("==> {}", String::from_utf8_lossy(output.stderr.as_slice()));
+            // }
+            // println!("1-->{}", String::from_utf8_lossy(output.stdout.as_slice()));
+            let output = std::process::Command::new("powershell.exe")
+                .arg("npm run compile:server")
+                .current_dir(&repo_root)
+                .output()
+                .unwrap();
+            if !output.status.success() {
+                println!("==> {}", String::from_utf8_lossy(output.stderr.as_slice()));
+            }
+            println!("2-->{}", String::from_utf8_lossy(output.stdout.as_slice()));
+
+            panic!();
         }
 
         Ok(LanguageServerBinary {
@@ -503,6 +538,24 @@ async fn get_cached_eslint_server_binary(
     })
     .await
     .log_err()
+}
+
+async fn copy_dir_all(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
+    if fs::metadata(&src_dir).await.is_err() {
+        return Err(anyhow!("Directory {} not present.", src_dir.display()));
+    }
+    if fs::metadata(&dest_dir).await.is_ok() {
+        fs::remove_file(&dest_dir).await?;
+    }
+    fs::create_dir_all(&dest_dir).await?;
+    let mut entries = fs::read_dir(&src_dir).await?;
+    while let Some(entry) = entries.try_next().await? {
+        let entry_path = entry.path();
+        let entry_name = entry.file_name();
+        let dest_path = dest_dir.join(&entry_name);
+        fs::copy(&entry_path, &dest_path).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
