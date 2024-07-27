@@ -652,28 +652,22 @@ impl settings::Settings for ThemeSettings {
         ["buffer_font_family", "ui_font_family"]
             .into_iter()
             .for_each(|key| {
-                let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
-                match schema {
-                    Schema::Bool(_) => unreachable!(),
-                    Schema::Object(obj) => {
-                        obj.subschemas().all_of =
-                            Some(vec![Schema::new_ref("#/definitions/FontFamilies".into())]);
-                    }
-                }
+                with_schema_object(&mut root_schema, key, |obj| {
+                    obj.instance_type = None;
+                    obj.string = None;
+                    obj.metadata().default = None;
+                    obj.reference = Some("#/definitions/FontFamilies".into());
+                });
             });
         ["buffer_font_fallbacks", "ui_font_fallbacks"]
             .into_iter()
             .for_each(|key| {
-                let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
-                match schema {
-                    Schema::Bool(_) => unreachable!(),
-                    Schema::Object(obj) => {
-                        obj.instance_type = None;
-                        obj.array = None;
-                        obj.subschemas().all_of =
-                            Some(vec![Schema::new_ref("#/definitions/FontFallbacks".into())]);
-                    }
-                }
+                with_schema_object(&mut root_schema, key, |obj| {
+                    obj.instance_type = None;
+                    obj.array = None;
+                    obj.metadata().default = None;
+                    obj.reference = Some("#/definitions/FontFallbacks".into());
+                });
             });
         {
             let prop = &root_schema.schema.object().properties;
@@ -715,10 +709,15 @@ fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     }
 }
 
-fn retrieve_schema_metadata(root_schema: &mut RootSchema, key: &str) -> Option<Box<Metadata>> {
-    let schema = root_schema.schema.object().properties.get(key)?;
+fn with_schema_object<F>(root_schema: &mut RootSchema, key: &str, f: F)
+where
+    F: FnOnce(&mut SchemaObject),
+{
+    let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
     match schema {
-        Schema::Bool(_) => None,
-        Schema::Object(obj) => obj.metadata.clone(),
+        Schema::Bool(_) => unreachable!(),
+        Schema::Object(obj) => {
+            f(obj);
+        }
     }
 }
