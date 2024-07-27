@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
+    mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
@@ -12,25 +13,35 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use clipboard_win::{get_clipboard_string, set_clipboard_string};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use time::UtcOffset;
 use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Globalization::u_memcpy,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+        },
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
+        System::{
+            Com::*,
+            DataExchange::{
+                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
+                RegisterClipboardFormatW, SetClipboardData,
+            },
+            LibraryLoader::*,
+            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+            Ole::*,
+            SystemInformation::*,
+            Threading::*,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        Color,
-        ViewManagement::{UIColorType, UISettings},
-    },
+    UI::ViewManagement::UISettings,
 };
 
 use crate::*;
@@ -42,7 +53,12 @@ pub(crate) struct WindowsPlatform {
     icon: HICON,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<dyn PlatformTextSystem>,
+    text_system: Arc<DirectWriteTextSystem>,
+    clipboard_hash_format: u32,
+    clipboard_metadata_format: u32,
+    windows_version: WindowsVersion,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    validation_number: usize,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -81,16 +97,22 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
-            log::info!("Using direct write text system.");
-            Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
-        } else {
-            log::info!("Using cosmic text system.");
-            Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
-        };
+        let bitmap_factory = ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
+        let clipboard_hash_format = register_clipboard_format(CLIPBOARD_HASH_FORMAT).unwrap();
+        let clipboard_metadata_format =
+            register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
+        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let validation_number = rand::random::<usize>();
 
         Self {
             state,
@@ -99,6 +121,11 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
+            clipboard_hash_format,
+            clipboard_metadata_format,
+            windows_version,
+            bitmap_factory,
+            validation_number,
         }
     }
 
@@ -135,7 +162,16 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
+        if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -182,7 +218,11 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0)) {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
@@ -291,7 +331,9 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.foreground_executor.clone(),
             lock.current_cursor,
-        );
+            self.windows_version,
+            self.validation_number,
+        )?;
         drop(lock);
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
@@ -319,7 +361,10 @@ impl Platform for WindowsPlatform {
         self.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
-    fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
 
         self.foreground_executor()
@@ -358,7 +403,7 @@ impl Platform for WindowsPlatform {
                     if hr.unwrap_err().code() == HRESULT(0x800704C7u32 as i32) {
                         // user canceled error
                         if let Some(tx) = tx.take() {
-                            tx.send(None).unwrap();
+                            tx.send(Ok(None)).unwrap();
                         }
                         return;
                     }
@@ -377,10 +422,10 @@ impl Platform for WindowsPlatform {
                 }
 
                 if let Some(tx) = tx.take() {
-                    if paths.len() == 0 {
-                        tx.send(None).unwrap();
+                    if paths.is_empty() {
+                        tx.send(Ok(None)).unwrap();
                     } else {
-                        tx.send(Some(paths)).unwrap();
+                        tx.send(Ok(Some(paths))).unwrap();
                     }
                 }
             })
@@ -389,27 +434,27 @@ impl Platform for WindowsPlatform {
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
                 unsafe {
                     let Ok(dialog) = show_savefile_dialog(directory) else {
-                        let _ = tx.send(None);
+                        let _ = tx.send(Ok(None));
                         return;
                     };
                     let Ok(_) = dialog.Show(None) else {
-                        let _ = tx.send(None); // user cancel
+                        let _ = tx.send(Ok(None)); // user cancel
                         return;
                     };
                     if let Ok(shell_item) = dialog.GetResult() {
                         if let Ok(file) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
-                            let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
+                            let _ = tx.send(Ok(Some(PathBuf::from(file.to_string().unwrap()))));
                             return;
                         }
                     }
-                    let _ = tx.send(None);
+                    let _ = tx.send(Ok(None));
                 }
             })
             .detach();
@@ -463,25 +508,6 @@ impl Platform for WindowsPlatform {
         Ok(std::env::current_exe()?)
     }
 
-    fn local_timezone(&self) -> UtcOffset {
-        let mut info = unsafe { std::mem::zeroed() };
-        let ret = unsafe { GetTimeZoneInformation(&mut info) };
-        if ret == TIME_ZONE_ID_INVALID {
-            log::error!(
-                "Unable to get local timezone: {}",
-                std::io::Error::last_os_error()
-            );
-            return UtcOffset::UTC;
-        }
-        // Windows treat offset as:
-        // UTC = localtime + offset
-        // so we add a minus here
-        let hours = -info.Bias / 60;
-        let minutes = -info.Bias % 60;
-
-        UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
-    }
-
     // todo(windows)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow!("not yet implemented"))
@@ -491,7 +517,7 @@ impl Platform for WindowsPlatform {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
         if lock.current_cursor.0 != hcursor.0 {
-            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0 as isize));
             lock.current_cursor = hcursor;
         }
     }
@@ -501,17 +527,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        if item.text.len() > 0 {
-            set_clipboard_string(item.text()).unwrap();
-        }
+        write_to_clipboard(
+            item,
+            self.clipboard_hash_format,
+            self.clipboard_metadata_format,
+        );
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let text = get_clipboard_string().ok()?;
-        Some(ClipboardItem {
-            text,
-            metadata: None,
-        })
+        read_from_clipboard(self.clipboard_hash_format, self.clipboard_metadata_format)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -590,6 +614,7 @@ impl Platform for WindowsPlatform {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
             OleUninitialize();
         }
     }
@@ -605,7 +630,7 @@ fn open_target(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
         }
     }
@@ -621,7 +646,7 @@ fn open_target_in_explorer(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!(
                 "Unable to open target in explorer: {}",
                 std::io::Error::last_os_error()
@@ -653,11 +678,12 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync(vsync_evnet: HANDLE) {
+fn begin_vsync(vsync_event: HANDLE) {
+    let event: SafeHandle = vsync_event.into();
     std::thread::spawn(move || unsafe {
         loop {
             windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(vsync_evnet).log_err();
+            SetEvent(*event).log_err();
         }
     });
 }
@@ -678,27 +704,138 @@ fn load_icon() -> Result<HICON> {
     Ok(HICON(handle.0))
 }
 
-// https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
-#[inline]
-fn system_appearance() -> Result<WindowAppearance> {
-    let ui_settings = UISettings::new()?;
-    let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
-    // If the foreground is light, then is_color_light will evaluate to true,
-    // meaning Dark mode is enabled.
-    if is_color_light(&foreground_color) {
-        Ok(WindowAppearance::Dark)
-    } else {
-        Ok(WindowAppearance::Light)
-    }
-}
-
-#[inline(always)]
-fn is_color_light(color: &Color) -> bool {
-    ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
-}
-
 #[inline]
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn register_clipboard_format(format: PCWSTR) -> Result<u32> {
+    let ret = unsafe { RegisterClipboardFormatW(format) };
+    if ret == 0 {
+        Err(anyhow::anyhow!(
+            "Error when registering clipboard format: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(ret)
+    }
+}
+
+fn write_to_clipboard(item: ClipboardItem, hash_format: u32, metadata_format: u32) {
+    write_to_clipboard_inner(item, hash_format, metadata_format).log_err();
+    unsafe { CloseClipboard().log_err() };
+}
+
+fn write_to_clipboard_inner(
+    item: ClipboardItem,
+    hash_format: u32,
+    metadata_format: u32,
+) -> Result<()> {
+    unsafe {
+        OpenClipboard(None)?;
+        EmptyClipboard()?;
+        let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
+        set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
+
+        if let Some(ref metadata) = item.metadata {
+            let hash_result = {
+                let hash = ClipboardItem::text_hash(&item.text);
+                hash.to_ne_bytes()
+            };
+            let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
+            set_data_to_clipboard(encode_wide, hash_format)?;
+
+            let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
+            set_data_to_clipboard(&metadata_wide, metadata_format)?;
+        }
+    }
+    Ok(())
+}
+
+fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
+        let handle = GlobalLock(global);
+        u_memcpy(handle as _, data.as_ptr(), data.len() as _);
+        let _ = GlobalUnlock(global);
+        SetClipboardData(format, HANDLE(global.0))?;
+    }
+    Ok(())
+}
+
+fn read_from_clipboard(hash_format: u32, metadata_format: u32) -> Option<ClipboardItem> {
+    let result = read_from_clipboard_inner(hash_format, metadata_format).log_err();
+    unsafe { CloseClipboard().log_err() };
+    result
+}
+
+fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<ClipboardItem> {
+    unsafe {
+        OpenClipboard(None)?;
+        let text = {
+            let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
+            let text = PCWSTR(handle.0 as *const u16);
+            String::from_utf16_lossy(text.as_wide())
+        };
+        let mut item = ClipboardItem {
+            text,
+            metadata: None,
+        };
+        let Some(hash) = read_hash_from_clipboard(hash_format) else {
+            return Ok(item);
+        };
+        let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
+            return Ok(item);
+        };
+        if hash == ClipboardItem::text_hash(&item.text) {
+            item.metadata = Some(metadata);
+        }
+        Ok(item)
+    }
+}
+
+fn read_hash_from_clipboard(hash_format: u32) -> Option<u64> {
+    unsafe {
+        let handle = GetClipboardData(hash_format).log_err()?;
+        let raw_ptr = handle.0 as *const u16;
+        let hash_bytes: [u8; 8] = std::slice::from_raw_parts(raw_ptr.cast::<u8>(), 8)
+            .to_vec()
+            .try_into()
+            .log_err()?;
+        Some(u64::from_ne_bytes(hash_bytes))
+    }
+}
+
+fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
+    unsafe {
+        let handle = GetClipboardData(metadata_format).log_err()?;
+        let text = PCWSTR(handle.0 as *const u16);
+        Some(String::from_utf16_lossy(text.as_wide()))
+    }
+}
+
+// clipboard
+pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
+pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
+
+#[cfg(test)]
+mod tests {
+    use crate::{ClipboardItem, Platform, WindowsPlatform};
+
+    #[test]
+    fn test_clipboard() {
+        let platform = WindowsPlatform::new();
+        let item = ClipboardItem::new("你好".to_string());
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new("12345".to_string());
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+    }
 }

@@ -8,6 +8,7 @@
 
 mod default_colors;
 mod default_theme;
+mod font_family_cache;
 mod one_themes;
 pub mod prelude;
 mod registry;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
 pub use default_theme::*;
+pub use font_family_cache::*;
 pub use registry::*;
 pub use scale::*;
 pub use schema::*;
@@ -28,7 +30,8 @@ pub use settings::*;
 pub use styles::*;
 
 use gpui::{
-    AppContext, AssetSource, Hsla, SharedString, WindowAppearance, WindowBackgroundAppearance,
+    px, AppContext, AssetSource, Hsla, Pixels, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 
@@ -37,6 +40,9 @@ pub enum Appearance {
     Light,
     Dark,
 }
+
+pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
+pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
 
 impl Appearance {
     pub fn is_light(&self) -> bool {
@@ -78,6 +84,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     }
 
     ThemeSettings::register(cx);
+    FontFamilyCache::init_global(cx);
 
     let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     cx.observe_global::<SettingsStore>(move |cx| {

@@ -84,7 +84,7 @@ impl Prettier {
             path_to_check.pop();
         }
 
-        let mut project_path_with_prettier_dependency = None;
+        let mut closest_package_json_path = None;
         loop {
             if installed_prettiers.contains(&path_to_check) {
                 log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
@@ -92,61 +92,44 @@ impl Prettier {
             } else if let Some(package_json_contents) =
                 read_package_json(fs, &path_to_check).await?
             {
-                if has_prettier_in_package_json(&package_json_contents) {
-                    if has_prettier_in_node_modules(fs, &path_to_check).await? {
-                        log::debug!("Found prettier path {path_to_check:?} in both package.json and node_modules");
-                        return Ok(ControlFlow::Continue(Some(path_to_check)));
-                    } else if project_path_with_prettier_dependency.is_none() {
-                        project_path_with_prettier_dependency = Some(path_to_check.clone());
-                    }
+                if has_prettier_in_node_modules(fs, &path_to_check).await? {
+                    log::debug!("Found prettier path {path_to_check:?} in the node_modules");
+                    return Ok(ControlFlow::Continue(Some(path_to_check)));
                 } else {
-                    match package_json_contents.get("workspaces") {
-                            Some(serde_json::Value::Array(workspaces)) => {
-                                match &project_path_with_prettier_dependency {
-                                    Some(project_path_with_prettier_dependency) => {
-                                        let subproject_path = project_path_with_prettier_dependency.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
-                                        if workspaces.iter().filter_map(|value| {
-                                            if let serde_json::Value::String(s) = value {
-                                                Some(s.clone())
-                                            } else {
-                                                log::warn!("Skipping non-string 'workspaces' value: {value:?}");
-                                                None
-                                            }
-                                        }).any(|workspace_definition| {
-                                            if let Some(path_matcher) = PathMatcher::new(&[workspace_definition.clone()]).ok() {
-                                                path_matcher.is_match(subproject_path)
-                                            } else {
-                                                workspace_definition == subproject_path.to_string_lossy()
-                                            }
-                                        }) {
-                                            anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}, but it's not installed into workspace root's node_modules");
-                                            log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}");
-                                            return Ok(ControlFlow::Continue(Some(path_to_check)));
+                    match &closest_package_json_path {
+                        None => closest_package_json_path = Some(path_to_check.clone()),
+                        Some(closest_package_json_path) => {
+                            match package_json_contents.get("workspaces") {
+                                Some(serde_json::Value::Array(workspaces)) => {
+                                    let subproject_path = closest_package_json_path.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
+                                    if workspaces.iter().filter_map(|value| {
+                                        if let serde_json::Value::String(s) = value {
+                                            Some(s.clone())
                                         } else {
-                                            log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
+                                            log::warn!("Skipping non-string 'workspaces' value: {value:?}");
+                                            None
                                         }
+                                    }).any(|workspace_definition| {
+                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition]).ok().map_or(false, |path_matcher| path_matcher.is_match(subproject_path))
+                                    }) {
+                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Path {path_to_check:?} is the workspace root for project in {closest_package_json_path:?}, but it has no prettier installed");
+                                        log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {closest_package_json_path:?}");
+                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
+                                    } else {
+                                        log::warn!("Skipping path {path_to_check:?} workspace root with workspaces {workspaces:?} that have no prettier installed");
                                     }
-                                    None => {
-                                        log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but has no prettier in its package.json");
-                                    }
-                                }
-                            },
-                            Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
-                            None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                                },
+                                Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
+                                None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                            }
                         }
+                    }
                 }
             }
 
             if !path_to_check.pop() {
-                match project_path_with_prettier_dependency {
-                    Some(closest_prettier_discovered) => {
-                        anyhow::bail!("No prettier found in node_modules for ancestors of {locate_from:?}, but discovered prettier package.json dependency in {closest_prettier_discovered:?}")
-                    }
-                    None => {
-                        log::debug!("Found no prettier in ancestors of {locate_from:?}");
-                        return Ok(ControlFlow::Continue(None));
-                    }
-                }
+                log::debug!("Found no prettier in ancestors of {locate_from:?}");
+                return Ok(ControlFlow::Continue(None));
             }
         }
     }
@@ -317,11 +300,14 @@ impl Prettier {
                             })
                             .collect();
 
-                        let prettier_parser = prettier_settings.parser.as_deref().or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+                        let mut prettier_parser = prettier_settings.parser.as_deref();
+                        if buffer_path.is_none() {
+                            prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+                            if prettier_parser.is_none() {
+                                log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
+                                return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
+                            }
 
-                        if prettier_parser.is_none() && buffer_path.is_none() {
-                            log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                            return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
                         }
 
                         log::debug!(
@@ -445,22 +431,6 @@ async fn read_package_json(
     Ok(None)
 }
 
-fn has_prettier_in_package_json(
-    package_json_contents: &HashMap<String, serde_json::Value>,
-) -> bool {
-    if let Some(serde_json::Value::Object(o)) = package_json_contents.get("dependencies") {
-        if o.contains_key(PRETTIER_PACKAGE_NAME) {
-            return true;
-        }
-    }
-    if let Some(serde_json::Value::Object(o)) = package_json_contents.get("devDependencies") {
-        if o.contains_key(PRETTIER_PACKAGE_NAME) {
-            return true;
-        }
-    }
-    false
-}
-
 enum Format {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -545,40 +515,36 @@ mod tests {
         )
         .await;
 
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/.config/zed/settings.json"),
-                )
-                .await,
-                Ok(ControlFlow::Continue(None))
-            ),
-            "Should successfully find no prettier for path hierarchy without it"
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/.config/zed/settings.json"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(None),
+            "Should find no prettier for path hierarchy without it"
         );
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/work/project/src/index.js")
-                )
-                .await,
-                Ok(ControlFlow::Continue(None))
-            ),
-            "Should successfully find no prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/src/index.js")
+            )
+            .await.unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/work/project"))),
+            "Should successfully find a prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
         );
-        assert!(
-            matches!(
-                Prettier::locate_prettier_installation(
-                    fs.as_ref(),
-                    &HashSet::default(),
-                    Path::new("/root/work/project/node_modules/expect/build/print.js")
-                )
-                .await,
-                Ok(ControlFlow::Break(()))
-            ),
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/project/node_modules/expect/build/print.js")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Break(()),
             "Should not format files inside node_modules/"
         );
     }
@@ -688,18 +654,17 @@ mod tests {
         )
         .await;
 
-        match Prettier::locate_prettier_installation(
-            fs.as_ref(),
-            &HashSet::default(),
-            Path::new("/root/work/web_blog/pages/[slug].tsx")
-        )
-        .await {
-            Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
-            Err(e) => {
-                let message = e.to_string();
-                assert!(message.contains("/root/work/web_blog"), "Error message should mention which project had prettier defined");
-            },
-        };
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/work/web_blog/pages/[slug].tsx")
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(None),
+            "Should find no prettier when node_modules don't have it"
+        );
 
         assert_eq!(
             Prettier::locate_prettier_installation(

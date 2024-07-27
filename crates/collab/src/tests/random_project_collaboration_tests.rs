@@ -301,7 +301,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let is_local = project.read_with(cx, |project, _| project.is_local());
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
-                                    .worktrees()
+                                    .worktrees(cx)
                                     .filter(|worktree| {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
@@ -423,7 +423,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         81.. => {
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
-                                    .worktrees()
+                                    .worktrees(cx)
                                     .filter(|worktree| {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
@@ -581,7 +581,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 }
                 project
                     .update(cx, |project, cx| {
-                        project.find_or_create_local_worktree(&new_root_path, true, cx)
+                        project.find_or_create_worktree(&new_root_path, true, cx)
                     })
                     .await
                     .unwrap();
@@ -1172,7 +1172,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
                                         host_project
-                                            .worktrees()
+                                            .worktrees(cx)
                                             .map(|worktree| {
                                                 let worktree = worktree.read(cx);
                                                 (worktree.id(), worktree.snapshot())
@@ -1180,7 +1180,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                             .collect::<BTreeMap<_, _>>()
                                     });
                                 let guest_worktree_snapshots = guest_project
-                                    .worktrees()
+                                    .worktrees(cx)
                                     .map(|worktree| {
                                         let worktree = worktree.read(cx);
                                         (worktree.id(), worktree.snapshot())
@@ -1237,7 +1237,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         }
 
-                        for buffer in guest_project.opened_buffers() {
+                        for buffer in guest_project.opened_buffers(cx) {
                             let buffer = buffer.read(cx);
                             assert_eq!(
                                 buffer.deferred_ops_len(),
@@ -1287,8 +1287,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                 for guest_buffer in guest_buffers {
                     let buffer_id =
                         guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
-                    let host_buffer = host_project.read_with(host_cx, |project, _| {
-                        project.buffer_for_id(buffer_id).unwrap_or_else(|| {
+                    let host_buffer = host_project.read_with(host_cx, |project, cx| {
+                        project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
                             panic!(
                                 "host does not have buffer for guest:{}, peer:{:?}, id:{}",
                                 client.username,
@@ -1538,7 +1538,7 @@ fn project_path_for_full_path(
     let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
     let path = components.as_path().into();
     let worktree_id = project.read_with(cx, |project, cx| {
-        project.worktrees().find_map(|worktree| {
+        project.worktrees(cx).find_map(|worktree| {
             let worktree = worktree.read(cx);
             if worktree.root_name() == root_name {
                 Some(worktree.id())

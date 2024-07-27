@@ -1,18 +1,16 @@
 # Remote Development
 
-Remote Development is in the early stages of development. If you'd like to try it please email [alpha@zed.dev](mailto:alpha@zed.dev).
-
 Remote Development allows you to code at the speed of thought, even when your codebase is not on your local machine. You use Zed locally so the UI is immediately responsive, but offload heavy computation to the development server so that you can work effectively.
+
+> **Note:** Remoting is still "alpha". We have several changes we would like to make before it is fully released.
 
 ## Overview
 
 Remote development requires running two instances of Zed. A headless instance on the remote machine, and the editor interface on your local computer. All configuration is done on your local computer.
 
-Currently the two instances connect via Zed's servers, but we intend to build peer to peer communication in the future.
+Currently the two instances connect via Zed's servers, but we intend to build peer to peer communication before the feature is fully released.
 
 ## Setup
-
-> **Note:** You must be in the alpha program to see this UI. The instructions will likely change as the feature gets closer to launch.
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
@@ -23,11 +21,11 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 6. On your laptop you can now open folders on the remote machine.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-## Toubleshooting
+## Troubleshooting
 
 ### UI is not showing up
 
-This can happen either if you were just added to the alpha, in which case you need to restart Zed. Or, if you lost connection to the Zed server, in which case you just need to click "Sign In" in the top right.
+You need to be on a relatively recent Zed (v0.145.0 or later).
 
 ### SSH connections
 
@@ -86,9 +84,30 @@ If you'd like to install language-server extensions, you can add them to the lis
 ## Known Limitations
 
 - You can't use the Terminal or Tasks if you choose "Manual Connection"
-- You can't yet open additional files on the machine in the current project.
 - You can't run `zed` in headless mode and in GUI mode at the same time on the same machine.
+- You can't open files from the remote Terminal by typing the `zed` command.
 
 ## Feedback
 
 Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/qSDQ8VWc7k).
+
+# Direct SSH Connections
+
+The current alpha release of Zed always connects via our servers. This was to get experience building the feature on top of our existing collaboration support. We plan to move to direct SSH connections for any machine that can be SSH'd into.
+
+We are working on a direct SSH connection feature, which you can try out if you'd like.
+
+> **Note:** Direct SSH support does not support most features yet! You cannot use project search, language servers, or basically do anything except edit files...
+
+To try this out you can either from the command line run:
+
+```
+zed ssh://user@host:port/path/to/project
+```
+
+Or you can (in your settings file) add:
+```
+"ssh_connections": []
+```
+
+And then from the command palette choose `projects: Open Remote` and configure an SSH connection from there.

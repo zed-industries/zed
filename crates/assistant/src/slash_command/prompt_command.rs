@@ -1,7 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
@@ -33,13 +33,20 @@ impl SlashCommand for PromptSlashCommand {
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
-                .filter_map(|prompt| Some(prompt.title?.to_string()))
+                .filter_map(|prompt| {
+                    let prompt_title = prompt.title?.to_string();
+                    Some(ArgumentCompletion {
+                        label: prompt_title.clone(),
+                        new_text: prompt_title,
+                        run_command: true,
+                    })
+                })
                 .collect())
         })
     }

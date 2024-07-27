@@ -4,11 +4,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -25,7 +27,7 @@ pub(crate) struct FetchSlashCommand;
 impl FetchSlashCommand {
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
         let mut url = url.to_owned();
-        if !url.starts_with("https://") {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
             url = format!("https://{url}");
         }
 
@@ -119,7 +121,7 @@ impl SlashCommand for FetchSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 

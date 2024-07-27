@@ -414,5 +414,5 @@ CREATE TABLE dev_servers (
 CREATE TABLE dev_server_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
-    path TEXT NOT NULL
+    paths TEXT NOT NULL
 );

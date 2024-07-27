@@ -1,6 +1,7 @@
 use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
-use crate::{DraggedDock, Event};
+use crate::{DraggedDock, Event, Pane};
+use client::proto;
 use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
@@ -23,6 +24,8 @@ pub enum PanelEvent {
     Close,
 }
 
+pub use proto::PanelId;
+
 pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn persistent_name() -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
@@ -44,6 +47,12 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn pane(&self) -> Option<View<Pane>> {
+        None
+    }
+    fn remote_id() -> Option<proto::PanelId> {
+        None
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -55,6 +64,8 @@ pub trait PanelHandle: Send + Sync {
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
+    fn remote_id(&self) -> Option<proto::PanelId>;
+    fn pane(&self, cx: &WindowContext) -> Option<View<Pane>>;
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
@@ -99,6 +110,14 @@ where
 
     fn set_active(&self, active: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_active(active, cx))
+    }
+
+    fn pane(&self, cx: &WindowContext) -> Option<View<Pane>> {
+        self.read(cx).pane()
+    }
+
+    fn remote_id(&self) -> Option<PanelId> {
+        T::remote_id()
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
@@ -296,6 +315,12 @@ impl Dock {
             .position(|entry| entry.panel.persistent_name() == ui_name)
     }
 
+    pub fn panel_index_for_proto_id(&self, panel_id: PanelId) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.remote_id() == Some(panel_id))
+    }
+
     pub fn active_panel_index(&self) -> usize {
         self.active_panel_index
     }
@@ -431,30 +456,36 @@ impl Dock {
             }),
         ];
 
-        let name = panel.persistent_name().to_string();
-
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel.clone()),
             _subscriptions: subscriptions,
         });
-        if let Some(serialized) = self.serialized_dock.clone() {
-            if serialized.active_panel == Some(name) {
-                self.activate_panel(self.panel_entries.len() - 1, cx);
-                if serialized.visible {
-                    self.set_open(true, cx);
-                }
-                if serialized.zoom {
-                    if let Some(panel) = self.active_panel() {
-                        panel.set_zoomed(true, cx)
-                    };
-                }
-            }
-        } else if panel.read(cx).starts_open(cx) {
+
+        if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
             self.activate_panel(self.panel_entries.len() - 1, cx);
             self.set_open(true, cx);
         }
 
         cx.notify()
+    }
+
+    pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(serialized) = self.serialized_dock.clone() {
+            if let Some(active_panel) = serialized.active_panel {
+                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
+                    self.activate_panel(idx, cx);
+                }
+            }
+
+            if serialized.zoom {
+                if let Some(panel) = self.active_panel() {
+                    panel.set_zoomed(true, cx)
+                }
+            }
+            self.set_open(serialized.visible, cx);
+            return true;
+        }
+        return false;
     }
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {

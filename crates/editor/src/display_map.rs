@@ -28,8 +28,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
-    BlockMap, BlockPoint, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
+    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
+    BlockMap, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -109,6 +109,7 @@ pub struct DisplayMap {
     crease_map: CreaseMap,
     fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
+    pub(crate) masked: bool,
 }
 
 impl DisplayMap {
@@ -156,6 +157,7 @@ impl DisplayMap {
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
+            masked: false,
         }
     }
 
@@ -182,6 +184,7 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
+            masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
         }
     }
@@ -269,7 +272,7 @@ impl DisplayMap {
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut ModelContext<Self>,
-    ) -> Vec<BlockId> {
+    ) -> Vec<CustomBlockId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -285,7 +288,7 @@ impl DisplayMap {
 
     pub fn replace_blocks(
         &mut self,
-        heights_and_renderers: HashMap<BlockId, (Option<u8>, RenderBlock)>,
+        heights_and_renderers: HashMap<CustomBlockId, (Option<u8>, RenderBlock)>,
         cx: &mut ModelContext<Self>,
     ) {
         //
@@ -306,8 +309,8 @@ impl DisplayMap {
         // directly and the new behavior separately.
         //
         //
-        let mut only_renderers = HashMap::<BlockId, RenderBlock>::default();
-        let mut full_replace = HashMap::<BlockId, (u8, RenderBlock)>::default();
+        let mut only_renderers = HashMap::<CustomBlockId, RenderBlock>::default();
+        let mut full_replace = HashMap::<CustomBlockId, (u8, RenderBlock)>::default();
         for (id, (height, render)) in heights_and_renderers {
             if let Some(height) = height {
                 full_replace.insert(id, (height, render));
@@ -334,7 +337,7 @@ impl DisplayMap {
         block_map.replace(full_replace);
     }
 
-    pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
+    pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -350,7 +353,7 @@ impl DisplayMap {
 
     pub fn row_for_block(
         &mut self,
-        block_id: BlockId,
+        block_id: CustomBlockId,
         cx: &mut ModelContext<Self>,
     ) -> Option<DisplayRow> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -499,6 +502,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
+    masked: bool,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -561,7 +565,7 @@ impl DisplaySnapshot {
         }
     }
 
-    // used by line_mode selections and tries to match vim behaviour
+    // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = if range.start.row == 0 {
             MultiBufferPoint::new(0, 0)
@@ -650,6 +654,7 @@ impl DisplaySnapshot {
             .chunks(
                 display_row.0..self.max_point().row().next_row().0,
                 false,
+                self.masked,
                 Highlights::default(),
             )
             .map(|h| h.text)
@@ -657,9 +662,9 @@ impl DisplaySnapshot {
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
-        (0..=display_row.0).rev().flat_map(|row| {
+        (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, Highlights::default())
+                .chunks(row..row + 1, false, self.masked, Highlights::default())
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -676,6 +681,7 @@ impl DisplaySnapshot {
         self.block_snapshot.chunks(
             display_rows.start.0..display_rows.end.0,
             language_aware,
+            self.masked,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
@@ -885,10 +891,14 @@ impl DisplaySnapshot {
     pub fn blocks_in_range(
         &self,
         rows: Range<DisplayRow>,
-    ) -> impl Iterator<Item = (DisplayRow, &TransformBlock)> {
+    ) -> impl Iterator<Item = (DisplayRow, &Block)> {
         self.block_snapshot
             .blocks_in_range(rows.start.0..rows.end.0)
             .map(|(row, block)| (DisplayRow(row), block))
+    }
+
+    pub fn block_for_id(&self, id: BlockId) -> Option<Block> {
+        self.block_snapshot.block_for_id(id)
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {

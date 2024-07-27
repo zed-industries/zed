@@ -149,8 +149,7 @@ impl ContextMenu {
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        let label = label.into();
-        self.items.push(ContextMenuItem::Label(label));
+        self.items.push(ContextMenuItem::Label(label.into()));
         self
     }
 
@@ -178,7 +177,7 @@ impl ContextMenu {
 
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
-            icon: Some(IconName::Link),
+            icon: Some(IconName::ArrowUpRight),
         });
         self
     }
@@ -250,7 +249,7 @@ impl ContextMenu {
         }
     }
 
-    pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
+    pub fn on_action_dispatch(&mut self, dispatched: &dyn Action, cx: &mut ViewContext<Self>) {
         if self.clicked {
             cx.propagate();
             return;
@@ -262,7 +261,7 @@ impl ContextMenu {
                 ..
             } = item
             {
-                action.partial_eq(&**dispatched)
+                action.partial_eq(dispatched)
             } else {
                 false
             }
@@ -285,14 +284,19 @@ impl ContextMenu {
             cx.propagate()
         }
     }
+
+    pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {
+        self._on_blur_subscription = new_subscription;
+        self
+    }
 }
 
 impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
-            ContextMenuItem::Separator => false,
-            ContextMenuItem::Label { .. } => false,
-            ContextMenuItem::Header(_) => false,
+            ContextMenuItem::Header(_)
+            | ContextMenuItem::Separator
+            | ContextMenuItem::Label { .. } => false,
             ContextMenuItem::Entry { .. } => true,
             ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
         }
@@ -306,7 +310,10 @@ impl Render for ContextMenu {
         div().occlude().elevation_2(cx).flex().flex_row().child(
             WithRemSize::new(ui_font_size).flex().child(
                 v_flex()
+                    .id("context-menu")
                     .min_w(px(200.))
+                    .max_h(vh(0.75, cx))
+                    .overflow_y_scroll()
                     .track_focus(&self.focus_handle)
                     .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                     .key_context("menu")
@@ -360,7 +367,7 @@ impl Render for ContextMenu {
                                         h_flex()
                                             .gap_1()
                                             .child(Label::new(label.clone()))
-                                            .child(Icon::new(*icon))
+                                            .child(Icon::new(*icon).size(IconSize::Small))
                                             .into_any_element()
                                     } else {
                                         Label::new(label.clone()).into_any_element()
@@ -420,19 +427,19 @@ impl Render for ContextMenu {
                                 } => {
                                     let handler = handler.clone();
                                     let menu = cx.view().downgrade();
+                                    let selectable = *selectable;
                                     ListItem::new(ix)
                                         .inset(true)
-                                        .selected(if *selectable {
+                                        .selected(if selectable {
                                             Some(ix) == self.selected_index
                                         } else {
                                             false
                                         })
-                                        .selectable(*selectable)
-                                        .on_click({
-                                            let context = self.action_context.clone();
-                                            let selectable = *selectable;
-                                            move |_, cx| {
-                                                if selectable {
+                                        .selectable(selectable)
+                                        .when(selectable, |item| {
+                                            item.on_click({
+                                                let context = self.action_context.clone();
+                                                move |_, cx| {
                                                     handler(context.as_ref(), cx);
                                                     menu.update(cx, |menu, cx| {
                                                         menu.clicked = true;
@@ -440,7 +447,7 @@ impl Render for ContextMenu {
                                                     })
                                                     .ok();
                                                 }
-                                            }
+                                            })
                                         })
                                         .child(entry_render(cx))
                                         .into_any_element()

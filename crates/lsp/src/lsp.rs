@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
@@ -24,6 +24,7 @@ use std::{
     ffi::OsString,
     fmt,
     io::Write,
+    ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -69,7 +70,7 @@ pub struct LanguageServer {
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
     name: Arc<str>,
-    capabilities: ServerCapabilities,
+    capabilities: RwLock<ServerCapabilities>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -206,6 +207,14 @@ impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
     fn id(&self) -> i32 {
         self.id
     }
+}
+
+/// Combined capabilities of the server and the adapter.
+pub struct AdapterServerCapabilities {
+    // Reported capabilities by the server
+    pub server_capabilities: ServerCapabilities,
+    // List of code actions supported by the LspAdapter matching the server
+    pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
 /// Experimental: Informs the end user about the state of the server
@@ -380,7 +389,7 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: "".into(),
+            name: Arc::default(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),
@@ -640,12 +649,32 @@ impl LanguageServer {
                         ..Default::default()
                     }),
                     formatting: Some(DynamicRegistrationClientCapabilities {
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
+                    }),
+                    range_formatting: Some(DynamicRegistrationClientCapabilities {
+                        dynamic_registration: Some(true),
                     }),
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    signature_help: Some(SignatureHelpClientCapabilities {
+                        signature_information: Some(SignatureInformationSettings {
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
+                            parameter_information: Some(ParameterInformationSettings {
+                                label_offset_support: Some(true),
+                            }),
+                            active_parameter_support: Some(true),
+                        }),
+                        ..SignatureHelpClientCapabilities::default()
+                    }),
+                    synchronization: Some(TextDocumentSyncClientCapabilities {
+                        did_save: Some(true),
+                        ..TextDocumentSyncClientCapabilities::default()
+                    }),
+                    ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
                     "serverStatusNotification": true,
@@ -676,7 +705,7 @@ impl LanguageServer {
             if let Some(info) = response.server_info {
                 self.name = info.name.into();
             }
-            self.capabilities = response.capabilities;
+            self.capabilities = RwLock::new(response.capabilities);
 
             self.notify::<notification::Initialized>(InitializedParams {})?;
             Ok(Arc::new(self))
@@ -891,8 +920,21 @@ impl LanguageServer {
     }
 
     /// Get the reported capabilities of the running language server.
-    pub fn capabilities(&self) -> &ServerCapabilities {
-        &self.capabilities
+    pub fn capabilities(&self) -> ServerCapabilities {
+        self.capabilities.read().clone()
+    }
+
+    /// Get the reported capabilities of the running language server and
+    /// what we know on the client/adapter-side of its capabilities.
+    pub fn adapter_server_capabilities(&self) -> AdapterServerCapabilities {
+        AdapterServerCapabilities {
+            server_capabilities: self.capabilities(),
+            code_action_kinds: self.code_action_kinds(),
+        }
+    }
+
+    pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
+        update(self.capabilities.write().deref_mut());
     }
 
     /// Get the id of the running language server.

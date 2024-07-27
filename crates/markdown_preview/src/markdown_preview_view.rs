@@ -6,13 +6,13 @@ use anyhow::Result;
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task,
-    View, ViewContext, WeakView,
+    list, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    WeakView,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
-use workspace::item::{Item, ItemHandle, TabContentParams};
+use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
@@ -99,7 +99,7 @@ impl MarkdownPreviewView {
             .and_then(|view| pane.index_for_item(&view))
     }
 
-    fn resolve_active_item_as_markdown_editor(
+    pub fn resolve_active_item_as_markdown_editor(
         workspace: &Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<View<Editor>> {
@@ -278,7 +278,7 @@ impl MarkdownPreviewView {
         }
     }
 
-    fn is_markdown_file<V>(editor: &View<Editor>, cx: &mut ViewContext<V>) -> bool {
+    pub fn is_markdown_file<V>(editor: &View<Editor>, cx: &mut ViewContext<V>) -> bool {
         let language = editor.read(cx).buffer().read(cx).language_at(0, cx);
         language
             .map(|l| l.name().as_ref() == "Markdown")
@@ -452,27 +452,16 @@ impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = PreviewEvent;
 
-    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
-        h_flex()
-            .gap_2()
-            .child(Icon::new(IconName::FileDoc).color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .child(
-                Label::new(if let Some(description) = &self.tab_description {
-                    description.clone().into()
-                } else {
-                    self.fallback_tab_description.clone()
-                })
-                .color(if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
-            )
-            .into_any()
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::FileDoc))
+    }
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some(if let Some(description) = &self.tab_description {
+            description.clone().into()
+        } else {
+            self.fallback_tab_description.clone()
+        })
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

@@ -4,9 +4,6 @@
 mod app_menu;
 mod keystroke;
 
-#[cfg(not(target_os = "macos"))]
-mod cosmic_text;
-
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -24,8 +21,8 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
-    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
@@ -51,8 +48,6 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keystroke::*;
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
@@ -60,16 +55,20 @@ pub(crate) use mac::*;
 pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
-use time::UtcOffset;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new())
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless))
 }
+
 #[cfg(target_os = "linux")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    if headless {
+        return Rc::new(HeadlessClient::new());
+    }
+
     match guess_compositor() {
         "Wayland" => Rc::new(WaylandClient::new()),
         "X11" => Rc::new(X11Client::new()),
@@ -83,6 +82,9 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn guess_compositor() -> &'static str {
+    if std::env::var_os("ZED_HEADLESS").is_some() {
+        return "Headless";
+    }
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
     let x11_display = std::env::var_os("DISPLAY");
 
@@ -98,9 +100,8 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
 }
 
@@ -137,8 +138,8 @@ pub(crate) trait Platform: 'static {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn reveal_path(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
@@ -159,7 +160,6 @@ pub(crate) trait Platform: 'static {
         ""
     }
     fn app_path(&self) -> Result<PathBuf>;
-    fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
@@ -210,6 +210,93 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
+/// Which part of the window to resize
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    /// The top edge
+    Top,
+    /// The top right corner
+    TopRight,
+    /// The right edge
+    Right,
+    /// The bottom right corner
+    BottomRight,
+    /// The bottom edge
+    Bottom,
+    /// The bottom left corner
+    BottomLeft,
+    /// The left edge
+    Left,
+    /// The top left corner
+    TopLeft,
+}
+
+/// A type to describe the appearance of a window
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum WindowDecorations {
+    #[default]
+    /// Server side decorations
+    Server,
+    /// Client side decorations
+    Client,
+}
+
+/// A type to describe how this window is currently configured
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum Decorations {
+    /// The window is configured to use server side decorations
+    #[default]
+    Server,
+    /// The window is configured to use client side decorations
+    Client {
+        /// The edge tiling state
+        tiling: Tiling,
+    },
+}
+
+/// What window controls this platform supports
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct WindowControls {
+    /// Whether this platform supports fullscreen
+    pub fullscreen: bool,
+    /// Whether this platform supports maximize
+    pub maximize: bool,
+    /// Whether this platform supports minimize
+    pub minimize: bool,
+    /// Whether this platform supports a window menu
+    pub window_menu: bool,
+}
+
+/// A type to describe which sides of the window are currently tiled in some way
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct Tiling {
+    /// Whether the top edge is tiled
+    pub top: bool,
+    /// Whether the left edge is tiled
+    pub left: bool,
+    /// Whether the right edge is tiled
+    pub right: bool,
+    /// Whether the bottom edge is tiled
+    pub bottom: bool,
+}
+
+impl Tiling {
+    /// Initializes a [`Tiling`] type with all sides tiled
+    pub fn tiled() -> Self {
+        Self {
+            top: true,
+            left: true,
+            right: true,
+            bottom: true,
+        }
+    }
+
+    /// Whether any edge is tiled
+    pub fn is_tiled(&self) -> bool {
+        self.top || self.left || self.right || self.bottom
+    }
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -231,11 +318,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn is_active(&self) -> bool;
+    fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
-    fn set_app_id(&mut self, app_id: &str);
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
-    fn set_edited(&mut self, edited: bool);
-    fn show_character_palette(&self);
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_fullscreen(&self);
@@ -243,6 +328,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
@@ -252,12 +338,32 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
+    // macOS specific methods
+    fn set_edited(&mut self, _edited: bool) {}
+    fn show_character_palette(&self) {}
+
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
 
-    fn show_window_menu(&self, position: Point<Pixels>);
-    fn start_system_move(&self);
-    fn should_render_window_controls(&self) -> bool;
+    // Linux specific methods
+    fn request_decorations(&self, _decorations: WindowDecorations) {}
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+    fn start_window_move(&self) {}
+    fn start_window_resize(&self, _edge: ResizeEdge) {}
+    fn window_decorations(&self) -> Decorations {
+        Decorations::Server
+    }
+    fn set_app_id(&mut self, _app_id: &str) {}
+    fn window_controls(&self) -> WindowControls {
+        WindowControls {
+            fullscreen: true,
+            maximize: true,
+            minimize: true,
+            window_menu: false,
+        }
+    }
+    fn set_client_inset(&self, _inset: Pixels) {}
+    fn gpu_specs(&self) -> Option<GPUSpecs>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -570,6 +676,10 @@ pub struct WindowOptions {
 
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// Whether to use client or server side decorations. Wayland only
+    /// Note that this may be ignored.
+    pub window_decorations: Option<WindowDecorations>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -596,9 +706,6 @@ pub(crate) struct WindowParams {
 
     pub display_id: Option<DisplayId>,
 
-    pub window_background: WindowBackgroundAppearance,
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
 }
 
@@ -649,6 +756,7 @@ impl Default for WindowOptions {
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
             window_min_size: None,
+            window_decorations: None,
         }
     }
 }
@@ -659,7 +767,7 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent
+    /// Whether the titlebar should appear transparent (macOS only)
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons
@@ -804,6 +912,14 @@ pub enum CursorStyle {
     /// A resize cursor directing up and down
     /// corresponds to the CSS cursor value `ns-resize`
     ResizeUpDown,
+
+    /// A resize cursor directing up-left and down-right
+    /// corresponds to the CSS cursor value `nesw-resize`
+    ResizeUpLeftDownRight,
+
+    /// A resize cursor directing up-right and down-left
+    /// corresponds to the CSS cursor value `nwse-resize`
+    ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
     /// corresponds to the CSS curosr value `col-resize`

@@ -29,10 +29,11 @@ picker.workspace = true
 project.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
-simplelog = "0.9"
+simplelog.workspace = true
 story.workspace = true
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
+title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
 
 [dev-dependencies]

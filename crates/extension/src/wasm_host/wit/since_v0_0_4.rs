@@ -11,6 +11,7 @@ pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
 
 wasmtime::component::bindgen!({
     async: true,
+    trappable_imports: true,
     path: "../extension_api/wit/since_v0.0.4",
     with: {
          "worktree": ExtensionWorktree,

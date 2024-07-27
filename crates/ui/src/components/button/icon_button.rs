@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, ElevationIndex, SelectableButton, Spacing};
+use crate::{prelude::*, ElevationIndex, SelectableButton};
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -147,16 +147,8 @@ impl RenderOnce for IconButton {
         self.base
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
-                    let icon_size = self.icon_size.rems() * cx.rem_size();
-                    let padding = match self.icon_size {
-                        IconSize::Indicator => Spacing::None.px(cx),
-                        IconSize::XSmall => Spacing::XSmall.px(cx),
-                        IconSize::Small => Spacing::XSmall.px(cx),
-                        IconSize::Medium => Spacing::XSmall.px(cx),
-                    };
-
-                    this.width((icon_size + padding * 2.).into())
-                        .height((icon_size + padding * 2.).into())
+                    let size = self.icon_size.square(cx);
+                    this.width(size.into()).height(size.into())
                 }
                 IconButtonShape::Wide => this,
             })

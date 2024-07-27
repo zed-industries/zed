@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use base64::prelude::*;
 use prometheus::{exponential_buckets, register_histogram, Histogram};
 pub use rpc::auth::random_token;
 use scrypt::{
@@ -155,19 +156,27 @@ pub async fn create_access_token(
 /// protection.
 pub fn hash_access_token(token: &str) -> String {
     let digest = sha2::Sha256::digest(token);
-    format!(
-        "$sha256${}",
-        base64::encode_config(digest, base64::URL_SAFE)
-    )
+    format!("$sha256${}", BASE64_URL_SAFE.encode(digest))
 }
 
 /// Encrypts the given access token with the given public key to avoid leaking it on the way
 /// to the client.
 pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<String> {
+    use rpc::auth::EncryptionFormat;
+
+    /// The encryption format to use for the access token.
+    ///
+    /// Currently we're using the original encryption format to avoid
+    /// breaking compatibility with older clients.
+    ///
+    /// Once enough clients are capable of decrypting the newer encryption
+    /// format we can start encrypting with `EncryptionFormat::V1`.
+    const ENCRYPTION_FORMAT: EncryptionFormat = EncryptionFormat::V0;
+
     let native_app_public_key =
         rpc::auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
     let encrypted_access_token = native_app_public_key
-        .encrypt_string(access_token)
+        .encrypt_string(access_token, ENCRYPTION_FORMAT)
         .context("failed to encrypt access token with public key")?;
     Ok(encrypted_access_token)
 }
@@ -391,14 +400,15 @@ mod test {
     fn previous_hash_access_token(token: &str) -> Result<String> {
         // Avoid slow hashing in debug mode.
         let params = if cfg!(debug_assertions) {
-            scrypt::Params::new(1, 1, 1).unwrap()
+            scrypt::Params::new(1, 1, 1, scrypt::Params::RECOMMENDED_LEN).unwrap()
         } else {
-            scrypt::Params::new(14, 8, 1).unwrap()
+            scrypt::Params::new(14, 8, 1, scrypt::Params::RECOMMENDED_LEN).unwrap()
         };
 
         Ok(Scrypt
-            .hash_password(
+            .hash_password_customized(
                 token.as_bytes(),
+                None,
                 None,
                 params,
                 &SaltString::generate(thread_rng()),

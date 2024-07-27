@@ -4,10 +4,10 @@ use chrono::Utc;
 use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http::Method;
+use http_client::Method;
 use isahc::config::Configurable;
 
-use http::{self, HttpClient, HttpClientWithUrl};
+use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
@@ -162,7 +162,7 @@ pub fn monitor_main_thread_hangs(
 
     use parking_lot::Mutex;
 
-    use http::Method;
+    use http_client::Method;
     use std::{
         ffi::c_int,
         sync::{mpsc, OnceLock},
@@ -323,7 +323,7 @@ pub fn monitor_main_thread_hangs(
                         continue;
                     };
 
-                    let Ok(request) = http::Request::builder()
+                    let Ok(request) = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(url.as_ref())
                         .header("x-zed-checksum", checksum)
@@ -416,7 +416,7 @@ async fn upload_previous_panics(
                     continue;
                 };
 
-                let Ok(request) = http::Request::builder()
+                let Ok(request) = http_client::Request::builder()
                     .method(Method::POST)
                     .uri(panic_report_url.as_ref())
                     .header("x-zed-checksum", checksum)
@@ -488,7 +488,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = http::Request::post(&crash_report_url.to_string())
+            let mut request = http_client::Request::post(&crash_report_url.to_string())
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain");
 

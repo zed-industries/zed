@@ -1,18 +1,15 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    relative, AppContext, BackgroundExecutor, FontStyle, FontWeight, HighlightStyle, StyledText,
-    TextStyle, WhiteSpace,
-};
+use gpui::{relative, AppContext, BackgroundExecutor, HighlightStyle, StyledText, TextStyle};
 use settings::Settings;
 use std::ops::Range;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{color_alpha, ActiveTheme, ThemeSettings};
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
-    path_candidates: Vec<StringMatchCandidate>,
+    pub path_candidates: Vec<StringMatchCandidate>,
     path_candidate_prefixes: Vec<usize>,
 }
 
@@ -23,6 +20,7 @@ pub struct OutlineItem<T> {
     pub text: String,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
+    pub body_range: Option<Range<T>>,
 }
 
 impl<T> Outline<T> {
@@ -146,9 +144,15 @@ impl<T> Outline<T> {
 
 pub fn render_item<T>(
     outline_item: &OutlineItem<T>,
-    custom_highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &AppContext,
 ) -> StyledText {
+    let mut highlight_style = HighlightStyle::default();
+    highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+    let custom_highlights = match_ranges
+        .into_iter()
+        .map(|range| (range, highlight_style));
+
     let settings = ThemeSettings::get_global(cx);
 
     // TODO: We probably shouldn't need to build a whole new text style here
@@ -158,14 +162,11 @@ pub fn render_item<T>(
         color: cx.theme().colors().text,
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
         font_size: settings.buffer_font_size(cx).into(),
-        font_weight: FontWeight::NORMAL,
-        font_style: FontStyle::Normal,
+        font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-        white_space: WhiteSpace::Normal,
+        ..Default::default()
     };
     let highlights = gpui::combine_highlights(
         custom_highlights,

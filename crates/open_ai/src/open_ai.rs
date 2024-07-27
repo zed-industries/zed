@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -8,6 +8,10 @@ use std::{convert::TryFrom, future::Future, time::Duration};
 use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
+
+fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
+    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +59,8 @@ pub enum Model {
     #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
     #[default]
     FourOmni,
+    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
+    FourOmniMini,
     #[serde(rename = "custom")]
     Custom { name: String, max_tokens: usize },
 }
@@ -66,17 +72,19 @@ impl Model {
             "gpt-4" => Ok(Self::Four),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
+            "gpt-4o-mini" => Ok(Self::FourOmniMini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
-            Self::Custom { .. } => "custom",
+            Self::FourOmniMini => "gpt-4o-mini",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -86,17 +94,19 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
+            Self::FourOmniMini => "gpt-4o-mini",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Model::ThreePointFiveTurbo => 4096,
-            Model::Four => 8192,
-            Model::FourTurbo => 128000,
-            Model::FourOmni => 128000,
-            Model::Custom { max_tokens, .. } => *max_tokens,
+            Self::ThreePointFiveTurbo => 4096,
+            Self::Four => 8192,
+            Self::FourTurbo => 128000,
+            Self::FourOmni => 128000,
+            Self::FourOmniMini => 128000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }
@@ -182,8 +192,8 @@ pub struct FunctionContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<ToolCallChunk>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

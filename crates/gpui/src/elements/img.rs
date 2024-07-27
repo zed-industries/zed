@@ -1,23 +1,24 @@
-use smallvec::SmallVec;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::{fs, io::Cursor};
-
 use crate::{
     point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
     ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
     WindowContext,
 };
-
 use futures::{AsyncReadExt, Future};
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat};
+use http_client;
+use image::{
+    codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
+};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
-
-use http;
-use std::time::{Duration, Instant};
+use smallvec::SmallVec;
+use std::{
+    fs,
+    io::Cursor,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use util::ResultExt;
 
@@ -427,6 +428,7 @@ impl Asset for Image {
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
                         return Err(ImageCacheError::BadStatus {
+                            uri,
                             status: response.status(),
                             body: String::from_utf8_lossy(&body).into_owned(),
                         });
@@ -486,15 +488,17 @@ impl Asset for Image {
 pub enum ImageCacheError {
     /// An error that occurred while fetching an image from a remote source.
     #[error("http error: {0}")]
-    Client(#[from] http::Error),
+    Client(#[from] http_client::Error),
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
     /// An error that occurred while processing an image.
-    #[error("unexpected http status: {status}, body: {body}")]
+    #[error("unexpected http status for {uri}: {status}, body: {body}")]
     BadStatus {
+        /// The URI of the image.
+        uri: SharedUri,
         /// The HTTP status code.
-        status: http::StatusCode,
+        status: http_client::StatusCode,
         /// The HTTP response body.
         body: String,
     },

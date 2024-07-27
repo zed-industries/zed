@@ -91,6 +91,7 @@ pub enum Motion {
         last_find: Box<Motion>,
     },
     NextLineStart,
+    PreviousLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
     GoToColumn,
@@ -98,7 +99,7 @@ pub enum Motion {
     WindowMiddle,
     WindowBottom,
 
-    // we don't have a good way to run a search syncronously, so
+    // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
     // calling back into motion with this
     ZedSearchResult {
@@ -235,6 +236,7 @@ actions!(
         EndOfDocument,
         Matching,
         NextLineStart,
+        PreviousLineStart,
         StartOfLineDownward,
         EndOfLineDownward,
         GoToColumn,
@@ -353,6 +355,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, &NextLineStart, cx: _| {
         motion(Motion::NextLineStart, cx)
     });
+    workspace.register_action(|_: &mut Workspace, &PreviousLineStart, cx: _| {
+        motion(Motion::PreviousLineStart, cx)
+    });
     workspace.register_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
         motion(Motion::StartOfLineDownward, cx)
     });
@@ -431,7 +436,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     let active_operator = Vim::read(cx).active_operator();
     let mut waiting_operator: Option<Operator> = None;
     match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace => {
+        Mode::Normal | Mode::Replace | Mode::Insert => {
             if active_operator == Some(Operator::AddSurrounds { target: None }) {
                 waiting_operator = Some(Operator::AddSurrounds {
                     target: Some(SurroundsType::Motion(motion)),
@@ -442,9 +447,6 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         }
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
-        }
-        Mode::Insert => {
-            // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
     Vim::update(cx, |vim, cx| {
@@ -468,6 +470,7 @@ impl Motion {
             | EndOfDocument
             | CurrentLine
             | NextLineStart
+            | PreviousLineStart
             | StartOfLineDownward
             | StartOfParagraph
             | WindowTop
@@ -537,6 +540,7 @@ impl Motion {
             | WindowMiddle
             | WindowBottom
             | NextLineStart
+            | PreviousLineStart
             | ZedSearchResult { .. }
             | Jump { .. } => false,
         }
@@ -561,7 +565,8 @@ impl Motion {
             | PreviousWordEnd { .. }
             | NextSubwordEnd { .. }
             | PreviousSubwordEnd { .. }
-            | NextLineStart => true,
+            | NextLineStart
+            | PreviousLineStart => true,
             Left
             | Backspace
             | Right
@@ -763,6 +768,7 @@ impl Motion {
                 _ => return None,
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
+            PreviousLineStart => (previous_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
@@ -890,7 +896,7 @@ impl Motion {
                 }
 
                 if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
-                    *selection.end.column_mut() += 1;
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
             Some(selection.start..selection.end)
@@ -1652,6 +1658,11 @@ fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
+    first_non_whitespace(map, false, correct_line)
+}
+
+fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
+    let correct_line = start_of_relative_buffer_row(map, point, (times as isize) * -1);
     first_non_whitespace(map, false, correct_line)
 }
 

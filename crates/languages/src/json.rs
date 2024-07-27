@@ -6,7 +6,7 @@ use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
-use http::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -93,6 +93,10 @@ impl JsonLspAdapter {
         serde_json::json!({
             "json": {
                 "format": {
+                    "enable": true,
+                },
+                "validate":
+                {
                     "enable": true,
                 },
                 "schemas": [
@@ -313,8 +317,11 @@ impl LspAdapter for NodeVersionAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path =
-            container_dir.join(format!("package-version-server-{}", version.name));
+        let destination_path = container_dir.join(format!(
+            "package-version-server-{}{}",
+            version.name,
+            std::env::consts::EXE_SUFFIX
+        ));
         let destination_container_path =
             container_dir.join(format!("package-version-server-{}-tmp", version.name));
         if fs::metadata(&destination_path).await.is_err() {
@@ -336,7 +343,10 @@ impl LspAdapter for NodeVersionAdapter {
             }
 
             fs::copy(
-                destination_container_path.join("package-version-server"),
+                destination_container_path.join(format!(
+                    "package-version-server{}",
+                    std::env::consts::EXE_SUFFIX
+                )),
                 &destination_path,
             )
             .await?;

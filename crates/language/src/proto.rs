@@ -1,11 +1,12 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
 use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
-use std::{ops::Range, sync::Arc};
+use serde_json::Value;
+use std::{ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
 pub use proto::{BufferState, Operation};
@@ -213,6 +214,7 @@ pub fn serialize_diagnostics<'a>(
             code: entry.diagnostic.code.clone(),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
+            data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
         })
         .collect()
 }
@@ -229,6 +231,21 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
         },
         buffer_id: anchor.buffer_id.map(Into::into),
     }
+}
+
+pub fn serialize_anchor_range(range: Range<Anchor>) -> proto::AnchorRange {
+    proto::AnchorRange {
+        start: Some(serialize_anchor(&range.start)),
+        end: Some(serialize_anchor(&range.end)),
+    }
+}
+
+/// Deserializes an [`Range<Anchor>`] from the RPC representation.
+pub fn deserialize_anchor_range(range: proto::AnchorRange) -> Result<Range<Anchor>> {
+    Ok(
+        deserialize_anchor(range.start.context("invalid anchor")?).context("invalid anchor")?
+            ..deserialize_anchor(range.end.context("invalid anchor")?).context("invalid anchor")?,
+    )
 }
 
 // This behavior is currently copied in the collab database, for snapshotting channel notes
@@ -381,6 +398,11 @@ pub fn deserialize_diagnostics(
     diagnostics
         .into_iter()
         .filter_map(|diagnostic| {
+            let data = if let Some(data) = diagnostic.data {
+                Some(Value::from_str(&data).ok()?)
+            } else {
+                None
+            };
             Some(DiagnosticEntry {
                 range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 diagnostic: Diagnostic {
@@ -398,6 +420,7 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
+                    data,
                 },
             })
         })

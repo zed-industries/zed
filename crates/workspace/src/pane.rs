@@ -1477,6 +1477,7 @@ impl Pane {
                 }
             }
         }
+
         Ok(true)
     }
 
@@ -1570,7 +1571,7 @@ impl Pane {
     fn render_tab(
         &self,
         ix: usize,
-        item: &Box<dyn ItemHandle>,
+        item: &dyn ItemHandle,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
@@ -1588,6 +1589,7 @@ impl Pane {
             },
             cx,
         );
+        let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -1675,7 +1677,18 @@ impl Pane {
                             .detach_and_log_err(cx);
                     })),
             )
-            .child(label);
+            .child(
+                h_flex()
+                    .gap_1()
+                    .children(icon.map(|icon| {
+                        icon.size(IconSize::Small).color(if is_active {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                    }))
+                    .child(label),
+            );
 
         let single_entry_to_resolve = {
             let item_entries = self.items[ix].project_entry_ids(cx);
@@ -1850,7 +1863,7 @@ impl Pane {
                     .iter()
                     .enumerate()
                     .zip(tab_details(&self.items, cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                    .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
             )
             .child(
                 div()
@@ -2216,7 +2229,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
-                let has_worktrees = self.project.read(cx).worktrees().next().is_some();
+                let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()

@@ -40,44 +40,6 @@ pub trait FluentBuilder {
             }
         })
     }
-
-    /// Conditionally unwrap and modify self with one closure if the given option is Some, or another if it is None.
-    fn when_some_else<T>(
-        self,
-        option: Option<T>,
-        then: impl FnOnce(Self, T) -> Self,
-        otherwise: impl FnOnce(Self) -> Self,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| {
-            if let Some(value) = option {
-                then(this, value)
-            } else {
-                otherwise(this)
-            }
-        })
-    }
-
-    /// Conditionally modify self with one closure or another
-    fn when_else(
-        self,
-        condition: bool,
-        then: impl FnOnce(Self) -> Self,
-        otherwise: impl FnOnce(Self) -> Self,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| {
-            if condition {
-                then(this)
-            } else {
-                otherwise(this)
-            }
-        })
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

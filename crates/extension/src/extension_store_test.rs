@@ -11,13 +11,15 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
-use http::{FakeHttpClient, Response};
+use http_client::{FakeHttpClient, Response};
+use indexed_docs::IndexedDocsRegistry;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
+use snippet_provider::SnippetRegistry;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -158,6 +160,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
+                        indexed_docs_providers: BTreeMap::default(),
+                        snippets: None,
                     }),
                     dev: false,
                 },
@@ -182,6 +186,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
+                        indexed_docs_providers: BTreeMap::default(),
+                        snippets: None,
                     }),
                     dev: false,
                 },
@@ -254,6 +260,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
+    let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
+    let snippet_registry = Arc::new(SnippetRegistry::new());
     let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
@@ -267,6 +275,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry.clone(),
+            indexed_docs_registry.clone(),
+            snippet_registry.clone(),
             cx,
         )
     });
@@ -339,6 +349,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
+                indexed_docs_providers: BTreeMap::default(),
+                snippets: None,
             }),
             dev: false,
         },
@@ -351,6 +363,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
+    #[allow(clippy::let_underscore_future)]
     let _ = store.update(cx, |store, cx| store.reload(None, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
@@ -389,6 +402,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry,
+            indexed_docs_registry,
+            snippet_registry,
             cx,
         )
     });
@@ -439,7 +454,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
+async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -449,7 +464,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .parent()
         .unwrap();
     let cache_dir = root_dir.join("target");
-    let gleam_extension_dir = root_dir.join("extensions").join("gleam");
+    let test_extension_id = "test-extension";
+    let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::default());
     let extensions_dir = temp_tree(json!({
@@ -468,6 +484,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
+    let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
+    let snippet_registry = Arc::new(SnippetRegistry::new());
     let node_runtime = FakeNodeRuntime::new();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -558,6 +576,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry,
+            indexed_docs_registry,
+            snippet_registry,
             cx,
         )
     });
@@ -587,7 +607,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     extension_store
         .update(cx, |store, cx| {
-            store.install_dev_extension(gleam_extension_dir.clone(), cx)
+            store.install_dev_extension(test_extension_dir.clone(), cx)
         })
         .await
         .unwrap();
@@ -602,7 +622,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
+    let expected_server_path =
+        extensions_dir.join(format!("work/{test_extension_id}/gleam-v1.2.3/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
     assert_eq!(fake_server.binary.path, expected_server_path);
@@ -716,7 +737,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     // The extension re-fetches the latest version of the language server.
     let fake_server = fake_servers.next().await.unwrap();
-    let new_expected_server_path = extensions_dir.join("work/gleam/gleam-v2.0.0/gleam");
+    let new_expected_server_path =
+        extensions_dir.join(format!("work/{test_extension_id}/gleam-v2.0.0/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
     assert_eq!(fake_server.binary.path, new_expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);

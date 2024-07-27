@@ -1,6 +1,6 @@
 use super::{create_label_for_command, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{
@@ -20,9 +20,9 @@ use util::paths::PathMatcher;
 use util::ResultExt;
 use workspace::Workspace;
 
-pub(crate) struct DiagnosticsCommand;
+pub(crate) struct DiagnosticsSlashCommand;
 
-impl DiagnosticsCommand {
+impl DiagnosticsSlashCommand {
     fn search_paths(
         &self,
         query: String,
@@ -33,7 +33,7 @@ impl DiagnosticsCommand {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = "".into();
+            let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
@@ -81,7 +81,7 @@ impl DiagnosticsCommand {
     }
 }
 
-impl SlashCommand for DiagnosticsCommand {
+impl SlashCommand for DiagnosticsSlashCommand {
     fn name(&self) -> String {
         "diagnostics".into()
     }
@@ -108,7 +108,7 @@ impl SlashCommand for DiagnosticsCommand {
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -143,7 +143,14 @@ impl SlashCommand for DiagnosticsCommand {
                 .map(|candidate| candidate.string),
             );
 
-            Ok(matches)
+            Ok(matches
+                .into_iter()
+                .map(|completion| ArgumentCompletion {
+                    label: completion.clone(),
+                    new_text: completion,
+                    run_command: true,
+                })
+                .collect())
         })
     }
 
@@ -277,7 +284,7 @@ fn collect_diagnostics(
         PathBuf::try_from(path)
             .ok()
             .and_then(|path| {
-                project.read(cx).worktrees().find_map(|worktree| {
+                project.read(cx).worktrees(cx).find_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let worktree_root_path = Path::new(worktree.root_name());
                     let relative_path = path.strip_prefix(worktree_root_path).ok()?;

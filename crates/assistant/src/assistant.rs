@@ -1,38 +1,40 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
-mod completion_provider;
-mod context_store;
+mod context;
+pub mod context_store;
 mod inline_assistant;
 mod model_selector;
 mod prompt_library;
 mod prompts;
-mod search;
 mod slash_command;
 mod streaming_diff;
+mod terminal_inline_assistant;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
-use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
+use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-pub(crate) use completion_provider::*;
-pub(crate) use context_store::*;
+use completion::LanguageModelCompletionProvider;
+pub use context::*;
+pub use context_store::*;
 use fs::Fs;
-use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
+use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
+use language_model::{
+    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
+};
 pub(crate) use model_selector::*;
-use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
+    active_command, default_command, diagnostics_command, docs_command, fetch_command,
+    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
+    tabs_command, term_command,
 };
-use std::{
-    fmt::{self, Display},
-    sync::Arc,
-};
+use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 
 actions!(
@@ -42,166 +44,32 @@ actions!(
         Split,
         CycleMessageRole,
         QuoteSelection,
+        InsertIntoEditor,
         ToggleFocus,
         ResetKey,
-        InlineAssist,
         InsertActivePrompt,
-        ToggleHistory,
-        ApplyEdit,
+        DeployHistory,
+        DeployPromptLibrary,
         ConfirmCommand,
-        ToggleModelSelector
+        ToggleModelSelector,
+        DebugEditSteps
     ]
 );
 
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-struct MessageId(usize);
-
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-    System,
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct InlineAssist {
+    prompt: Option<String>,
 }
 
-impl Role {
-    pub fn cycle(&mut self) {
-        *self = match self {
-            Role::User => Role::Assistant,
-            Role::Assistant => Role::System,
-            Role::System => Role::User,
-        }
+impl_actions!(assistant, [InlineAssist]);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct MessageId(clock::Lamport);
+
+impl MessageId {
+    pub fn as_u64(self) -> u64 {
+        self.0.as_u64()
     }
-}
-
-impl Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Role::User => write!(f, "user"),
-            Role::Assistant => write!(f, "assistant"),
-            Role::System => write!(f, "system"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum LanguageModel {
-    Cloud(CloudModel),
-    OpenAi(OpenAiModel),
-    Anthropic(AnthropicModel),
-    Ollama(OllamaModel),
-}
-
-impl Default for LanguageModel {
-    fn default() -> Self {
-        LanguageModel::Cloud(CloudModel::default())
-    }
-}
-
-impl LanguageModel {
-    pub fn telemetry_id(&self) -> String {
-        match self {
-            LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
-            LanguageModel::Anthropic(model) => format!("anthropic/{}", model.id()),
-            LanguageModel::Cloud(model) => format!("zed.dev/{}", model.id()),
-            LanguageModel::Ollama(model) => format!("ollama/{}", model.id()),
-        }
-    }
-
-    pub fn display_name(&self) -> String {
-        match self {
-            LanguageModel::OpenAi(model) => model.display_name().into(),
-            LanguageModel::Anthropic(model) => model.display_name().into(),
-            LanguageModel::Cloud(model) => model.display_name().into(),
-            LanguageModel::Ollama(model) => model.display_name().into(),
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            LanguageModel::OpenAi(model) => model.max_token_count(),
-            LanguageModel::Anthropic(model) => model.max_token_count(),
-            LanguageModel::Cloud(model) => model.max_token_count(),
-            LanguageModel::Ollama(model) => model.max_token_count(),
-        }
-    }
-
-    pub fn id(&self) -> &str {
-        match self {
-            LanguageModel::OpenAi(model) => model.id(),
-            LanguageModel::Anthropic(model) => model.id(),
-            LanguageModel::Cloud(model) => model.id(),
-            LanguageModel::Ollama(model) => model.id(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LanguageModelRequestMessage {
-    pub role: Role,
-    pub content: String,
-}
-
-impl LanguageModelRequestMessage {
-    pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
-        proto::LanguageModelRequestMessage {
-            role: match self.role {
-                Role::User => proto::LanguageModelRole::LanguageModelUser,
-                Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
-                Role::System => proto::LanguageModelRole::LanguageModelSystem,
-            } as i32,
-            content: self.content.clone(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        }
-    }
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct LanguageModelRequest {
-    pub model: LanguageModel,
-    pub messages: Vec<LanguageModelRequestMessage>,
-    pub stop: Vec<String>,
-    pub temperature: f32,
-}
-
-impl LanguageModelRequest {
-    pub fn to_proto(&self) -> proto::CompleteWithLanguageModel {
-        proto::CompleteWithLanguageModel {
-            model: self.model.id().to_string(),
-            messages: self.messages.iter().map(|m| m.to_proto()).collect(),
-            stop: self.stop.clone(),
-            temperature: self.temperature,
-            tool_choice: None,
-            tools: Vec::new(),
-        }
-    }
-
-    /// Before we send the request to the server, we can perform fixups on it appropriate to the model.
-    pub fn preprocess(&mut self) {
-        match &self.model {
-            LanguageModel::OpenAi(_) => {}
-            LanguageModel::Anthropic(_) => {}
-            LanguageModel::Ollama(_) => {}
-            LanguageModel::Cloud(model) => match model {
-                CloudModel::Claude3Opus
-                | CloudModel::Claude3Sonnet
-                | CloudModel::Claude3Haiku
-                | CloudModel::Claude3_5Sonnet => {
-                    preprocess_anthropic_request(self);
-                }
-                _ => {}
-            },
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LanguageModelResponseMessage {
-    pub role: Option<Role>,
-    pub content: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -218,17 +86,46 @@ pub struct LanguageModelChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MessageMetadata {
-    role: Role,
-    status: MessageStatus,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum MessageStatus {
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
+}
+
+impl MessageStatus {
+    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
+        match status.variant {
+            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
+            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
+            Some(proto::context_message_status::Variant::Error(error)) => {
+                MessageStatus::Error(error.message.into())
+            }
+            None => MessageStatus::Pending,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ContextMessageStatus {
+        match self {
+            MessageStatus::Pending => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Pending(
+                    proto::context_message_status::Pending {},
+                )),
+            },
+            MessageStatus::Done => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Done(
+                    proto::context_message_status::Done {},
+                )),
+            },
+            MessageStatus::Error(message) => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Error(
+                    proto::context_message_status::Error {
+                        message: message.to_string(),
+                    },
+                )),
+            },
+        }
+    }
 }
 
 /// The state pertaining to the Assistant.
@@ -268,6 +165,16 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
+    // TODO: remove this when 0.148.0 is released.
+    if AssistantSettings::get_global(cx).using_outdated_settings_version {
+        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+            let fs = fs.clone();
+            |content, cx| {
+                content.update_file(fs, cx);
+            }
+        });
+    }
+
     cx.spawn(|mut cx| {
         let client = client.clone();
         async move {
@@ -283,13 +190,15 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     })
     .detach();
 
+    context_store::init(&client);
     prompt_library::init(cx);
-    completion_provider::init(client.clone(), cx);
+    init_completion_provider(cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    RustdocStore::init_global(cx);
+    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+    IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
@@ -308,10 +217,43 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 }
 
+fn init_completion_provider(cx: &mut AppContext) {
+    completion::init(cx);
+    update_active_language_model_from_settings(cx);
+
+    cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
+        .detach();
+    cx.observe(&LanguageModelRegistry::global(cx), |_, cx| {
+        update_active_language_model_from_settings(cx)
+    })
+    .detach();
+}
+
+fn update_active_language_model_from_settings(cx: &mut AppContext) {
+    let settings = AssistantSettings::get_global(cx);
+    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
+    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_name)
+    else {
+        return;
+    };
+
+    let models = provider.provided_models(cx);
+    if let Some(model) = models.iter().find(|model| model.id() == model_id).cloned() {
+        LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
+            completion_provider.set_active_model(model, cx);
+        });
+    }
+}
+
 fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
+    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
@@ -319,8 +261,8 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
-    slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
-    slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
+    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 
