@@ -26,6 +26,10 @@
       "tab_size": 2,
       "formatter": "prettier"
     },
+    "CSS": {
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
     "Rust": {
       "tasks": {
         "variables": {
