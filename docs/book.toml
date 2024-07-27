@@ -6,7 +6,6 @@ src = "src"
 title = "Zed"
 site-url = "/docs/"
 
-[preprocessor.pagetoc]
 [output.html]
 no-section-label = true
 preferred-dark-theme = "light"
