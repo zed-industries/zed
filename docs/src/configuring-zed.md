@@ -1701,10 +1701,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Scrollbar related settings. Possible values: "always", "never".
 - Setting: `scrollbar`
-- Default: `json
+- Default:
+
+```json
 "scrollbar": {
     "show": "always"
-}`
+}
+```
 
 **Options**
 

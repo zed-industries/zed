@@ -23,11 +23,7 @@ impl ParentElement for SettingsContainer {
 }
 
 impl RenderOnce for SettingsContainer {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        v_flex()
-            .elevation_2(cx)
-            .px_2()
-            .gap_1()
-            .children(self.children)
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        v_flex().px_2().gap_1().children(self.children)
     }
 }

@@ -185,13 +185,7 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             in_progress_window_controls: None,
-            // Assume that we can do anything, unless told otherwise
-            window_controls: WindowControls {
-                fullscreen: true,
-                maximize: true,
-                minimize: true,
-                window_menu: true,
-            },
+            window_controls: WindowControls::default(),
             inset: None,
         })
     }
