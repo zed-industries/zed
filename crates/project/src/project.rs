@@ -1179,21 +1179,19 @@ impl Project {
                                 Some(
                                     breakpoints
                                         .iter()
-                                        .map(|b| {
-                                            dbg!(SourceBreakpoint {
-                                                line: (buffer
-                                                    .summary_for_anchor::<Point>(
-                                                        &b.position.text_anchor,
-                                                    )
-                                                    .row
-                                                    + 1)
-                                                    as u64,
-                                                condition: None,
-                                                hit_condition: None,
-                                                log_message: None,
-                                                column: None,
-                                                mode: None,
-                                            })
+                                        .map(|b| SourceBreakpoint {
+                                            line: (buffer
+                                                .summary_for_anchor::<Point>(
+                                                    &b.position.text_anchor,
+                                                )
+                                                .row
+                                                + 1)
+                                                as u64,
+                                            condition: None,
+                                            hit_condition: None,
+                                            log_message: None,
+                                            column: None,
+                                            mode: None,
                                         })
                                         .collect::<Vec<_>>(),
                                 ),
@@ -1216,7 +1214,6 @@ impl Project {
         debug_task: task::ResolvedTask,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!(&self.breakpoints);
         let id = DebugAdapterClientId(1);
         let debug_template = debug_task.original_task();
         let cwd = debug_template

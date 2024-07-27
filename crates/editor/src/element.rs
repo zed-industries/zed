@@ -1566,8 +1566,11 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            editor
-                .breakpoints
+            let Some(breakpoints) = &editor.breakpoints else {
+                return vec![];
+            };
+
+            breakpoints
                 .read()
                 .iter()
                 .flat_map(|(_buffer_id, breakpoint_set)| breakpoint_set.iter())

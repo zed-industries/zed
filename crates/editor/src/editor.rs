@@ -570,7 +570,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
+    breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
@@ -1784,14 +1784,11 @@ impl Editor {
             None
         };
 
-        let breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>> = Default::default();
-        // TODO: Figure out why the code below doesn't work
-        // if let Some(project) = project.as_ref() {
-        //     dbg!("Setting breakpoints from editor to project");
-        //     project.update(cx, |project, _cx| {
-        //         project.breakpoints = breakpoints.clone();
-        //     })
-        // }
+        let breakpoints = if let Some(project) = project.as_ref() {
+            Some(project.update(cx, |project, _cx| project.breakpoints.clone()))
+        } else {
+            None
+        };
 
         let mut this = Self {
             focus_handle,
@@ -6000,10 +5997,9 @@ impl Editor {
             return;
         };
 
-        // TODO: Figure out how to only clone breakpoints pointer once per editor
-        project.update(cx, |project, _cx| {
-            project.breakpoints = self.breakpoints.clone();
-        });
+        let Some(breakpoints) = &self.breakpoints else {
+            return;
+        };
 
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
             return;
@@ -6015,21 +6011,13 @@ impl Editor {
             position: breakpoint_position,
         };
 
-        let mut write_guard = self.breakpoints.write();
+        let mut write_guard = breakpoints.write();
 
         let breakpoint_set = write_guard.entry(buffer_id).or_default();
 
         if !breakpoint_set.remove(&breakpoint) {
             breakpoint_set.insert(breakpoint);
         }
-        // let row = breakpoint_position
-        //     .to_point(&(self.snapshot(cx).display_snapshot.buffer_snapshot))
-        //     .row
-        //     + 1;
-
-        // project.update(cx, |project, cx| {
-        //     project.update_breakpoint(buffer, row, cx);
-        // });
         cx.notify();
     }
 
