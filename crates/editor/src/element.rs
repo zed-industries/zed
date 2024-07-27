@@ -702,6 +702,13 @@ impl EditorElement {
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
         editor.set_gutter_hovered(gutter_hovered, cx);
 
+        if gutter_hovered {
+            // TODO: Show breakpoint indicator on line closest to mouse
+            editor.gutter_breakpoint_indicator = Some(Point::new(5, 0));
+        } else {
+            editor.gutter_breakpoint_indicator = None;
+        }
+
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {
             let point_for_position =
@@ -1570,7 +1577,7 @@ impl EditorElement {
                 return vec![];
             };
 
-            breakpoints
+            let mut breakpoints_to_render = breakpoints
                 .read()
                 .iter()
                 .flat_map(|(_buffer_id, breakpoint_set)| breakpoint_set.iter())
@@ -1599,7 +1606,39 @@ impl EditorElement {
                     );
                     Some(button)
                 })
-                .collect_vec()
+                .collect_vec();
+
+            // See if a user is hovered over a gutter line & if they are display
+            // a breakpoint indicator that they can click to add a breakpoint
+            if let Some(gutter_breakpoint) = &editor.gutter_breakpoint_indicator {
+                let button = IconButton::new(
+                    (
+                        "gutter_breakpoint_indicator",
+                        gutter_breakpoint.row as usize,
+                    ),
+                    ui::IconName::Play,
+                )
+                .icon_size(IconSize::XSmall)
+                .size(ui::ButtonSize::None)
+                .icon_color(Color::Hint);
+
+                let button = prepaint_gutter_button(
+                    button,
+                    gutter_breakpoint
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                    line_height,
+                    gutter_dimensions,
+                    scroll_pixel_position,
+                    gutter_hitbox,
+                    rows_with_hunk_bounds,
+                    cx,
+                );
+
+                breakpoints_to_render.push(button);
+            }
+
+            breakpoints_to_render
         })
     }
 
