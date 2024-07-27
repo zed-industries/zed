@@ -1,4 +1,5 @@
 mod editable_setting_control;
+mod json_schema;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -9,6 +10,7 @@ use std::{borrow::Cow, str};
 use util::asset_str;
 
 pub use editable_setting_control::*;
+pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
