@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http_client::github::{build_tarball_url, GitHubLspBinaryVersion};
+use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -296,6 +296,7 @@ pub struct EsLintLspAdapter {
 
 impl EsLintLspAdapter {
     const CURRENT_VERSION: &'static str = "release/2.4.4";
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
 
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: &'static str = "eslint";
@@ -406,7 +407,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+        let url = build_asset_url(
+            "microsoft/vscode-eslint",
+            Self::CURRENT_VERSION,
+            Self::GITHUB_ASSET_KIND,
+        )?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
@@ -432,9 +437,13 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&destination_path).await?;
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+            }
 
             let mut dir = fs::read_dir(&destination_path).await?;
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
