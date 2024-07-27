@@ -14,6 +14,7 @@ use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
+    properties::WmSizeHints,
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -370,6 +371,14 @@ impl X11WindowState {
                 format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
                     visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
             })?;
+
+        if let Some(size) = params.window_min_size {
+            let mut size_hints = WmSizeHints::new();
+            size_hints.min_size = Some((size.width.0 as i32, size.height.0 as i32));
+            size_hints
+                .set_normal_hints(xcb_connection, x_window)
+                .unwrap();
+        }
 
         let reply = xcb_connection
             .get_geometry(x_window)

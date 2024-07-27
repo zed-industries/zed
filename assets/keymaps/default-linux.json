@@ -40,7 +40,6 @@
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
       "delete": "editor::Delete",
-      "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
@@ -106,6 +105,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "ctrl-enter": "editor::NewlineAbove",
       "ctrl-shift-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
@@ -114,12 +114,6 @@
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol"
-    }
-  },
-  {
-    "context": "Editor && mode == full && !jupyter",
-    "bindings": {
-      "ctrl-enter": "editor::NewlineAbove"
     }
   },
   {
@@ -274,6 +268,7 @@
       "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
+      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
       "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],

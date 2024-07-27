@@ -533,6 +533,7 @@ impl Render for MessageEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: TextSize::Small.rems(cx).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,

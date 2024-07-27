@@ -10,7 +10,7 @@ Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux).
 
 This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
-Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behaviour of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
@@ -1562,7 +1562,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Project Panel
 
-- Description: Customise project panel
+- Description: Customize project panel
 - Setting: `project_panel`
 - Default:
 
@@ -1633,7 +1633,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Default Width
 
-- Description: Customise default width taken by project panel
+- Description: Customize default width taken by project panel
 - Setting: `default_width`
 - Default: N/A width in pixels (eg: 420)
 
@@ -1650,7 +1650,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 1. Enable auto reveal entries
-   
+
 ```json
 {
     "auto_reveal_entries": true,
@@ -1658,7 +1658,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```
 
 2. Disable auto reveal entries
-   
+
 ```json
 {
     "auto_reveal_entries": false,
@@ -1674,7 +1674,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 1. Enable auto fold dirs
-   
+
 ```json
 {
     "auto_fold_dirs": true,
@@ -1682,7 +1682,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```
 
 2. Disable auto fold dirs
-   
+
 ```json
 {
     "auto_fold_dirs": false,
@@ -1707,7 +1707,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 1. Show scrollbar in project panel
-   
+
 ```json
 {
     "scrollbar": {
@@ -1717,7 +1717,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```
 
 2. Hide scrollbar in project panel
-   
+
 ```json
 {
     "scrollbar": {
@@ -1728,7 +1728,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Calls
 
-- Description: Customise behaviour when participating in a call
+- Description: Customize behavior when participating in a call
 - Setting: `calls`
 - Default:
 

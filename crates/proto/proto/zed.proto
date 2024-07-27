@@ -2257,6 +2257,7 @@ message TaskContextForLocation {
 message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
+    map<string, string> project_env = 3;
 }
 
 message TaskTemplates {

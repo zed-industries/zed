@@ -264,7 +264,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "".into()
+        Arc::default()
     }
 
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {

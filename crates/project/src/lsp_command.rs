@@ -427,6 +427,13 @@ impl LspCommand for GetDefinition {
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
 
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .definition_provider
+            .is_some()
+    }
+
     fn to_lsp(
         &self,
         path: &Path,

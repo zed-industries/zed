@@ -464,15 +464,12 @@ impl ProjectPanel {
             let is_remote = project.is_remote() && project.dev_server_project_id().is_none();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
-                menu.context(self.focus_handle.clone()).when_else(
-                    is_read_only,
-                    |menu| {
-                        menu.action("Copy Relative Path", Box::new(CopyRelativePath))
-                            .when(is_dir, |menu| {
-                                menu.action("Search Inside", Box::new(NewSearchInDirectory))
-                            })
-                    },
-                    |menu| {
+                menu.context(self.focus_handle.clone()).map(|menu| {
+                    if is_read_only {
+                        menu.when(is_dir, |menu| {
+                            menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                        })
+                    } else {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
@@ -545,8 +542,8 @@ impl ProjectPanel {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
                             })
-                    },
-                )
+                    }
+                })
             });
 
             cx.focus_view(&context_menu);
@@ -654,7 +651,7 @@ impl ProjectPanel {
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
-        // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
+        // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
         self.expanded_dir_ids
             .retain(|_, expanded_entries| expanded_entries.is_empty());
         self.update_visible_entries(None, cx);
@@ -5088,6 +5085,9 @@ mod tests {
             Project::init_settings(cx);
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
@@ -5105,6 +5105,15 @@ mod tests {
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

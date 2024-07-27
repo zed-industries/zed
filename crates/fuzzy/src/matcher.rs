@@ -404,7 +404,12 @@ mod tests {
 
     #[test]
     fn test_match_multibyte_path_entries() {
-        let paths = vec!["aαbβ/cγdδ", "αβγδ/bcde", "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", "/d/🆒/h"];
+        let paths = vec![
+            "aαbβ/cγdδ",
+            "αβγδ/bcde",
+            "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f",
+            "/d/🆒/h",
+        ];
         assert_eq!("1️⃣".len(), 7);
         assert_eq!(
             match_single_path_query("bcd", false, &paths),

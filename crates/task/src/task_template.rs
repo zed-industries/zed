@@ -184,13 +184,27 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
-        let mut env = substitute_all_template_variables_in_map(
-            &self.env,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
-        env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+
+        let env = {
+            // Start with the project environment as the base.
+            let mut env = cx.project_env.clone();
+
+            // Extend that environment with what's defined in the TaskTemplate
+            env.extend(self.env.clone());
+
+            // Then we replace all task variables that could be set in environment variables
+            let mut env = substitute_all_template_variables_in_map(
+                &env,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?;
+
+            // Last step: set the task variables as environment variables too
+            env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+            env
+        };
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -392,6 +406,7 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_without_cwd, &cx).cwd,
@@ -403,6 +418,7 @@ mod tests {
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_without_cwd, &cx)
@@ -421,6 +437,7 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
@@ -434,6 +451,7 @@ mod tests {
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_with_cwd, &cx)
@@ -512,6 +530,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
+                    project_env: HashMap::default(),
                 },
             ).unwrap_or_else(|| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}"));
 
@@ -599,6 +618,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
+                    project_env: HashMap::default(),
                 },
             );
             assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
@@ -651,6 +671,7 @@ mod tests {
                 VariableName::Symbol,
                 "test_symbol".to_string(),
             ))),
+            project_env: HashMap::default(),
         };
 
         for (i, symbol_dependent_task) in [
@@ -724,5 +745,75 @@ mod tests {
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
         assert!(faulty_go_test.resolve_task("base", &context).is_some());
+    }
+
+    #[test]
+    fn test_project_env() {
+        let all_variables = [
+            (VariableName::Row, "1234".to_string()),
+            (VariableName::Column, "5678".to_string()),
+            (VariableName::File, "test_file".to_string()),
+            (VariableName::Symbol, "my symbol".to_string()),
+        ];
+
+        let template = TaskTemplate {
+            label: "my task".to_string(),
+            command: format!(
+                "echo {} {}",
+                VariableName::File.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            args: vec![],
+            env: HashMap::from_iter([
+                (
+                    "TASK_ENV_VAR1".to_string(),
+                    "TASK_ENV_VAR1_VALUE".to_string(),
+                ),
+                (
+                    "TASK_ENV_VAR2".to_string(),
+                    format!(
+                        "env_var_2 {} {}",
+                        VariableName::Row.template_value(),
+                        VariableName::Column.template_value()
+                    ),
+                ),
+                (
+                    "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                    "overwritten".to_string(),
+                ),
+            ]),
+            ..TaskTemplate::default()
+        };
+
+        let project_env = HashMap::from_iter([
+            (
+                "PROJECT_ENV_VAR1".to_string(),
+                "PROJECT_ENV_VAR1_VALUE".to_string(),
+            ),
+            (
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN_VALUE".to_string(),
+            ),
+        ]);
+
+        let context = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(all_variables.clone()),
+            project_env,
+        };
+
+        let resolved = template
+            .resolve_task(TEST_ID_BASE, &context)
+            .unwrap()
+            .resolved
+            .unwrap();
+
+        assert_eq!(resolved.env["TASK_ENV_VAR1"], "TASK_ENV_VAR1_VALUE");
+        assert_eq!(resolved.env["TASK_ENV_VAR2"], "env_var_2 1234 5678");
+        assert_eq!(resolved.env["PROJECT_ENV_VAR1"], "PROJECT_ENV_VAR1_VALUE");
+        assert_eq!(
+            resolved.env["PROJECT_ENV_WILL_BE_OVERWRITTEN"],
+            "overwritten"
+        );
     }
 }

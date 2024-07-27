@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitsDisabled",
+    ":separateMultipleMajorReleases",
+    "helpers:pinGitHubActionDigests",
+    "group:serdeMonorepo"
+  ],
+  "dependencyDashboard": true,
+  "timezone": "America/New_York",
+  "schedule": ["after 3pm on Wednesday"],
+  "major": {
+    "dependencyDashboardApproval": true
+  },
+  "prFooter": "Release Notes:\n\n- N/A",
+  "packageRules": [
+    {
+      "description": "Group wasmtime crates together.",
+      "matchPackagePrefixes": ["wasmtime"],
+      "groupName": "wasmtime"
+    }
+  ]
+}
