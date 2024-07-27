@@ -27,7 +27,7 @@ pub struct LanguageModelCompletionProvider {
 const MAX_CONCURRENT_COMPLETION_REQUESTS: usize = 4;
 
 pub struct LanguageModelCompletionResponse {
-    pub inner: BoxStream<'static, Result<String>>,
+    inner: BoxStream<'static, Result<String>>,
     _lock: SemaphoreGuardArc,
 }
 
