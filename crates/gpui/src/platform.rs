@@ -255,7 +255,7 @@ pub enum Decorations {
 }
 
 /// What window controls this platform supports
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct WindowControls {
     /// Whether this platform supports fullscreen
     pub fullscreen: bool,
@@ -265,6 +265,18 @@ pub struct WindowControls {
     pub minimize: bool,
     /// Whether this platform supports a window menu
     pub window_menu: bool,
+}
+
+impl Default for WindowControls {
+    fn default() -> Self {
+        // Assume that we can do anything, unless told otherwise
+        Self {
+            fullscreen: true,
+            maximize: true,
+            minimize: true,
+            window_menu: true,
+        }
+    }
 }
 
 /// A type to describe which sides of the window are currently tiled in some way
@@ -355,12 +367,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_app_id(&mut self, _app_id: &str) {}
     fn window_controls(&self) -> WindowControls {
-        WindowControls {
-            fullscreen: true,
-            maximize: true,
-            minimize: true,
-            window_menu: false,
-        }
+        WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
