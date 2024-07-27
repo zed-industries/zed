@@ -120,6 +120,7 @@ pub async fn get_release_by_tag_name(
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AssetKind {
     TarGz,
+    Zip,
 }
 
 pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -> Result<String> {
@@ -132,6 +133,7 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
         "{tag}.{extension}",
         extension = match kind {
             AssetKind::TarGz => "tar.gz",
+            AssetKind::Zip => "zip",
         }
     );
     url.path_segments_mut()
@@ -153,6 +155,12 @@ mod tests {
         assert_eq!(
             tarball,
             "https://github.com/microsoft/vscode-eslint/archive/refs/tags/release%2F2.3.5.tar.gz"
+        );
+
+        let zip = build_asset_url(repo_name_with_owner, tag, AssetKind::Zip).unwrap();
+        assert_eq!(
+            zip,
+            "https://github.com/microsoft/vscode-eslint/archive/refs/tags/release%2F2.3.5.zip"
         );
     }
 }
