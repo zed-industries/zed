@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http_client::github::{build_asset_url, GitHubLspBinaryVersion};
+use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -406,11 +406,13 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_asset_url(
-            "microsoft/vscode-eslint",
-            Self::CURRENT_VERSION,
-            http_client::github::AssetKind::TarGz,
-        )?;
+        #[cfg(not(windows))]
+        let asset_kind = AssetKind::TarGz;
+
+        #[cfg(windows)]
+        let asset_kind = AssetKind::Zip;
+
+        let url = build_asset_url("microsoft/vscode-eslint", Self::CURRENT_VERSION, asset_kind)?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
@@ -428,6 +430,12 @@ impl LspAdapter for EsLintLspAdapter {
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
 
+        #[cfg(not(windows))]
+        let asset_kind = AssetKind::TarGz;
+
+        #[cfg(windows)]
+        let asset_kind = AssetKind::Zip;
+
         if fs::metadata(&server_path).await.is_err() {
             remove_matching(&container_dir, |entry| entry != destination_path).await;
 
@@ -436,14 +444,19 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-
-            if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(&destination_path, BufReader::new(response.body_mut()))
+            match asset_kind {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
                     .await?;
-            } else if version.url.ends_with(".tar.gz") {
-                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                let archive = Archive::new(decompressed_bytes);
-                archive.unpack(&destination_path).await?;
+                }
             }
 
             let mut dir = fs::read_dir(&destination_path).await?;
