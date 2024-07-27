@@ -669,35 +669,6 @@ impl settings::Settings for ThemeSettings {
                     obj.reference = Some("#/definitions/FontFallbacks".into());
                 });
             });
-        {
-            let prop = &root_schema.schema.object().properties;
-            println!("{:#?}", prop);
-        }
-
-        // root_schema
-        //     .schema
-        //     .object
-        //     .as_mut()
-        //     .unwrap()
-        //     .properties
-        //     .extend([
-        //         (
-        //             "buffer_font_family".to_owned(),
-        //             Schema::new_ref("#/definitions/FontFamilies".into()),
-        //         ),
-        //         (
-        //             "buffer_font_fallbacks".to_owned(),
-        //             Schema::new_ref("#/definitions/FontFallbacks".into()),
-        //         ),
-        //         (
-        //             "ui_font_family".to_owned(),
-        //             Schema::new_ref("#/definitions/FontFamilies".into()),
-        //         ),
-        //         (
-        //             "ui_font_fallbacks".to_owned(),
-        //             Schema::new_ref("#/definitions/FontFallbacks".into()),
-        //         ),
-        //     ]);
 
         root_schema
     }
