@@ -449,28 +449,28 @@ impl LspAdapter for EsLintLspAdapter {
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await.unwrap();
-            copy_dir_all(
-                repo_root.join("$shared"),
-                repo_root.join("server").join("src").join("shared"),
-            )
-            .await
-            .unwrap();
-            copy_dir_all(
-                repo_root.join("$shared"),
-                repo_root.join("client").join("src").join("shared"),
-            )
-            .await
-            .unwrap();
+
+            #[cfg(target_os = "windows")]
+            {
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("client").join("src").join("shared"),
+                )
+                .await?;
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("server").join("src").join("shared"),
+                )
+                .await?;
+            }
 
             self.node
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
-                .await
-                .unwrap();
+                .await?;
 
             self.node
                 .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
-                .await
-                .unwrap();
+                .await?;
         }
 
         Ok(LanguageServerBinary {
@@ -519,7 +519,8 @@ async fn get_cached_eslint_server_binary(
     .log_err()
 }
 
-async fn copy_dir_all(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
+#[cfg(target_os = "windows")]
+async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
     if fs::metadata(&src_dir).await.is_err() {
         return Err(anyhow!("Directory {} not present.", src_dir.display()));
     }
