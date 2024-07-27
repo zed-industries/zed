@@ -1638,7 +1638,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
 
     // file_1.txt is now selected
     picker.update(cx, |finder, _| {
-        assert_match_selection(finder, 0, "file_1.txt".as_ref());
+        assert_match_selection(finder, 0, "file_1.txt");
     });
 }
 
