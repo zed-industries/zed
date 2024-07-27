@@ -1119,19 +1119,6 @@ impl Pane {
         )
     }
 
-    fn copy_path(&mut self, _: &CopyPath, path: PathBuf, cx: &mut ViewContext<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
-    }
-
-    fn copy_relative_path(
-        &mut self,
-        _: &CopyRelativePath,
-        path: PathBuf,
-        cx: &mut ViewContext<Self>,
-    ) {
-        cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
-    }
-
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
         all_dirty_items: usize,
@@ -1581,6 +1568,43 @@ impl Pane {
         });
     }
 
+    fn get_absolute_path(
+        pane: &View<Pane>,
+        cx: &mut WindowContext,
+        entry: ProjectEntryId,
+    ) -> Option<PathBuf> {
+        pane.update(cx, |pane, cx| {
+            pane.workspace.update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                project.worktree_for_entry(entry, cx).and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    let entry = worktree.entry_for_id(entry)?;
+                    let abs_path = worktree.absolutize(&entry.path).ok()?;
+                    let path = if entry.is_symlink {
+                        abs_path.canonicalize().ok()?
+                    } else {
+                        abs_path
+                    };
+
+                    Some(path)
+                })
+            })
+        })
+        .ok()
+        .flatten()
+    }
+
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some(clipboard_text) = self
+            .active_item()
+            .as_ref()
+            .and_then(|entry| entry.project_path(cx))
+            .map(|p| p.path.to_string_lossy().to_string())
+        {
+            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1774,64 +1798,31 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let paths = pane
-                            .update(cx, |pane, cx| {
-                                pane.workspace.update(cx, |workspace, cx| {
-                                    let project = workspace.project().read(cx);
-                                    project.worktree_for_entry(entry, cx).and_then(|worktree| {
-                                        let worktree = worktree.read(cx);
-                                        let entry = worktree.entry_for_id(entry)?;
-                                        let rel_path = &entry.path;
-                                        let abs_path = (|| {
-                                            let abs_path = worktree.absolutize(rel_path).ok()?;
-                                            let parent = if entry.is_symlink {
-                                                abs_path.canonicalize().ok()?
-                                            } else {
-                                                abs_path
-                                            }
-                                            .to_path_buf();
-                                            Some(parent)
-                                        })();
-                                        Some((Arc::clone(rel_path), abs_path))
-                                    })
-                                })
-                            })
-                            .ok()
-                            .flatten();
-
-                        let (rel_path, abs_path) =
-                            paths.map_or((None, None), |(rel, abs)| (Some(rel), abs));
-
-                        let parent_abs_path = abs_path
-                            .as_deref()
-                            .and_then(|path| path.parent())
-                            .map(|path| path.to_path_buf());
+                        let absolute_path = Pane::get_absolute_path(&pane, cx, entry);
+                        let parent_abs_path = Pane::get_absolute_path(&pane, cx, entry)
+                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
 
                         let entry_id = entry.to_proto();
                         menu = menu
                             .separator()
-                            .when_some(abs_path, |menu, path| {
+                            .when_some(absolute_path, |menu, path| {
                                 menu.entry(
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
-                                    cx.handler_for(&pane, move |pane, cx| {
-                                        pane.copy_path(&CopyPath, path.to_path_buf(), cx);
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            path.to_string_lossy().to_string(),
+                                        ));
                                     }),
                                 )
                             })
-                            .when_some(rel_path, |menu, path| {
-                                menu.entry(
-                                    "Copy Relative Path",
-                                    Some(Box::new(CopyRelativePath)),
-                                    cx.handler_for(&pane, move |pane, cx| {
-                                        pane.copy_relative_path(
-                                            &CopyRelativePath,
-                                            path.to_path_buf(),
-                                            cx,
-                                        );
-                                    }),
-                                )
-                            })
+                            .entry(
+                                "Copy Relative Path",
+                                Some(Box::new(CopyRelativePath)),
+                                cx.handler_for(&pane, move |pane, cx| {
+                                    pane.copy_relative_path(&CopyRelativePath, cx);
+                                }),
+                            )
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
