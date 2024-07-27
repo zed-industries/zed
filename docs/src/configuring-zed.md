@@ -1585,40 +1585,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 },
 ```
 
-## Assistant Panel
-
-- Description: Customize assistant panel
-- Setting: `assistant`
-- Default:
-
-```json
-"assistant": {
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": "N/A - width in pixels",
-  "version": "1",
-},
-```
-
-## Outline Panel
-
-- Description: Customize outline Panel
-- Setting: `outline_panel`
-- Default:
-
-```json
-"outline_panel": {
-  "auto_fold_dirs": true,
-  "auto_reveal_entries": true,
-  "default_width": "N/A - width in pixels",
-  "dock": "left",
-  "file_icons": true,
-  "git_status": true,
-  "indent_size": 20,
-}
-```
-
 ### Dock
 
 - Description: Control the position of the dock
@@ -1759,6 +1725,40 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "scrollbar": {
     "show": "never"
   }
+}
+```
+
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": "N/A - width in pixels"O,
+
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "auto_fold_dirs": true,
+  "auto_reveal_entries": true,
+  "default_width": "N/A - width in pixels",
+  "dock": "left",
+  "file_icons": true,
+  "git_status": true,
+  "indent_size": 20,
 }
 ```
 
