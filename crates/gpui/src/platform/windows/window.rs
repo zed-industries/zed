@@ -670,6 +670,10 @@ impl PlatformWindow for WindowsWindow {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // todo!()
+    }
 }
 
 #[implement(IDropTarget)]
