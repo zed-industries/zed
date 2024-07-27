@@ -4697,8 +4697,6 @@ async fn complete_with_anthropic(
     session: UserSession,
     api_key: Arc<str>,
 ) -> Result<()> {
-    let model = anthropic::Model::from_id(&request.model)?;
-
     let mut system_message = String::new();
     let messages = request
         .messages
@@ -4734,7 +4732,7 @@ async fn complete_with_anthropic(
         anthropic::ANTHROPIC_API_URL,
         &api_key,
         anthropic::Request {
-            model,
+            model: request.model,
             messages,
             stream: true,
             system: system_message,
