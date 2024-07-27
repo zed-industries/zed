@@ -18,17 +18,18 @@ use crate::{
 mod default;
 
 lazy_static! {
-    static ref DEFAULT_DIGRAPHS_MAP: HashMap<String, char> = {
+    static ref DEFAULT_DIGRAPHS_MAP: HashMap<String, String> = {
         let mut map = HashMap::default();
         for &(a, b, c) in default::DEFAULT_DIGRAPHS {
             let key = format!("{a}{b}");
-            map.insert(key, char::from_u32(c).unwrap());
+            let value = char::from_u32(c).unwrap().to_string();
+            map.insert(key, value);
         }
         map
     };
 }
 
-fn lookup_digraph(a: char, b: char, cx: &AppContext) -> char {
+fn lookup_digraph(a: char, b: char, cx: &AppContext) -> String {
     let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
     let input = [a, b].into_iter().collect::<String>();
     let reversed = [b, a].into_iter().collect::<String>();
@@ -38,8 +39,8 @@ fn lookup_digraph(a: char, b: char, cx: &AppContext) -> char {
         .or_else(|| DEFAULT_DIGRAPHS_MAP.get(&input))
         .or_else(|| custom_digraphs.get(&reversed))
         .or_else(|| DEFAULT_DIGRAPHS_MAP.get(&reversed))
-        .copied()
-        .unwrap_or(b)
+        .cloned()
+        .unwrap_or_else(|| b.to_string())
 }
 
 pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
@@ -138,12 +139,19 @@ mod test {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
                 let mut custom_digraphs = HashMap::default();
-                custom_digraphs.insert("|-".into(), '⊢');
+                custom_digraphs.insert("|-".into(), "⊢".into());
+                custom_digraphs.insert(":)".into(), "👨‍💻".into());
                 s.custom_digraphs = Some(custom_digraphs);
             });
         });
 
+        cx.set_state("ˇ", Mode::Normal);
         cx.simulate_keystrokes("a ctrl-k | - escape");
         cx.assert_state("ˇ⊢", Mode::Normal);
+
+        // Test support for multi-codepoint mappings
+        cx.set_state("ˇ", Mode::Normal);
+        cx.simulate_keystrokes("a ctrl-k : ) escape");
+        cx.assert_state("ˇ👨‍💻", Mode::Normal);
     }
 }
