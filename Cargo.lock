@@ -10814,7 +10814,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_derive",
- "serde_json",
  "settings",
  "smol",
  "sysinfo",
