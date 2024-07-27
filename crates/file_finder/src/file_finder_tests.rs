@@ -1542,6 +1542,107 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
 }
 
 #[gpui::test]
+async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state.fs.as_fake().insert_tree("/src", json!({})).await;
+
+    app_state
+        .fs
+        .create_dir("/src/even".as_ref())
+        .await
+        .expect("unable to create dir");
+
+    let initial_files_num = 5;
+    for i in 0..initial_files_num {
+        let filename = format!("/src/even/file_{}.txt", 10 + i);
+        app_state
+            .fs
+            .create_file(Path::new(&filename), Default::default())
+            .await
+            .expect("unable to create file");
+    }
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("file");
+    let selected_index = 3;
+    // Checking only the filename, not the whole path
+    let selected_file = format!("file_{}.txt", 10 + selected_index);
+    // Select even/file_13.txt
+    for _ in 0..selected_index {
+        cx.dispatch_action(SelectNext);
+    }
+
+    picker.update(cx, |finder, _| {
+        assert_match_selection(finder, selected_index, &selected_file)
+    });
+
+    // Add more matches to the search results
+    let files_to_add = 10;
+    for i in 0..files_to_add {
+        let filename = format!("/src/file_{}.txt", 20 + i);
+        app_state
+            .fs
+            .create_file(Path::new(&filename), Default::default())
+            .await
+            .expect("unable to create file");
+    }
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // file_13.txt is still selected
+    picker.update(cx, |finder, _| {
+        let expected_selected_index = selected_index + files_to_add;
+        assert_match_selection(finder, expected_selected_index, &selected_file);
+    });
+}
+
+#[gpui::test]
+async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "file_1.txt": "// file_1",
+                "file_2.txt": "// file_2",
+                "file_3.txt": "// file_3",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("file");
+    // Select even/file_2.txt
+    cx.dispatch_action(SelectNext);
+
+    // Add more matches to the search results
+    app_state
+        .fs
+        .remove_file("/src/file_2.txt".as_ref(), Default::default())
+        .await
+        .expect("unable to remove file");
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // file_1.txt is now selected
+    picker.update(cx, |finder, _| {
+        assert_match_selection(finder, 0, "file_1.txt".as_ref());
+    });
+}
+
+#[gpui::test]
 async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
