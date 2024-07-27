@@ -1285,18 +1285,13 @@ pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Opti
         }
     }
 }
-
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    let project = workspace.project().read(cx);
-
-    for worktree in project.worktrees(cx) {
-        let worktree = worktree.read(cx);
-        if worktree.root_entry().is_some_and(|re| re.is_dir()) {
-            return Some(worktree.abs_path().to_path_buf());
-        }
+    let worktree = workspace.worktrees(cx).next()?.read(cx);
+    if !worktree.root_entry()?.is_dir() {
+        return None;
     }
-    None
+    Some(worktree.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
@@ -1321,7 +1316,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
@@ -1342,7 +1337,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
@@ -1362,7 +1357,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
@@ -1384,7 +1379,7 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
@@ -1406,7 +1401,7 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
@@ -1417,6 +1412,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
+            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);

@@ -25,6 +25,7 @@ pub struct Terminals {
 }
 
 /// Terminals are opened either for the users shell, or to run a task.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)
@@ -44,18 +45,25 @@ pub enum SshCommand {
 
 impl Project {
     pub fn active_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
-        for worktree in self
+        let worktree = self
             .active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
-            .into_iter()
-            .chain(self.worktrees(cx))
-        {
-            let worktree = worktree.read(cx);
-            if worktree.root_entry().is_some_and(|re| re.is_dir()) {
-                return Some(worktree.abs_path().to_path_buf());
-            }
+            .or_else(|| self.worktrees(cx).next())?;
+        let worktree = worktree.read(cx);
+        if !worktree.root_entry()?.is_dir() {
+            return None;
         }
-        None
+        Some(worktree.abs_path().to_path_buf())
+    }
+
+    pub fn first_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+        let worktree = self.worktrees(cx).next()?;
+        let worktree = worktree.read(cx);
+        if worktree.root_entry()?.is_dir() {
+            return Some(worktree.abs_path().to_path_buf());
+        } else {
+            None
+        }
     }
 
     fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
