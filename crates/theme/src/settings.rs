@@ -7,7 +7,6 @@ use gpui::{
     Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
-use schemars::schema::ArrayValidation;
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -620,33 +619,10 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        let available_fonts = params
-            .font_names
-            .iter()
-            .cloned()
-            .map(Value::String)
-            .collect::<Vec<_>>();
-        let font_family_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        };
-        let font_fallback_schema = SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    font_family_schema.clone().into(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
-            ("FontFamilies".into(), font_family_schema.into()),
-            ("FontFallbacks".into(), font_fallback_schema.into()),
+            ("FontFamilies".into(), params.font_family_schema()),
+            ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);
 
         add_references_to_properties(
