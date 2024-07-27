@@ -649,30 +649,30 @@ impl settings::Settings for ThemeSettings {
             ("FontFallbacks".into(), font_fallback_schema.into()),
         ]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([
-                (
-                    "buffer_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "buffer_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-                (
-                    "ui_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "ui_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-            ]);
+        // The list of properties that should reference another definition in
+        // the schema.
+        let properties_with_references = vec![
+            ("buffer_font_family", "#/definitions/FontFamilies"),
+            ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
+            ("ui_font_family", "#/definitions/FontFamilies"),
+            ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
+        ];
+
+        for (property, definition) in properties_with_references {
+            let Some(schema) = root_schema.schema.object().properties.get_mut(property) else {
+                log::warn!("property '{property}' not found in JSON schema");
+                continue;
+            };
+
+            match schema {
+                Schema::Object(schema) => {
+                    schema.reference = Some(definition.into());
+                }
+                Schema::Bool(_) => {
+                    // Boolean schemas can't have references.
+                }
+            }
+        }
 
         root_schema
     }
