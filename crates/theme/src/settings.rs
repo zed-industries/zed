@@ -7,7 +7,7 @@ use gpui::{
     Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
-use schemars::schema::{ArrayValidation, Metadata, RootSchema};
+use schemars::schema::{ArrayValidation, RootSchema};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -684,9 +684,14 @@ fn with_schema_object<F>(root_schema: &mut RootSchema, key: &str, f: F)
 where
     F: FnOnce(&mut SchemaObject),
 {
-    let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
+    let Some(schema) = root_schema.schema.object().properties.get_mut(key) else {
+        log::error!("No schema found for key: {key}");
+        return;
+    };
     match schema {
-        Schema::Bool(_) => unreachable!(),
+        Schema::Bool(_) => {
+            log::error!("Expect schema object, but schema bool was found for key: {key}");
+        }
         Schema::Object(obj) => {
             f(obj);
         }
