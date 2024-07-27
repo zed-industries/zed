@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::{TimeZone, Utc};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
@@ -15,6 +16,10 @@ use ui::{
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
+
+use ui::{
+    prelude::*, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, PopoverMenu, Tooltip,
+};
 
 actions!(branches, [OpenRecent]);
 
@@ -260,12 +265,112 @@ impl PickerDelegate for BranchListDelegate {
             .filter(|index| index < &&self.branch_name_trailoff_after)
             .copied()
             .collect();
+    
+        let branch = self.all_branches.iter().find(|&branch| branch.name == shortened_branch_name.clone().into());
+        let author_name = branch.unwrap().author_name.clone();
+        
+        let branch_head: Option<Branch> = self.all_branches.iter().find(|&branch| branch.is_head).cloned();
+
+        let formatted_date;
+        if let Some(unix_timestamp) = branch.unwrap().unix_timestamp {
+            match Utc.timestamp_opt(unix_timestamp as i64, 0) {
+                chrono::LocalResult::Single(naive_datetime) => {
+                    formatted_date = naive_datetime.format(" committed %d/%m/%Y %H:%M").to_string();
+                },
+                _ => {
+                    formatted_date = String::from(" Invalid timestamp");
+                }
+            }
+        } else {
+            formatted_date = String::from(" Timestamp not available");
+        }
+    
+        let last_commit_summary = branch.unwrap().last_commit_summary.clone();
+        let truncated_summary = if last_commit_summary.len() > 50 {
+            let truncated = &last_commit_summary[..50];
+            let last_space = truncated.rfind(' ').unwrap_or(50);
+            format!("{}...", &last_commit_summary[..last_space])
+        } else {
+            last_commit_summary.to_string()
+        };
+    
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .child(HighlightedLabel::new(shortened_branch_name.clone(), highlights.clone()))
+                        )
+                        .child(
+                            Label::new(truncated_summary)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                        )
+                        .child(
+                            h_flex()
+                            .child(HighlightedLabel::new(author_name.clone(), highlights))
+                            .child(Label::new(formatted_date.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted))
+                        )
+                )
+                .map(|el| {
+                    let branch_clone = branch.cloned();
+                    let settings_button = div()
+                        .child(
+                            PopoverMenu::new(SharedString::from(format!("branch-menu-{ix}")))
+                                .menu(move |cx| {
+                                    let branch_clone = branch_clone.clone();
+                                    let branch_head = branch_head.clone();
+                                    ContextMenu::build(cx, move |mut menu, _| {
+                                        if let Some(ref branch) = branch_clone {
+                                            if !branch.is_head {
+                                                if let Some(ref head_branch) = branch_head {
+                                                    menu = menu
+                                                        .action("Switch...", Box::new(gpui::NoAction))
+                                                        .action(
+                                                            format!("Merge into “{}”...", head_branch.name),
+                                                            Box::new(gpui::NoAction)
+                                                        );
+                                                }
+                                            }
+                                        }
+                                        if let Some(ref head_branch) = branch_clone {
+                                            menu = menu
+                                                .action(
+                                                    format!("Rename “{}”...", head_branch.name),
+                                                    Box::new(gpui::NoAction)
+                                                )
+                                                .action(
+                                                    format!("New Branch from \"{}\"...", head_branch.name),
+                                                    Box::new(gpui::NoAction)
+                                                );
+                                        }
+                                        menu
+                                    })
+                                    .into()
+                                })
+                                .trigger(
+                                    ButtonLike::new(SharedString::from(format!("branch-menu-{ix}")))
+                                        .child(
+                                            h_flex().gap_0p5().child(
+                                                Icon::new(IconName::Settings)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(move |cx| Tooltip::text("Toggle Branch Menu", cx)),
+                                ),
+                        )
+                        .into_any_element();
+        
+                    el.end_hover_slot::<AnyElement>(settings_button)
+                }),
         )
     }
 

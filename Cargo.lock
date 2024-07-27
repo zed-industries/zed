@@ -12022,6 +12022,7 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "fuzzy",
  "git",
  "gpui",
