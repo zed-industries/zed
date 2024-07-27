@@ -1,0 +1,20 @@
+name: Docs
+
+on:
+  push:
+    paths:
+      - "docs/**"
+
+jobs:
+  check_formatting:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+
+      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3
+        with:
+          version: 9
+
+      - run: pnpm dlx prettier . --check
+        working-directory: ./docs
