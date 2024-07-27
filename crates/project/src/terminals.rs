@@ -1,21 +1,16 @@
 use crate::Project;
 use anyhow::Context as _;
 use collections::HashMap;
-use gpui::{
-    AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
-};
+use gpui::{AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, WeakModel};
 use itertools::Itertools;
-use paths::home_dir;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
     env::{self},
-    fs::File,
-    io::Write,
     iter,
     path::{Path, PathBuf},
 };
-use task::{Shell, SpawnInTerminal, SshCommand, TerminalWorkDir};
+use task::{Shell, SpawnInTerminal};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
@@ -29,29 +24,43 @@ pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ConnectRemoteTerminal {
-    pub ssh_connection_string: SharedString,
-    pub project_path: SharedString,
+/// Terminals are opened either for the users shell, or to run a task.
+#[derive(Debug)]
+pub enum TerminalKind {
+    /// Run a shell at the given path (or $HOME if None)
+    Shell(Option<PathBuf>),
+    /// Run a task.
+    Task(SpawnInTerminal),
+}
+
+/// SshCommand describes how to connect to a remote server
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SshCommand {
+    /// DevServers give a string from the user
+    DevServer(String),
+    /// Direct ssh has a list of arguments to pass to ssh
+    Direct(Vec<String>),
 }
 
 impl Project {
-    // Returns a working directory. If None, then this project does not support terminals.
-    pub fn terminal_work_dir_for(
-        &self,
-        // None means $HOME (we may need to resolve it on the remote)
-        pathbuf: Option<PathBuf>,
-        cx: &AppContext,
-    ) -> Option<TerminalWorkDir> {
-        if let Some(session) = self.ssh_session.as_ref() {
-            return Some(TerminalWorkDir::Ssh {
-                ssh_command: SshCommand::Direct(session.ssh_args()),
-                path: pathbuf.map(|p| p.to_string_lossy().to_string()),
-            });
+    pub fn active_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+        for worktree in self
+            .active_entry()
+            .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
+            .into_iter()
+            .chain(self.worktrees(cx))
+        {
+            let worktree = worktree.read(cx);
+            if worktree.root_entry().is_some_and(|re| re.is_dir()) {
+                return Some(worktree.abs_path().to_path_buf());
+            }
         }
-        if self.is_local() {
-            let pathbuf = pathbuf.unwrap_or_else(|| home_dir().clone());
-            return Some(TerminalWorkDir::Local(pathbuf.to_owned()));
+        None
+    }
+
+    fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
+        if let Some(ssh_session) = self.ssh_session.as_ref() {
+            return Some(SshCommand::Direct(ssh_session.ssh_args()));
         }
 
         let dev_server_project_id = self.dev_server_project_id()?;
@@ -61,123 +70,116 @@ impl Project {
             .ssh_connection_string
             .as_ref()?
             .to_string();
-
-        Some(TerminalWorkDir::Ssh {
-            ssh_command: SshCommand::DevServer(ssh_command),
-            path: pathbuf.map(|pathbuf| pathbuf.to_string_lossy().to_string()),
-        })
+        Some(SshCommand::DevServer(ssh_command))
     }
 
     pub fn create_terminal(
         &mut self,
-        working_directory: Option<TerminalWorkDir>,
-        spawn_task: Option<SpawnInTerminal>,
+        kind: TerminalKind,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        // used only for TerminalSettings::get
-        let worktree = {
-            let terminal_cwd = working_directory.as_ref().and_then(|cwd| cwd.local_path());
-            let task_cwd = spawn_task
-                .as_ref()
-                .and_then(|spawn_task| spawn_task.cwd.as_ref())
-                .and_then(|cwd| cwd.local_path());
-
-            terminal_cwd
-                .and_then(|terminal_cwd| self.find_worktree(&terminal_cwd, cx))
-                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_worktree(&spawn_cwd, cx)))
+        let path = match &kind {
+            TerminalKind::Shell(path) => path.as_ref().map(|path| path.to_path_buf()),
+            TerminalKind::Task(spawn_task) => {
+                if let Some(cwd) = &spawn_task.cwd {
+                    Some(cwd.clone())
+                } else {
+                    self.active_project_directory(cx)
+                }
+            }
         };
+        let ssh_command = self.ssh_command(cx);
 
-        let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-            worktree_id: worktree.read(cx).id().to_usize(),
-            path,
-        });
-
-        let is_terminal = spawn_task.is_none()
-            && working_directory
-                .as_ref()
-                .map_or(true, |work_dir| work_dir.is_local());
+        let mut settings_location = None;
+        if let Some(path) = path.as_ref() {
+            if let Some((worktree, _)) = self.find_worktree(path, cx) {
+                settings_location = Some(SettingsLocation {
+                    worktree_id: worktree.read(cx).id().to_usize(),
+                    path,
+                });
+            }
+        }
         let settings = TerminalSettings::get(settings_location, cx);
+
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
 
         let mut env = settings.env.clone();
-        // Alacritty uses parent project's working directory when no working directory is provided
-        // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
 
-        let venv_base_directory = working_directory
-            .as_ref()
-            .and_then(|cwd| cwd.local_path())
-            .unwrap_or_else(|| Path::new(""));
+        let is_terminal = matches!(kind, TerminalKind::Shell(_)) && ssh_command.is_none();
+        let local_path = if ssh_command.is_none() {
+            path.clone()
+        } else {
+            None
+        };
+        let venv_base_directory = local_path.clone().unwrap_or_else(|| PathBuf::new());
 
-        let (spawn_task, shell) = match working_directory.as_ref() {
-            Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
-                log::debug!("Connecting to a remote server: {ssh_command:?}");
+        let (spawn_task, shell) = match kind {
+            TerminalKind::Shell(_) => match &ssh_command {
+                Some(ssh_command) => {
+                    log::debug!("Connecting to a remote server: {ssh_command:?}");
 
-                // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
-                // to properly display colors.
-                // We do not have the luxury of assuming the host has it installed,
-                // so we set it to a default that does not break the highlighting via ssh.
-                env.entry("TERM".to_string())
-                    .or_insert_with(|| "xterm-256color".to_string());
+                    // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+                    // to properly display colors.
+                    // We do not have the luxury of assuming the host has it installed,
+                    // so we set it to a default that does not break the highlighting via ssh.
+                    env.entry("TERM".to_string())
+                        .or_insert_with(|| "xterm-256color".to_string());
 
-                let (program, args) = wrap_for_ssh(
-                    ssh_command,
-                    spawn_task.as_ref().map(|st| (&st.command, &st.args)),
-                    path.as_deref(),
-                );
+                    let (program, args) = wrap_for_ssh(ssh_command, None, path.as_deref());
+                    (None, Shell::WithArguments { program, args })
+                }
+                None => (None, settings.shell.clone()),
+            },
+            TerminalKind::Task(spawn_task) => {
+                let task_state = Some(TaskState {
+                    id: spawn_task.id,
+                    full_label: spawn_task.full_label,
+                    label: spawn_task.label,
+                    command_label: spawn_task.command_label,
+                    hide: spawn_task.hide,
+                    status: TaskStatus::Running,
+                    completion_rx,
+                });
 
-                (
-                    spawn_task.map(|spawn_task| TaskState {
-                        id: spawn_task.id,
-                        full_label: spawn_task.full_label,
-                        label: spawn_task.label,
-                        command_label: spawn_task.command_label,
-                        hide: spawn_task.hide,
-                        status: TaskStatus::Running,
-                        completion_rx,
-                    }),
-                    Shell::WithArguments { program, args },
-                )
-            }
-            _ => {
-                if let Some(spawn_task) = spawn_task {
-                    log::debug!("Spawning task: {spawn_task:?}");
-                    env.extend(spawn_task.env);
-                    // Activate minimal Python virtual environment
-                    if let Some(python_settings) = &python_settings.as_option() {
-                        self.set_python_venv_path_for_tasks(
-                            python_settings,
-                            &venv_base_directory,
-                            &mut env,
+                match &ssh_command {
+                    Some(ssh_command) => {
+                        log::debug!("Connecting to a remote server: {ssh_command:?}");
+                        env.entry("TERM".to_string())
+                            .or_insert_with(|| "xterm-256color".to_string());
+                        let (program, args) = wrap_for_ssh(
+                            ssh_command,
+                            Some((&spawn_task.command, &spawn_task.args)),
+                            path.as_deref(),
                         );
+                        (task_state, Shell::WithArguments { program, args })
                     }
-                    (
-                        Some(TaskState {
-                            id: spawn_task.id,
-                            full_label: spawn_task.full_label,
-                            label: spawn_task.label,
-                            command_label: spawn_task.command_label,
-                            hide: spawn_task.hide,
-                            status: TaskStatus::Running,
-                            completion_rx,
-                        }),
-                        Shell::WithArguments {
-                            program: spawn_task.command,
-                            args: spawn_task.args,
-                        },
-                    )
-                } else {
-                    (None, settings.shell.clone())
+                    None => {
+                        // todo: this should happen on remotes if ssh command is set
+                        env.extend(spawn_task.env);
+                        if let Some(python_settings) = &python_settings.as_option() {
+                            self.set_python_venv_path_for_tasks(
+                                python_settings,
+                                &venv_base_directory,
+                                &mut env,
+                            )
+                        }
+
+                        (
+                            task_state,
+                            Shell::WithArguments {
+                                program: spawn_task.command,
+                                args: spawn_task.args,
+                            },
+                        )
+                    }
                 }
             }
         };
 
         let terminal = TerminalBuilder::new(
-            working_directory
-                .as_ref()
-                .and_then(|cwd| cwd.local_path())
-                .map(ToOwned::to_owned),
+            local_path,
             spawn_task,
             shell,
             env,
@@ -314,7 +316,7 @@ impl Project {
 pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
-    path: Option<&str>,
+    path: Option<&Path>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
         iter::once(command)
@@ -326,7 +328,7 @@ pub fn wrap_for_ssh(
     };
 
     let commands = if let Some(path) = path {
-        format!("cd {path}; {to_run}")
+        format!("cd {:?}; {}", path, to_run)
     } else {
         format!("cd; {to_run}")
     };

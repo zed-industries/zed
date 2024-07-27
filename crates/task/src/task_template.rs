@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, Shell, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
+    ResolvedTask, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
     ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -134,14 +134,11 @@ impl TaskTemplate {
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(TerminalWorkDir::Local(PathBuf::from(substitured_cwd)))
+                Some(PathBuf::from(substitured_cwd))
             }
             None => None,
         }
-        .or(cx
-            .cwd
-            .as_ref()
-            .map(|cwd| TerminalWorkDir::Local(cwd.clone())));
+        .or(cx.cwd.clone());
         let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,

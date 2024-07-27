@@ -19,6 +19,7 @@ use gpui::{
 use markdown::Markdown;
 use markdown::MarkdownStyle;
 use project::terminals::wrap_for_ssh;
+use project::terminals::SshCommand;
 use rpc::proto::RegenerateDevServerTokenResponse;
 use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
@@ -29,8 +30,6 @@ use settings::Settings;
 use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
-use task::SshCommand;
-use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
@@ -1661,9 +1660,7 @@ pub async fn spawn_ssh_task(
                     allow_concurrent_runs: false,
                     reveal: RevealStrategy::Always,
                     hide: HideStrategy::Never,
-                    env: [("TERM".to_string(), "xterm-256color".to_string())]
-                        .into_iter()
-                        .collect(),
+                    env: Default::default(),
                     shell: Default::default(),
                 },
                 cx,
