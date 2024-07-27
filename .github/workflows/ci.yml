@@ -53,6 +53,9 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Check docs formatting
+        run: pnpm dlx prettier --check "docs/src/**/*"
+
       - name: Check unused dependencies
         uses: bnjbvr/cargo-machete@main
 
