@@ -668,6 +668,8 @@ impl settings::Settings for ThemeSettings {
                 match schema {
                     Schema::Bool(_) => unreachable!(),
                     Schema::Object(obj) => {
+                        obj.instance_type = None;
+                        obj.array = None;
                         obj.subschemas().all_of =
                             Some(vec![Schema::new_ref("#/definitions/FontFallbacks".into())]);
                     }
