@@ -2,13 +2,8 @@ use collections::HashMap;
 use gpui::{
     px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
 };
-use schemars::{
-    gen::SchemaGenerator,
-    schema::{ArrayValidation, InstanceType, RootSchema, SchemaObject},
-    JsonSchema,
-};
+use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
 use task::Shell;
@@ -202,34 +197,9 @@ impl settings::Settings for TerminalSettings {
         _: &AppContext,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-        let available_fonts: Vec<_> = params
-            .font_names
-            .iter()
-            .cloned()
-            .map(Value::String)
-            .collect();
-
-        let font_family_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        };
-
-        let font_fallback_schema = SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    font_family_schema.clone().into(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
         root_schema.definitions.extend([
-            ("FontFamilies".into(), font_family_schema.into()),
-            ("FontFallbacks".into(), font_fallback_schema.into()),
+            ("FontFamilies".into(), params.font_family_schema()),
+            ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);
 
         add_references_to_properties(
