@@ -467,31 +467,10 @@ impl LspAdapter for EsLintLspAdapter {
                 .await
                 .unwrap();
 
-            // self.node
-            //     .run_npm_subcommand(Some(&repo_root), "run-script", &["compile:server"])
-            //     .await
-            //     .log_err();
-
-            // let output = std::process::Command::new("powershell.exe")
-            //     .arg("npm install --proxy \"http://127.0.0.1:10809\"")
-            //     .current_dir(&repo_root)
-            //     .output()
-            //     .unwrap();
-            // if !output.status.success() {
-            //     println!("==> {}", String::from_utf8_lossy(output.stderr.as_slice()));
-            // }
-            // println!("1-->{}", String::from_utf8_lossy(output.stdout.as_slice()));
-            let output = std::process::Command::new("powershell.exe")
-                .arg("npm run compile:server")
-                .current_dir(&repo_root)
-                .output()
+            self.node
+                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                .await
                 .unwrap();
-            if !output.status.success() {
-                println!("==> {}", String::from_utf8_lossy(output.stderr.as_slice()));
-            }
-            println!("2-->{}", String::from_utf8_lossy(output.stdout.as_slice()));
-
-            panic!();
         }
 
         Ok(LanguageServerBinary {
