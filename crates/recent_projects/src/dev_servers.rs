@@ -1422,7 +1422,7 @@ impl DevServerProjects {
             .when(is_signed_out, |modal| {
                 modal
                     .section(Section::new().child(v_flex().mb_4().child(Label::new(
-                        "You are not currently signed in to Zed. Currently the remote development featuers are only available to signed in users. Please sign in to continue.",
+                        "You are not currently signed in to Zed. Currently the remote development features are only available to signed in users. Please sign in to continue.",
                     ))))
                     .footer(
                         ModalFooter::new().end_slot(
