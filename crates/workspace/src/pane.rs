@@ -1568,28 +1568,22 @@ impl Pane {
         });
     }
 
-    fn active_item_abs_path(
-        pane: &View<Pane>,
-        cx: &mut WindowContext,
-        entry: ProjectEntryId,
-    ) -> Option<PathBuf> {
-        pane.update(cx, |pane, cx| {
-            pane.workspace.update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                project.worktree_for_entry(entry, cx).and_then(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let entry = worktree.entry_for_id(entry)?;
-                    let abs_path = worktree.absolutize(&entry.path).ok()?;
-                    if entry.is_symlink {
-                        abs_path.canonicalize().ok()
-                    } else {
-                        Some(abs_path)
-                    }
-                })
-            })
-        })
-        .ok()
-        .flatten()
+    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &WindowContext) -> Option<PathBuf> {
+        let worktree = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_entry(entry, cx)?
+            .read(cx);
+        let entry = worktree.entry_for_id(entry)?;
+        let abs_path = worktree.absolutize(&entry.path).ok()?;
+        if entry.is_symlink {
+            abs_path.canonicalize().ok()
+        } else {
+            Some(abs_path)
+        }
     }
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
@@ -1796,16 +1790,15 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let item_abs_path = Pane::active_item_abs_path(&pane, cx, entry);
-                        let parent_abs_path = item_abs_path
+                        let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                        let parent_abs_path = entry_abs_path
                             .as_deref()
-                            .and_then(|abs_path| abs_path.parent())
-                            .map(ToOwned::to_owned);
+                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
 
                         let entry_id = entry.to_proto();
                         menu = menu
                             .separator()
-                            .when_some(item_abs_path, |menu, abs_path| {
+                            .when_some(entry_abs_path, |menu, abs_path| {
                                 menu.entry(
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
