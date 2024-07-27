@@ -21,11 +21,11 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, Element, ElementId,
-    EntityId, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
-    KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
-    SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakView, WindowContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
+    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
+    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -1116,6 +1116,7 @@ impl OutlinePanel {
         }
     }
 
+    // TODO kb reveal last search entry that is on the same line the caret is on
     fn reveal_entry_for_selection(
         &mut self,
         editor: &View<Editor>,
@@ -1534,11 +1535,11 @@ impl OutlinePanel {
         )
     }
 
+    // TODO kb render it better
     fn render_search_match(
         &self,
         match_range: &Range<editor::Anchor>,
         depth: usize,
-        as_ref: Option<&StringMatch>,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
         let Some(match_text) = self.text_for_match(&match_range, cx) else {
@@ -1560,7 +1561,7 @@ impl OutlinePanel {
         };
 
         let label_element = Label::new(format!(
-            "match_text (lines {} -{})",
+            "{match_text} (lines {} -{})",
             match_point_range.start.row + 1,
             match_point_range.end.row + 1,
         ))
@@ -2625,78 +2626,43 @@ impl OutlinePanel {
                         );
                     }
 
-                    // TODO kb do different things depending on mode
-                    let excerpts_to_consider =
-                        if is_singleton || query.is_some() || (should_add && is_expanded) {
-                            match entry {
-                                FsEntry::File(_, _, buffer_id, entry_excerpts) => {
-                                    Some((*buffer_id, entry_excerpts))
-                                }
-                                FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
-                                    Some((*buffer_id, entry_excerpts))
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
-                    if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
-                        if let Some(excerpts) = outline_panel.excerpts.get(&buffer_id) {
-                            for &entry_excerpt in entry_excerpts {
-                                let Some(excerpt) = excerpts.get(&entry_excerpt) else {
-                                    continue;
+                    match outline_panel.mode {
+                        ItemsDisplayMode::Search => outline_panel.add_search_entries(
+                            entry,
+                            depth,
+                            track_matches,
+                            &mut entries,
+                            &mut match_candidates,
+                            cx,
+                        ),
+                        ItemsDisplayMode::Outline => {
+                            let excerpts_to_consider =
+                                if is_singleton || query.is_some() || (should_add && is_expanded) {
+                                    match entry {
+                                        FsEntry::File(_, _, buffer_id, entry_excerpts) => {
+                                            Some((*buffer_id, entry_excerpts))
+                                        }
+                                        FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
+                                            Some((*buffer_id, entry_excerpts))
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
                                 };
-                                let excerpt_depth = depth + 1;
-                                outline_panel.push_entry(
+                            if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
+                                outline_panel.add_excerpt_entries(
+                                    entry,
+                                    buffer_id,
+                                    entry_excerpts,
+                                    depth,
+                                    track_matches,
+                                    is_singleton,
+                                    query.as_deref(),
                                     &mut entries,
                                     &mut match_candidates,
-                                    track_matches,
-                                    PanelEntry::Outline(OutlineEntry::Excerpt(
-                                        buffer_id,
-                                        entry_excerpt,
-                                        excerpt.range.clone(),
-                                    )),
-                                    excerpt_depth,
                                     cx,
                                 );
-
-                                let mut outline_base_depth = excerpt_depth + 1;
-                                if is_singleton {
-                                    outline_base_depth = 0;
-                                    entries.clear();
-                                    match_candidates.clear();
-                                } else if query.is_none()
-                                    && outline_panel.collapsed_entries.contains(
-                                        &CollapsedEntry::Excerpt(buffer_id, entry_excerpt),
-                                    )
-                                {
-                                    continue;
-                                }
-
-                                for outline in excerpt.iter_outlines() {
-                                    outline_panel.push_entry(
-                                        &mut entries,
-                                        &mut match_candidates,
-                                        track_matches,
-                                        PanelEntry::Outline(OutlineEntry::Outline(
-                                            buffer_id,
-                                            entry_excerpt,
-                                            outline.clone(),
-                                        )),
-                                        outline_base_depth + outline.depth,
-                                        cx,
-                                    );
-                                }
-                                if is_singleton && entries.is_empty() {
-                                    outline_panel.push_entry(
-                                        &mut entries,
-                                        &mut match_candidates,
-                                        track_matches,
-                                        PanelEntry::Fs(entry.clone()),
-                                        0,
-                                        cx,
-                                    );
-                                }
                             }
                         }
                     }
@@ -2911,6 +2877,116 @@ impl OutlinePanel {
         }
         if update_cached_entries {
             self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
+        }
+    }
+
+    fn add_excerpt_entries(
+        &self,
+        entry: &FsEntry,
+        buffer_id: BufferId,
+        entries_to_add: &[ExcerptId],
+        parent_depth: usize,
+        track_matches: bool,
+        is_singleton: bool,
+        query: Option<&str>,
+        entries: &mut Vec<CachedEntry>,
+        match_candidates: &mut Vec<StringMatchCandidate>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(excerpts) = self.excerpts.get(&buffer_id) {
+            for &excerpt_id in entries_to_add {
+                let Some(excerpt) = excerpts.get(&excerpt_id) else {
+                    continue;
+                };
+                let excerpt_depth = parent_depth + 1;
+                self.push_entry(
+                    entries,
+                    match_candidates,
+                    track_matches,
+                    PanelEntry::Outline(OutlineEntry::Excerpt(
+                        buffer_id,
+                        excerpt_id,
+                        excerpt.range.clone(),
+                    )),
+                    excerpt_depth,
+                    cx,
+                );
+
+                let mut outline_base_depth = excerpt_depth + 1;
+                if is_singleton {
+                    outline_base_depth = 0;
+                    entries.clear();
+                    match_candidates.clear();
+                } else if query.is_none()
+                    && self
+                        .collapsed_entries
+                        .contains(&CollapsedEntry::Excerpt(buffer_id, excerpt_id))
+                {
+                    continue;
+                }
+
+                for outline in excerpt.iter_outlines() {
+                    self.push_entry(
+                        entries,
+                        match_candidates,
+                        track_matches,
+                        PanelEntry::Outline(OutlineEntry::Outline(
+                            buffer_id,
+                            excerpt_id,
+                            outline.clone(),
+                        )),
+                        outline_base_depth + outline.depth,
+                        cx,
+                    );
+                }
+                if is_singleton && entries.is_empty() {
+                    self.push_entry(
+                        entries,
+                        match_candidates,
+                        track_matches,
+                        PanelEntry::Fs(entry.clone()),
+                        0,
+                        cx,
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_search_entries(
+        &self,
+        entry: &FsEntry,
+        parent_depth: usize,
+        track_matches: bool,
+        entries: &mut Vec<CachedEntry>,
+        match_candidates: &mut Vec<StringMatchCandidate>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let related_excerpts = match entry {
+            FsEntry::Directory(_, _) => return,
+            FsEntry::ExternalFile(_, excerpts) => excerpts,
+            FsEntry::File(_, _, _, excerpts) => excerpts,
+        }
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+        if related_excerpts.is_empty() || self.search_matches.is_empty() {
+            return;
+        }
+
+        for match_range in &self.search_matches {
+            if related_excerpts.contains(&match_range.start.excerpt_id)
+                || related_excerpts.contains(&match_range.end.excerpt_id)
+            {
+                self.push_entry(
+                    entries,
+                    match_candidates,
+                    track_matches,
+                    PanelEntry::Search(match_range.clone()),
+                    parent_depth + 1,
+                    cx,
+                );
+            }
         }
     }
 }
@@ -3173,7 +3249,6 @@ impl Render for OutlinePanel {
                                     Some(outline_panel.render_search_match(
                                         &match_range,
                                         cached_entry.depth,
-                                        cached_entry.string_match.as_ref(),
                                         cx,
                                     ))
                                 },
