@@ -5,17 +5,17 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
-    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
+    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -1568,6 +1568,35 @@ impl Pane {
         });
     }
 
+    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &WindowContext) -> Option<PathBuf> {
+        let worktree = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_entry(entry, cx)?
+            .read(cx);
+        let entry = worktree.entry_for_id(entry)?;
+        let abs_path = worktree.absolutize(&entry.path).ok()?;
+        if entry.is_symlink {
+            abs_path.canonicalize().ok()
+        } else {
+            Some(abs_path)
+        }
+    }
+
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some(clipboard_text) = self
+            .active_item()
+            .as_ref()
+            .and_then(|entry| entry.project_path(cx))
+            .map(|p| p.path.to_string_lossy().to_string())
+        {
+            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1761,30 +1790,32 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let parent_abs_path = pane
-                            .update(cx, |pane, cx| {
-                                pane.workspace.update(cx, |workspace, cx| {
-                                    let project = workspace.project().read(cx);
-                                    project.worktree_for_entry(entry, cx).and_then(|worktree| {
-                                        let worktree = worktree.read(cx);
-                                        let entry = worktree.entry_for_id(entry)?;
-                                        let abs_path = worktree.absolutize(&entry.path).ok()?;
-                                        let parent = if entry.is_symlink {
-                                            abs_path.canonicalize().ok()?
-                                        } else {
-                                            abs_path
-                                        }
-                                        .parent()?
-                                        .to_path_buf();
-                                        Some(parent)
-                                    })
-                                })
-                            })
-                            .ok()
-                            .flatten();
+                        let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                        let parent_abs_path = entry_abs_path
+                            .as_deref()
+                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
 
                         let entry_id = entry.to_proto();
                         menu = menu
+                            .separator()
+                            .when_some(entry_abs_path, |menu, abs_path| {
+                                menu.entry(
+                                    "Copy Path",
+                                    Some(Box::new(CopyPath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            abs_path.to_string_lossy().to_string(),
+                                        ));
+                                    }),
+                                )
+                            })
+                            .entry(
+                                "Copy Relative Path",
+                                Some(Box::new(CopyRelativePath)),
+                                cx.handler_for(&pane, move |pane, cx| {
+                                    pane.copy_relative_path(&CopyRelativePath, cx);
+                                }),
+                            )
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
@@ -1799,14 +1830,14 @@ impl Pane {
                                     });
                                 }),
                             )
-                            .when_some(parent_abs_path, |menu, abs_path| {
+                            .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
                                     Some(Box::new(OpenInTerminal)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.dispatch_action(
                                             OpenTerminal {
-                                                working_directory: abs_path.clone(),
+                                                working_directory: parent_abs_path.clone(),
                                             }
                                             .boxed_clone(),
                                         );
