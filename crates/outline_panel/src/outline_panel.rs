@@ -2625,6 +2625,7 @@ impl OutlinePanel {
                         );
                     }
 
+                    // TODO kb do different things depending on mode
                     let excerpts_to_consider =
                         if is_singleton || query.is_some() || (should_add && is_expanded) {
                             match entry {
@@ -2891,33 +2892,26 @@ impl OutlinePanel {
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
 
-        if !buffer_search_matches.is_empty() {
-            self.search_matches = buffer_search_matches;
-        } else if !project_search_matches.is_empty() {
-            self.search_matches = project_search_matches;
-        } else {
+        let mut update_cached_entries = false;
+        if buffer_search_matches.is_empty() && project_search_matches.is_empty() {
             self.search_matches.clear();
-        }
-
-        // TODO kb consider pinned case
-        if !self.search_matches.is_empty() {
-            self.mode = ItemsDisplayMode::Search;
+            if self.mode == ItemsDisplayMode::Search {
+                self.mode = ItemsDisplayMode::Outline;
+                update_cached_entries = true;
+            }
         } else {
-            self.mode = ItemsDisplayMode::Outline;
+            update_cached_entries =
+                self.mode != ItemsDisplayMode::Search || self.search_matches.is_empty();
+            self.search_matches = if buffer_search_matches.is_empty() {
+                project_search_matches
+            } else {
+                buffer_search_matches
+            };
+            self.mode = ItemsDisplayMode::Search;
         }
-
-        self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
-
-        dbg!(
-            "????????????? TODO kb actually update and display the matches",
-            project_search_matches.len(),
-            buffer_search_matches.len(),
-        );
-        // Ideas:
-        // * decide, how to represent the `CachedEntry` with FS entries on top, and then Excerpt + Outlines <—> vs Search result <—> vs something else on the low level
-        // * Maybe, add an enum for cached entries, instead of just `Vec<CachedEntry>`?
-        // * Or, keep a mode only, and refresh the cached entries accordingly.
-        // * Other entry kinds should have more priority than the outlines, but less than the search results: if a more prioritized kind entries were 0 and become > 0, swith over that presentation. Fall back to a less prioritized entry, if current entries are 0.
+        if update_cached_entries {
+            self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
+        }
     }
 }
 
