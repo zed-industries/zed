@@ -33,7 +33,7 @@ pub enum DebugPanelEvent {
     Thread((DebugAdapterClientId, ThreadEvent)),
 }
 
-actions!(debug_panel, [TogglePanel]);
+actions!(debug_panel, [ToggleFocus]);
 
 pub struct DebugPanel {
     size: Pixels,
@@ -426,7 +426,8 @@ impl DebugPanel {
 
                     if let Some(item) = this.pane.read(cx).active_item() {
                         if let Some(pane) = item.downcast::<DebugPanelItem>() {
-                            if pane.read(cx).thread_id() == thread_id {
+                            let pane = pane.read(cx);
+                            if pane.thread_id() == thread_id && pane.client().id() == client_id {
                                 let workspace = this.workspace.clone();
                                 let client = client.clone();
                                 return cx.spawn(|_, cx| async move {
@@ -572,7 +573,7 @@ impl Panel for DebugPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(TogglePanel)
+        Box::new(ToggleFocus)
     }
 
     fn icon_label(&self, _: &WindowContext) -> Option<String> {

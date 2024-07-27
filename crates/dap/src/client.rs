@@ -1,15 +1,16 @@
-use crate::transport::{Events, Payload, Request, Response, Transport};
+use crate::transport::{Events, Payload, Response, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Restart,
-        SetBreakpoints, StepBack, StepIn, StepOut,
+        Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
+        Restart, RunInTerminal, SetBreakpoints, StartDebugging, StepBack, StepIn, StepOut,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
-    NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
-    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
+    NextArguments, PauseArguments, RestartArguments, RunInTerminalRequestArguments,
+    RunInTerminalResponse, Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source,
+    SourceBreakpoint, StackFrame, StartDebuggingRequestArguments, StepBackArguments,
     StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
@@ -66,6 +67,7 @@ pub struct DebugAdapterClient {
     capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
     config: DebugAdapterConfig,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
+    sub_client: Arc<Mutex<Option<Arc<Self>>>>,
 }
 
 impl DebugAdapterClient {
@@ -86,7 +88,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self>
+    ) -> Result<Arc<Self>>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -140,7 +142,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self>
+    ) -> Result<Arc<Self>>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -218,7 +220,7 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self>
+    ) -> Result<Arc<Self>>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
@@ -274,30 +276,34 @@ impl DebugAdapterClient {
         process: Option<Child>,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self>
+    ) -> Result<Arc<Self>>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client = Self {
+        let client = Arc::new(Self {
             id,
             config,
-            server_tx,
             _process: process,
-            sequence_count: AtomicU64::new(1),
+            sub_client: Default::default(),
+            server_tx: server_tx.clone(),
             capabilities: Default::default(),
-            thread_states: Arc::new(Mutex::new(HashMap::new())),
-        };
+            thread_states: Default::default(),
+            sequence_count: AtomicU64::new(1),
+        });
 
         cx.update(|cx| {
             cx.background_executor()
                 .spawn(Self::handle_recv(server_rx, client_tx))
                 .detach_and_log_err(cx);
 
-            cx.spawn(|mut cx| async move {
-                Self::handle_events(client_rx, event_handler, &mut cx).await
+            cx.spawn({
+                let client = client.clone();
+                |mut cx| async move {
+                    Self::handle_events(client, client_rx, server_tx, event_handler, &mut cx).await
+                }
             })
             .detach_and_log_err(cx);
         })?;
@@ -314,7 +320,9 @@ impl DebugAdapterClient {
     ///     should be DebugPanel::handle_debug_client_events
     /// `cx`: The context that this task will run in
     pub async fn handle_events<F>(
+        this: Arc<Self>,
         client_rx: Receiver<Payload>,
+        server_tx: Sender<Payload>,
         mut event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<()>
@@ -322,13 +330,100 @@ impl DebugAdapterClient {
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         while let Ok(payload) = client_rx.recv().await {
-            cx.update(|cx| match payload {
-                Payload::Event(event) => event_handler(*event, cx),
-                err => {
-                    log::error!("Invalid Event: {:#?}", err);
+            match payload {
+                Payload::Event(event) => cx
+                    .update(|cx| event_handler(*event, cx))
+                    .context("Event handler failed")?,
+                Payload::Request(request) => {
+                    if RunInTerminal::COMMAND == request.command {
+                        Self::handle_run_in_terminal_request(request, &server_tx).await?;
+                    } else if StartDebugging::COMMAND == request.command {
+                        Self::handle_start_debugging_request(&this, request, cx).await?;
+                    } else {
+                        unreachable!("Unknown reverse request {}", request.command);
+                    }
                 }
-            })?;
+                _ => unreachable!(),
+            }
         }
+
+        anyhow::Ok(())
+    }
+
+    async fn handle_run_in_terminal_request(
+        request: crate::transport::Request,
+        server_tx: &Sender<Payload>,
+    ) -> Result<()> {
+        let arguments: RunInTerminalRequestArguments =
+            serde_json::from_value(request.arguments.unwrap_or_default())?;
+
+        let mut args = arguments.args.clone();
+        let mut command = process::Command::new(args.remove(0));
+
+        let envs = arguments.env.as_ref().and_then(|e| e.as_object()).map(|e| {
+            e.iter()
+                .map(|(key, value)| (key.clone(), value.clone().to_string()))
+                .collect::<HashMap<String, String>>()
+        });
+
+        if let Some(envs) = envs {
+            command.envs(envs);
+        }
+
+        let process = command
+            .current_dir(arguments.cwd)
+            .args(args)
+            .spawn()
+            .with_context(|| "failed to spawn run in terminal command.")?;
+
+        server_tx
+            .send(Payload::Response(Response {
+                request_seq: request.seq,
+                success: true,
+                command: RunInTerminal::COMMAND.into(),
+                message: None,
+                body: Some(serde_json::to_value(RunInTerminalResponse {
+                    process_id: Some(process.id() as u64),
+                    shell_process_id: None,
+                })?),
+            }))
+            .await?;
+
+        anyhow::Ok(())
+    }
+
+    async fn handle_start_debugging_request(
+        this: &Arc<Self>,
+        request: crate::transport::Request,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        dbg!(&request);
+        let arguments: StartDebuggingRequestArguments =
+            serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
+
+        let sub_client = DebugAdapterClient::new(
+            DebugAdapterClientId(1),
+            this.config.clone(),
+            "node",
+            vec![
+                "/Users/remcosmits/Downloads/js-debug/src/dapDebugServer.js",
+                "8134",
+                "127.0.0.1",
+            ],
+            PathBuf::from("/Users/remcosmits/Documents/code/prettier-test"),
+            |event, _cx| {
+                dbg!(event);
+            },
+            cx,
+        )
+        .await?;
+
+        dbg!(&arguments);
+
+        let res = sub_client.launch(request.arguments).await?;
+        dbg!(res);
+
+        *this.sub_client.lock() = Some(sub_client);
 
         anyhow::Ok(())
     }
@@ -347,15 +442,12 @@ impl DebugAdapterClient {
 
     /// Send a request to an adapter and get a response back
     /// Note: This function will block until a response is sent back from the adapter
-    pub async fn request<R: dap_types::requests::Request>(
-        &self,
-        arguments: R::Arguments,
-    ) -> Result<R::Response> {
+    pub async fn request<R: Request>(&self, arguments: R::Arguments) -> Result<R::Response> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
         let (callback_tx, callback_rx) = bounded::<Result<Response>>(1);
 
-        let request = Request {
+        let request = crate::transport::Request {
             back_ch: Some(callback_tx),
             seq: self.next_sequence_id(),
             command: R::COMMAND.to_string(),
