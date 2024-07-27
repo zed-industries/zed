@@ -704,7 +704,10 @@ impl EditorElement {
 
         if gutter_hovered {
             // TODO: Show breakpoint indicator on line closest to mouse
-            editor.gutter_breakpoint_indicator = Some(Point::new(5, 0));
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
+            let position = point_for_position.previous_valid;
+            editor.gutter_breakpoint_indicator = Some(position);
         } else {
             editor.gutter_breakpoint_indicator = None;
         }
@@ -1610,23 +1613,23 @@ impl EditorElement {
 
             // See if a user is hovered over a gutter line & if they are display
             // a breakpoint indicator that they can click to add a breakpoint
-            if let Some(gutter_breakpoint) = &editor.gutter_breakpoint_indicator {
-                let button = IconButton::new(
-                    (
-                        "gutter_breakpoint_indicator",
-                        gutter_breakpoint.row as usize,
-                    ),
-                    ui::IconName::Play,
-                )
-                .icon_size(IconSize::XSmall)
-                .size(ui::ButtonSize::None)
-                .icon_color(Color::Hint);
+            // TODO: We should figure out a way to display this side by side with
+            //      the code action button. They currently overlap
+            if let Some(gutter_breakpoint) = editor.gutter_breakpoint_indicator {
+                let gutter_anchor = snapshot.display_point_to_anchor(gutter_breakpoint, Bias::Left);
+
+                let button = IconButton::new("gutter_breakpoint_indicator", ui::IconName::Play)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
+                    .icon_color(Color::Hint)
+                    .on_click(cx.listener(move |editor, _e, cx| {
+                        editor.focus(cx);
+                        editor.toggle_breakpoint_at_row(gutter_anchor, cx) //TODO handle folded
+                    }));
 
                 let button = prepaint_gutter_button(
                     button,
-                    gutter_breakpoint
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
+                    gutter_breakpoint.row(),
                     line_height,
                     gutter_dimensions,
                     scroll_pixel_position,
