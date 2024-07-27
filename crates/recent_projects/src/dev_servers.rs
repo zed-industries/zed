@@ -28,6 +28,7 @@ use settings::Settings;
 use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
+use task::SshCommand;
 use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
@@ -1650,7 +1651,7 @@ pub async fn spawn_ssh_task(
                     args,
                     command_label: ssh_connection_string.clone(),
                     cwd: Some(TerminalWorkDir::Ssh {
-                        ssh_command: ssh_connection_string,
+                        ssh_command: SshCommand::DevServer(ssh_connection_string),
                         path: None,
                     }),
                     use_new_terminal: true,

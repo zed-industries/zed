@@ -5,15 +5,16 @@ use gpui::{
     AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
 };
 use itertools::Itertools;
+use paths::home_dir;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
-    env,
+    env::{self},
     fs::File,
     io::Write,
     path::{Path, PathBuf},
 };
-use task::{Shell, SpawnInTerminal, TerminalWorkDir};
+use task::{Shell, SpawnInTerminal, SshCommand, TerminalWorkDir};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
@@ -34,14 +35,24 @@ pub struct ConnectRemoteTerminal {
 }
 
 impl Project {
+    // Returns a working directory. If None, then this project does not support terminals.
     pub fn terminal_work_dir_for(
         &self,
-        pathbuf: Option<&Path>,
+        // None means $HOME (we may need to resolve it on the remote)
+        pathbuf: Option<PathBuf>,
         cx: &AppContext,
     ) -> Option<TerminalWorkDir> {
-        if self.is_local() {
-            return Some(TerminalWorkDir::Local(pathbuf?.to_owned()));
+        if let Some(session) = self.ssh_session.as_ref() {
+            return Some(TerminalWorkDir::Ssh {
+                ssh_command: SshCommand::Direct(session.ssh_args()),
+                path: pathbuf.map(|p| p.to_string_lossy().to_string()),
+            });
         }
+        if self.is_local() {
+            let pathbuf = pathbuf.unwrap_or_else(|| home_dir().clone());
+            return Some(TerminalWorkDir::Local(pathbuf.to_owned()));
+        }
+
         let dev_server_project_id = self.dev_server_project_id()?;
         let projects_store = dev_server_projects::Store::global(cx).read(cx);
         let ssh_command = projects_store
@@ -50,20 +61,9 @@ impl Project {
             .as_ref()?
             .to_string();
 
-        let path = if let Some(pathbuf) = pathbuf {
-            pathbuf.to_string_lossy().to_string()
-        } else {
-            projects_store
-                .dev_server_project(dev_server_project_id)?
-                .paths
-                .get(0)
-                .unwrap()
-                .to_string()
-        };
-
         Some(TerminalWorkDir::Ssh {
-            ssh_command,
-            path: Some(path),
+            ssh_command: SshCommand::DevServer(ssh_command),
+            path: pathbuf.map(|pathbuf| pathbuf.to_string_lossy().to_string()),
         })
     }
 
@@ -314,7 +314,7 @@ fn prepare_ssh_shell(
     env: &mut HashMap<String, String>,
     tmp_dir: &Path,
     spawn_task: Option<&SpawnInTerminal>,
-    ssh_command: &str,
+    ssh_command: &SshCommand,
     path: Option<&str>,
 ) -> anyhow::Result<Shell> {
     // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
@@ -323,10 +323,6 @@ fn prepare_ssh_shell(
     // so we set it to a default that does not break the highlighting via ssh.
     env.entry("TERM".to_string())
         .or_insert_with(|| "xterm-256color".to_string());
-
-    let real_ssh = which::which("ssh")?;
-    let ssh_path = tmp_dir.join("ssh");
-    let mut ssh_file = File::create(&ssh_path)?;
 
     let to_run = if let Some(spawn_task) = spawn_task {
         Some(shlex::try_quote(&spawn_task.command)?)
@@ -339,7 +335,7 @@ fn prepare_ssh_shell(
             )
             .join(" ")
     } else {
-        "exec $SHELL -l".to_string()
+        "exec ${SHELL:-sh} -l".to_string()
     };
 
     let commands = if let Some(path) = path {
@@ -347,28 +343,47 @@ fn prepare_ssh_shell(
     } else {
         format!("cd; {to_run}")
     };
-    let shell_invocation = &format!("sh -c {}", shlex::try_quote(&commands)?);
+    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands)?);
 
-    // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
-    // you have configured, but place our custom script on the path so that it will
-    // be run instead.
-    write!(
-        &mut ssh_file,
-        "#!/bin/sh\nexec {} \"$@\" {} {}",
-        real_ssh.to_string_lossy(),
-        if spawn_task.is_none() { "-t" } else { "" },
-        shlex::try_quote(shell_invocation)?,
-    )?;
+    match ssh_command {
+        SshCommand::DevServer(ssh_command) => {
+            let real_ssh = which::which("ssh")?;
+            let ssh_path = tmp_dir.join("ssh");
+            let mut ssh_file = File::create(&ssh_path)?;
 
-    // todo(windows)
-    #[cfg(not(target_os = "windows"))]
-    std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
+            // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
+            // you have configured, but place our custom script on the path so that it will
+            // be run instead.
+            write!(
+                &mut ssh_file,
+                "#!/bin/sh\nexec {} \"$@\" {} {}",
+                real_ssh.to_string_lossy(),
+                if spawn_task.is_none() { "-t" } else { "" },
+                shlex::try_quote(&shell_invocation)?,
+            )?;
 
-    add_environment_path(env, tmp_dir)?;
+            // todo(windows)
+            #[cfg(not(target_os = "windows"))]
+            std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
 
-    let mut args = shlex::split(&ssh_command).unwrap_or_default();
-    let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
-    Ok(Shell::WithArguments { program, args })
+            add_environment_path(env, tmp_dir)?;
+
+            let mut args = shlex::split(&ssh_command).unwrap_or_default();
+            let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
+            Ok(Shell::WithArguments { program, args })
+        }
+        SshCommand::Direct(ssh_args) => {
+            let mut args = ssh_args.clone();
+            if spawn_task.is_none() {
+                args.push("-t".to_string())
+            }
+            args.push(shell_invocation);
+            Ok(Shell::WithArguments {
+                program: "ssh".to_string(),
+                args,
+            })
+        }
+    }
 }
 
 fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {

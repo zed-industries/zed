@@ -1134,9 +1134,7 @@ impl SerializableItem for TerminalView {
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
-                        project
-                            .read(cx)
-                            .terminal_work_dir_for(from_db.as_deref(), cx)
+                        project.read(cx).terminal_work_dir_for(from_db, cx)
                     } else {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace.upgrade().and_then(|workspace| {
@@ -1281,32 +1279,32 @@ pub fn get_working_directory(
     cx: &AppContext,
     strategy: WorkingDirectory,
 ) -> Option<TerminalWorkDir> {
-    if workspace.project().read(cx).is_local() {
-        let res = match strategy {
-            WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
-                .or_else(|| first_project_directory(workspace, cx)),
-            WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
-            WorkingDirectory::AlwaysHome => None,
-            WorkingDirectory::Always { directory } => {
-                shellexpand::full(&directory) //TODO handle this better
-                    .ok()
-                    .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                    .filter(|dir| dir.is_dir())
-            }
-        };
-        res.or_else(home_dir).map(|cwd| TerminalWorkDir::Local(cwd))
-    } else {
-        workspace.project().read(cx).terminal_work_dir_for(None, cx)
-    }
+    let res = match strategy {
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
+            .or_else(|| first_project_directory(workspace, cx)),
+        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+        WorkingDirectory::AlwaysHome => None,
+        WorkingDirectory::Always { directory } => {
+            shellexpand::full(&directory) //TODO handle this better
+                .ok()
+                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                .filter(|dir| dir.is_dir())
+        }
+    };
+    workspace.project().read(cx).terminal_work_dir_for(res, cx)
 }
 
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    workspace
-        .worktrees(cx)
-        .next()
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
+    let project = workspace.project().read(cx);
+
+    for worktree in project.worktrees(cx) {
+        let worktree = worktree.read(cx);
+        if worktree.root_entry().is_some_and(|re| re.is_dir()) {
+            return Some(worktree.abs_path().to_path_buf());
+        }
+    }
+    None
 }
 
 ///Gets the intuitively correct working directory from the given workspace
@@ -1317,18 +1315,18 @@ fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<Pat
 fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     let project = workspace.project().read(cx);
 
-    project
+    for worktree in project
         .active_entry()
         .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-        .or_else(|| workspace.worktrees(cx).next())
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
-}
-
-fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
-    wt.root_entry()
-        .filter(|re| re.is_dir())
-        .map(|_| wt.abs_path().to_path_buf())
+        .into_iter()
+        .chain(project.worktrees(cx))
+    {
+        let worktree = worktree.read(cx);
+        if worktree.root_entry().is_some_and(|re| re.is_dir()) {
+            return Some(worktree.abs_path().to_path_buf());
+        }
+    }
+    None
 }
 
 #[cfg(test)]

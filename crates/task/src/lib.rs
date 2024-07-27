@@ -21,6 +21,15 @@ pub use vscode_format::VsCodeTaskFile;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
+/// SshCommand describes how to connect to a remote server
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SshCommand {
+    /// DevServers give a string from the user
+    DevServer(String),
+    /// Direct ssh has a list of arguments to pass to ssh
+    Direct(Vec<String>),
+}
+
 /// TerminalWorkDir describes where a task should be run
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalWorkDir {
@@ -29,7 +38,7 @@ pub enum TerminalWorkDir {
     /// SSH runs the terminal over ssh
     Ssh {
         /// The command to run to connect
-        ssh_command: String,
+        ssh_command: SshCommand,
         /// The path on the remote server
         path: Option<String>,
     },

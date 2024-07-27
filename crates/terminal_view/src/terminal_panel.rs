@@ -351,7 +351,7 @@ impl TerminalPanel {
         let terminal_work_dir = workspace
             .project()
             .read(cx)
-            .terminal_work_dir_for(Some(&action.working_directory), cx);
+            .terminal_work_dir_for(Some(action.working_directory.clone()), cx);
 
         terminal_panel
             .update(cx, |panel, cx| {
