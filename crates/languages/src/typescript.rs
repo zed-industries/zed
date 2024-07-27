@@ -58,8 +58,8 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    // vec![server_path.into(), "--stdio".into()]
-    vec![server_path.into(), "--stdin".into()]
+    vec![server_path.into(), "--stdio".into()]
+    // vec![server_path.into(), "--stdin".into()]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -298,8 +298,8 @@ pub struct EsLintLspAdapter {
 impl EsLintLspAdapter {
     const CURRENT_VERSION: &'static str = "release/2.4.4";
 
-    // const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
-    const SERVER_PATH: &'static str = "vscode-eslint/node_modules/.bin/eslint.ps1";
+    const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
+    // const SERVER_PATH: &'static str = "vscode-eslint/node_modules/.bin/eslint.ps1";
     const SERVER_NAME: &'static str = "eslint";
 
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
@@ -425,7 +425,6 @@ impl LspAdapter for EsLintLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
-        println!("--> {:#?}", version);
 
         if fs::metadata(&server_path).await.is_err() {
             remove_matching(&container_dir, |entry| entry != destination_path).await;
@@ -435,9 +434,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            // let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            // let archive = Archive::new(decompressed_bytes);
-            // archive.unpack(&destination_path).await?;
+
             if version.url.ends_with(".zip") {
                 node_runtime::extract_zip(&destination_path, BufReader::new(response.body_mut()))
                     .await
@@ -453,74 +450,20 @@ impl LspAdapter for EsLintLspAdapter {
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await.unwrap();
 
-            // panic!();
-            let ret = self
-                .node
-                .run_npm_subcommand(Some(&repo_root), "ci", &[])
-                .await;
-            println!("ret1 ==>{:?}", ret);
-            {
-                let ret = ret.log_err();
-                if let Some(ret) = ret {
-                    println!("err: {}", String::from_utf8_lossy(&ret.stderr));
-                }
-            }
-            // panic!();
-            let ret = self
-                .node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["lint"])
-                .await;
-            println!("ret2 ==>{:?}", ret);
-            {
-                let ret = ret.log_err();
-                if let Some(ret) = ret {
-                    println!("err: {}", String::from_utf8_lossy(&ret.stderr));
-                }
-            }
-            // panic!();
-            let ret = self
-                .node
+            self.node
+                .run_npm_subcommand(Some(&repo_root), "install", &[])
+                .await?;
+
+            self.node
                 .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
-                .await;
-            println!("ret3 ==>{:?}", ret);
-            {
-                let ret = ret.log_err();
-                if let Some(ret) = ret {
-                    println!("err: {}", String::from_utf8_lossy(&ret.stderr));
-                }
-            }
-            // panic!();
+                .await?;
         }
 
-        // Ok(LanguageServerBinary {
-        //     path: self.node.binary_path().await?,
-        //     env: None,
-        //     arguments: eslint_server_binary_arguments(&server_path),
-        // })
-        {
-            let mut env_path = vec![self
-                .node
-                .binary_path()
-                .await?
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
-
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-                env_path.append(&mut paths);
-            }
-
-            let env_path = std::env::join_paths(env_path)?;
-            let mut env = HashMap::default();
-            env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
-
-            Ok(LanguageServerBinary {
-                path: "powershell.exe".into(),
-                env: Some(env),
-                arguments: eslint_server_binary_arguments(&server_path),
-            })
-        }
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
     }
 
     async fn cached_server_binary(
