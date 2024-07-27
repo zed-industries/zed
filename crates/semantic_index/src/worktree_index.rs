@@ -165,6 +165,10 @@ impl WorktreeIndex {
         &self.embedding_index
     }
 
+    pub fn summary_index(&self) -> &SummaryIndex {
+        &self.summary_index
+    }
+
     async fn index_entries(
         this: WeakModel<Self>,
         updated_entries: channel::Receiver<UpdatedEntriesSet>,

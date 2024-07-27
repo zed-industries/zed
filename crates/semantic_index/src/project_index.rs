@@ -1,5 +1,6 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
+    summary_index::{self, FileSummary},
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
 use anyhow::{anyhow, Context, Result};
@@ -13,8 +14,9 @@ use language::LanguageRegistry;
 use log;
 use project::{Project, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
+use serde_json::{ser::CompactFormatter, Serializer, Value};
 use smol::channel;
-use std::{cmp::Ordering, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Ordering, io::Cursor, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 pub struct SearchResult {
@@ -381,6 +383,124 @@ impl ProjectIndex {
             .collect::<Vec<_>>();
         result.sort_by_key(|index| index.read(cx).worktree().read(cx).id());
         result
+    }
+
+    pub fn all_summaries(&self, cx: &AppContext) -> Task<Result<Vec<FileSummary>>> {
+        let (summaries_tx, summaries_rx) = channel::bounded(1024);
+        let mut worktree_scan_tasks = Vec::new();
+        for worktree_index in self.worktree_indices.values() {
+            let worktree_index = worktree_index.clone();
+            let summaries_tx = summaries_tx.clone();
+            worktree_scan_tasks.push(cx.spawn(|cx| async move {
+                let index = match worktree_index {
+                    WorktreeIndexHandle::Loading { index } => {
+                        index.clone().await.map_err(|error| anyhow!(error))?
+                    }
+                    WorktreeIndexHandle::Loaded { index } => index.clone(),
+                };
+
+                index
+                    .read_with(&cx, |index, cx| {
+                        let db_connection = index.db_connection().clone();
+                        let summary_index = index.summary_index();
+                        let file_digest_db = summary_index.file_digest_db().clone();
+                        let summary_db = summary_index.summary_db().clone();
+
+                        cx.background_executor().spawn(async move {
+                            let txn = db_connection
+                                .read_txn()
+                                .context("failed to create read transaction")?;
+                            let db_entries = file_digest_db
+                                .iter(&txn)
+                                .context("failed to iterate database")?;
+                            for db_entry in db_entries {
+                                let (_key, db_file) = db_entry?;
+
+                                match summary_db.get(&txn, &db_file.digest) {
+                                    Ok(opt_summary) => {
+                                        // Currently, we only use summaries we already have. If the file hasn't been
+                                        // summarized yet, then we skip it and don't include it in the inferred context.
+                                        // If we want to do just-in-time summarization, this would be the place to do it!
+                                        if let Some(summary) = opt_summary {
+                                            summaries_tx
+                                                .send((db_file.path.clone(), summary.clone()))
+                                                .await?;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::error!(
+                                            "Error reading from summary database: {:?}",
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                            anyhow::Ok(())
+                        })
+                    })?
+                    .await
+            }));
+        }
+        drop(summaries_tx);
+
+        let project = self.project.clone();
+        // let summary_provider = self.summary_provider.clone();
+        cx.spawn(|cx| async move {
+            // #[cfg(debug_assertions)]
+            // let embedding_query_start = std::time::Instant::now();
+            // log::info!("Searching for {query}");
+
+            // let query_embeddings = embedding_provider
+            //     .embed(&[TextToEmbed::new(&query)])
+            //     .await?;
+            // let query_embedding = query_embeddings
+            //     .into_iter()
+            //     .next()
+            //     .ok_or_else(|| anyhow!("no embedding for query"))?;
+
+            let mut results_by_worker = Vec::new();
+            for _ in 0..cx.background_executor().num_cpus() {
+                results_by_worker.push(Vec::<FileSummary>::new());
+            }
+
+            // #[cfg(debug_assertions)]
+            // let search_start = std::time::Instant::now();
+
+            cx.background_executor()
+                .scoped(|cx| {
+                    for results in results_by_worker.iter_mut() {
+                        cx.spawn(async {
+                            while let Ok((filename, summary)) = summaries_rx.recv().await {
+                                results.push(FileSummary {
+                                    filename: filename.display().to_string(),
+                                    summary: summary.to_string(),
+                                });
+                            }
+                        });
+                    }
+                })
+                .await;
+
+            for scan_task in futures::future::join_all(worktree_scan_tasks).await {
+                scan_task.log_err();
+            }
+
+            project.read_with(&cx, |project, cx| {
+                results_by_worker.into_iter().flatten().collect()
+
+                // #[cfg(debug_assertions)]
+                // {
+                //     let search_elapsed = search_start.elapsed();
+                //     log::debug!(
+                //         "searched {} entries in {:?}",
+                //         search_results.len(),
+                //         search_elapsed
+                //     );
+                //     let embedding_query_elapsed = embedding_query_start.elapsed();
+                //     log::debug!("embedding query took {:?}", embedding_query_elapsed);
+                // }
+            })
+        })
     }
 }
 

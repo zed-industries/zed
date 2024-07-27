@@ -6,9 +6,10 @@ use assistant_slash_command::ArgumentCompletion;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use semantic_index::{FileSummary, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::WindowContext;
+use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
 
 pub(crate) struct AutoCommand;
@@ -48,25 +49,27 @@ impl SlashCommand for AutoCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
-        _workspace: WeakView<Workspace>,
+        workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
+        let Some(workspace) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
+        };
         let Some(argument) = argument else {
             return Task::ready(Err(anyhow!("missing prompt")));
         };
 
-        // to_string() is needed so it can live long enough to be used in cx.spawn
         let original_prompt = argument.to_string();
-        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
-            let summaries: Vec<FileSummary> = serde_json::from_str(SUMMARY).unwrap_or_else(|_| {
-                // Since we generate the JSON ourselves, this parsing should never fail. If it does, that's a bug.
-                log::error!("JSON parsing of project file summaries failed");
+        let project = workspace.read(cx).project().clone();
+        let fs = project.read(cx).fs().clone();
+        let project_index =
+            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
 
-                // Handle this gracefully by not including any summaries. Assistant results
-                // will be worse than if we actually had summaries, but we won't block the user.
-                Vec::new()
-            });
+        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
+            let summaries = project_index
+                .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
+                .await?;
 
             commands_for_summaries(&summaries, &original_prompt, &cx).await
         });
@@ -106,13 +109,6 @@ impl SlashCommand for AutoCommand {
 
 const PROMPT_INSTRUCTIONS_BEFORE_SUMMARY: &str = include_str!("prompt_before_summary.txt");
 const PROMPT_INSTRUCTIONS_AFTER_SUMMARY: &str = include_str!("prompt_after_summary.txt");
-const SUMMARY: &str = include_str!("/Users/rtfeldman/code/summarize-dir/combined_summaries.json");
-
-#[derive(Serialize, Deserialize)]
-struct FileSummary {
-    filename: String,
-    summary: String,
-}
 
 fn summaries_prompt(summaries: &[FileSummary], original_prompt: &str) -> String {
     let json_summaries = serde_json::to_string(summaries).unwrap();

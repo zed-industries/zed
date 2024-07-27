@@ -29,8 +29,16 @@ use crate::indexing::{IndexingEntryHandle, IndexingEntrySet};
 const PREFERRED_SUMMARIZATION_MODEL: LanguageModel =
     LanguageModel::OpenAi(open_ai::Model::FourOmniMini);
 
+#[derive(Serialize, Deserialize)]
+pub struct FileSummary {
+    pub filename: String,
+    pub summary: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct UnsummarizedFile {
+    // Path to the file on disk
+    path: String,
     // BLAKE3 hash of the source file's contents
     content_hash: String,
     // The source file's contents
@@ -39,6 +47,8 @@ struct UnsummarizedFile {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SummarizedFile {
+    // Path to the file on disk
+    path: String,
     // BLAKE3 hash of the source file's contents
     content_hash: String,
     // The LLM's summary of the file's contents
@@ -50,9 +60,9 @@ type Blake3Digest = ArrayString<{ blake3::OUT_LEN * 2 }>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileDigest {
-    path: Arc<Path>,
-    mtime: Option<SystemTime>,
-    digest: Blake3Digest,
+    pub path: Arc<Path>,
+    pub mtime: Option<SystemTime>,
+    pub digest: Blake3Digest,
 }
 
 struct SummarizeFiles {
@@ -101,6 +111,14 @@ impl SummaryIndex {
             summary_db,
             entry_ids_being_indexed,
         }
+    }
+
+    pub fn file_digest_db(&self) -> heed::Database<Str, SerdeBincode<FileDigest>> {
+        self.file_digest_db
+    }
+
+    pub fn summary_db(&self) -> heed::Database<Str, Str> {
+        self.summary_db
     }
 
     pub fn index_entries_changed_on_disk(
@@ -331,6 +349,7 @@ impl SummaryIndex {
                                 let unsummarized_file = UnsummarizedFile {
                                     content_hash,
                                     contents: text,
+                                    path: entry.path.display().to_string(),
                                 };
 
                                 if let Err(err) = might_need_summary_tx
@@ -369,6 +388,7 @@ impl SummaryIndex {
 
                 summarized_tx
                     .send(SummarizedFile {
+                        path: file.path,
                         content_hash: file.content_hash,
                         summary: summary.await?,
                     })

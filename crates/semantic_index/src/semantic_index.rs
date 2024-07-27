@@ -16,6 +16,7 @@ use std::{path::PathBuf, sync::Arc};
 
 pub use embedding::*;
 pub use project_index_debug_view::ProjectIndexDebugView;
+pub use summary_index::FileSummary;
 
 pub struct SemanticIndex {
     embedding_provider: Arc<dyn EmbeddingProvider>,
