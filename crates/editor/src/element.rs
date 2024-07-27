@@ -2555,7 +2555,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_overlays(
+    fn prepaint_overlays(
         &self,
         content_origin: gpui::Point<Pixels>,
         line_height: Pixels,
@@ -2564,7 +2564,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         text_style: &TextStyle,
         cx: &mut WindowContext,
-    ) {
+    ) -> Vec<AnyElement> {
         let overlay_map = self
             .editor
             .update(cx, |editor, _| mem::take(&mut editor.overlay_map));
@@ -2574,22 +2574,26 @@ impl EditorElement {
             .filter_map(|overlay| overlay.render(text_style, visible_display_row_range.clone()));
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-        for (anchor, mut overlay) in overlays {
-            let _overlay_size = overlay.layout_as_root(available_space, cx);
+        let overlays = overlays
+            .map(|(anchor, mut overlay)| {
+                let _overlay_size = overlay.layout_as_root(available_space, cx);
 
-            let hovered_row_layout =
-                &line_layouts[anchor.row().minus(visible_display_row_range.start) as usize];
+                let hovered_row_layout =
+                    &line_layouts[anchor.row().minus(visible_display_row_range.start) as usize];
 
-            let x =
-                hovered_row_layout.x_for_index(anchor.column() as usize) - scroll_pixel_position.x;
-            let y = anchor.row().as_f32() * line_height - scroll_pixel_position.y;
-            let origin = content_origin + point(x, y);
+                let x = hovered_row_layout.x_for_index(anchor.column() as usize)
+                    - scroll_pixel_position.x;
+                let y = anchor.row().as_f32() * line_height - scroll_pixel_position.y;
+                let origin = content_origin + point(x, y);
 
-            cx.defer_draw(overlay, origin, 1);
-        }
+                overlay.prepaint_at(origin, cx);
+                overlay
+            })
+            .collect_vec();
 
         self.editor
             .update(cx, move |editor, _| editor.overlay_map = overlay_map);
+        overlays
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5483,7 +5487,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    self.layout_overlays(
+                    let overlays = self.prepaint_overlays(
                         content_origin,
                         line_height,
                         start_row..end_row,
@@ -5541,6 +5545,7 @@ impl Element for EditorElement {
                         .unwrap();
 
                     EditorLayout {
+                        overlays,
                         mode: snapshot.mode,
                         position_map: Rc::new(PositionMap {
                             size: bounds.size,
@@ -5639,6 +5644,7 @@ impl Element for EditorElement {
                     }
                 }
             });
+
         let rem_size = self.rem_size(cx);
         cx.with_rem_size(rem_size, |cx| {
             cx.with_text_style(Some(text_style), |cx| {
@@ -5653,6 +5659,10 @@ impl Element for EditorElement {
                     }
 
                     self.paint_text(layout, cx);
+
+                    for overlay in layout.overlays.iter_mut() {
+                        overlay.paint(cx);
+                    }
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter_highlights(layout, cx);
@@ -5725,6 +5735,7 @@ pub struct EditorLayout {
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+    overlays: Vec<AnyElement>,
 }
 
 impl EditorLayout {
