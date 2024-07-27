@@ -7,7 +7,7 @@ use gpui::{
     Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
-use schemars::schema::ArrayValidation;
+use schemars::schema::{ArrayValidation, Metadata, RootSchema};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -674,6 +674,11 @@ impl settings::Settings for ThemeSettings {
                 ),
             ]);
 
+        {
+            let prop = &root_schema.schema.object().properties;
+            println!("{:#?}", prop);
+        }
+
         root_schema
     }
 }
@@ -681,5 +686,13 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+fn retrieve_schema_metadata(root_schema: &mut RootSchema, key: &str) -> Option<Box<Metadata>> {
+    let schema = root_schema.schema.object().properties.get(key)?;
+    match schema {
+        Schema::Bool(_) => None,
+        Schema::Object(obj) => obj.metadata.clone(),
     }
 }
