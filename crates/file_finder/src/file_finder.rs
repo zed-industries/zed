@@ -587,7 +587,7 @@ impl FileFinderDelegate {
 
     fn update_selected_index(&mut self, selected_index: usize) {
         self.selected_index = selected_index;
-        self.selected_match = self.matches.get(self.selected_index).map(|m| m.clone());
+        self.selected_match = self.matches.get(self.selected_index).cloned();
     }
 
     fn labels_for_match(
