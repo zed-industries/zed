@@ -602,6 +602,7 @@ To override settings for a language, add an entry for that language server's nam
 ```
 
 4. Or to use multiple formatters consecutively, use an array of formatters:
+
 ```json
 {
   "formatter": [
@@ -613,6 +614,7 @@ To override settings for a language, add an entry for that language server's nam
   ]
 }
 ```
+
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
@@ -1653,7 +1655,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": true,
+  "auto_reveal_entries": true
 }
 ```
 
@@ -1661,7 +1663,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": false,
+  "auto_reveal_entries": false
 }
 ```
 
@@ -1677,7 +1679,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": true,
+  "auto_fold_dirs": true
 }
 ```
 
@@ -1685,7 +1687,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": false,
+  "auto_fold_dirs": false
 }
 ```
 
@@ -1699,10 +1701,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Scrollbar related settings. Possible values: "always", "never".
 - Setting: `scrollbar`
-- Default: ```json
-    "scrollbar": {
-        "show": "always"
-    }```
+- Default:
+
+```json
+"scrollbar": {
+    "show": "always"
+}
+```
 
 **Options**
 
@@ -1710,9 +1715,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "always"
-    }
+  "scrollbar": {
+    "show": "always"
+  }
 }
 ```
 
@@ -1720,9 +1725,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "never"
-    }
+  "scrollbar": {
+    "show": "never"
+  }
 }
 ```
 
