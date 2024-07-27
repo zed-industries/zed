@@ -58,6 +58,7 @@ pub(crate) struct WindowsPlatform {
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    validation_number: usize,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -111,6 +112,7 @@ impl WindowsPlatform {
         let clipboard_metadata_format =
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let validation_number = rand::random::<usize>();
 
         Self {
             state,
@@ -123,6 +125,7 @@ impl WindowsPlatform {
             clipboard_metadata_format,
             windows_version,
             bitmap_factory,
+            validation_number,
         }
     }
 
@@ -159,7 +162,16 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
+        if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -206,7 +218,11 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0 as _)) {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
@@ -316,6 +332,7 @@ impl Platform for WindowsPlatform {
             self.foreground_executor.clone(),
             lock.current_cursor,
             self.windows_version,
+            self.validation_number,
         )?;
         drop(lock);
         let handle = window.get_raw_handle();
