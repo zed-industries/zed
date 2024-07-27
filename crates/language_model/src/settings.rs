@@ -6,12 +6,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-use crate::{
-    provider::{
-        anthropic::AnthropicSettings, cloud::ZedDotDevSettings, google::GoogleSettings,
-        ollama::OllamaSettings, open_ai::OpenAiSettings,
-    },
-    CloudModel,
+use crate::provider::{
+    anthropic::AnthropicSettings,
+    cloud::{self, ZedDotDevSettings},
+    google::GoogleSettings,
+    ollama::OllamaSettings,
+    open_ai::OpenAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -66,7 +66,7 @@ pub struct GoogleSettingsContent {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
-    available_models: Option<Vec<CloudModel>>,
+    available_models: Option<Vec<cloud::AvailableModel>>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {

@@ -9,6 +9,8 @@ use client::Client;
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -23,7 +25,22 @@ pub const PROVIDER_NAME: &str = "zed.dev";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
-    pub available_models: Vec<CloudModel>,
+    pub available_models: Vec<AvailableModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AvailableProvider {
+    Anthropic,
+    OpenAi,
+    Google,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    provider: AvailableProvider,
+    name: String,
+    max_tokens: usize,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -121,6 +138,20 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .zed_dot_dev
             .available_models
         {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
             models.insert(model.id().to_string(), model.clone());
         }
 

@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(tag = "provider", rename_all = "lowercase")]
 pub enum CloudModel {
     Anthropic(anthropic::Model),
     OpenAi(open_ai::Model),
