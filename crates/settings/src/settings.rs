@@ -13,9 +13,7 @@ pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
-pub use settings_store::{
-    Settings, SettingsJsonSchemaParams, SettingsLocation, SettingsSources, SettingsStore,
-};
+pub use settings_store::{Settings, SettingsLocation, SettingsSources, SettingsStore};
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

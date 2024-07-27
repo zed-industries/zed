@@ -17,6 +17,8 @@ use std::{
 };
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
+use crate::SettingsJsonSchemaParams;
+
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
@@ -144,12 +146,6 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
 pub struct SettingsLocation<'a> {
     pub worktree_id: usize,
     pub path: &'a Path,
-}
-
-pub struct SettingsJsonSchemaParams<'a> {
-    pub staff_mode: bool,
-    pub language_names: &'a [String],
-    pub font_names: &'a [String],
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
