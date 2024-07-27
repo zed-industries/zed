@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use rpc::proto;
-use util::ResultExt as _;
 
 pub fn language_model_request_to_open_ai(
     request: proto::CompleteWithLanguageModel,
@@ -21,25 +20,7 @@ pub fn language_model_request_to_open_ai(
                     proto::LanguageModelRole::LanguageModelAssistant => {
                         open_ai::RequestMessage::Assistant {
                             content: Some(message.content),
-                            tool_calls: message
-                                .tool_calls
-                                .into_iter()
-                                .filter_map(|call| {
-                                    Some(open_ai::ToolCall {
-                                        id: call.id,
-                                        content: match call.variant? {
-                                            proto::tool_call::Variant::Function(f) => {
-                                                open_ai::ToolCallContent::Function {
-                                                    function: open_ai::FunctionContent {
-                                                        name: f.name,
-                                                        arguments: f.arguments,
-                                                    },
-                                                }
-                                            }
-                                        },
-                                    })
-                                })
-                                .collect(),
+                            tool_calls: Vec::new(),
                         }
                     }
                     proto::LanguageModelRole::LanguageModelSystem => {
@@ -47,12 +28,6 @@ pub fn language_model_request_to_open_ai(
                             content: message.content,
                         }
                     }
-                    proto::LanguageModelRole::LanguageModelTool => open_ai::RequestMessage::Tool {
-                        tool_call_id: message
-                            .tool_call_id
-                            .ok_or_else(|| anyhow!("tool message is missing tool call id"))?,
-                        content: message.content,
-                    },
                 };
 
                 Ok(openai_message)
@@ -61,32 +36,8 @@ pub fn language_model_request_to_open_ai(
         stream: true,
         stop: request.stop,
         temperature: request.temperature,
-        tools: request
-            .tools
-            .into_iter()
-            .filter_map(|tool| {
-                Some(match tool.variant? {
-                    proto::chat_completion_tool::Variant::Function(f) => {
-                        open_ai::ToolDefinition::Function {
-                            function: open_ai::FunctionDefinition {
-                                name: f.name,
-                                description: f.description,
-                                parameters: if let Some(params) = &f.parameters {
-                                    Some(
-                                        serde_json::from_str(params)
-                                            .context("failed to deserialize tool parameters")
-                                            .log_err()?,
-                                    )
-                                } else {
-                                    None
-                                },
-                            },
-                        }
-                    }
-                })
-            })
-            .collect(),
-        tool_choice: request.tool_choice,
+        tool_choice: None,
+        tools: Vec::new(),
     })
 }
 
@@ -118,9 +69,6 @@ pub fn language_model_request_message_to_google_ai(
             proto::LanguageModelRole::LanguageModelUser => google_ai::Role::User,
             proto::LanguageModelRole::LanguageModelAssistant => google_ai::Role::Model,
             proto::LanguageModelRole::LanguageModelSystem => google_ai::Role::User,
-            proto::LanguageModelRole::LanguageModelTool => {
-                Err(anyhow!("we don't handle tool calls with google ai yet"))?
-            }
         },
     })
 }

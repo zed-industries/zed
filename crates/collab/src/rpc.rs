@@ -4597,37 +4597,19 @@ async fn complete_with_open_ai(
                 .map(|choice| proto::LanguageModelChoiceDelta {
                     index: choice.index,
                     delta: Some(proto::LanguageModelResponseMessage {
-                        role: choice.delta.role.map(|role| match role {
-                            open_ai::Role::User => LanguageModelRole::LanguageModelUser,
-                            open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
-                            open_ai::Role::System => LanguageModelRole::LanguageModelSystem,
-                            open_ai::Role::Tool => LanguageModelRole::LanguageModelTool,
-                        } as i32),
+                        role: choice.delta.role.and_then(|role| match role {
+                            open_ai::Role::User => {
+                                Some(LanguageModelRole::LanguageModelUser as i32)
+                            }
+                            open_ai::Role::Assistant => {
+                                Some(LanguageModelRole::LanguageModelAssistant as i32)
+                            }
+                            open_ai::Role::System => {
+                                Some(LanguageModelRole::LanguageModelSystem as i32)
+                            }
+                            _ => None,
+                        }),
                         content: choice.delta.content,
-                        tool_calls: choice
-                            .delta
-                            .tool_calls
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|delta| proto::ToolCallDelta {
-                                index: delta.index as u32,
-                                id: delta.id,
-                                variant: match delta.function {
-                                    Some(function) => {
-                                        let name = function.name;
-                                        let arguments = function.arguments;
-
-                                        Some(proto::tool_call_delta::Variant::Function(
-                                            proto::tool_call_delta::FunctionCallDelta {
-                                                name,
-                                                arguments,
-                                            },
-                                        ))
-                                    }
-                                    None => None,
-                                },
-                            })
-                            .collect(),
                     }),
                     finish_reason: choice.finish_reason,
                 })
@@ -4679,8 +4661,6 @@ async fn complete_with_google_ai(
                                 })
                                 .collect(),
                         ),
-                        // Tool calls are not supported for Google
-                        tool_calls: Vec::new(),
                     }),
                     finish_reason: candidate.finish_reason.map(|reason| reason.to_string()),
                 })
@@ -4721,8 +4701,6 @@ async fn complete_with_anthropic(
 
                     None
                 }
-                // We don't yet support tool calls for Anthropic
-                LanguageModelRole::LanguageModelTool => None,
             }
         })
         .collect();
@@ -4767,7 +4745,6 @@ async fn complete_with_anthropic(
                                     delta: Some(proto::LanguageModelResponseMessage {
                                         role: Some(current_role as i32),
                                         content: Some(text),
-                                        tool_calls: Vec::new(),
                                     }),
                                     finish_reason: None,
                                 }],
@@ -4784,7 +4761,6 @@ async fn complete_with_anthropic(
                             delta: Some(proto::LanguageModelResponseMessage {
                                 role: Some(current_role as i32),
                                 content: Some(text),
-                                tool_calls: Vec::new(),
                             }),
                             finish_reason: None,
                         }],
