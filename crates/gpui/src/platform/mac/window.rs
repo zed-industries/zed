@@ -1100,6 +1100,13 @@ impl PlatformWindow for MacWindow {
     fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
         None
     }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+        }
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
