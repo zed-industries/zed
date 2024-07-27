@@ -649,35 +649,59 @@ impl settings::Settings for ThemeSettings {
             ("FontFallbacks".into(), font_fallback_schema.into()),
         ]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([
-                (
-                    "buffer_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "buffer_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-                (
-                    "ui_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "ui_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-            ]);
-
+        ["buffer_font_family", "ui_font_family"]
+            .into_iter()
+            .for_each(|key| {
+                let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
+                match schema {
+                    Schema::Bool(_) => unreachable!(),
+                    Schema::Object(obj) => {
+                        obj.subschemas().all_of =
+                            Some(vec![Schema::new_ref("#/definitions/FontFamilies".into())]);
+                    }
+                }
+            });
+        ["buffer_font_fallbacks", "ui_font_fallbacks"]
+            .into_iter()
+            .for_each(|key| {
+                let schema = root_schema.schema.object().properties.get_mut(key).unwrap();
+                match schema {
+                    Schema::Bool(_) => unreachable!(),
+                    Schema::Object(obj) => {
+                        obj.subschemas().all_of =
+                            Some(vec![Schema::new_ref("#/definitions/FontFallbacks".into())]);
+                    }
+                }
+            });
         {
             let prop = &root_schema.schema.object().properties;
             println!("{:#?}", prop);
         }
+
+        // root_schema
+        //     .schema
+        //     .object
+        //     .as_mut()
+        //     .unwrap()
+        //     .properties
+        //     .extend([
+        //         (
+        //             "buffer_font_family".to_owned(),
+        //             Schema::new_ref("#/definitions/FontFamilies".into()),
+        //         ),
+        //         (
+        //             "buffer_font_fallbacks".to_owned(),
+        //             Schema::new_ref("#/definitions/FontFallbacks".into()),
+        //         ),
+        //         (
+        //             "ui_font_family".to_owned(),
+        //             Schema::new_ref("#/definitions/FontFamilies".into()),
+        //         ),
+        //         (
+        //             "ui_font_fallbacks".to_owned(),
+        //             Schema::new_ref("#/definitions/FontFallbacks".into()),
+        //         ),
+        //     ]);
 
         root_schema
     }
