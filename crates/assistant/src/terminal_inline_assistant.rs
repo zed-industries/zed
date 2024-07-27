@@ -947,7 +947,7 @@ impl TerminalTransaction {
     }
 
     pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
-        // Ensure that the assistant cannot accidently execute commands that are streamed into the terminal
+        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = hunk.replace(CARRIAGE_RETURN, " ");
         self.terminal
             .update(cx, |terminal, _| terminal.input(input));
