@@ -31,7 +31,7 @@ impl From<HighlightId> for Highlight {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RichText {
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, Highlight)>,
@@ -41,19 +41,6 @@ pub struct RichText {
     pub custom_ranges: Vec<Range<usize>>,
     custom_ranges_tooltip_fn:
         Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
-}
-
-impl Default for RichText {
-    fn default() -> Self {
-        Self {
-            text: SharedString::default(),
-            highlights: Vec::new(),
-            link_ranges: Vec::new(),
-            link_urls: Arc::from([]),
-            custom_ranges: Vec::new(),
-            custom_ranges_tooltip_fn: None,
-        }
-    }
 }
 
 /// Allows one to specify extra links to the rendered markdown, which can be used

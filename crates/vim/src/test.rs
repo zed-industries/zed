@@ -1438,3 +1438,13 @@ async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("ctrl-w").await;
     cx.shared_state().await.assert_eq("ˇ");
 }
+
+#[gpui::test]
+async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhi", Mode::Normal);
+    cx.simulate_keystrokes("shift-v 3 >");
+    cx.assert_state("            ˇhi", Mode::Normal);
+    cx.simulate_keystrokes("shift-v 2 <");
+    cx.assert_state("    ˇhi", Mode::Normal);
+}

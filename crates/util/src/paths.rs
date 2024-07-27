@@ -104,6 +104,14 @@ pub struct PathLikeWithPosition<P> {
 }
 
 impl<P> PathLikeWithPosition<P> {
+    /// Returns a PathLikeWithPosition from a path.
+    pub fn from_path(path: P) -> Self {
+        Self {
+            path_like: path,
+            row: None,
+            column: None,
+        }
+    }
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.

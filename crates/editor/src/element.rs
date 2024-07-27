@@ -59,6 +59,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    rc::Rc,
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -1969,6 +1970,7 @@ impl EditorElement {
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                     .into_any_element()
             }
@@ -4105,11 +4107,11 @@ fn prepaint_gutter_button(
     );
     let indicator_size = button.layout_as_root(available_space, cx);
 
-    let blame_offset = gutter_dimensions.git_blame_entries_width;
-    let gutter_offset = rows_with_hunk_bounds
+    let blame_width = gutter_dimensions.git_blame_entries_width;
+    let gutter_width = rows_with_hunk_bounds
         .get(&row)
-        .map(|bounds| bounds.origin.x + bounds.size.width);
-    let left_offset = blame_offset.max(gutter_offset).unwrap_or(Pixels::ZERO);
+        .map(|bounds| bounds.size.width);
+    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
     let mut x = left_offset;
     let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
@@ -5492,7 +5494,7 @@ impl Element for EditorElement {
 
                     EditorLayout {
                         mode: snapshot.mode,
-                        position_map: Arc::new(PositionMap {
+                        position_map: Rc::new(PositionMap {
                             size: bounds.size,
                             scroll_pixel_position,
                             scroll_max,
@@ -5642,7 +5644,7 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    position_map: Arc<PositionMap>,
+    position_map: Rc<PositionMap>,
     hitbox: Hitbox,
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,

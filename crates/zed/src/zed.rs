@@ -6,7 +6,6 @@ pub(crate) mod linux_prompts;
 pub(crate) mod only_instance;
 mod open_listener;
 pub(crate) mod session;
-mod ssh_connection_modal;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
@@ -171,9 +170,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 For troubleshooting see: https://zed.dev/docs/linux
                 "#}, specs.device_name);
             let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
-                &["Troubleshoot and Quit"]);
+                &["Skip", "Troubleshoot and Quit"]);
             cx.spawn(|_, mut cx| async move {
-                if prompt.await == Ok(0) {
+                if prompt.await == Ok(1) {
                     cx.update(|cx| {
                         cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
                         cx.quit();
@@ -3460,7 +3459,11 @@ mod tests {
             terminal_view::init(cx);
             language_model::init(app_state.client.clone(), cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-            repl::init(app_state.fs.clone(), cx);
+            repl::init(
+                app_state.fs.clone(),
+                app_state.client.telemetry().clone(),
+                cx,
+            );
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

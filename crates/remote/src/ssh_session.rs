@@ -58,11 +58,55 @@ pub struct SshSession {
 }
 
 struct SshClientState {
+    connection_options: SshConnectionOptions,
     socket_path: PathBuf,
-    port: u16,
-    url: String,
     _master_process: process::Child,
     _temp_dir: TempDir,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshConnectionOptions {
+    pub host: String,
+    pub username: Option<String>,
+    pub port: Option<u16>,
+    pub password: Option<String>,
+}
+
+impl SshConnectionOptions {
+    pub fn ssh_url(&self) -> String {
+        let mut result = String::from("ssh://");
+        if let Some(username) = &self.username {
+            result.push_str(username);
+            result.push('@');
+        }
+        result.push_str(&self.host);
+        if let Some(port) = self.port {
+            result.push(':');
+            result.push_str(&port.to_string());
+        }
+        result
+    }
+
+    fn scp_url(&self) -> String {
+        if let Some(username) = &self.username {
+            format!("{}@{}", username, self.host)
+        } else {
+            self.host.clone()
+        }
+    }
+
+    pub fn connection_string(&self) -> String {
+        let host = if let Some(username) = &self.username {
+            format!("{}@{}", username, self.host)
+        } else {
+            self.host.clone()
+        };
+        if let Some(port) = &self.port {
+            format!("{}:{}", host, port)
+        } else {
+            host
+        }
+    }
 }
 
 struct SpawnRequest {
@@ -95,13 +139,11 @@ type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, ones
 
 impl SshSession {
     pub async fn client(
-        user: String,
-        host: String,
-        port: u16,
+        connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>> {
-        let client_state = SshClientState::new(user, host, port, delegate.clone(), cx).await?;
+        let client_state = SshClientState::new(connection_options, delegate.clone(), cx).await?;
 
         let platform = client_state.query_platform().await?;
         let (local_binary_path, version) = delegate.get_server_binary(platform, cx).await??;
@@ -424,9 +466,7 @@ impl ProtoClient for SshSession {
 impl SshClientState {
     #[cfg(not(unix))]
     async fn new(
-        _user: String,
-        _host: String,
-        _port: u16,
+        _connection_options: SshConnectionOptions,
         _delegate: Arc<dyn SshClientDelegate>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Self> {
@@ -435,9 +475,7 @@ impl SshClientState {
 
     #[cfg(unix)]
     async fn new(
-        user: String,
-        host: String,
-        port: u16,
+        connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
@@ -447,7 +485,7 @@ impl SshClientState {
 
         delegate.set_status(Some("connecting"), cx);
 
-        let url = format!("{user}@{host}");
+        let url = connection_options.ssh_url();
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
@@ -500,7 +538,6 @@ impl SshClientState {
             .env("SSH_ASKPASS", &askpass_script_path)
             .args(["-N", "-o", "ControlMaster=yes", "-o"])
             .arg(format!("ControlPath={}", socket_path.display()))
-            .args(["-p", &port.to_string()])
             .arg(&url)
             .spawn()?;
 
@@ -522,8 +559,7 @@ impl SshClientState {
         }
 
         Ok(Self {
-            url,
-            port,
+            connection_options,
             socket_path,
             _master_process: master_process,
             _temp_dir: temp_dir,
@@ -610,10 +646,18 @@ impl SshClientState {
         let mut command = process::Command::new("scp");
         let output = self
             .ssh_options(&mut command)
-            .arg("-P")
-            .arg(&self.port.to_string())
+            .args(
+                self.connection_options
+                    .port
+                    .map(|port| vec!["-P".to_string(), port.to_string()])
+                    .unwrap_or_default(),
+            )
             .arg(&src_path)
-            .arg(&format!("{}:{}", self.url, dest_path.display()))
+            .arg(&format!(
+                "{}:{}",
+                self.connection_options.scp_url(),
+                dest_path.display()
+            ))
             .output()
             .await?;
 
@@ -632,9 +676,7 @@ impl SshClientState {
     fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
         let mut command = process::Command::new("ssh");
         self.ssh_options(&mut command)
-            .arg("-p")
-            .arg(&self.port.to_string())
-            .arg(&self.url)
+            .arg(self.connection_options.ssh_url())
             .arg(program);
         command
     }

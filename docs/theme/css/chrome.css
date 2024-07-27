@@ -14,15 +14,15 @@ a > .hljs {
 }
 
 /*
-    body-container is necessary because mobile browsers don't seem to like
-    overflow-x on the body tag when there is a <meta name="viewport"> tag.
+  body-container is necessary because mobile browsers don't seem to like
+  overflow-x on the body tag when there is a <meta name="viewport"> tag.
 */
 #body-container {
   /*
-        This is used when the sidebar pushes the body content off the side of
-        the screen on small screens. Without it, dragging on mobile Safari
-        will want to reposition the viewport in a weird way.
-    */
+      This is used when the sidebar pushes the body content off the side of
+      the screen on small screens. Without it, dragging on mobile Safari
+      will want to reposition the viewport in a weird way.
+  */
   overflow-x: clip;
 }
 

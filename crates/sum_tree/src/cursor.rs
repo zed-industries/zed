@@ -178,11 +178,11 @@ where
 
     #[track_caller]
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.search_backward(|_| true, cx)
+        self.prev_internal(|_| true, cx)
     }
 
     #[track_caller]
-    pub fn search_backward<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    fn prev_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: FnMut(&T::Summary) -> bool,
     {
@@ -249,11 +249,11 @@ where
 
     #[track_caller]
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.search_forward(|_| true, cx)
+        self.next_internal(|_| true, cx)
     }
 
     #[track_caller]
-    pub fn search_forward<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    fn next_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
         F: FnMut(&T::Summary) -> bool,
     {
@@ -658,11 +658,11 @@ where
     }
 
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.search_forward(&mut self.filter_node, cx);
+        self.cursor.next_internal(&mut self.filter_node, cx);
     }
 
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.search_backward(&mut self.filter_node, cx);
+        self.cursor.prev_internal(&mut self.filter_node, cx);
     }
 }
 
@@ -681,7 +681,7 @@ where
         }
 
         if let Some(item) = self.item() {
-            self.cursor.search_forward(&mut self.filter_node, &());
+            self.cursor.next_internal(&mut self.filter_node, &());
             Some(item)
         } else {
             None

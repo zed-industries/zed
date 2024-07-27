@@ -229,6 +229,7 @@ pub struct Project {
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
+    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
 pub enum LanguageServerToQuery {
@@ -827,6 +828,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             }
         })
     }
@@ -1021,6 +1023,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1201,6 +1204,15 @@ impl Project {
                 })
                 .await
                 .unwrap();
+
+            project.update(cx, |project, cx| {
+                let tree_id = tree.read(cx).id();
+                // In tests we always populate the environment to be empty so we don't run the shell
+                project
+                    .cached_shell_environments
+                    .insert(tree_id, HashMap::default());
+            });
+
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
@@ -7886,6 +7898,7 @@ impl Project {
         }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
+        self.cached_shell_environments.remove(&id_to_remove);
 
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
@@ -9286,6 +9299,7 @@ impl Project {
         })?;
         let task_context = context_task.await.unwrap_or_default();
         Ok(proto::TaskContext {
+            project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
                 .cwd
                 .map(|cwd| cwd.to_string_lossy().to_string()),
@@ -10260,7 +10274,14 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local() {
-            let cwd = self.task_cwd(cx).log_err().flatten();
+            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+                (
+                    Some(worktree.read(cx).id()),
+                    Some(self.task_cwd(worktree, cx)),
+                )
+            } else {
+                (None, None)
+            };
 
             cx.spawn(|project, cx| async move {
                 let mut task_variables = cx
@@ -10277,7 +10298,17 @@ impl Project {
                     .flatten()?;
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
+
+                let mut project_env = None;
+                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
+                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
+                    if let Some(env) = env {
+                        project_env.replace(env);
+                    }
+                };
+
                 Some(TaskContext {
+                    project_env: project_env.unwrap_or_default(),
                     cwd,
                     task_variables,
                 })
@@ -10297,6 +10328,7 @@ impl Project {
             cx.background_executor().spawn(async move {
                 let task_context = task_context.await.log_err()?;
                 Some(TaskContext {
+                    project_env: task_context.project_env.into_iter().collect(),
                     cwd: task_context.cwd.map(PathBuf::from),
                     task_variables: task_context
                         .task_variables
@@ -10315,6 +10347,50 @@ impl Project {
             })
         } else {
             Task::ready(None)
+        }
+    }
+
+    async fn get_worktree_shell_env(
+        this: WeakModel<Self>,
+        worktree_id: WorktreeId,
+        cwd: &PathBuf,
+        mut cx: AsyncAppContext,
+    ) -> Option<HashMap<String, String>> {
+        let cached_env = this
+            .update(&mut cx, |project, _| {
+                project.cached_shell_environments.get(&worktree_id).cloned()
+            })
+            .ok()?;
+
+        if let Some(env) = cached_env {
+            Some(env)
+        } else {
+            let load_direnv = this
+                .update(&mut cx, |_, cx| {
+                    ProjectSettings::get_global(cx).load_direnv.clone()
+                })
+                .ok()?;
+
+            let shell_env = cx
+                .background_executor()
+                .spawn({
+                    let cwd = cwd.clone();
+                    async move {
+                        load_shell_environment(&cwd, &load_direnv)
+                            .await
+                            .unwrap_or_default()
+                    }
+                })
+                .await;
+
+            this.update(&mut cx, |project, _| {
+                project
+                    .cached_shell_environments
+                    .insert(worktree_id, shell_env.clone());
+            })
+            .ok()?;
+
+            Some(shell_env)
         }
     }
 
@@ -10441,7 +10517,7 @@ impl Project {
         })
     }
 
-    fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
+    fn task_worktree(&self, cx: &AppContext) -> Option<Model<Worktree>> {
         let available_worktrees = self
             .worktrees(cx)
             .filter(|worktree| {
@@ -10451,28 +10527,24 @@ impl Project {
                     && worktree.root_entry().map_or(false, |e| e.is_dir())
             })
             .collect::<Vec<_>>();
-        let cwd = match available_worktrees.len() {
+
+        match available_worktrees.len() {
             0 => None,
-            1 => Some(available_worktrees[0].read(cx).abs_path()),
-            _ => {
-                let cwd_for_active_entry = self.active_entry().and_then(|entry_id| {
-                    available_worktrees.into_iter().find_map(|worktree| {
-                        let worktree = worktree.read(cx);
-                        if worktree.contains_entry(entry_id) {
-                            Some(worktree.abs_path())
-                        } else {
-                            None
-                        }
-                    })
-                });
-                anyhow::ensure!(
-                    cwd_for_active_entry.is_some(),
-                    "Cannot determine task cwd for multiple worktrees"
-                );
-                cwd_for_active_entry
-            }
-        };
-        Ok(cwd.map(|path| path.to_path_buf()))
+            1 => Some(available_worktrees[0].clone()),
+            _ => self.active_entry().and_then(|entry_id| {
+                available_worktrees.into_iter().find_map(|worktree| {
+                    if worktree.read(cx).contains_entry(entry_id) {
+                        Some(worktree)
+                    } else {
+                        None
+                    }
+                })
+            }),
+        }
+    }
+
+    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
+        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 
@@ -10844,7 +10916,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         } else if self.include_root_name {
             format!("{}/", self.snapshot.root_name()).into()
         } else {
-            "".into()
+            Arc::default()
         }
     }
 
