@@ -303,6 +303,11 @@ impl EsLintLspAdapter {
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
         &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 
+    #[cfg(not(windows))]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    #[cfg(windows)]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
     }
@@ -406,13 +411,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        #[cfg(not(windows))]
-        let asset_kind = AssetKind::TarGz;
-
-        #[cfg(windows)]
-        let asset_kind = AssetKind::Zip;
-
-        let url = build_asset_url("microsoft/vscode-eslint", Self::CURRENT_VERSION, asset_kind)?;
+        let url = build_asset_url(
+            "microsoft/vscode-eslint",
+            Self::CURRENT_VERSION,
+            Self::GITHUB_ASSET_KIND,
+        )?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
@@ -430,12 +433,6 @@ impl LspAdapter for EsLintLspAdapter {
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
 
-        #[cfg(not(windows))]
-        let asset_kind = AssetKind::TarGz;
-
-        #[cfg(windows)]
-        let asset_kind = AssetKind::Zip;
-
         if fs::metadata(&server_path).await.is_err() {
             remove_matching(&container_dir, |entry| entry != destination_path).await;
 
@@ -444,7 +441,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            match asset_kind {
+            match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
