@@ -9645,6 +9645,7 @@ dependencies = [
  "gpui",
  "indoc",
  "lazy_static",
+ "log",
  "paths",
  "pretty_assertions",
  "release_channel",

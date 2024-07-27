@@ -15,7 +15,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -649,30 +649,15 @@ impl settings::Settings for ThemeSettings {
             ("FontFallbacks".into(), font_fallback_schema.into()),
         ]);
 
-        // The list of properties that should reference another definition in
-        // the schema.
-        let properties_with_references = vec![
-            ("buffer_font_family", "#/definitions/FontFamilies"),
-            ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
-            ("ui_font_family", "#/definitions/FontFamilies"),
-            ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
-        ];
-
-        for (property, definition) in properties_with_references {
-            let Some(schema) = root_schema.schema.object().properties.get_mut(property) else {
-                log::warn!("property '{property}' not found in JSON schema");
-                continue;
-            };
-
-            match schema {
-                Schema::Object(schema) => {
-                    schema.reference = Some(definition.into());
-                }
-                Schema::Bool(_) => {
-                    // Boolean schemas can't have references.
-                }
-            }
-        }
+        add_references_to_properties(
+            &mut root_schema,
+            &[
+                ("buffer_font_family", "#/definitions/FontFamilies"),
+                ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
+                ("ui_font_family", "#/definitions/FontFamilies"),
+                ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
+            ],
+        );
 
         root_schema
     }
