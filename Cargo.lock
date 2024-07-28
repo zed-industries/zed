@@ -3233,6 +3233,7 @@ dependencies = [
  "dap-types",
  "futures 0.3.28",
  "gpui",
+ "language",
  "log",
  "multi_buffer",
  "parking_lot",
@@ -3244,6 +3245,7 @@ dependencies = [
  "serde_json_lenient",
  "smol",
  "task",
+ "text",
  "util",
 ]
 

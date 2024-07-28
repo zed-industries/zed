@@ -15,6 +15,7 @@ dap-types = { git = "https://github.com/zed-industries/dap-types" }
 futures.workspace = true
 gpui.workspace = true
 multi_buffer.workspace = true
+language.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
@@ -25,4 +26,5 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 smol.workspace = true
 task.workspace = true
+text.workspace = true
 util.workspace = true

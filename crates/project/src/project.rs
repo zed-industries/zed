@@ -27,7 +27,6 @@ use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dap::{
     client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId},
     transport::Events,
-    SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
 use futures::{
@@ -56,8 +55,8 @@ use language::{
         deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
         serialize_version, split_operations,
     },
-    range_from_lsp, Bias, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability,
-    CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
     Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
     LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
@@ -119,7 +118,7 @@ use task::{
     HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
-use text::{Anchor, BufferId, LineEnding, Point};
+use text::{Anchor, BufferId, LineEnding};
 use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
@@ -1175,24 +1174,11 @@ impl Project {
                     if let Some((path, breakpoints)) = res {
                         tasks.push(
                             client.set_breakpoints(
-                                path,
+                                path.clone(),
                                 Some(
                                     breakpoints
                                         .iter()
-                                        .map(|b| SourceBreakpoint {
-                                            line: (buffer
-                                                .summary_for_anchor::<Point>(
-                                                    &b.position.text_anchor,
-                                                )
-                                                .row
-                                                + 1)
-                                                as u64,
-                                            condition: None,
-                                            hit_condition: None,
-                                            log_message: None,
-                                            column: None,
-                                            mode: None,
-                                        })
+                                        .map(|b| b.to_source_breakpoint(buffer))
                                         .collect::<Vec<_>>(),
                                 ),
                             ),
@@ -1270,47 +1256,60 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
-    pub fn _update_breakpoint(
-        &mut self,
-        _buffer: Model<Buffer>,
-        _row: BufferRow,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        // let breakpoints_for_buffer = self
-        //     .breakpoints
-        //     .entry(buffer.read(cx).remote_id())
-        //     .or_insert(Vec::new());
+    pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
+        let clients = self
+            .debug_adapters
+            .iter()
+            .filter_map(|(_, state)| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+            .collect::<Vec<_>>();
 
-        // if let Some(ix) = breakpoints_for_buffer
-        //     .iter()
-        //     .position(|breakpoint| breakpoint.row == row)
-        // {
-        //     breakpoints_for_buffer.remove(ix);
-        // } else {
-        //     breakpoints_for_buffer.push(Breakpoint { row });
-        // }
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
 
-        // let clients = self
-        //     .debug_adapters
-        //     .iter()
-        //     .filter_map(|(_, state)| match state {
-        //         DebugAdapterClientState::Starting(_) => None,
-        //         DebugAdapterClientState::Running(client) => Some(client.clone()),
-        //     })
-        //     .collect::<Vec<_>>();
+        let buffer = buffer.read(cx);
 
-        // let mut tasks = Vec::new();
-        // for client in clients {
-        //     tasks.push(self.send_breakpoints(client, cx));
-        // }
+        let file_path = maybe!({
+            let project_path = buffer.project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
-        // cx.background_executor()
-        //     .spawn(async move {
-        //         try_join_all(tasks).await?;
+            Some(path)
+        });
 
-        //         anyhow::Ok(())
-        //     })
-        //     .detach_and_log_err(cx)
+        let Some(file_path) = file_path else {
+            return;
+        };
+
+        let read_guard = self.breakpoints.read();
+
+        let breakpoints_locations = read_guard.get(&buffer_id);
+
+        if let Some(breakpoints_locations) = breakpoints_locations {
+            let breakpoints_locations = Some(
+                breakpoints_locations
+                    .iter()
+                    .map(|bp| bp.to_source_breakpoint(&buffer))
+                    .collect(),
+            );
+
+            // TODO: Send correct value for sourceModified
+            for client in clients {
+                let bps = breakpoints_locations.clone();
+                let file_path = file_path.clone();
+
+                cx.background_executor()
+                    .spawn(async move {
+                        client.set_breakpoints(file_path, bps).await?;
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx)
+            }
+        }
     }
 
     fn shutdown_language_servers(

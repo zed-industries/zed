@@ -578,6 +578,7 @@ pub struct Editor {
     /// Otherwise it represents the point that the breakpoint will be shown
     pub gutter_breakpoint_indicator: Option<DisplayPoint>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
+    active_debuggers: bool,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1922,6 +1923,7 @@ impl Editor {
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
+            active_debuggers: false,
             breadcrumb_header: None,
             focused_block: None,
         };
@@ -6025,6 +6027,13 @@ impl Editor {
         if !breakpoint_set.remove(&breakpoint) {
             breakpoint_set.insert(breakpoint);
         }
+
+        if self.active_debuggers {
+            project.update(cx, |project, cx| {
+                project.update_file_breakpoints(buffer_id, cx)
+            });
+        }
+
         cx.notify();
     }
 
