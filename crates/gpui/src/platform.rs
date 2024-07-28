@@ -26,6 +26,8 @@ use crate::{
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
+use ::windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+use ::windows::Win32::System::Threading::CreateMutexW;
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -43,7 +45,9 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use util::ResultExt;
 use uuid::Uuid;
+use windows_core::HSTRING;
 
 pub use app_menu::*;
 pub use keystroke::*;
@@ -57,6 +61,15 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+
+/// TODO:
+pub fn check_single_instance() -> bool {
+    // TODO:
+    // we should let user to provide their own app identifier.
+    unsafe { CreateMutexW(None, true, &HSTRING::from("Local\\Zed-Editor-Instance")).log_err() };
+    let last_err = unsafe { GetLastError() };
+    last_err != ERROR_ALREADY_EXISTS
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {

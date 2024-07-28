@@ -335,10 +335,16 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
+    // {
+    //     use zed::only_instance::*;
+    //     if ensure_only_instance() != IsOnlyInstance::Yes {
+    //         println!("zed is already running");
+    //         return;
+    //     }
+    // }
     {
-        use zed::only_instance::*;
-        if ensure_only_instance() != IsOnlyInstance::Yes {
+        if !gpui::check_single_instance() {
             println!("zed is already running");
             return;
         }
