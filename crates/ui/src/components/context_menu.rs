@@ -52,7 +52,7 @@ impl FluentBuilder for ContextMenu {}
 impl ContextMenu {
     pub fn build(
         cx: &mut WindowContext,
-        f: impl FnOnce(Self, &mut WindowContext) -> Self,
+        f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
     ) -> View<Self> {
         cx.new_view(|cx| {
             let focus_handle = cx.focus_handle();
