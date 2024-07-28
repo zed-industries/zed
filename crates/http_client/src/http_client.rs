@@ -2,13 +2,14 @@ pub mod github;
 
 pub use anyhow::{anyhow, Result};
 use derive_more::Deref;
-use futures::{future::BoxFuture, AsyncRead};
+use futures::{future::BoxFuture, AsyncRead, AsyncReadExt as _};
 use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
 pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
+use smol::Unblock;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
@@ -16,46 +17,25 @@ use std::{
     io::{Cursor, Read},
     pin::Pin,
     sync::{Arc, Mutex},
+    task::Poll,
     time::Duration,
 };
 pub use url::Url;
 
 // A type to implement Read on the inner dyn Read
-struct UreqReader {
-    reader: Box<dyn Read + Send + 'static>,
-}
+struct UreqReader(Box<dyn Read + Send + 'static>);
 
 impl Read for UreqReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf)
-    }
-}
-
-pub struct NewResponse(smol::Unblock<UreqReader>);
-
-impl From<ureq::Response> for NewResponse {
-    fn from(response: ureq::Response) -> Self {
-        NewResponse(smol::Unblock::new(UreqReader {
-            reader: response.into_reader(),
-        }))
-    }
-}
-
-impl AsyncRead for NewResponse {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        // SAFETY: Standard pin projection
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        inner.poll_read(cx, buf)
+        self.0.read(buf)
     }
 }
 
 /// Based on the implementation of AsyncBody in
 /// https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs
-pub enum NewBody {
+struct HttpBodyNew(Inner);
+
+enum Inner {
     /// An empty body.
     Empty,
 
@@ -63,76 +43,109 @@ pub enum NewBody {
     SyncReader(std::io::Cursor<Cow<'static, [u8]>>),
 
     /// An asynchronous reader.
-    AsyncReader(smol::io::BlockOn<Pin<Box<dyn AsyncRead + Send + Sync>>>),
+    AsyncReader(Pin<Box<dyn futures::AsyncRead + Send + Sync>>),
+
+    /// A compatibility layer over our old isahc client, to make it compatible with ureq
+    UReqReader(smol::Unblock<UreqReader>),
 }
 
-impl std::io::Read for NewBody {
+impl HttpBodyNew {
+    /// Create a streaming body that reads from the given reader.
+    pub fn from_reader<R>(read: R) -> Self
+    where
+        R: AsyncRead + Send + Sync + 'static,
+    {
+        Self(Inner::AsyncReader(Box::pin(read)))
+    }
+}
+
+impl std::io::Read for HttpBodyNew {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            NewBody::Empty => Ok(0),
-            NewBody::SyncReader(cursor) => cursor.read(buf),
-            NewBody::AsyncReader(async_reader) => async_reader.read(buf),
+        match &mut self.0 {
+            Inner::Empty => Ok(0),
+            Inner::SyncReader(cursor) => cursor.read(buf),
+            Inner::AsyncReader(async_reader) => smol::block_on(async_reader.read(buf)),
+            Inner::UReqReader(unblock_reader) => smol::block_on(unblock_reader.read(buf)),
         }
     }
 }
 
-impl Default for NewBody {
+impl futures::AsyncRead for HttpBodyNew {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        // SAFETY: Standard Enum pin projection
+        let inner = unsafe { &mut self.get_unchecked_mut().0 };
+        match inner {
+            Inner::Empty => Poll::Ready(Ok(0)),
+            // Blocking call is over an in-memory buffer
+            Inner::SyncReader(cursor) => Poll::Ready(cursor.read(buf)),
+            Inner::AsyncReader(async_reader) => {
+                AsyncRead::poll_read(async_reader.as_mut(), cx, buf)
+            }
+            Inner::UReqReader(unblock_reader) => AsyncRead::poll_read(
+                unsafe { Pin::new_unchecked(unblock_reader).as_mut() },
+                cx,
+                buf,
+            ),
+        }
+    }
+}
+
+impl Default for HttpBodyNew {
     fn default() -> Self {
-        Self::Empty
+        Self(Inner::Empty)
     }
 }
 
-impl From<()> for NewBody {
+impl From<()> for HttpBodyNew {
     fn from(_: ()) -> Self {
-        Self::Empty
+        Self(Inner::Empty)
     }
 }
 
-impl From<Vec<u8>> for NewBody {
+impl From<Vec<u8>> for HttpBodyNew {
     fn from(body: Vec<u8>) -> Self {
-        Self::SyncReader(Cursor::new(Cow::Owned(body)))
+        Self(Inner::SyncReader(Cursor::new(Cow::Owned(body))))
     }
 }
 
-impl From<&'_ [u8]> for NewBody {
+impl From<&'_ [u8]> for HttpBodyNew {
     fn from(body: &[u8]) -> Self {
         body.to_vec().into()
     }
 }
 
-impl From<String> for NewBody {
+impl From<String> for HttpBodyNew {
     fn from(body: String) -> Self {
         body.into_bytes().into()
     }
 }
 
-impl From<&'_ str> for NewBody {
+impl From<&'_ str> for HttpBodyNew {
     fn from(body: &str) -> Self {
         body.as_bytes().into()
     }
 }
 
-impl<T: Into<Self>> From<Option<T>> for NewBody {
+impl<T: Into<Self>> From<Option<T>> for HttpBodyNew {
     fn from(body: Option<T>) -> Self {
         match body {
             Some(body) => body.into(),
-            None => Self::Empty,
+            None => Self(Inner::Empty),
         }
     }
 }
 
-// Example of how to do an async request with the blocking IO
-// fn post<'a>(uri: &str, body: NewBody) -> BoxFuture<'a, Result<NewResponse, anyhow::Error>> {
-//     let post = ureq::post(uri);
-
-//     async move {
-//         let response = smol::unblock(move || post.send(body))
-//             .await
-//             .map_err(|e| anyhow!("Error: {:?}", e))?;
-//         Ok(response.into())
-//     }
-//     .boxed()
-// }
+impl From<ureq::Response> for HttpBodyNew {
+    fn from(value: ureq::Response) -> Self {
+        HttpBodyNew(Inner::UReqReader(Unblock::new(UreqReader(
+            value.into_reader(),
+        ))))
+    }
+}
 
 pub trait HttpClient: Send + Sync {
     fn send(
