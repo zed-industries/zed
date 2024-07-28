@@ -870,6 +870,9 @@
     "openai": {
       "api_url": "https://api.openai.com/v1"
     },
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
+    },
     "ollama": {
       "api_url": "http://localhost:11434"
     }

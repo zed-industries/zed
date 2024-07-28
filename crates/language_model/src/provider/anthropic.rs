@@ -1,4 +1,4 @@
-use anthropic::{stream_completion, Request, RequestMessage};
+use anthropic::stream_completion;
 use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -18,7 +18,7 @@ use util::ResultExt;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelProviderState, LanguageModelRequest, Role,
 };
 
 const PROVIDER_ID: &str = "anthropic";
@@ -160,40 +160,6 @@ pub struct AnthropicModel {
     http_client: Arc<dyn HttpClient>,
 }
 
-impl AnthropicModel {
-    fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
-        preprocess_anthropic_request(&mut request);
-
-        let mut system_message = String::new();
-        if request
-            .messages
-            .first()
-            .map_or(false, |message| message.role == Role::System)
-        {
-            system_message = request.messages.remove(0).content;
-        }
-
-        Request {
-            model: self.model.id().to_string(),
-            messages: request
-                .messages
-                .iter()
-                .map(|msg| RequestMessage {
-                    role: match msg.role {
-                        Role::User => anthropic::Role::User,
-                        Role::Assistant => anthropic::Role::Assistant,
-                        Role::System => unreachable!("filtered out by preprocess_request"),
-                    },
-                    content: msg.content.clone(),
-                })
-                .collect(),
-            stream: true,
-            system: system_message,
-            max_tokens: 4092,
-        }
-    }
-}
-
 pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &AppContext,
@@ -260,7 +226,7 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_anthropic_request(request);
+        let request = request.into_anthropic(self.model.id().into());
 
         let http_client = self.http_client.clone();
 
@@ -285,73 +251,10 @@ impl LanguageModel for AnthropicModel {
                 low_speed_timeout,
             );
             let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(response) => match response {
-                            anthropic::ResponseEvent::ContentBlockStart {
-                                content_block, ..
-                            } => match content_block {
-                                anthropic::ContentBlock::Text { text } => Some(Ok(text)),
-                            },
-                            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
-                                match delta {
-                                    anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
-                                }
-                            }
-                            _ => None,
-                        },
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
+            Ok(anthropic::extract_text_from_events(response).boxed())
         }
         .boxed()
     }
-}
-
-pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
-    let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages.drain(..) {
-        if message.content.is_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == message.role {
-                        last_message.content.push_str("\n\n");
-                        last_message.content.push_str(&message.content);
-                        continue;
-                    }
-                }
-
-                new_messages.push(message);
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
-            }
-        }
-    }
-
-    if !system_message.is_empty() {
-        new_messages.insert(
-            0,
-            LanguageModelRequestMessage {
-                role: Role::System,
-                content: system_message,
-            },
-        );
-    }
-
-    request.messages = new_messages;
 }
 
 struct AuthenticationPrompt {

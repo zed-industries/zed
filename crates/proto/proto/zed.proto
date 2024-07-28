@@ -13,13 +13,6 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
 
-    /*
-        When you are adding a new message type, instead of adding it in semantic order
-        and bumping the message ID's of everything that follows, add it at the end of the
-        file and bump the max number. See this
-        https://github.com/zed-industries/zed/pull/7890#discussion_r1496621823
-
-    */
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;
@@ -201,10 +194,8 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        CompleteWithLanguageModel complete_with_language_model = 166;
-        LanguageModelResponse language_model_response = 167;
-        CountTokensWithLanguageModel count_tokens_with_language_model = 168;
-        CountTokensResponse count_tokens_response = 169;
+        QueryLanguageModel query_language_model = 224;
+        QueryLanguageModelResponse query_language_model_response = 225; // current max
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -271,10 +262,11 @@ message Envelope {
         UpdateDevServerProject update_dev_server_project = 221;
 
         AddWorktree add_worktree = 222;
-        AddWorktreeResponse add_worktree_response = 223; // current max
+        AddWorktreeResponse add_worktree_response = 223;
     }
 
     reserved 158 to 161;
+    reserved 166 to 169;
 }
 
 // Messages
@@ -2051,94 +2043,32 @@ message SetRoomParticipantRole {
     ChannelRole role = 3;
 }
 
-message CompleteWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-    repeated string stop = 3;
-    float temperature = 4;
-    repeated ChatCompletionTool tools = 5;
-    optional string tool_choice = 6;
-}
-
-// A tool presented to the language model for its use
-message ChatCompletionTool {
-    oneof variant {
-        FunctionObject function = 1;
-    }
-
-    message FunctionObject {
-        string name = 1;
-        optional string description = 2;
-        optional string parameters = 3;
-    }
-}
-
-// A message to the language model
-message LanguageModelRequestMessage {
-    LanguageModelRole role = 1;
-    string content = 2;
-    optional string tool_call_id = 3;
-    repeated ToolCall tool_calls = 4;
-}
-
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
-    LanguageModelTool = 3;
+    reserved 3;
 }
 
-message LanguageModelResponseMessage {
-    optional LanguageModelRole role = 1;
-    optional string content = 2;
-    repeated ToolCallDelta tool_calls = 3;
+message QueryLanguageModel {
+    LanguageModelProvider provider = 1;
+    LanguageModelRequestKind kind = 2;
+    string request = 3;
 }
 
-// A request to call a tool, by the language model
-message ToolCall {
-    string id = 1;
-
-    oneof variant {
-        FunctionCall function = 2;
-    }
-
-    message FunctionCall {
-        string name = 1;
-        string arguments = 2;
-    }
+enum LanguageModelProvider {
+    Anthropic = 0;
+    OpenAI = 1;
+    Google = 2;
 }
 
-message ToolCallDelta {
-    uint32 index = 1;
-    optional string id = 2;
-
-    oneof variant {
-        FunctionCallDelta function = 3;
-    }
-
-    message FunctionCallDelta {
-        optional string name = 1;
-        optional string arguments = 2;
-    }
+enum LanguageModelRequestKind {
+    Complete = 0;
+    CountTokens = 1;
 }
 
-message LanguageModelResponse {
-    repeated LanguageModelChoiceDelta choices = 1;
-}
-
-message LanguageModelChoiceDelta {
-    uint32 index = 1;
-    LanguageModelResponseMessage delta = 2;
-    optional string finish_reason = 3;
-}
-
-message CountTokensWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-}
-
-message CountTokensResponse {
-    uint32 token_count = 1;
+message QueryLanguageModelResponse {
+    string response = 1;
 }
 
 message GetCachedEmbeddings {
