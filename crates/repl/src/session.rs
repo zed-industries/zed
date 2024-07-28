@@ -14,7 +14,8 @@ use editor::{
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
-use futures::{FutureExt as _, StreamExt as _};
+use futures::io::BufReader;
+use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
     div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
     WeakView,
@@ -241,6 +242,34 @@ impl Session {
                     Ok((mut kernel, mut messages_rx)) => {
                         this.update(&mut cx, |session, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
+
+                            let stderr = kernel.process.stderr.take();
+
+                            cx.spawn(|_session, mut _cx| async move {
+                                if let None = stderr {
+                                    return;
+                                }
+                                let reader = BufReader::new(stderr.unwrap());
+                                let mut lines = reader.lines();
+                                while let Some(Ok(line)) = lines.next().await {
+                                    log::error!("kernel: {}", line);
+                                }
+                            })
+                            .detach();
+
+                            let stdout = kernel.process.stderr.take();
+
+                            cx.spawn(|_session, mut _cx| async move {
+                                if let None = stdout {
+                                    return;
+                                }
+                                let reader = BufReader::new(stdout.unwrap());
+                                let mut lines = reader.lines();
+                                while let Some(Ok(line)) = lines.next().await {
+                                    log::info!("kernel: {}", line);
+                                }
+                            })
+                            .detach();
 
                             let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(kernel), cx);
