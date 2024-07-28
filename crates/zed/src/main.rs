@@ -344,7 +344,15 @@ fn main() {
     //     }
     // }
     {
-        if !gpui::check_single_instance() {
+        if !gpui::check_single_instance(|single_instance| {
+            if *db::ZED_STATELESS
+                || *release_channel::RELEASE_CHANNEL == release_channel::ReleaseChannel::Dev
+            {
+                true
+            } else {
+                single_instance
+            }
+        }) {
             println!("zed is already running");
             return;
         }

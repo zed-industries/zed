@@ -63,12 +63,16 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 /// TODO:
-pub fn check_single_instance() -> bool {
+pub fn check_single_instance<F>(f: F) -> bool
+where
+    F: FnOnce(bool) -> bool,
+{
     // TODO:
     // we should let user to provide their own app identifier.
     unsafe { CreateMutexW(None, true, &HSTRING::from("Local\\Zed-Editor-Instance")).log_err() };
     let last_err = unsafe { GetLastError() };
-    last_err != ERROR_ALREADY_EXISTS
+    let is_single_instance = last_err != ERROR_ALREADY_EXISTS;
+    f(is_single_instance)
 }
 
 #[cfg(target_os = "macos")]
