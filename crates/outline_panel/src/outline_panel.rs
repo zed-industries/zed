@@ -15,7 +15,7 @@ use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
-    AnchorRangeExt, DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
+    AnchorRangeExt, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -40,7 +40,7 @@ use util::{RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
-    searchable::SearchableItem,
+    searchable::{SearchEvent, SearchableItem},
     ui::{
         h_flex, v_flex, ActiveTheme, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
@@ -212,7 +212,7 @@ impl PartialEq for FsEntry {
 struct ActiveItem {
     item_id: EntityId,
     active_editor: WeakView<Editor>,
-    _buffer_search_subscription: Option<Subscription>,
+    _buffer_search_subscription: Subscription,
     _editor_subscrpiption: Subscription,
 }
 
@@ -302,6 +302,7 @@ impl OutlinePanel {
                             .read(cx)
                             .active_item(cx)
                             .and_then(|item| item.act_as::<Editor>(cx))
+                            .filter(|editor| editor.read(cx).mode() == EditorMode::Full)
                         {
                             let active_editor_updated = outline_panel
                                 .active_item
@@ -2015,21 +2016,14 @@ impl OutlinePanel {
     ) {
         let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.clear_previous(cx);
-        let outline_panel = cx.view().clone();
-        let buffer_search_subscription =
-            new_active_editor
-                .to_searchable_item_handle(cx)
-                .map(|handle| {
-                    handle.subscribe_to_search_events(
-                        cx,
-                        Box::new(move |_, cx| {
-                            outline_panel.update(cx, |outline_panel, cx| {
-                                outline_panel.update_search_matches(cx);
-                                outline_panel.autoscroll(cx);
-                            });
-                        }),
-                    )
-                });
+        let buffer_search_subscription = cx.subscribe(
+            &new_active_editor,
+            |outline_panel: &mut Self, _, e: &SearchEvent, cx: &mut ViewContext<'_, Self>| {
+                dbg!(e);
+                outline_panel.update_search_matches(cx);
+                outline_panel.autoscroll(cx);
+            },
+        );
         self.active_item = Some(ActiveItem {
             item_id: new_active_editor.item_id(),
             _buffer_search_subscription: buffer_search_subscription,
@@ -2841,6 +2835,7 @@ impl OutlinePanel {
         self.autoscroll(cx);
     }
 
+    // TODO kb does not trigger (no event is sent) when no matches are found
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let project_search_matches = self
             .workspace
@@ -2866,13 +2861,15 @@ impl OutlinePanel {
                 update_cached_entries = true;
             }
         } else {
-            update_cached_entries =
-                self.mode != ItemsDisplayMode::Search || self.search_matches.is_empty();
-            self.search_matches = if buffer_search_matches.is_empty() {
+            let new_search_matches = if buffer_search_matches.is_empty() {
                 project_search_matches
             } else {
                 buffer_search_matches
             };
+            update_cached_entries = self.mode != ItemsDisplayMode::Search
+                || self.search_matches.is_empty()
+                || self.search_matches != new_search_matches;
+            self.search_matches = new_search_matches;
             self.mode = ItemsDisplayMode::Search;
         }
         if update_cached_entries {
