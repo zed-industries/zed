@@ -344,7 +344,13 @@ fn main() {
     //     }
     // }
     {
-        if !gpui::check_single_instance(|single_instance| {
+        let app_identifier = match *release_channel::RELEASE_CHANNEL {
+            release_channel::ReleaseChannel::Dev => "Zed-Editor-Instance-Dev",
+            release_channel::ReleaseChannel::Nightly => "Zed-Editor-Instance-Nightly",
+            release_channel::ReleaseChannel::Preview => "Zed-Editor-Instance-Preview",
+            release_channel::ReleaseChannel::Stable => "Zed-Editor-Instance-Stable",
+        };
+        if !gpui::check_single_instance(app_identifier, true, |single_instance| {
             if *db::ZED_STATELESS
                 || *release_channel::RELEASE_CHANNEL == release_channel::ReleaseChannel::Dev
             {

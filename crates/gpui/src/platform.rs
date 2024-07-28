@@ -63,13 +63,24 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 /// TODO:
-pub fn check_single_instance<F>(f: F) -> bool
+pub fn check_single_instance<F>(app_identifier: &str, local: bool, f: F) -> bool
 where
     F: FnOnce(bool) -> bool,
 {
-    // TODO:
-    // we should let user to provide their own app identifier.
-    unsafe { CreateMutexW(None, true, &HSTRING::from("Local\\Zed-Editor-Instance")).log_err() };
+    let identifier = if local {
+        format!("Local\\{app_identifier}")
+    } else {
+        format!("Global\\{app_identifier}")
+    };
+    unsafe {
+        CreateMutexW(None, true, &HSTRING::from(identifier.as_str())).expect(
+            format!(
+                "Unable to create mutex!\n{:?}",
+                std::io::Error::last_os_error()
+            )
+            .as_str(),
+        );
+    }
     let last_err = unsafe { GetLastError() };
     let is_single_instance = last_err != ERROR_ALREADY_EXISTS;
     f(is_single_instance)
