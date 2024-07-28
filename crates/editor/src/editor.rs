@@ -578,7 +578,6 @@ pub struct Editor {
     /// Otherwise it represents the point that the breakpoint will be shown
     pub gutter_breakpoint_indicator: Option<DisplayPoint>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
-    active_debuggers: bool,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1923,7 +1922,6 @@ impl Editor {
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
-            active_debuggers: false,
             breadcrumb_header: None,
             focused_block: None,
         };
@@ -6020,19 +6018,24 @@ impl Editor {
             position: breakpoint_position,
         };
 
-        let mut write_guard = breakpoints.write();
+        // Putting the write guard within it's own scope so it's dropped
+        // before project updates it's breakpoints. This is done to prevent
+        // a data race condition where project waits to get a read lock
+        {
+            let mut write_guard = breakpoints.write();
 
-        let breakpoint_set = write_guard.entry(buffer_id).or_default();
+            let breakpoint_set = write_guard.entry(buffer_id).or_default();
 
-        if !breakpoint_set.remove(&breakpoint) {
-            breakpoint_set.insert(breakpoint);
+            if !breakpoint_set.remove(&breakpoint) {
+                breakpoint_set.insert(breakpoint);
+            }
         }
 
-        if self.active_debuggers {
-            project.update(cx, |project, cx| {
-                project.update_file_breakpoints(buffer_id, cx)
-            });
-        }
+        project.update(cx, |project, cx| {
+            if project.has_active_debugger() {
+                project.update_file_breakpoints(buffer_id, cx);
+            }
+        });
 
         cx.notify();
     }

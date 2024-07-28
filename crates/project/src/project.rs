@@ -1195,6 +1195,10 @@ impl Project {
         })
     }
 
+    pub fn has_active_debugger(&self) -> bool {
+        self.debug_adapters.len() > 0
+    }
+
     pub fn start_debug_adapter_client(
         &mut self,
         debug_task: task::ResolvedTask,
@@ -1300,7 +1304,6 @@ impl Project {
             for client in clients {
                 let bps = breakpoints_locations.clone();
                 let file_path = file_path.clone();
-
                 cx.background_executor()
                     .spawn(async move {
                         client.set_breakpoints(file_path, bps).await?;
