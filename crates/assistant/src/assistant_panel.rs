@@ -1261,11 +1261,7 @@ impl ContextEditor {
                     .collect::<String>()
             ));
             match &step.operations {
-                Some(EditStepOperations::Parsed {
-                    operations,
-                    raw_output,
-                }) => {
-                    output.push_str(&format!("Raw Output:\n{raw_output}\n"));
+                Some(EditStepOperations::Ready(operations)) => {
                     output.push_str("Parsed Operations:\n");
                     for op in operations {
                         output.push_str(&format!("  {:?}\n", op));
@@ -2163,7 +2159,7 @@ impl ContextEditor {
         let button_text = match self.edit_step_for_cursor(cx) {
             Some(edit_step) => match &edit_step.operations {
                 Some(EditStepOperations::Pending(_)) => "Computing Changes...",
-                Some(EditStepOperations::Parsed { .. }) => "Apply Changes",
+                Some(EditStepOperations::Ready(_)) => "Apply Changes",
                 None => "Send",
             },
             None => "Send",

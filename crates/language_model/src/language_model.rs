@@ -55,24 +55,9 @@ pub trait LanguageModel: Send + Sync {
     ) -> BoxFuture<'static, Result<serde_json::Value>>;
 }
 
-pub trait LanguageModelTool: DeserializeOwned + JsonSchema {
+pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;
     fn description() -> String;
-}
-
-impl dyn LanguageModel {
-    pub async fn use_tool<T: LanguageModelTool>(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncAppContext,
-    ) -> Result<T> {
-        let schema = schemars::schema_for!(T);
-        let schema_json = serde_json::to_value(&schema).unwrap();
-        let request =
-            LanguageModel::use_tool(self, request, T::name(), T::description(), schema_json, cx);
-        let response = request.await?;
-        Ok(serde_json::from_value(response)?)
-    }
 }
 
 pub trait LanguageModelProvider: 'static {

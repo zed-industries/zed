@@ -18,11 +18,11 @@ use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscrip
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
 };
-use language_model::LanguageModelRequestMessage;
-use language_model::{LanguageModelRequest, Role};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, LanguageModelTool, Role};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp,
@@ -361,7 +361,7 @@ impl EditStep {
         project: &Model<Project>,
         cx: &AppContext,
     ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
-        let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
+        let Some(EditStepOperations::Ready(operations)) = &self.operations else {
             return Task::ready(HashMap::default());
         };
 
@@ -471,32 +471,26 @@ impl EditStep {
 }
 
 pub enum EditStepOperations {
-    Pending(Task<Result<()>>),
-    Parsed {
-        operations: Vec<EditOperation>,
-        raw_output: String,
-    },
+    Pending(Task<Option<()>>),
+    Ready(Vec<EditOperation>),
 }
 
 impl Debug for EditStepOperations {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            EditStepOperations::Parsed {
-                operations,
-                raw_output,
-            } => f
+            EditStepOperations::Ready(operations) => f
                 .debug_struct("EditStepOperations::Parsed")
                 .field("operations", operations)
-                .field("raw_output", raw_output)
                 .finish(),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub struct EditOperation {
     pub path: String,
+    #[serde(flatten)]
     pub kind: EditOperationKind,
 }
 
@@ -608,7 +602,8 @@ impl EditOperation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "kind")]
 pub enum EditOperationKind {
     Update {
         symbol: String,
@@ -1304,7 +1299,22 @@ impl Context {
         &self,
         edit_step: &EditStep,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Option<()>> {
+        #[derive(Debug, Deserialize, JsonSchema)]
+        struct EditTool {
+            operations: Vec<EditOperation>,
+        }
+
+        impl LanguageModelTool for EditTool {
+            fn name() -> String {
+                "edit".into()
+            }
+
+            fn description() -> String {
+                "suggest edits to one or more locations in the codebase".into()
+            }
+        }
+
         let mut request = self.to_completion_request(cx);
         let edit_step_range = edit_step.source_range.clone();
         let step_text = self
@@ -1313,160 +1323,41 @@ impl Context {
             .text_for_range(edit_step_range.clone())
             .collect::<String>();
 
-        cx.spawn(|this, mut cx| async move {
-            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
+        cx.spawn(|this, mut cx| {
+            async move {
+                let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
 
-            let mut prompt = prompt_store.operations_prompt();
-            prompt.push_str(&step_text);
+                let mut prompt = prompt_store.operations_prompt();
+                prompt.push_str(&step_text);
 
-            request.messages.push(LanguageModelRequestMessage {
-                role: Role::User,
-                content: prompt,
-            });
+                request.messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: prompt,
+                });
 
-            let raw_output = cx
-                .update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).complete(request, cx)
+                let tool_use = cx
+                    .update(|cx| {
+                        LanguageModelCompletionProvider::read_global(cx)
+                            .use_tool::<EditTool>(request, cx)
+                    })?
+                    .await?;
+
+                this.update(&mut cx, |this, cx| {
+                    let step_index = this
+                        .edit_steps
+                        .binary_search_by(|step| {
+                            step.source_range
+                                .cmp(&edit_step_range, this.buffer.read(cx))
+                        })
+                        .map_err(|_| anyhow!("edit step not found"))?;
+                    if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
+                        edit_step.operations = Some(EditStepOperations::Ready(tool_use.operations));
+                        cx.emit(ContextEvent::EditStepsChanged);
+                    }
+                    anyhow::Ok(())
                 })?
-                .await?;
-
-            let operations = Self::parse_edit_operations(&raw_output);
-            this.update(&mut cx, |this, cx| {
-                let step_index = this
-                    .edit_steps
-                    .binary_search_by(|step| {
-                        step.source_range
-                            .cmp(&edit_step_range, this.buffer.read(cx))
-                    })
-                    .map_err(|_| anyhow!("edit step not found"))?;
-                if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                    edit_step.operations = Some(EditStepOperations::Parsed {
-                        operations,
-                        raw_output,
-                    });
-                    cx.emit(ContextEvent::EditStepsChanged);
-                }
-                anyhow::Ok(())
-            })?
-        })
-    }
-
-    fn parse_edit_operations(xml: &str) -> Vec<EditOperation> {
-        let Some(start_ix) = xml.find("<operations>") else {
-            return Vec::new();
-        };
-        let Some(end_ix) = xml[start_ix..].find("</operations>") else {
-            return Vec::new();
-        };
-        let end_ix = end_ix + start_ix + "</operations>".len();
-
-        let doc = roxmltree::Document::parse(&xml[start_ix..end_ix]).log_err();
-        doc.map_or(Vec::new(), |doc| {
-            doc.root_element()
-                .children()
-                .map(|node| {
-                    let tag_name = node.tag_name().name();
-                    let path = node
-                        .attribute("path")
-                        .with_context(|| {
-                            format!("invalid node {node:?}, missing attribute 'path'")
-                        })?
-                        .to_string();
-                    let kind = match tag_name {
-                        "update" => EditOperationKind::Update {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "create" => EditOperationKind::Create {
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "prepend_child" => EditOperationKind::PrependChild {
-                            symbol: node.attribute("symbol").map(String::from),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "append_child" => EditOperationKind::AppendChild {
-                            symbol: node.attribute("symbol").map(String::from),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "delete" => EditOperationKind::Delete {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                        },
-                        _ => return Err(anyhow!("invalid node {node:?}")),
-                    };
-                    anyhow::Ok(EditOperation { path, kind })
-                })
-                .filter_map(|op| op.log_err())
-                .collect()
+            }
+            .log_err()
         })
     }
 
@@ -3081,55 +2972,6 @@ mod tests {
                 })
                 .collect()
         }
-    }
-
-    #[test]
-    fn test_parse_edit_operations() {
-        let operations = indoc! {r#"
-            Here are the operations to make all fields of the Canvas struct private:
-
-            <operations>
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub pixels" description="Remove pub keyword from pixels field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub size" description="Remove pub keyword from size field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub stride" description="Remove pub keyword from stride field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub format" description="Remove pub keyword from format field" />
-            </operations>
-        "#};
-
-        let parsed_operations = Context::parse_edit_operations(operations);
-        assert_eq!(
-            parsed_operations,
-            vec![
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub pixels".to_string(),
-                        description: "Remove pub keyword from pixels field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub size".to_string(),
-                        description: "Remove pub keyword from size field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub stride".to_string(),
-                        description: "Remove pub keyword from stride field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub format".to_string(),
-                        description: "Remove pub keyword from format field".to_string(),
-                    },
-                },
-            ]
-        );
     }
 
     #[gpui::test]

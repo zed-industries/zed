@@ -3,7 +3,7 @@ use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
 use language_model::{
     LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest,
+    LanguageModelRequest, LanguageModelTool,
 };
 use smol::lock::{Semaphore, SemaphoreGuardArc};
 use std::{pin::Pin, sync::Arc, task::Poll};
@@ -182,6 +182,25 @@ impl LanguageModelCompletionProvider {
             }
             Ok(completion)
         })
+    }
+
+    pub fn use_tool<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AppContext,
+    ) -> Task<Result<T>> {
+        if let Some(language_model) = self.active_model() {
+            cx.spawn(|cx| async move {
+                let schema = schemars::schema_for!(T);
+                let schema_json = serde_json::to_value(&schema).unwrap();
+                let request =
+                    language_model.use_tool(request, T::name(), T::description(), schema_json, &cx);
+                let response = request.await?;
+                Ok(serde_json::from_value(response)?)
+            })
+        } else {
+            Task::ready(Err(anyhow!("No active model set")))
+        }
     }
 }
 

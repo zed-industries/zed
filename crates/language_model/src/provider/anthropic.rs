@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, pin_mut, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
     WhiteSpace,
@@ -187,11 +187,32 @@ pub fn count_anthropic_tokens(
 }
 
 impl AnthropicModel {
+    fn request_completion(
+        &self,
+        request: anthropic::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<anthropic::Response>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            anthropic::request_completion(http_client.as_ref(), &api_url, &api_key, request).await
+        }
+        .boxed()
+    }
+
     fn stream_completion(
         &self,
         request: anthropic::Request,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::ResponseEvent>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event>>>> {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
@@ -270,30 +291,39 @@ impl LanguageModel for AnthropicModel {
     fn use_tool(
         &self,
         request: LanguageModelRequest,
-        name: String,
-        description: String,
+        tool_name: String,
+        tool_description: String,
         input_schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
         let mut request = request.into_anthropic(self.model.id().into());
-        request.tool_choice = Some(anthropic::ToolChoice::Tool { name: name.clone() });
+        request.tool_choice = Some(anthropic::ToolChoice::Tool {
+            name: tool_name.clone(),
+        });
         request.tools = vec![anthropic::Tool {
-            name: name.clone(),
-            description,
+            name: tool_name.clone(),
+            description: tool_description,
             input_schema,
         }];
 
-        let request = self.stream_completion(request, cx);
+        let response = self.request_completion(request, cx);
         async move {
-            let response = request.await?;
-            let tool_uses = anthropic::extract_tool_uses_from_events(response);
-            pin_mut!(tool_uses);
-            let tool_use = tool_uses.next().await.context("tool was not used")??;
-            if tool_use.name == name {
-                Ok(tool_use.input)
-            } else {
-                Err(anyhow!("used wrong tool {:?}", tool_use.name))
-            }
+            let response = response.await?;
+            response
+                .content
+                .into_iter()
+                .find_map(|content| {
+                    if let anthropic::Content::ToolUse { name, input, .. } = content {
+                        if name == tool_name {
+                            Some(input)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .context("tool not used")
         }
         .boxed()
     }
