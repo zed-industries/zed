@@ -13,13 +13,6 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
 
-    /*
-        When you are adding a new message type, instead of adding it in semantic order
-        and bumping the message ID's of everything that follows, add it at the end of the
-        file and bump the max number. See this
-        https://github.com/zed-industries/zed/pull/7890#discussion_r1496621823
-
-    */
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;
@@ -201,8 +194,8 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        QueryLanguageModel query_language_model = 166;
-        QueryLanguageModelResponse query_language_model_response = 167;
+        QueryLanguageModel query_language_model = 224;
+        QueryLanguageModelResponse query_language_model_response = 225; // current max
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -269,10 +262,11 @@ message Envelope {
         UpdateDevServerProject update_dev_server_project = 221;
 
         AddWorktree add_worktree = 222;
-        AddWorktreeResponse add_worktree_response = 223; // current max
+        AddWorktreeResponse add_worktree_response = 223;
     }
 
     reserved 158 to 161;
+    reserved 166 to 169;
 }
 
 // Messages
@@ -2053,6 +2047,7 @@ enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
+    reserved 3;
 }
 
 message QueryLanguageModel {
