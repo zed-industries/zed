@@ -57,6 +57,7 @@ pub struct OpenAiSettingsContent {
     pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<open_ai::Model>>,
 }
+
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
