@@ -334,6 +334,18 @@ impl Session {
                                         .ok();
                                 }
                             });
+
+                            // todo!(kyle): send kernelinforequest once our shell channel read/writes are split
+                            // cx.spawn(|this, mut cx| async move {
+                            //     cx.background_executor()
+                            //         .timer(Duration::from_millis(120))
+                            //         .await;
+                            //     this.update(&mut cx, |this, cx| {
+                            //         this.send(KernelInfoRequest {}.into(), cx).ok();
+                            //     })
+                            //     .ok();
+                            // })
+                            // .detach();
                         })
                         .ok();
                     }

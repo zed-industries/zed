@@ -362,7 +362,7 @@ refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
 rsa = "0.9.6"
-runtimelib = { version = "0.12", default-features = false, features = [
+runtimelib = { version = "0.14", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
