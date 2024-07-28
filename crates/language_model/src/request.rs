@@ -1,4 +1,5 @@
 use crate::role::Role;
+use anthropic::MessageContent;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -112,13 +113,17 @@ impl LanguageModelRequest {
                             Role::Assistant => anthropic::Role::Assistant,
                             Role::System => return None,
                         },
-                        content: message.content,
+                        content: vec![MessageContent::Text {
+                            text: message.content,
+                        }],
                     })
                 })
                 .collect(),
             stream: true,
             max_tokens: 4092,
             system: system_message,
+            tools: Vec::new(),
+            tool_choice: None,
         }
     }
 }

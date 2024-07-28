@@ -104,13 +104,32 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub system: String,
-    pub max_tokens: u32,
+    pub max_tokens: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct RequestMessage {
     pub role: Role,
-    pub content: String,
+    pub content: Vec<MessageContent>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageContent {
+    Text {
+        text: String,
+    },
+    ToolUse(ToolUse),
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -136,6 +155,12 @@ pub enum ResponseEvent {
         usage: Usage,
     },
     MessageStop {},
+    ToolUse(ToolUse),
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: Option<bool>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -168,6 +193,12 @@ pub enum ContentBlock {
 pub enum TextDelta {
     TextDelta { text: String },
 }
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
@@ -187,7 +218,9 @@ pub async fn stream_completion(
     if let Some(low_speed_timeout) = low_speed_timeout {
         request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     }
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -245,42 +278,28 @@ pub fn extract_text_from_events(
     })
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use http::IsahcHttpClient;
+pub fn extract_tool_uses_from_events(
+    response: impl Stream<Item = Result<ResponseEvent>>,
+) -> impl Stream<Item = Result<ToolUse>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(ResponseEvent::ToolUse(tool_use)) => Some(Ok(tool_use)),
+            _ => None,
+        }
+    })
+}
 
-//     #[tokio::test]
-//     async fn stream_completion_success() {
-//         let http_client = IsahcHttpClient::new().unwrap();
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Tool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
 
-//         let request = Request {
-//             model: Model::Claude3Opus,
-//             messages: vec![RequestMessage {
-//                 role: Role::User,
-//                 content: "Ping".to_string(),
-//             }],
-//             stream: true,
-//             system: "Respond to ping with pong".to_string(),
-//             max_tokens: 4096,
-//         };
-
-//         let stream = stream_completion(
-//             &http_client,
-//             "https://api.anthropic.com",
-//             &std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY not set"),
-//             request,
-//         )
-//         .await
-//         .unwrap();
-
-//         stream
-//             .for_each(|event| async {
-//                 match event {
-//                     Ok(event) => println!("{:?}", event),
-//                     Err(e) => eprintln!("Error: {:?}", e),
-//                 }
-//             })
-//             .await;
-//     }
-// }
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
+}

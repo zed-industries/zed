@@ -4,15 +4,15 @@ use crate::{
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::BTreeMap;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, pin_mut, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -301,13 +301,63 @@ impl LanguageModel for CloudLanguageModel {
                         kind: proto::LanguageModelRequestKind::Complete as i32,
                         request,
                     });
-                    let chunks = response.await?;
+                    let events = response.await?;
                     Ok(google_ai::extract_text_from_events(
-                        chunks.map(|chunk| Ok(serde_json::from_str(&chunk?.response)?)),
+                        events.map(|event| Ok(serde_json::from_str(&event?.response)?)),
                     )
                     .boxed())
                 }
                 .boxed()
+            }
+        }
+    }
+
+    fn use_tool(
+        &self,
+        request: LanguageModelRequest,
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                let client = self.client.clone();
+                let mut request = request.into_anthropic(model.id().into());
+                request.tool_choice = Some(anthropic::ToolChoice::Tool { name: name.clone() });
+                request.tools = vec![anthropic::Tool {
+                    name: name.clone(),
+                    description,
+                    input_schema,
+                }];
+
+                async move {
+                    let request = serde_json::to_string(&request)?;
+                    let events = client
+                        .request_stream(proto::QueryLanguageModel {
+                            provider: proto::LanguageModelProvider::Anthropic as i32,
+                            kind: proto::LanguageModelRequestKind::Complete as i32,
+                            request,
+                        })
+                        .await?;
+                    let tool_uses = anthropic::extract_tool_uses_from_events(
+                        events.map(|event| Ok(serde_json::from_str(&event?.response)?)),
+                    );
+                    pin_mut!(tool_uses);
+                    let tool_use = tool_uses.next().await.context("tool was not used")??;
+                    if tool_use.name == name {
+                        Ok(tool_use.input)
+                    } else {
+                        Err(anyhow!("used wrong tool {:?}", tool_use.name))
+                    }
+                }
+                .boxed()
+            }
+            CloudModel::OpenAi(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for OpenAI"))).boxed()
+            }
+            CloudModel::Google(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
             }
         }
     }

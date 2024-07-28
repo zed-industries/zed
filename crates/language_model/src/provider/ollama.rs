@@ -6,7 +6,7 @@ use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
 };
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::{future, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 use crate::{
@@ -297,6 +297,17 @@ impl LanguageModel for OllamaLanguageModel {
             Ok(stream)
         }
         .boxed()
+    }
+
+    fn use_tool(
+        &self,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 

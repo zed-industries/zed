@@ -16,6 +16,8 @@ pub use model::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     settings::init(cx);
@@ -42,6 +44,35 @@ pub trait LanguageModel: Send + Sync {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+
+    fn use_tool(
+        &self,
+        request: LanguageModelRequest,
+        name: String,
+        description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>>;
+}
+
+pub trait LanguageModelTool: DeserializeOwned + JsonSchema {
+    fn name() -> String;
+    fn description() -> String;
+}
+
+impl dyn LanguageModel {
+    pub async fn use_tool<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> Result<T> {
+        let schema = schemars::schema_for!(T);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+        let request =
+            LanguageModel::use_tool(self, request, T::name(), T::description(), schema_json, cx);
+        let response = request.await?;
+        Ok(serde_json::from_value(response)?)
+    }
 }
 
 pub trait LanguageModelProvider: 'static {
