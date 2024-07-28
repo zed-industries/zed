@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::{AsyncReadExt, FutureExt};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{HttpBody, HttpClient, HttpClientWithUrl};
 
 use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 
@@ -135,7 +135,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
                     let mut response = http_client
                         .get(
                             &format!("https://docs.rs/{path}"),
-                            AsyncBody::default(),
+                            HttpBody::default(),
                             true,
                         )
                         .await?;

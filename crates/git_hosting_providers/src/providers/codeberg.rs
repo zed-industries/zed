@@ -4,8 +4,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use http_client::HttpClient;
-use isahc::config::Configurable;
-use isahc::{AsyncBody, Request};
+use http_client::{HttpBody, Request};
 use serde::Deserialize;
 use url::Url;
 
@@ -52,7 +51,8 @@ impl Codeberg {
             format!("https://codeberg.org/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}");
 
         let mut request = Request::get(&url)
-            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+            // TODO: replicate this API?
+            // .redirect_policy(isahc::config::RedirectPolicy::Follow)
             .header("Content-Type", "application/json");
 
         if let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN") {
@@ -60,7 +60,7 @@ impl Codeberg {
         }
 
         let mut response = client
-            .send(request.body(AsyncBody::default())?)
+            .send(request.body(HttpBody::default())?)
             .await
             .with_context(|| format!("error fetching Codeberg commit details at {:?}", url))?;
 

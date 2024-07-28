@@ -6,7 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
-use http_client::{self, AsyncBody, HttpClient};
+use http_client::{self, HttpBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,
@@ -360,7 +360,7 @@ impl ExtensionBuilder {
         );
         let mut response = self
             .http
-            .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
+            .get(WASI_ADAPTER_URL, HttpBody::default(), true)
             .await?;
 
         let mut content = Vec::new();
@@ -398,7 +398,7 @@ impl ExtensionBuilder {
         fs::remove_dir_all(&tar_out_dir).ok();
 
         log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
-        let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
+        let mut response = self.http.get(&url, HttpBody::default(), true).await?;
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
         let tar = Archive::new(body);

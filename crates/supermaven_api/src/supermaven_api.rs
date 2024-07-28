@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures::io::BufReader;
 use futures::{AsyncReadExt, Future};
-use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
+use http_client::{HttpBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
@@ -79,7 +79,7 @@ impl SupermavenAdminApi {
 
         let mut response = self
             .http_client
-            .send(request.body(AsyncBody::default())?)
+            .send(request.body(HttpBody::default())?)
             .await
             .with_context(|| "Unable to get Supermaven API Key".to_string())?;
 
@@ -114,7 +114,7 @@ impl SupermavenAdminApi {
 
         let request = HttpRequest::post(&uri)
             .header("Authorization", self.admin_api_key.clone())
-            .body(AsyncBody::from(serde_json::to_vec(&request)?))?;
+            .body(HttpBody::from(serde_json::to_vec(&request)?))?;
 
         let mut response = self
             .http_client
@@ -143,7 +143,7 @@ impl SupermavenAdminApi {
 
         let mut response = self
             .http_client
-            .send(request.body(AsyncBody::default())?)
+            .send(request.body(HttpBody::default())?)
             .await
             .with_context(|| "Unable to delete Supermaven User".to_string())?;
 
@@ -194,7 +194,7 @@ pub async fn latest_release(
     let request = HttpRequest::get(&uri);
 
     let mut response = client
-        .send(request.body(AsyncBody::default())?)
+        .send(request.body(HttpBody::default())?)
         .await
         .with_context(|| "Unable to acquire Supermaven Agent".to_string())?;
 
@@ -258,7 +258,7 @@ pub fn get_supermaven_agent_path(
         let request = HttpRequest::get(&download_info.download_url);
 
         let mut response = client
-            .send(request.body(AsyncBody::default())?)
+            .send(request.body(HttpBody::default())?)
             .await
             .with_context(|| "Unable to download Supermaven Agent".to_string())?;
 

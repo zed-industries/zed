@@ -347,10 +347,6 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
-# We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "text-decoding",
-] }
 itertools = "0.11.0"
 jsonwebtoken = "9.3"
 lazy_static = "1.4.0"

@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{HttpBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, time::Duration};
 use strum::EnumIter;
@@ -184,10 +183,11 @@ pub async fn stream_completion(
         .header("Anthropic-Beta", "tools-2024-04-04")
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    }
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    // TODO: figure out what to do about low_speed_timeout
+    // if let Some(low_speed_timeout) = low_speed_timeout {
+    //     request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    // }
+    let request = request_builder.body(HttpBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());

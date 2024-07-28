@@ -9,7 +9,7 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
     SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use isahc::AsyncBody;
+use http_client::HttpBody;
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
@@ -583,7 +583,7 @@ async fn download_remote_server_binary(
 
         (installation_id, release_channel, telemetry)
     })?;
-    let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+    let request_body = HttpBody::from(serde_json::to_string(&UpdateRequestBody {
         installation_id,
         release_channel,
         telemetry,
@@ -611,7 +611,7 @@ async fn download_release(
         (installation_id, release_channel, telemetry)
     })?;
 
-    let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+    let request_body = HttpBody::from(serde_json::to_string(&UpdateRequestBody {
         installation_id,
         release_channel,
         telemetry,

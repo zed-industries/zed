@@ -1,5 +1,5 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
-use ::http_client::AsyncBody;
+use ::http_client::HttpBody;
 use ::settings::Settings;
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -138,7 +138,7 @@ impl http_client::Host for WasmState {
             let mut response = self
                 .host
                 .http_client
-                .get(url, AsyncBody::default(), true)
+                .get(url, HttpBody::default(), true)
                 .await?;
 
             if response.status().is_client_error() || response.status().is_server_error() {

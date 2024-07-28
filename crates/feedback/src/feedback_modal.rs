@@ -11,7 +11,7 @@ use gpui::{
     PromptLevel, Render, Task, View, ViewContext,
 };
 use http_client::HttpClient;
-use isahc::Request;
+use http_client::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;

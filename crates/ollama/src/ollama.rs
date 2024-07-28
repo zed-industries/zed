@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{HttpBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
@@ -174,11 +173,12 @@ pub async fn stream_chat_completion(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
+    // TODO: Figure out what to do about this
+    // if let Some(low_speed_timeout) = low_speed_timeout {
+    //     request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    // };
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder.body(HttpBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -217,11 +217,12 @@ pub async fn get_models(
         .uri(uri)
         .header("Accept", "application/json");
 
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
+    // TODO: Figure out what to do about this
+    // if let Some(low_speed_timeout) = low_speed_timeout {
+    //     request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    // };
 
-    let request = request_builder.body(AsyncBody::default())?;
+    let request = request_builder.body(HttpBody::default())?;
 
     let mut response = client.send(request).await?;
 
@@ -249,12 +250,10 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({
-                "model": model,
-                "keep_alive": "15m",
-            }),
-        )?))?;
+        .body(HttpBody::from(serde_json::to_string(&serde_json::json!({
+            "model": model,
+            "keep_alive": "15m",
+        }))?))?;
 
     let mut response = match client.send(request).await {
         Ok(response) => response,

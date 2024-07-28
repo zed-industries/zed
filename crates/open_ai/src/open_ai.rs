@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{HttpBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{convert::TryFrom, future::Future, time::Duration};
@@ -238,11 +237,12 @@ pub async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
 
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
+    // TODO: Figure out what to do about this
+    // if let Some(low_speed_timeout) = low_speed_timeout {
+    //     request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    // };
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder.body(HttpBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -331,7 +331,7 @@ pub fn embed<'a>(
         model,
         input: texts.into_iter().collect(),
     };
-    let body = AsyncBody::from(serde_json::to_string(&request).unwrap());
+    let body = HttpBody::from(serde_json::to_string(&request).unwrap());
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)

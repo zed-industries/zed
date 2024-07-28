@@ -5,9 +5,11 @@ use derive_more::Deref;
 use futures::{future::BoxFuture, AsyncRead, AsyncReadExt as _};
 use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
+pub use isahc::http;
+use isahc::AsyncBody as IsahcBody;
 pub use isahc::{
-    http::{Method, StatusCode, Uri},
-    AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
+    http::{Method, Request, Response, StatusCode, Uri},
+    Error, HttpClient as IsahcHttpClient,
 };
 use smol::Unblock;
 #[cfg(feature = "test-support")]
@@ -21,6 +23,9 @@ use std::{
     time::Duration,
 };
 pub use url::Url;
+
+/// The body of an HTTP Request
+pub type HttpBody = IsahcBody;
 
 // A type to implement Read on the inner dyn Read
 struct UreqReader(Box<dyn Read + Send + 'static>);
@@ -148,17 +153,26 @@ impl From<ureq::Response> for HttpBodyNew {
 }
 
 pub trait HttpClient: Send + Sync {
+    // TODO: Make a better API for this once we have ureq in place
+    fn send_with_redirect_policy(
+        &self,
+        req: Request<HttpBody>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>>;
+
     fn send(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>;
+        req: Request<HttpBody>,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
+        self.send_with_redirect_policy(req, false)
+    }
 
     fn get<'a>(
         &'a self,
         uri: &str,
-        body: AsyncBody,
+        body: HttpBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
+    ) -> BoxFuture<'a, Result<Response<HttpBody>, Error>> {
         let request = isahc::Request::builder()
             .redirect_policy(if follow_redirects {
                 RedirectPolicy::Follow
@@ -177,8 +191,8 @@ pub trait HttpClient: Send + Sync {
     fn post_json<'a>(
         &'a self,
         uri: &str,
-        body: AsyncBody,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
+        body: HttpBody,
+    ) -> BoxFuture<'a, Result<Response<HttpBody>, Error>> {
         let request = isahc::Request::builder()
             .method(Method::POST)
             .uri(uri)
@@ -221,11 +235,12 @@ impl HttpClientWithProxy {
 }
 
 impl HttpClient for HttpClientWithProxy {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        req: Request<HttpBody>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
+        self.client.send_with_redirect_policy(req, follow_redirects)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -234,11 +249,12 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 impl HttpClient for Arc<HttpClientWithProxy> {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        req: Request<HttpBody>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
+        self.client.send_with_redirect_policy(req, follow_redirects)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -304,11 +320,12 @@ impl HttpClientWithUrl {
 }
 
 impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        req: Request<HttpBody>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
+        self.client.send_with_redirect_policy(req, follow_redirects)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -317,11 +334,12 @@ impl HttpClient for Arc<HttpClientWithUrl> {
 }
 
 impl HttpClient for HttpClientWithUrl {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
-        self.client.send(req)
+        req: Request<HttpBody>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
+        self.client.send_with_redirect_policy(req, follow_redirects)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -363,10 +381,11 @@ fn read_proxy_from_env() -> Option<Uri> {
 }
 
 impl HttpClient for isahc::HttpClient {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        req: Request<HttpBody>,
+        _follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
         let client = self.clone();
         Box::pin(async move { client.send_async(req).await })
     }
@@ -378,7 +397,7 @@ impl HttpClient for isahc::HttpClient {
 
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<
-    dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>
+    dyn Fn(Request<HttpBody>) -> BoxFuture<'static, Result<Response<HttpBody>, Error>>
         + Send
         + Sync
         + 'static,
@@ -393,8 +412,8 @@ pub struct FakeHttpClient {
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
-        Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
-        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
+        Fut: futures::Future<Output = Result<Response<HttpBody>, Error>> + Send + 'static,
+        F: Fn(Request<HttpBody>) -> Fut + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),
@@ -435,10 +454,11 @@ impl fmt::Debug for FakeHttpClient {
 
 #[cfg(feature = "test-support")]
 impl HttpClient for FakeHttpClient {
-    fn send(
+    fn send_with_redirect_policy(
         &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        req: Request<HttpBody>,
+        _follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
         let future = (self.handler)(req);
         Box::pin(async move { future.await.map(Into::into) })
     }
