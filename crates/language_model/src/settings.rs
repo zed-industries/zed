@@ -6,12 +6,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-use crate::{
-    provider::{
-        anthropic::AnthropicSettings, cloud::ZedDotDevSettings, ollama::OllamaSettings,
-        open_ai::OpenAiSettings,
-    },
-    CloudModel,
+use crate::provider::{
+    anthropic::AnthropicSettings,
+    cloud::{self, ZedDotDevSettings},
+    google::GoogleSettings,
+    ollama::OllamaSettings,
+    open_ai::OpenAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -25,6 +25,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
+    pub google: GoogleSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -34,6 +35,7 @@ pub struct AllLanguageModelSettingsContent {
     pub openai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
+    pub google: Option<GoogleSettingsContent>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -57,8 +59,15 @@ pub struct OpenAiSettingsContent {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct GoogleSettingsContent {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<google_ai::Model>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
-    available_models: Option<Vec<CloudModel>>,
+    available_models: Option<Vec<cloud::AvailableModel>>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {
@@ -133,6 +142,26 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.zed_dot_dev.available_models,
                 value
                     .zed_dot_dev
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
+
+            merge(
+                &mut settings.google.api_url,
+                value.google.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            if let Some(low_speed_timeout_in_seconds) = value
+                .google
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.google.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
+            }
+            merge(
+                &mut settings.google.available_models,
+                value
+                    .google
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );

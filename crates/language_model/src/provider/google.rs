@@ -2,12 +2,12 @@ use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use google_ai::stream_generate_content;
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
     WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::stream_completion;
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
@@ -18,20 +18,20 @@ use util::ResultExt;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
+    LanguageModelProviderState, LanguageModelRequest,
 };
 
-const PROVIDER_ID: &str = "openai";
-const PROVIDER_NAME: &str = "OpenAI";
+const PROVIDER_ID: &str = "google";
+const PROVIDER_NAME: &str = "Google AI";
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct OpenAiSettings {
+pub struct GoogleSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<open_ai::Model>,
+    pub available_models: Vec<google_ai::Model>,
 }
 
-pub struct OpenAiLanguageModelProvider {
+pub struct GoogleLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Model<State>,
 }
@@ -41,11 +41,11 @@ struct State {
     _subscription: Subscription,
 }
 
-impl OpenAiLanguageModelProvider {
+impl GoogleLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
         });
@@ -54,7 +54,7 @@ impl OpenAiLanguageModelProvider {
     }
 }
 
-impl LanguageModelProviderState for OpenAiLanguageModelProvider {
+impl LanguageModelProviderState for GoogleLanguageModelProvider {
     fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
         Some(cx.observe(&self.state, |_, _, cx| {
             cx.notify();
@@ -62,7 +62,7 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
     }
 }
 
-impl LanguageModelProvider for OpenAiLanguageModelProvider {
+impl LanguageModelProvider for GoogleLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
@@ -74,16 +74,16 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Add base models from open_ai::Model::iter()
-        for model in open_ai::Model::iter() {
-            if !matches!(model, open_ai::Model::Custom { .. }) {
+        // Add base models from google_ai::Model::iter()
+        for model in google_ai::Model::iter() {
+            if !matches!(model, google_ai::Model::Custom { .. }) {
                 models.insert(model.id().to_string(), model);
             }
         }
 
         // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
-            .openai
+            .google
             .available_models
         {
             models.insert(model.id().to_string(), model.clone());
@@ -92,7 +92,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         models
             .into_values()
             .map(|model| {
-                Arc::new(OpenAiLanguageModel {
+                Arc::new(GoogleLanguageModel {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     state: self.state.clone(),
@@ -111,12 +111,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             Task::ready(Ok(()))
         } else {
             let api_url = AllLanguageModelSettings::get_global(cx)
-                .openai
+                .google
                 .api_url
                 .clone();
             let state = self.state.clone();
             cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                let api_key = if let Ok(api_key) = std::env::var("GOOGLE_AI_API_KEY") {
                     api_key
                 } else {
                     let (_, api_key) = cx
@@ -125,6 +125,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                         .ok_or_else(|| anyhow!("credentials not found"))?;
                     String::from_utf8(api_key)?
                 };
+
                 state.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
                     cx.notify();
@@ -139,9 +140,9 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
+        let delete_credentials =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).google.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             state.update(&mut cx, |this, cx| {
@@ -152,14 +153,14 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
-pub struct OpenAiLanguageModel {
+pub struct GoogleLanguageModel {
     id: LanguageModelId,
-    model: open_ai::Model,
+    model: google_ai::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
 }
 
-impl LanguageModel for OpenAiLanguageModel {
+impl LanguageModel for GoogleLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
     }
@@ -177,7 +178,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("openai/{}", self.model.id())
+        format!("google/{}", self.model.id())
     }
 
     fn max_token_count(&self) -> usize {
@@ -189,7 +190,28 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_open_ai_tokens(request, self.model.clone(), cx)
+        let request = request.into_google(self.model.id().to_string());
+        let http_client = self.http_client.clone();
+        let api_key = self.state.read(cx).api_key.clone();
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .google
+            .api_url
+            .clone();
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let response = google_ai::count_tokens(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                google_ai::CountTokensRequest {
+                    contents: request.contents,
+                },
+            )
+            .await?;
+            Ok(response.total_tokens)
+        }
+        .boxed()
     }
 
     fn stream_completion(
@@ -197,65 +219,25 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = request.into_open_ai(self.model.id().into());
+        let request = request.into_google(self.model.id().to_string());
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).google;
+            (state.api_key.clone(), settings.api_url.clone())
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
-            let response = request.await?;
-            Ok(open_ai::extract_text_from_events(response).boxed())
+            let response =
+                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
+            let events = response.await?;
+            Ok(google_ai::extract_text_from_events(events).boxed())
         }
         .boxed()
     }
-}
-
-pub fn count_open_ai_tokens(
-    request: LanguageModelRequest,
-    model: open_ai::Model,
-    cx: &AppContext,
-) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.content),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            if let open_ai::Model::Custom { .. } = model {
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            } else {
-                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
-            }
-        })
-        .boxed()
 }
 
 struct AuthenticationPrompt {
@@ -268,10 +250,7 @@ impl AuthenticationPrompt {
         Self {
             api_key: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(
-                    "sk-000000000000000000000000000000000000000000000000",
-                    cx,
-                );
+                editor.set_placeholder_text("AIzaSy...", cx);
                 editor
             }),
             state,
@@ -284,7 +263,7 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
         let state = self.state.clone();
@@ -328,13 +307,11 @@ impl AuthenticationPrompt {
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&str; 6] = [
-            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: platform.openai.com/api-keys",
-            " - Make sure your OpenAI account has credits",
-            " - Having a subscription for another service like GitHub Copilot won't work.",
+        const INSTRUCTIONS: [&str; 4] = [
+            "To use the Google AI assistant, you need to add your Google AI API key.",
+            "You can create an API key at: https://makersuite.google.com/app/apikey",
             "",
-            "Paste your OpenAI API key below and hit enter to use the assistant:",
+            "Paste your Google AI API key below and hit enter to use the assistant:",
         ];
 
         v_flex()
@@ -356,7 +333,7 @@ impl Render for AuthenticationPrompt {
             )
             .child(
                 Label::new(
-                    "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
+                    "You can also assign the GOOGLE_AI_API_KEY environment variable and restart Zed.",
                 )
                 .size(LabelSize::Small),
             )

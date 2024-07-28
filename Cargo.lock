@@ -472,27 +472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant_tooling"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "futures 0.3.28",
- "gpui",
- "log",
- "project",
- "repair_json",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "sum_tree",
- "ui",
- "unindent",
- "util",
-]
-
-[[package]]
 name = "async-attributes"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4811,8 +4790,10 @@ dependencies = [
  "anyhow",
  "futures 0.3.28",
  "http_client",
+ "schemars",
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -5988,6 +5969,7 @@ dependencies = [
  "env_logger",
  "feature_flags",
  "futures 0.3.28",
+ "google_ai",
  "gpui",
  "http_client",
  "language",
@@ -8713,15 +8695,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "581008d2099240d37fb08d77ad713bcaec2c4d89d50b5b21a8bb1996bbab68ab"
 dependencies = [
  "bytecheck",
-]
-
-[[package]]
-name = "repair_json"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee191e184125fe72cb59b74160e25584e3908f2aaa84cbda1e161347102aa15"
-dependencies = [
- "thiserror",
 ]
 
 [[package]]
