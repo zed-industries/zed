@@ -232,11 +232,6 @@ impl SummaryIndex {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
-            // let mut db_entries = digest_db
-            //     .iter(&txn)
-            //     .context("failed to create iterator")?
-            //     .move_between_keys()
-            //     .peekable();
 
             for entry in worktree.files(false, 0) {
                 let entry_db_key = db_key_for_path(&entry.path);
@@ -431,6 +426,7 @@ impl SummaryIndex {
         };
 
         let response = provider.stream_completion_bg(request, cx);
+        let code_len = code.len();
 
         cx.background_executor().spawn(async move {
             let mut chunks = response.await?;
@@ -440,7 +436,14 @@ impl SummaryIndex {
                 answer.push_str(chunk?.as_str());
             }
 
-            log::info!("Code summarization took {:?}", start.elapsed());
+            log::info!(
+                "It took {:?} to summarize {:?} bytes of code.",
+                start.elapsed(),
+                code_len
+            );
+
+            log::debug!("Summary was: {:?}", &answer);
+
             Ok(answer)
         })
     }

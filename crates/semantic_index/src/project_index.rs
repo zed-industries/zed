@@ -445,27 +445,11 @@ impl ProjectIndex {
         drop(summaries_tx);
 
         let project = self.project.clone();
-        // let summary_provider = self.summary_provider.clone();
         cx.spawn(|cx| async move {
-            // #[cfg(debug_assertions)]
-            // let embedding_query_start = std::time::Instant::now();
-            // log::info!("Searching for {query}");
-
-            // let query_embeddings = embedding_provider
-            //     .embed(&[TextToEmbed::new(&query)])
-            //     .await?;
-            // let query_embedding = query_embeddings
-            //     .into_iter()
-            //     .next()
-            //     .ok_or_else(|| anyhow!("no embedding for query"))?;
-
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {
                 results_by_worker.push(Vec::<FileSummary>::new());
             }
-
-            // #[cfg(debug_assertions)]
-            // let search_start = std::time::Instant::now();
 
             cx.background_executor()
                 .scoped(|cx| {
@@ -483,20 +467,8 @@ impl ProjectIndex {
                 scan_task.log_err();
             }
 
-            project.read_with(&cx, |project, cx| {
+            project.read_with(&cx, |_project, _cx| {
                 results_by_worker.into_iter().flatten().collect()
-
-                // #[cfg(debug_assertions)]
-                // {
-                //     let search_elapsed = search_start.elapsed();
-                //     log::debug!(
-                //         "searched {} entries in {:?}",
-                //         search_results.len(),
-                //         search_elapsed
-                //     );
-                //     let embedding_query_elapsed = embedding_query_start.elapsed();
-                //     log::debug!("embedding query took {:?}", embedding_query_elapsed);
-                // }
             })
         })
     }
