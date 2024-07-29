@@ -203,7 +203,7 @@ impl AnthropicModel {
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            anthropic::request_completion(http_client.as_ref(), &api_url, &api_key, request).await
+            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request).await
         }
         .boxed()
     }

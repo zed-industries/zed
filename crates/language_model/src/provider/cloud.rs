@@ -234,15 +234,13 @@ impl LanguageModel for CloudLanguageModel {
                 };
                 async move {
                     let request = serde_json::to_string(&request)?;
-                    let response = client.request(proto::QueryLanguageModel {
-                        provider: proto::LanguageModelProvider::Google as i32,
-                        kind: proto::LanguageModelRequestKind::CountTokens as i32,
-                        request,
-                    });
-                    let response = response.await?;
-                    let response =
-                        serde_json::from_str::<google_ai::CountTokensResponse>(&response.response)?;
-                    Ok(response.total_tokens)
+                    let response = client
+                        .request(proto::CountLanguageModelTokens {
+                            provider: proto::LanguageModelProvider::Google as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(response.token_count as usize)
                 }
                 .boxed()
             }
@@ -260,14 +258,14 @@ impl LanguageModel for CloudLanguageModel {
                 let request = request.into_anthropic(model.id().into());
                 async move {
                     let request = serde_json::to_string(&request)?;
-                    let response = client.request_stream(proto::QueryLanguageModel {
-                        provider: proto::LanguageModelProvider::Anthropic as i32,
-                        kind: proto::LanguageModelRequestKind::Complete as i32,
-                        request,
-                    });
-                    let chunks = response.await?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Anthropic as i32,
+                            request,
+                        })
+                        .await?;
                     Ok(anthropic::extract_text_from_events(
-                        chunks.map(|chunk| Ok(serde_json::from_str(&chunk?.response)?)),
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
                     )
                     .boxed())
                 }
@@ -278,14 +276,14 @@ impl LanguageModel for CloudLanguageModel {
                 let request = request.into_open_ai(model.id().into());
                 async move {
                     let request = serde_json::to_string(&request)?;
-                    let response = client.request_stream(proto::QueryLanguageModel {
-                        provider: proto::LanguageModelProvider::OpenAi as i32,
-                        kind: proto::LanguageModelRequestKind::Complete as i32,
-                        request,
-                    });
-                    let chunks = response.await?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::OpenAi as i32,
+                            request,
+                        })
+                        .await?;
                     Ok(open_ai::extract_text_from_events(
-                        chunks.map(|chunk| Ok(serde_json::from_str(&chunk?.response)?)),
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
                     )
                     .boxed())
                 }
@@ -296,14 +294,14 @@ impl LanguageModel for CloudLanguageModel {
                 let request = request.into_google(model.id().into());
                 async move {
                     let request = serde_json::to_string(&request)?;
-                    let response = client.request_stream(proto::QueryLanguageModel {
-                        provider: proto::LanguageModelProvider::Google as i32,
-                        kind: proto::LanguageModelRequestKind::Complete as i32,
-                        request,
-                    });
-                    let events = response.await?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Google as i32,
+                            request,
+                        })
+                        .await?;
                     Ok(google_ai::extract_text_from_events(
-                        events.map(|event| Ok(serde_json::from_str(&event?.response)?)),
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
                     )
                     .boxed())
                 }
@@ -336,13 +334,12 @@ impl LanguageModel for CloudLanguageModel {
                 async move {
                     let request = serde_json::to_string(&request)?;
                     let response = client
-                        .request(proto::QueryLanguageModel {
+                        .request(proto::CompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Anthropic as i32,
-                            kind: proto::LanguageModelRequestKind::Complete as i32,
                             request,
                         })
                         .await?;
-                    let response: anthropic::Response = serde_json::from_str(&response.response)?;
+                    let response: anthropic::Response = serde_json::from_str(&response.completion)?;
                     response
                         .content
                         .into_iter()

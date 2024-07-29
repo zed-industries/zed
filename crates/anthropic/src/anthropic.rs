@@ -70,7 +70,7 @@ impl Model {
     }
 }
 
-pub async fn request_completion(
+pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
