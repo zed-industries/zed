@@ -93,18 +93,18 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
         let Some(descriptors) = collection.get_descriptors() else {
-            return Vec::new();
+            return names;
         };
-        let mut names = BTreeSet::new();
         for descriptor in descriptors.into_iter() {
             names.extend(lenient_font_attributes::family_name(&descriptor));
         }
         if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
             names.extend(fonts_in_memory);
         }
-        names.into_iter().collect()
+        names
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
