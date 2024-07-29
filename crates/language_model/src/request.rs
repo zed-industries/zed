@@ -1,7 +1,4 @@
-use crate::{
-    model::{CloudModel, LanguageModel},
-    role::Role,
-};
+use crate::role::Role;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -10,60 +7,75 @@ pub struct LanguageModelRequestMessage {
     pub content: String,
 }
 
-impl LanguageModelRequestMessage {
-    pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
-        proto::LanguageModelRequestMessage {
-            role: self.role.to_proto() as i32,
-            content: self.content.clone(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        }
-    }
-}
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LanguageModelRequest {
-    pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
     pub temperature: f32,
 }
 
 impl LanguageModelRequest {
-    pub fn to_proto(&self) -> proto::CompleteWithLanguageModel {
-        proto::CompleteWithLanguageModel {
-            model: self.model.id().to_string(),
-            messages: self.messages.iter().map(|m| m.to_proto()).collect(),
-            stop: self.stop.clone(),
+    pub fn into_open_ai(self, model: String) -> open_ai::Request {
+        open_ai::Request {
+            model,
+            messages: self
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => open_ai::RequestMessage::User {
+                        content: msg.content,
+                    },
+                    Role::Assistant => open_ai::RequestMessage::Assistant {
+                        content: Some(msg.content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => open_ai::RequestMessage::System {
+                        content: msg.content,
+                    },
+                })
+                .collect(),
+            stream: true,
+            stop: self.stop,
             temperature: self.temperature,
-            tool_choice: None,
             tools: Vec::new(),
+            tool_choice: None,
         }
     }
 
-    /// Before we send the request to the server, we can perform fixups on it appropriate to the model.
-    pub fn preprocess(&mut self) {
-        match &self.model {
-            LanguageModel::OpenAi(_) => {}
-            LanguageModel::Anthropic(_) => {}
-            LanguageModel::Ollama(_) => {}
-            LanguageModel::Cloud(model) => match model {
-                CloudModel::Claude3Opus
-                | CloudModel::Claude3Sonnet
-                | CloudModel::Claude3Haiku
-                | CloudModel::Claude3_5Sonnet => {
-                    self.preprocess_anthropic();
-                }
-                _ => {}
-            },
+    pub fn into_google(self, model: String) -> google_ai::GenerateContentRequest {
+        google_ai::GenerateContentRequest {
+            model,
+            contents: self
+                .messages
+                .into_iter()
+                .map(|msg| google_ai::Content {
+                    parts: vec![google_ai::Part::TextPart(google_ai::TextPart {
+                        text: msg.content,
+                    })],
+                    role: match msg.role {
+                        Role::User => google_ai::Role::User,
+                        Role::Assistant => google_ai::Role::Model,
+                        Role::System => google_ai::Role::User, // Google AI doesn't have a system role
+                    },
+                })
+                .collect(),
+            generation_config: Some(google_ai::GenerationConfig {
+                candidate_count: Some(1),
+                stop_sequences: Some(self.stop),
+                max_output_tokens: None,
+                temperature: Some(self.temperature as f64),
+                top_p: None,
+                top_k: None,
+            }),
+            safety_settings: None,
         }
     }
 
-    pub fn preprocess_anthropic(&mut self) {
+    pub fn into_anthropic(self, model: String) -> anthropic::Request {
         let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
         let mut system_message = String::new();
 
-        for message in self.messages.drain(..) {
+        for message in self.messages {
             if message.content.is_empty() {
                 continue;
             }
@@ -89,17 +101,25 @@ impl LanguageModelRequest {
             }
         }
 
-        if !system_message.is_empty() {
-            new_messages.insert(
-                0,
-                LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: system_message,
-                },
-            );
+        anthropic::Request {
+            model,
+            messages: new_messages
+                .into_iter()
+                .filter_map(|message| {
+                    Some(anthropic::RequestMessage {
+                        role: match message.role {
+                            Role::User => anthropic::Role::User,
+                            Role::Assistant => anthropic::Role::Assistant,
+                            Role::System => return None,
+                        },
+                        content: message.content,
+                    })
+                })
+                .collect(),
+            stream: true,
+            max_tokens: 4092,
+            system: system_message,
         }
-
-        self.messages = new_messages;
     }
 }
 

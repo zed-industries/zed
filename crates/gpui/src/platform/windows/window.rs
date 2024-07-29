@@ -40,6 +40,7 @@ pub struct WindowsWindowState {
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub system_key_handled: bool,
 
     pub renderer: BladeRenderer,
 
@@ -60,6 +61,8 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
+    pub(crate) windows_version: WindowsVersion,
+    pub(crate) validation_number: usize,
 }
 
 impl WindowsWindowState {
@@ -87,6 +90,7 @@ impl WindowsWindowState {
         let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let system_key_handled = false;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new();
         let nc_button_pressed = None;
@@ -100,6 +104,7 @@ impl WindowsWindowState {
             scale_factor,
             callbacks,
             input_handler,
+            system_key_handled,
             renderer,
             click_state,
             system_settings,
@@ -219,6 +224,8 @@ impl WindowsWindowStatePtr {
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
             executor: context.executor.clone(),
+            windows_version: context.windows_version,
+            validation_number: context.validation_number,
         }))
     }
 }
@@ -244,6 +251,8 @@ struct WindowCreateContext {
     is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
+    windows_version: WindowsVersion,
+    validation_number: usize,
 }
 
 impl WindowsWindow {
@@ -253,6 +262,8 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
+        windows_version: WindowsVersion,
+        validation_number: usize,
     ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -292,9 +303,11 @@ impl WindowsWindow {
             is_movable: params.is_movable,
             executor,
             current_cursor,
+            windows_version,
+            validation_number,
         };
         let lpparam = Some(&context as *const _ as *const _);
-        let raw_hwnd = unsafe {
+        let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
                 classname,
@@ -310,7 +323,10 @@ impl WindowsWindow {
                 lpparam,
             )
         };
+        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
+        let raw_hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
         unsafe {
@@ -340,9 +356,10 @@ impl WindowsWindow {
 
 impl rwh::HasWindowHandle for WindowsWindow {
     fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let raw =
-            rwh::Win32WindowHandle::new(unsafe { NonZeroIsize::new_unchecked(self.0.hwnd.0) })
-                .into();
+        let raw = rwh::Win32WindowHandle::new(unsafe {
+            NonZeroIsize::new_unchecked(self.0.hwnd.0 as isize)
+        })
+        .into();
         Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
@@ -506,8 +523,8 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd) };
-        unsafe { SetFocus(hwnd) };
+        unsafe { SetActiveWindow(hwnd).log_err() };
+        unsafe { SetFocus(hwnd).log_err() };
         // todo(windows)
         // crate `windows 0.56` reports true as Err
         unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -654,6 +671,10 @@ impl PlatformWindow for WindowsWindow {
     fn get_raw_handle(&self) -> HWND {
         self.0.hwnd
     }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        Some(self.0.state.borrow().renderer.gpu_specs())
+    }
 }
 
 #[implement(IDropTarget)]
@@ -671,7 +692,7 @@ impl WindowsDragDropHandler {
 }
 
 #[allow(non_snake_case)]
-impl IDropTarget_Impl for WindowsDragDropHandler {
+impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
         pdataobj: Option<&IDataObject>,
@@ -949,7 +970,7 @@ unsafe extern "system" fn wnd_proc(
 }
 
 pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
-    if hwnd == HWND(0) {
+    if hwnd.is_invalid() {
         return None;
     }
 
@@ -979,7 +1000,7 @@ fn get_module_handle() -> HMODULE {
 fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     let window_handle = state_ptr.hwnd;
     let handler = WindowsDragDropHandler(state_ptr);
-    // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
+    // The lifetime of `IDropTarget` is handled by Windows, it won't release until
     // we call `RevokeDragDrop`.
     // So, it's safe to drop it here.
     let drag_drop_handler: IDropTarget = handler.into();
@@ -1051,7 +1072,7 @@ mod windows_renderer {
     };
 
     pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
-        let raw = RawWindow { hwnd: hwnd.0 };
+        let raw = RawWindow { hwnd };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
@@ -1074,15 +1095,15 @@ mod windows_renderer {
     }
 
     struct RawWindow {
-        hwnd: isize,
+        hwnd: HWND,
     }
 
     impl rwh::HasWindowHandle for RawWindow {
         fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
             Ok(unsafe {
-                let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
+                let hwnd = NonZeroIsize::new_unchecked(self.hwnd.0 as isize);
                 let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
+                let hinstance = get_window_long(self.hwnd, GWLP_HINSTANCE);
                 handle.hinstance = NonZeroIsize::new(hinstance);
                 rwh::WindowHandle::borrow_raw(handle.into())
             })

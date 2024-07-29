@@ -3,13 +3,12 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    EditorStyle, Hover, RangeToAnchorExt,
+    Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, CursorStyle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, View,
-    ViewContext, WeakView,
+    div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, ScrollHandle, Size, StatefulInteractiveElement,
+    StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -22,9 +21,8 @@ use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent, Tooltip};
+use ui::{prelude::*, window_is_transparent};
 use util::TryFutureExt;
-use workspace::Workspace;
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -64,6 +62,18 @@ pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) ->
             }
         }
     }
+
+    let diagnostic_popover = editor.hover_state.diagnostic_popover.clone();
+    if let Some(d) = diagnostic_popover {
+        let keyboard_grace = d.keyboard_grace.borrow();
+        if *keyboard_grace {
+            if let Some(anchor) = d.anchor {
+                show_hover(editor, anchor, false, cx);
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -213,22 +223,9 @@ fn show_hover(
     };
 
     if !ignore_timeout {
-        if editor
-            .hover_state
-            .info_popovers
-            .iter()
-            .any(|InfoPopover { symbol_range, .. }| {
-                symbol_range
-                    .as_text_range()
-                    .map(|range| {
-                        let hover_range = range.to_offset(&snapshot.buffer_snapshot);
-                        let offset = anchor.to_offset(&snapshot.buffer_snapshot);
-                        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                        // use an inclusive range here to check if we should dismiss the popover
-                        (hover_range.start..=hover_range.end).contains(&offset)
-                    })
-                    .unwrap_or(false)
-            })
+        if same_info_hover(editor, &snapshot, anchor)
+            || same_diagnostic_hover(editor, &snapshot, anchor)
+            || editor.hover_state.diagnostic_popover.is_some()
         {
             // Hover triggered from same location as last time. Don't show again.
             return;
@@ -299,12 +296,85 @@ fn show_hover(
                     })
             });
 
+            let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
+                let text = match local_diagnostic.diagnostic.source {
+                    Some(ref source) => {
+                        format!("{source}: {}", local_diagnostic.diagnostic.message)
+                    }
+                    None => local_diagnostic.diagnostic.message.clone(),
+                };
+
+                let mut border_color: Option<Hsla> = None;
+                let mut background_color: Option<Hsla> = None;
+
+                let parsed_content = cx
+                    .new_view(|cx| {
+                        let status_colors = cx.theme().status();
+
+                        match local_diagnostic.diagnostic.severity {
+                            DiagnosticSeverity::ERROR => {
+                                background_color = Some(status_colors.error_background);
+                                border_color = Some(status_colors.error_border);
+                            }
+                            DiagnosticSeverity::WARNING => {
+                                background_color = Some(status_colors.warning_background);
+                                border_color = Some(status_colors.warning_border);
+                            }
+                            DiagnosticSeverity::INFORMATION => {
+                                background_color = Some(status_colors.info_background);
+                                border_color = Some(status_colors.info_border);
+                            }
+                            DiagnosticSeverity::HINT => {
+                                background_color = Some(status_colors.hint_background);
+                                border_color = Some(status_colors.hint_border);
+                            }
+                            _ => {
+                                background_color = Some(status_colors.ignored_background);
+                                border_color = Some(status_colors.ignored_border);
+                            }
+                        };
+                        let settings = ThemeSettings::get_global(cx);
+                        let mut base_text_style = cx.text_style();
+                        base_text_style.refine(&TextStyleRefinement {
+                            font_family: Some(settings.ui_font.family.clone()),
+                            font_size: Some(settings.ui_font_size.into()),
+                            color: Some(cx.theme().colors().editor_foreground),
+                            background_color: Some(gpui::transparent_black()),
+
+                            ..Default::default()
+                        });
+                        let markdown_style = MarkdownStyle {
+                            base_text_style,
+                            selection_background_color: { cx.theme().players().local().selection },
+                            link: TextStyleRefinement {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(cx.theme().colors().editor_foreground),
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
+                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                    })
+                    .ok();
+
+                Some(DiagnosticPopover {
+                    local_diagnostic,
+                    primary_diagnostic,
+                    parsed_content,
+                    border_color,
+                    background_color,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                })
+            } else {
+                None
+            };
+
             this.update(&mut cx, |this, _| {
-                this.hover_state.diagnostic_popover =
-                    local_diagnostic.map(|local_diagnostic| DiagnosticPopover {
-                        local_diagnostic,
-                        primary_diagnostic,
-                    });
+                this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
             let hovers_response = hover_request.await;
@@ -373,6 +443,43 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+}
+
+fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .info_popovers
+        .iter()
+        .any(|InfoPopover { symbol_range, .. }| {
+            symbol_range
+                .as_text_range()
+                .map(|range| {
+                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                    let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
+                    (hover_range.start..=hover_range.end).contains(&offset)
+                })
+                .unwrap_or(false)
+        })
+}
+
+fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor
+        .hover_state
+        .diagnostic_popover
+        .as_ref()
+        .map(|diagnostic| {
+            let hover_range = diagnostic
+                .local_diagnostic
+                .range
+                .to_offset(&snapshot.buffer_snapshot);
+            let offset = anchor.to_offset(&snapshot.buffer_snapshot);
+
+            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
+            (hover_range.start..=hover_range.end).contains(&offset)
+        })
+        .unwrap_or(false)
 }
 
 async fn parse_blocks(
@@ -472,10 +579,8 @@ impl HoverState {
     pub fn render(
         &mut self,
         snapshot: &EditorSnapshot,
-        style: &EditorStyle,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        _workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -510,7 +615,7 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(style, max_size, cx));
+            elements.push(diagnostic_popover.render(max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
             elements.push(info_popover.render(max_size, cx));
@@ -522,7 +627,14 @@ impl HoverState {
     pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            for markdown_view in &info_popover.parsed_content {
+            if let Some(markdown_view) = &info_popover.parsed_content {
+                if markdown_view.focus_handle(cx).is_focused(cx) {
+                    hover_popover_is_focused = true;
+                }
+            }
+        }
+        if let Some(diagnostic_popover) = &self.diagnostic_popover {
+            if let Some(markdown_view) = &diagnostic_popover.parsed_content {
                 if markdown_view.focus_handle(cx).is_focused(cx) {
                     hover_popover_is_focused = true;
                 }
@@ -583,84 +695,55 @@ impl InfoPopover {
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
+    parsed_content: Option<View<Markdown>>,
+    border_color: Option<Hsla>,
+    background_color: Option<Hsla>,
+    pub keyboard_grace: Rc<RefCell<bool>>,
+    pub anchor: Option<Anchor>,
 }
 
 impl DiagnosticPopover {
-    pub fn render(
-        &self,
-        style: &EditorStyle,
-        max_size: Size<Pixels>,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement {
-        let text = match &self.local_diagnostic.diagnostic.source {
-            Some(source) => format!("{source}: {}", self.local_diagnostic.diagnostic.message),
-            None => self.local_diagnostic.diagnostic.message.clone(),
-        };
-
-        let status_colors = cx.theme().status();
-
-        struct DiagnosticColors {
-            pub background: Hsla,
-            pub border: Hsla,
+    pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+        let keyboard_grace = Rc::clone(&self.keyboard_grace);
+        let mut markdown_div = div().py_1().px_2();
+        if let Some(markdown) = &self.parsed_content {
+            markdown_div = markdown_div.child(markdown.clone());
         }
 
-        let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
-            DiagnosticSeverity::ERROR => DiagnosticColors {
-                background: status_colors.error_background,
-                border: status_colors.error_border,
-            },
-            DiagnosticSeverity::WARNING => DiagnosticColors {
-                background: status_colors.warning_background,
-                border: status_colors.warning_border,
-            },
-            DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                background: status_colors.info_background,
-                border: status_colors.info_border,
-            },
-            DiagnosticSeverity::HINT => DiagnosticColors {
-                background: status_colors.hint_background,
-                border: status_colors.hint_border,
-            },
-            _ => DiagnosticColors {
-                background: status_colors.ignored_background,
-                border: status_colors.ignored_border,
-            },
-        };
+        if let Some(background_color) = &self.background_color {
+            markdown_div = markdown_div.bg(*background_color);
+        }
 
-        div()
+        if let Some(border_color) = &self.border_color {
+            markdown_div = markdown_div
+                .border_1()
+                .border_color(*border_color)
+                .rounded_lg();
+        }
+
+        let diagnostic_div = div()
             .id("diagnostic")
             .block()
+            .max_h(max_size.height)
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
             .when(window_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
-            .cursor(CursorStyle::PointingHand)
-            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
-            .child(
-                div()
-                    .id("diagnostic-inner")
-                    .overflow_y_scroll()
-                    .max_w(max_size.width)
-                    .max_h(max_size.height)
-                    .px_2()
-                    .py_1()
-                    .bg(diagnostic_colors.background)
-                    .text_color(style.text.color)
-                    .border_1()
-                    .border_color(diagnostic_colors.border)
-                    .rounded_lg()
-                    .child(SharedString::from(text)),
-            )
-            .into_any_element()
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                let mut keyboard_grace = keyboard_grace.borrow_mut();
+                *keyboard_grace = false;
+                cx.stop_propagation();
+            })
+            .child(markdown_div);
+
+        diagnostic_div.into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {

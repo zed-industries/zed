@@ -998,7 +998,7 @@ mod tests {
                 positions: Vec::new(),
                 worktree_id: 0,
                 path: Arc::from(Path::new("b0.5")),
-                path_prefix: Arc::from(""),
+                path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
             }),
             ProjectPanelOrdMatch(PathMatch {
@@ -1006,7 +1006,7 @@ mod tests {
                 positions: Vec::new(),
                 worktree_id: 0,
                 path: Arc::from(Path::new("c1.0")),
-                path_prefix: Arc::from(""),
+                path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
             }),
             ProjectPanelOrdMatch(PathMatch {
@@ -1014,7 +1014,7 @@ mod tests {
                 positions: Vec::new(),
                 worktree_id: 0,
                 path: Arc::from(Path::new("a1.0")),
-                path_prefix: Arc::from(""),
+                path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
             }),
             ProjectPanelOrdMatch(PathMatch {
@@ -1022,7 +1022,7 @@ mod tests {
                 positions: Vec::new(),
                 worktree_id: 0,
                 path: Arc::from(Path::new("a0.5")),
-                path_prefix: Arc::from(""),
+                path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
             }),
             ProjectPanelOrdMatch(PathMatch {
@@ -1030,7 +1030,7 @@ mod tests {
                 positions: Vec::new(),
                 worktree_id: 0,
                 path: Arc::from(Path::new("b1.0")),
-                path_prefix: Arc::from(""),
+                path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
             }),
         ];
@@ -1044,7 +1044,7 @@ mod tests {
                     positions: Vec::new(),
                     worktree_id: 0,
                     path: Arc::from(Path::new("a1.0")),
-                    path_prefix: Arc::from(""),
+                    path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
@@ -1052,7 +1052,7 @@ mod tests {
                     positions: Vec::new(),
                     worktree_id: 0,
                     path: Arc::from(Path::new("b1.0")),
-                    path_prefix: Arc::from(""),
+                    path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
@@ -1060,7 +1060,7 @@ mod tests {
                     positions: Vec::new(),
                     worktree_id: 0,
                     path: Arc::from(Path::new("c1.0")),
-                    path_prefix: Arc::from(""),
+                    path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
@@ -1068,7 +1068,7 @@ mod tests {
                     positions: Vec::new(),
                     worktree_id: 0,
                     path: Arc::from(Path::new("a0.5")),
-                    path_prefix: Arc::from(""),
+                    path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
@@ -1076,7 +1076,7 @@ mod tests {
                     positions: Vec::new(),
                     worktree_id: 0,
                     path: Arc::from(Path::new("b0.5")),
-                    path_prefix: Arc::from(""),
+                    path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
                 }),
             ]

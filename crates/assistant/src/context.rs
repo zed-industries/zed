@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider, MessageId,
-    MessageStatus,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, LanguageModelCompletionProvider,
+    MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -9,7 +9,7 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
@@ -532,7 +532,21 @@ impl EditOperation {
                     .path_candidates
                     .iter()
                     .find(|item| item.string == symbol)
-                    .context("symbol not found")?;
+                    .with_context(|| {
+                        format!(
+                            "symbol {:?} not found in path {:?}.\ncandidates: {:?}.\nparse status: {:?}. text:\n{}",
+                            symbol,
+                            path,
+                            outline
+                                .path_candidates
+                                .iter()
+                                .map(|candidate| &candidate.string)
+                                .collect::<Vec<_>>(),
+                            *parse_status.borrow(),
+                            buffer.read_with(&cx, |buffer, _| buffer.text()).unwrap_or_else(|_| "error".to_string())
+                        )
+                    })?;
+
                 buffer.update(&mut cx, |buffer, _| {
                     let outline_item = &outline.items[candidate.id];
                     let symbol_range = outline_item.range.to_point(buffer);
@@ -1123,14 +1137,17 @@ impl Context {
                     .timer(Duration::from_millis(200))
                     .await;
 
-                let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
-                    .await?;
+                if let Some(token_count) = cx.update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                })? {
+                    let token_count = token_count.await?;
 
-                this.update(&mut cx, |this, cx| {
-                    this.token_count = Some(token_count);
-                    cx.notify()
-                })?;
+                    this.update(&mut cx, |this, cx| {
+                        this.token_count = Some(token_count);
+                        cx.notify()
+                    })?;
+                }
+
                 anyhow::Ok(())
             }
             .log_err()
@@ -1308,7 +1325,9 @@ impl Context {
             });
 
             let raw_output = cx
-                .update(|cx| CompletionProvider::global(cx).complete(request, cx))?
+                .update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).complete(request, cx)
+                })?
                 .await?;
 
             let operations = Self::parse_edit_operations(&raw_output);
@@ -1612,13 +1631,14 @@ impl Context {
                 .then_some(message.id)
         })?;
 
-        if !CompletionProvider::global(cx).is_authenticated() {
+        if !LanguageModelCompletionProvider::read_global(cx).is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
 
         let request = self.to_completion_request(cx);
-        let stream = CompletionProvider::global(cx).stream_completion(request, cx);
+        let stream =
+            LanguageModelCompletionProvider::read_global(cx).stream_completion(request, cx);
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
@@ -1675,7 +1695,7 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != this.completion_count);
-                        this.summarize(cx);
+                        this.summarize(false, cx);
                     })?;
 
                     anyhow::Ok(())
@@ -1698,11 +1718,14 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        let model = CompletionProvider::global(cx).model();
+                        let model_telemetry_id = LanguageModelCompletionProvider::read_global(cx)
+                            .active_model()
+                            .map(|m| m.telemetry_id())
+                            .unwrap_or_default();
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
-                            model.telemetry_id(),
+                            model_telemetry_id,
                             response_latency,
                             error_message,
                         );
@@ -1727,7 +1750,6 @@ impl Context {
             .map(|message| message.to_request_message(self.buffer.read(cx)));
 
         LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
             messages: messages.collect(),
             stop: vec![],
             temperature: 1.0,
@@ -1968,9 +1990,9 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
-        if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
+    pub(super) fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
+            if !LanguageModelCompletionProvider::read_global(cx).is_authenticated(cx) {
                 return;
             }
 
@@ -1982,24 +2004,29 @@ impl Context {
                     content: "Summarize the context into a short title without punctuation.".into(),
                 }));
             let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).stream_completion(request, cx);
+            let stream =
+                LanguageModelCompletionProvider::read_global(cx).stream_completion(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
                     let mut messages = stream.await?;
 
+                    let mut replaced = !replace_old;
                     while let Some(message) = messages.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(Default::default());
+                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            if !replaced && replace_old {
+                                summary.text.clear();
+                                replaced = true;
+                            }
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -2142,34 +2169,51 @@ impl Context {
 
             if let Some(summary) = summary {
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
-                let path = if let Some(old_path) = old_path {
-                    old_path
-                } else {
-                    let mut discriminant = 1;
-                    let mut new_path;
-                    loop {
-                        new_path = contexts_dir().join(&format!(
-                            "{} - {}.zed.json",
-                            summary.trim(),
-                            discriminant
-                        ));
-                        if fs.is_file(&new_path).await {
-                            discriminant += 1;
-                        } else {
-                            break;
-                        }
+                let mut discriminant = 1;
+                let mut new_path;
+                loop {
+                    new_path = contexts_dir().join(&format!(
+                        "{} - {}.zed.json",
+                        summary.trim(),
+                        discriminant
+                    ));
+                    if fs.is_file(&new_path).await {
+                        discriminant += 1;
+                    } else {
+                        break;
                     }
-                    new_path
-                };
+                }
 
                 fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
+                fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path))?;
+                if let Some(old_path) = old_path {
+                    if new_path != old_path {
+                        fs.remove_file(
+                            &old_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+
+                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
         });
+    }
+
+    pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+        let timestamp = self.next_timestamp();
+        let summary = self.summary.get_or_insert(ContextSummary::default());
+        summary.timestamp = timestamp;
+        summary.done = true;
+        summary.text = custom_summary;
+        cx.emit(ContextEvent::SummaryChanged);
     }
 }
 
@@ -2482,7 +2526,6 @@ mod tests {
         MessageId,
     };
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
-    use completion::FakeCompletionProvider;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
     use indoc::indoc;
@@ -2502,7 +2545,8 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        completion::LanguageModelCompletionProvider::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2634,7 +2678,8 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        FakeCompletionProvider::setup_test(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        completion::LanguageModelCompletionProvider::test(cx);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -2727,7 +2772,8 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        completion::LanguageModelCompletionProvider::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2812,7 +2858,8 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.update(Project::init_settings);
         cx.update(assistant_panel::init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2937,7 +2984,11 @@ mod tests {
         cx.update(prompt_library::init);
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        let fake_provider = cx.update(FakeCompletionProvider::setup_test);
+
+        let fake_provider = cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
+
+        let fake_model = fake_provider.test_model();
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
@@ -3003,8 +3054,8 @@ mod tests {
         });
 
         // Simulate the LLM completion
-        fake_provider.send_last_completion_chunk(llm_response.to_string());
-        fake_provider.finish_last_completion();
+        fake_model.send_last_completion_chunk(llm_response.to_string());
+        fake_model.finish_last_completion();
 
         // Wait for the completion to be processed
         cx.run_until_parked();
@@ -3085,7 +3136,8 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
@@ -3161,7 +3213,9 @@ mod tests {
 
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(completion::LanguageModelCompletionProvider::test);
+
         cx.update(assistant_panel::init);
         let slash_commands = cx.update(SlashCommandRegistry::default_global);
         slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);

@@ -85,12 +85,8 @@ To do so, add the following to your Zed `settings.json`:
 
 ```json
 {
-  "assistant": {
-    "version": "1",
-    "provider": {
-      "name": "openai",
-      "type": "openai",
-      "default_model": "gpt-4-turbo-preview",
+  "language_models": {
+    "openai": {
       "api_url": "http://localhost:11434/v1"
     }
   }
@@ -103,51 +99,36 @@ The custom URL here is `http://localhost:11434/v1`.
 
 You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
 
-1. Add the following to your Zed `settings.json`:
+1. Download, for example, the `mistral` model with Ollama:
 
-  ```json
-  {
-    "assistant": {
-      "version": "1",
-      "provider": {
-        "name": "openai",
-        "type": "openai",
-        "default_model": "gpt-4-turbo-preview",
-        "api_url": "http://localhost:11434/v1"
-      }
+   ```
+   ollama pull mistral
+   ```
+
+2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
+
+   ```
+   ollama serve
+   ```
+
+3. In the assistant panel, select one of the Ollama models using the model dropdown.
+4. (Optional) If you want to change the default url that is used to access the Ollama server, you can do so by adding the following settings:
+
+```json
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434"
     }
   }
-  ```
-2. Download, for example, the `mistral` model with Ollama:
-  ```
-  ollama run mistral
-  ```
-3. Copy the model and change its name to match the model in the Zed `settings.json`:
-  ```
-  ollama cp mistral gpt-4-turbo-preview
-  ```
-4. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
-  ```
-  ollama
-  ```
-5. Restart Zed
+}
+```
 
 ### Using Claude 3.5 Sonnet
 
-You can use Claude with the Zed assistant by adding the following settings:
+You can use Claude with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-```json
-"assistant": {
-  "version": "1",
-  "provider": {
-    "default_model": "claude-3-5-sonnet",
-    "name": "anthropic"
-  }
-},
-```
-
-When you save the settings, the assistant panel will open and ask you to add your Anthropic API key.
-You need can obtain this key [here](https://console.anthropic.com/settings/keys).
+You need can obtain an API key [here](https://console.anthropic.com/settings/keys).
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
 

@@ -103,6 +103,10 @@ impl AnyProtoClient {
         let envelope = request.into_envelope(0, None, None);
         self.0.send(envelope)
     }
+
+    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
+        self.0.send(message)
+    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -199,12 +203,9 @@ messages!(
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
-    (CompleteWithLanguageModel, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountTokensWithLanguageModel, Background),
-    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -274,7 +275,6 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LanguageModelResponse, Background),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -294,6 +294,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
+    (QueryLanguageModel, Background),
+    (QueryLanguageModelResponse, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -395,7 +397,6 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
-    // Remote development
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
@@ -409,9 +410,7 @@ request_messages!(
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (CompleteWithLanguageModel, LanguageModelResponse),
     (ComputeEmbeddings, ComputeEmbeddingsResponse),
-    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -464,6 +463,7 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
+    (QueryLanguageModel, QueryLanguageModelResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -515,7 +515,6 @@ request_messages!(
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
-    // Remote development
     (AddWorktree, AddWorktreeResponse),
 );
 

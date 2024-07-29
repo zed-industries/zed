@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http::github::{build_tarball_url, GitHubLspBinaryVersion};
+use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -297,6 +297,11 @@ pub struct EsLintLspAdapter {
 impl EsLintLspAdapter {
     const CURRENT_VERSION: &'static str = "release/2.4.4";
 
+    #[cfg(not(windows))]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    #[cfg(windows)]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: &'static str = "eslint";
 
@@ -406,7 +411,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+        let url = build_asset_url(
+            "microsoft/vscode-eslint",
+            Self::CURRENT_VERSION,
+            Self::GITHUB_ASSET_KIND,
+        )?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
@@ -432,14 +441,39 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&destination_path).await?;
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
+                    .await?;
+                }
+            }
 
             let mut dir = fs::read_dir(&destination_path).await?;
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
+
+            #[cfg(target_os = "windows")]
+            {
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("client").join("src").join("shared"),
+                )
+                .await?;
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("server").join("src").join("shared"),
+                )
+                .await?;
+            }
 
             self.node
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
@@ -494,6 +528,25 @@ async fn get_cached_eslint_server_binary(
     })
     .await
     .log_err()
+}
+
+#[cfg(target_os = "windows")]
+async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
+    if fs::metadata(&src_dir).await.is_err() {
+        return Err(anyhow!("Directory {} not present.", src_dir.display()));
+    }
+    if fs::metadata(&dest_dir).await.is_ok() {
+        fs::remove_file(&dest_dir).await?;
+    }
+    fs::create_dir_all(&dest_dir).await?;
+    let mut entries = fs::read_dir(&src_dir).await?;
+    while let Some(entry) = entries.try_next().await? {
+        let entry_path = entry.path();
+        let entry_name = entry.file_name();
+        let dest_path = dest_dir.join(&entry_name);
+        fs::copy(&entry_path, &dest_path).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

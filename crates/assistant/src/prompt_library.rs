@@ -1,6 +1,6 @@
 use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant,
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
+    LanguageModelCompletionProvider,
 };
 use anyhow::{anyhow, Result};
 use assets::Assets;
@@ -636,9 +636,9 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let provider = CompletionProvider::global(cx);
+        let provider = LanguageModelCompletionProvider::read_global(cx);
         let initial_prompt = action.prompt.clone();
-        if provider.is_authenticated() {
+        if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
                 assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
             })
@@ -734,29 +734,29 @@ impl PromptLibrary {
                     const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-                    let token_count = cx
-                        .update(|cx| {
-                            let provider = CompletionProvider::global(cx);
-                            let model = provider.model();
-                            provider.count_tokens(
-                                LanguageModelRequest {
-                                    model,
-                                    messages: vec![LanguageModelRequestMessage {
-                                        role: Role::System,
-                                        content: body.to_string(),
-                                    }],
-                                    stop: Vec::new(),
-                                    temperature: 1.,
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?;
-                    this.update(&mut cx, |this, cx| {
-                        let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
-                        prompt_editor.token_count = Some(token_count);
-                        cx.notify();
-                    })
+                    if let Some(token_count) = cx.update(|cx| {
+                        LanguageModelCompletionProvider::read_global(cx).count_tokens(
+                            LanguageModelRequest {
+                                messages: vec![LanguageModelRequestMessage {
+                                    role: Role::System,
+                                    content: body.to_string(),
+                                }],
+                                stop: Vec::new(),
+                                temperature: 1.,
+                            },
+                            cx,
+                        )
+                    })? {
+                        let token_count = token_count.await?;
+
+                        this.update(&mut cx, |this, cx| {
+                            let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
+                            prompt_editor.token_count = Some(token_count);
+                            cx.notify();
+                        })
+                    } else {
+                        Ok(())
+                    }
                 }
                 .log_err()
             });
@@ -806,7 +806,7 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let current_model = CompletionProvider::global(cx).model();
+                let current_model = LanguageModelCompletionProvider::read_global(cx).active_model();
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -917,7 +917,11 @@ impl PromptLibrary {
                                                                     format!(
                                                                         "Model: {}",
                                                                         current_model
-                                                                            .display_name()
+                                                                            .as_ref()
+                                                                            .map(|model| model
+                                                                                .name()
+                                                                                .0)
+                                                                            .unwrap_or_default()
                                                                     ),
                                                                     cx,
                                                                 )

@@ -27,6 +27,7 @@ use gpui::{
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use serde_json::Value;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -213,6 +214,8 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
+    pub data: Option<Value>,
 }
 
 /// TODO - move this into the `project` crate and make it private.
@@ -1399,7 +1402,7 @@ impl Buffer {
                 LineEnding::normalize(&mut new_text);
 
                 let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = "".into();
+                let empty: Arc<str> = Arc::default();
 
                 let mut edits = Vec::new();
                 let mut old_offset = 0;
@@ -1717,7 +1720,7 @@ impl Buffer {
             .get(&self.text.replica_id())
             .map_or(true, |set| !set.selections.is_empty())
         {
-            self.set_active_selections(Arc::from([]), false, Default::default(), cx);
+            self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
     }
 
@@ -3055,6 +3058,43 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn injections_intersecting_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, &Arc<Language>)> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .injection_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.injection_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let ranges = syntax_matches.peek().and_then(|mat| {
+                let config = &configs[mat.grammar_index]?;
+                let content_capture_range = mat.captures.iter().find_map(|capture| {
+                    if capture.index == config.content_capture_ix {
+                        Some(capture.node.byte_range())
+                    } else {
+                        None
+                    }
+                })?;
+                let language = self.language_at(content_capture_range.start)?;
+                Some((content_capture_range, language))
+            });
+            syntax_matches.advance();
+            ranges
+        })
+    }
+
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
@@ -3844,6 +3884,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            data: None,
         }
     }
 }

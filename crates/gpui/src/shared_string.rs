@@ -1,4 +1,5 @@
 use derive_more::{Deref, DerefMut};
+
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, sync::Arc};
 use util::arc_cow::ArcCow;
@@ -10,7 +11,7 @@ pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {
     fn default() -> Self {
-        Self(ArcCow::Owned("".into()))
+        Self(ArcCow::Owned(Arc::default()))
     }
 }
 

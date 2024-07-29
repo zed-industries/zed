@@ -2,9 +2,9 @@ use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
     X11ClientStatePtr,
 };
@@ -14,6 +14,7 @@ use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
+    properties::WmSizeHints,
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -370,6 +371,14 @@ impl X11WindowState {
                 format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
                     visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
             })?;
+
+        if let Some(size) = params.window_min_size {
+            let mut size_hints = WmSizeHints::new();
+            size_hints.min_size = Some((size.width.0 as i32, size.height.0 as i32));
+            size_hints
+                .set_normal_hints(xcb_connection, x_window)
+                .unwrap();
+        }
 
         let reply = xcb_connection
             .get_geometry(x_window)
@@ -1221,6 +1230,14 @@ impl PlatformWindow for X11Window {
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
         let coords = self.get_root_position(position);
         let message = ClientMessageEvent::new(
             32,
@@ -1384,5 +1401,9 @@ impl PlatformWindow for X11Window {
         if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
             appearance_changed();
         }
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.0.state.borrow().renderer.gpu_specs().into()
     }
 }

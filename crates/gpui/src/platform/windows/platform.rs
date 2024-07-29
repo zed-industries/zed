@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
+    mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
@@ -21,7 +22,10 @@ use windows::{
     Win32::{
         Foundation::*,
         Globalization::u_memcpy,
-        Graphics::Gdi::*,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+        },
         Security::Credentials::*,
         System::{
             Com::*,
@@ -49,9 +53,12 @@ pub(crate) struct WindowsPlatform {
     icon: HICON,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<dyn PlatformTextSystem>,
+    text_system: Arc<DirectWriteTextSystem>,
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
+    windows_version: WindowsVersion,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    validation_number: usize,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -90,19 +97,22 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
-            log::info!("Using direct write text system.");
-            Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
-        } else {
-            log::info!("Using cosmic text system.");
-            Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
-        };
+        let bitmap_factory = ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let clipboard_hash_format = register_clipboard_format(CLIPBOARD_HASH_FORMAT).unwrap();
         let clipboard_metadata_format =
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
+        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let validation_number = rand::random::<usize>();
 
         Self {
             state,
@@ -113,6 +123,9 @@ impl WindowsPlatform {
             text_system,
             clipboard_hash_format,
             clipboard_metadata_format,
+            windows_version,
+            bitmap_factory,
+            validation_number,
         }
     }
 
@@ -149,7 +162,16 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
+        if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -196,7 +218,11 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0)) {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
@@ -305,6 +331,8 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.foreground_executor.clone(),
             lock.current_cursor,
+            self.windows_version,
+            self.validation_number,
         )?;
         drop(lock);
         let handle = window.get_raw_handle();
@@ -489,7 +517,7 @@ impl Platform for WindowsPlatform {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
         if lock.current_cursor.0 != hcursor.0 {
-            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0 as isize));
             lock.current_cursor = hcursor;
         }
     }
@@ -585,8 +613,10 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        self.text_system.destroy();
-        unsafe { OleUninitialize() };
+        unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
+            OleUninitialize();
+        }
     }
 }
 
@@ -600,7 +630,7 @@ fn open_target(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
         }
     }
@@ -616,7 +646,7 @@ fn open_target_in_explorer(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!(
                 "Unable to open target in explorer: {}",
                 std::io::Error::last_os_error()
@@ -648,11 +678,12 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync(vsync_evnet: HANDLE) {
+fn begin_vsync(vsync_event: HANDLE) {
+    let event: SafeHandle = vsync_event.into();
     std::thread::spawn(move || unsafe {
         loop {
             windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(vsync_evnet).log_err();
+            SetEvent(*event).log_err();
         }
     });
 }
@@ -728,7 +759,7 @@ fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
         let handle = GlobalLock(global);
         u_memcpy(handle as _, data.as_ptr(), data.len() as _);
         let _ = GlobalUnlock(global);
-        SetClipboardData(format, HANDLE(global.0 as isize))?;
+        SetClipboardData(format, HANDLE(global.0))?;
     }
     Ok(())
 }

@@ -94,7 +94,7 @@ enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EntryDetails {
     filename: String,
-    icon: Option<Arc<str>>,
+    icon: Option<SharedString>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -108,7 +108,7 @@ pub struct EntryDetails {
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<PathBuf>,
+    canonical_path: Option<Box<Path>>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -464,15 +464,12 @@ impl ProjectPanel {
             let is_remote = project.is_remote() && project.dev_server_project_id().is_none();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
-                menu.context(self.focus_handle.clone()).when_else(
-                    is_read_only,
-                    |menu| {
-                        menu.action("Copy Relative Path", Box::new(CopyRelativePath))
-                            .when(is_dir, |menu| {
-                                menu.action("Search Inside", Box::new(NewSearchInDirectory))
-                            })
-                    },
-                    |menu| {
+                menu.context(self.focus_handle.clone()).map(|menu| {
+                    if is_read_only {
+                        menu.when(is_dir, |menu| {
+                            menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                        })
+                    } else {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
@@ -545,8 +542,8 @@ impl ProjectPanel {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
                             })
-                    },
-                )
+                    }
+                })
             });
 
             cx.focus_view(&context_menu);
@@ -654,7 +651,7 @@ impl ProjectPanel {
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
-        // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
+        // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
         self.expanded_dir_ids
             .retain(|_, expanded_entries| expanded_entries.is_empty());
         self.update_visible_entries(None, cx);
@@ -2541,7 +2538,7 @@ impl Render for DraggedProjectEntryView {
                         .indent_level(self.details.depth)
                         .indent_step_size(px(settings.indent_size))
                         .child(if let Some(icon) = &self.details.icon {
-                            div().child(Icon::from_path(icon.to_string()))
+                            div().child(Icon::from_path(icon.clone()))
                         } else {
                             div()
                         })
@@ -2572,7 +2569,7 @@ impl Panel for ProjectPanel {
         settings::update_settings_file::<ProjectPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
+            move |settings, _| {
                 let dock = match position {
                     DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
                     DockPosition::Right => ProjectPanelDockPosition::Right,
@@ -4173,7 +4170,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let worktree_id =
-            cx.update(|cx| project.read(cx).worktrees().next().unwrap().read(cx).id());
+            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace
@@ -4969,7 +4966,7 @@ mod tests {
     ) {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
@@ -4984,7 +4981,7 @@ mod tests {
     fn select_path(panel: &View<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
@@ -5006,7 +5003,7 @@ mod tests {
     ) -> Option<ProjectEntryId> {
         let path = path.as_ref();
         panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     return worktree.entry_for_path(relative_path).map(|entry| entry.id);
@@ -5088,6 +5085,9 @@ mod tests {
             Project::init_settings(cx);
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
@@ -5105,6 +5105,15 @@ mod tests {
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

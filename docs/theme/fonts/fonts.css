@@ -3,15 +3,15 @@
 
 /* open-sans-300 - latin_vietnamese_latin-ext_greek-ext_greek_cyrillic-ext_cyrillic */
 @font-face {
-    font-family: "Agrandir";
-    font-style: normal;
-    font-weight: 400;
-    src: url("PPAgrandir-Regular.woff2") format("woff2");
+  font-family: "Agrandir";
+  font-style: normal;
+  font-weight: 400;
+  src: url("PPAgrandir-Regular.woff2") format("woff2");
 }
 
 @font-face {
-    font-family: "IA Writer Quattro S";
-    font-style: normal;
-    font-weight: 400;
-    src: url("iAWriterQuattroS-Regular.woff2") format("woff2");
+  font-family: "IA Writer Quattro S";
+  font-style: normal;
+  font-weight: 400;
+  src: url("iAWriterQuattroS-Regular.woff2") format("woff2");
 }

@@ -673,7 +673,7 @@ impl MultiBuffer {
                         let mut insertions = Vec::new();
                         let mut original_indent_columns = Vec::new();
                         let mut deletions = Vec::new();
-                        let empty_str: Arc<str> = "".into();
+                        let empty_str: Arc<str> = Arc::default();
                         while let Some(BufferEdit {
                             mut range,
                             new_text,

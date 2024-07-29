@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, time::Duration};
@@ -21,11 +21,7 @@ pub enum Model {
     #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
     #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        #[serde(default)]
-        max_tokens: Option<usize>,
-    },
+    Custom { name: String, max_tokens: usize },
 }
 
 impl Model {
@@ -39,10 +35,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Ok(Self::Custom {
-                name: id.to_string(),
-                max_tokens: None,
-            })
+            Err(anyhow!("invalid model id"))
         }
     }
 
@@ -52,7 +45,7 @@ impl Model {
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-opus-20240307",
-            Model::Custom { name, .. } => name,
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -72,7 +65,7 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
-            Self::Custom { max_tokens, .. } => max_tokens.unwrap_or(200_000),
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 }
@@ -105,21 +98,13 @@ impl From<Role> for String {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    #[serde(serialize_with = "serialize_request_model")]
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub system: String,
     pub max_tokens: u32,
-}
-
-fn serialize_request_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&model.id())
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -128,7 +113,7 @@ pub struct RequestMessage {
     pub content: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseEvent {
     MessageStart {
@@ -153,7 +138,7 @@ pub enum ResponseEvent {
     MessageStop {},
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseMessage {
     #[serde(rename = "type")]
     pub message_type: Option<String>,
@@ -166,19 +151,19 @@ pub struct ResponseMessage {
     pub usage: Option<Usage>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
     Text { text: String },
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TextDelta {
     TextDelta { text: String },
@@ -239,6 +224,25 @@ pub async fn stream_completion(
             )),
         }
     }
+}
+
+pub fn extract_text_from_events(
+    response: impl Stream<Item = Result<ResponseEvent>>,
+) -> impl Stream<Item = Result<String>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(response) => match response {
+                ResponseEvent::ContentBlockStart { content_block, .. } => match content_block {
+                    ContentBlock::Text { text } => Some(Ok(text)),
+                },
+                ResponseEvent::ContentBlockDelta { delta, .. } => match delta {
+                    TextDelta::TextDelta { text } => Some(Ok(text)),
+                },
+                _ => None,
+            },
+            Err(error) => Some(Err(error)),
+        }
+    })
 }
 
 // #[cfg(test)]

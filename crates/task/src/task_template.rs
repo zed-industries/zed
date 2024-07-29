@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, TerminalWorkDir, VariableName,
+    ResolvedTask, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
     ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -45,10 +45,18 @@ pub struct TaskTemplate {
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     #[serde(default)]
     pub reveal: RevealStrategy,
-
+    /// What to do with the terminal pane and tab, after the command had finished:
+    /// * `never` — do nothing when the command finishes (default)
+    /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
+    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
+    #[serde(default)]
+    pub hide: HideStrategy,
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Which shell to use when spawning the task.
+    #[serde(default)]
+    pub shell: Shell,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -60,6 +68,19 @@ pub enum RevealStrategy {
     Always,
     /// Do not change terminal pane focus, but still add/reuse the task's tab there.
     Never,
+}
+
+/// What to do with the terminal pane and tab, after the command has finished.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HideStrategy {
+    /// Do nothing when the command finishes.
+    #[default]
+    Never,
+    /// Always hide the terminal tab, hide the pane also if it was the last tab in it.
+    Always,
+    /// Hide the terminal tab on task success only, otherwise behaves similar to `Always`.
+    OnSuccess,
 }
 
 /// A group of Tasks defined in a JSON file.
@@ -113,14 +134,11 @@ impl TaskTemplate {
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(TerminalWorkDir::Local(PathBuf::from(substitured_cwd)))
+                Some(PathBuf::from(substitured_cwd))
             }
             None => None,
         }
-        .or(cx
-            .cwd
-            .as_ref()
-            .map(|cwd| TerminalWorkDir::Local(cwd.clone())));
+        .or(cx.cwd.clone());
         let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,
@@ -163,13 +181,27 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
-        let mut env = substitute_all_template_variables_in_map(
-            &self.env,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
-        env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+
+        let env = {
+            // Start with the project environment as the base.
+            let mut env = cx.project_env.clone();
+
+            // Extend that environment with what's defined in the TaskTemplate
+            env.extend(self.env.clone());
+
+            // Then we replace all task variables that could be set in environment variables
+            let mut env = substitute_all_template_variables_in_map(
+                &env,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?;
+
+            // Last step: set the task variables as environment variables too
+            env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+            env
+        };
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -194,6 +226,8 @@ impl TaskTemplate {
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
+                hide: self.hide,
+                shell: self.shell.clone(),
             }),
         })
     }
@@ -369,6 +403,7 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
             resolved_task(&task_without_cwd, &cx).cwd,
@@ -380,13 +415,11 @@ mod tests {
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
-            resolved_task(&task_without_cwd, &cx)
-                .cwd
-                .as_ref()
-                .and_then(|cwd| cwd.local_path()),
-            Some(context_cwd.as_path()),
+            resolved_task(&task_without_cwd, &cx).cwd,
+            Some(context_cwd.clone()),
             "TaskContext's cwd should be taken on resolve if task's cwd is None"
         );
 
@@ -398,26 +431,22 @@ mod tests {
         let cx = TaskContext {
             cwd: None,
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx)
-                .cwd
-                .as_ref()
-                .and_then(|cwd| cwd.local_path()),
-            Some(task_cwd.as_path()),
+            resolved_task(&task_with_cwd, &cx).cwd,
+            Some(task_cwd.clone()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is None"
         );
 
         let cx = TaskContext {
             cwd: Some(context_cwd.clone()),
             task_variables: TaskVariables::default(),
+            project_env: HashMap::default(),
         };
         assert_eq!(
-            resolved_task(&task_with_cwd, &cx)
-                .cwd
-                .as_ref()
-                .and_then(|cwd| cwd.local_path()),
-            Some(task_cwd.as_path()),
+            resolved_task(&task_with_cwd, &cx).cwd,
+            Some(task_cwd),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
     }
@@ -489,6 +518,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
+                    project_env: HashMap::default(),
                 },
             ).unwrap_or_else(|| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}"));
 
@@ -576,6 +606,7 @@ mod tests {
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
+                    project_env: HashMap::default(),
                 },
             );
             assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
@@ -628,6 +659,7 @@ mod tests {
                 VariableName::Symbol,
                 "test_symbol".to_string(),
             ))),
+            project_env: HashMap::default(),
         };
 
         for (i, symbol_dependent_task) in [
@@ -701,5 +733,75 @@ mod tests {
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
         assert!(faulty_go_test.resolve_task("base", &context).is_some());
+    }
+
+    #[test]
+    fn test_project_env() {
+        let all_variables = [
+            (VariableName::Row, "1234".to_string()),
+            (VariableName::Column, "5678".to_string()),
+            (VariableName::File, "test_file".to_string()),
+            (VariableName::Symbol, "my symbol".to_string()),
+        ];
+
+        let template = TaskTemplate {
+            label: "my task".to_string(),
+            command: format!(
+                "echo {} {}",
+                VariableName::File.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            args: vec![],
+            env: HashMap::from_iter([
+                (
+                    "TASK_ENV_VAR1".to_string(),
+                    "TASK_ENV_VAR1_VALUE".to_string(),
+                ),
+                (
+                    "TASK_ENV_VAR2".to_string(),
+                    format!(
+                        "env_var_2 {} {}",
+                        VariableName::Row.template_value(),
+                        VariableName::Column.template_value()
+                    ),
+                ),
+                (
+                    "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                    "overwritten".to_string(),
+                ),
+            ]),
+            ..TaskTemplate::default()
+        };
+
+        let project_env = HashMap::from_iter([
+            (
+                "PROJECT_ENV_VAR1".to_string(),
+                "PROJECT_ENV_VAR1_VALUE".to_string(),
+            ),
+            (
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN".to_string(),
+                "PROJECT_ENV_WILL_BE_OVERWRITTEN_VALUE".to_string(),
+            ),
+        ]);
+
+        let context = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(all_variables.clone()),
+            project_env,
+        };
+
+        let resolved = template
+            .resolve_task(TEST_ID_BASE, &context)
+            .unwrap()
+            .resolved
+            .unwrap();
+
+        assert_eq!(resolved.env["TASK_ENV_VAR1"], "TASK_ENV_VAR1_VALUE");
+        assert_eq!(resolved.env["TASK_ENV_VAR2"], "env_var_2 1234 5678");
+        assert_eq!(resolved.env["PROJECT_ENV_VAR1"], "PROJECT_ENV_VAR1_VALUE");
+        assert_eq!(
+            resolved.env["PROJECT_ENV_WILL_BE_OVERWRITTEN"],
+            "overwritten"
+        );
     }
 }

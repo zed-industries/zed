@@ -11,13 +11,14 @@
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
 mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
+mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -57,6 +58,7 @@ use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -406,6 +408,7 @@ impl EditorActionId {
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
+#[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
     dirty: bool,
@@ -416,17 +419,6 @@ struct ScrollbarMarkerState {
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
         self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
-    }
-}
-
-impl Default for ScrollbarMarkerState {
-    fn default() -> Self {
-        Self {
-            scrollbar_size: Size::default(),
-            dirty: false,
-            markers: Arc::from([]),
-            pending_refresh: None,
-        }
     }
 }
 
@@ -488,7 +480,6 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    redact_all: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -533,7 +524,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
-    active_inline_completion: Option<Inlay>,
+    active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
@@ -592,7 +583,7 @@ pub struct EditorSnapshot {
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
@@ -612,18 +603,6 @@ impl GutterDimensions {
     /// right align content with the line numbers
     pub fn fold_area_width(&self) -> Pixels {
         self.margin + self.right_padding
-    }
-}
-
-impl Default for GutterDimensions {
-    fn default() -> Self {
-        Self {
-            left_padding: Pixels::ZERO,
-            right_padding: Pixels::ZERO,
-            width: Pixels::ZERO,
-            margin: Pixels::ZERO,
-            git_blame_entries_width: None,
-        }
     }
 }
 
@@ -1823,7 +1802,6 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_wrap_guides: None,
-            redact_all: false,
             show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
@@ -1953,7 +1931,7 @@ impl Editor {
             EditorMode::Full => "full",
         };
 
-        if EditorSettings::get_global(cx).jupyter.enabled {
+        if EditorSettings::jupyter_enabled(cx) {
             key_context.add("jupyter");
         }
 
@@ -4953,7 +4931,7 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(completion) = self.take_active_inline_completion(cx) else {
+        let Some((completion, delete_range)) = self.take_active_inline_completion(cx) else {
             return;
         };
         if let Some(provider) = self.inline_completion_provider() {
@@ -4964,6 +4942,10 @@ impl Editor {
             utf16_range_to_replace: None,
             text: completion.text.to_string().into(),
         });
+
+        if let Some(range) = delete_range {
+            self.change_selections(None, cx, |s| s.select_ranges([range]))
+        }
         self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
         self.refresh_inline_completion(true, cx);
         cx.notify();
@@ -4975,7 +4957,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
-            if let Some(completion) = self.take_active_inline_completion(cx) {
+            if let Some((completion, delete_range)) = self.take_active_inline_completion(cx) {
                 let mut partial_completion = completion
                     .text
                     .chars()
@@ -4995,7 +4977,12 @@ impl Editor {
                     utf16_range_to_replace: None,
                     text: partial_completion.clone().into(),
                 });
+
+                if let Some(range) = delete_range {
+                    self.change_selections(None, cx, |s| s.select_ranges([range]))
+                }
                 self.insert_with_autoindent_mode(&partial_completion, None, cx);
+
                 self.refresh_inline_completion(true, cx);
                 cx.notify();
             }
@@ -5017,20 +5004,23 @@ impl Editor {
     pub fn has_active_inline_completion(&self, cx: &AppContext) -> bool {
         if let Some(completion) = self.active_inline_completion.as_ref() {
             let buffer = self.buffer.read(cx).read(cx);
-            completion.position.is_valid(&buffer)
+            completion.0.position.is_valid(&buffer)
         } else {
             false
         }
     }
 
-    fn take_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
+    fn take_active_inline_completion(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Inlay, Option<Range<Anchor>>)> {
         let completion = self.active_inline_completion.take()?;
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(vec![completion.id], Default::default(), cx);
+            map.splice_inlays(vec![completion.0.id], Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
-        if completion.position.is_valid(&buffer) {
+        if completion.0.position.is_valid(&buffer) {
             Some(completion)
         } else {
             None
@@ -5041,6 +5031,8 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
+        let excerpt_id = cursor.excerpt_id;
+
         if self.context_menu.read().is_none()
             && self.completion_tasks.is_empty()
             && selection.start == selection.end
@@ -5049,18 +5041,28 @@ impl Editor {
                 if let Some((buffer, cursor_buffer_position)) =
                     self.buffer.read(cx).text_anchor_for_position(cursor, cx)
                 {
-                    if let Some(text) =
+                    if let Some((text, text_anchor_range)) =
                         provider.active_completion_text(&buffer, cursor_buffer_position, cx)
                     {
                         let text = Rope::from(text);
                         let mut to_remove = Vec::new();
                         if let Some(completion) = self.active_inline_completion.take() {
-                            to_remove.push(completion.id);
+                            to_remove.push(completion.0.id);
                         }
 
                         let completion_inlay =
                             Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
-                        self.active_inline_completion = Some(completion_inlay.clone());
+
+                        let multibuffer_anchor_range = text_anchor_range.and_then(|range| {
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            Some(
+                                snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?,
+                            )
+                        });
+                        self.active_inline_completion =
+                            Some((completion_inlay.clone(), multibuffer_anchor_range));
+
                         self.display_map.update(cx, move |map, cx| {
                             map.splice_inlays(to_remove, vec![completion_inlay], cx)
                         });
@@ -5141,7 +5143,7 @@ impl Editor {
             }))
     }
 
-    fn render_close_hunk_diff_button(
+    fn close_hunk_diff_button(
         &self,
         hunk: HoveredHunk,
         row: DisplayRow,
@@ -5716,7 +5718,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     deletion_ranges
                         .into_iter()
@@ -5782,7 +5784,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     edit_ranges
                         .into_iter()
@@ -8083,7 +8085,7 @@ impl Editor {
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             let snapshot = this.buffer.read(cx).read(cx);
-            let empty_str: Arc<str> = "".into();
+            let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
 
             fn comment_prefix_range(
@@ -10360,7 +10362,7 @@ impl Editor {
         };
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
-        update_settings_file::<TabBarSettings>(fs, cx, move |setting| {
+        update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
             setting.show = Some(!current_show);
         });
     }
@@ -10416,9 +10418,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_redact_all(&mut self, redact_all: bool, cx: &mut ViewContext<Self>) {
-        self.redact_all = redact_all;
-        cx.notify();
+    pub fn set_masked(&mut self, masked: bool, cx: &mut ViewContext<Self>) {
+        if self.display_map.read(cx).masked != masked {
+            self.display_map.update(cx, |map, _| map.masked = masked);
+        }
+        cx.notify()
     }
 
     pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
@@ -10833,17 +10837,6 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
-        // this is to try and catch a panic sooner
-        for range in ranges {
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.start);
-            snapshot
-                .buffer_snapshot
-                .summary_for_anchor::<usize>(&range.end);
-        }
-
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
@@ -11115,10 +11108,6 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         cx: &WindowContext,
     ) -> Vec<Range<DisplayPoint>> {
-        if self.redact_all {
-            return vec![DisplayPoint::zero()..display_snapshot.max_point()];
-        }
-
         display_snapshot
             .buffer_snapshot
             .redacted_ranges(search_range, |file| {
@@ -11839,6 +11828,11 @@ impl Editor {
         let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
+
+    fn gutter_bounds(&self) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_bounds?;
+        Some(element::gutter_bounds(bounds, self.gutter_dimensions))
+    }
 }
 
 fn hunks_for_selections(
@@ -12225,7 +12219,7 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
-    pub fn gutter_dimensions(
+    fn gutter_dimensions(
         &self,
         font_id: FontId,
         font_size: Pixels,
@@ -12436,6 +12430,7 @@ impl Render for Editor {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features.clone(),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: settings.ui_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),
@@ -12445,6 +12440,7 @@ impl Render for Editor {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
+                font_fallbacks: settings.buffer_font.fallbacks.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),

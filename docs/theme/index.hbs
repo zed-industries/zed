@@ -119,7 +119,6 @@
         </script>
 
         <div id="page-wrapper" class="page-wrapper">
-
             <div class="page">
                 {{> header}}
                 <div id="menu-bar-hover-placeholder"></div>
@@ -192,7 +191,12 @@
 
                 <div id="content" class="content">
                     <main>
-                        {{{ content }}}
+                      <div class="sidetoc">
+                          <nav class="pagetoc">
+                            <p class="toc-title">On this page</p>
+                          </nav>
+                      </div>
+                      {{{ content }}}
                     </main>
                 </div>
             </div>

@@ -27,7 +27,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
-use http::HttpClient;
+use http_client::HttpClient;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
@@ -682,7 +682,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: "".into(),
+            name: Arc::default(),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),

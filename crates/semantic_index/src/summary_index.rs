@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
-use completion::CompletionProvider;
+use completion::LanguageModelCompletionProvider;
 use fs::Fs;
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
@@ -26,8 +26,7 @@ use crate::indexing::{IndexingEntryHandle, IndexingEntrySet};
 ///
 /// It's called "preferred" because if the model isn't available (e.g. due to lacking the necessary API key),
 /// we fall back on the global CompletionProvider's selected model.
-const PREFERRED_SUMMARIZATION_MODEL: LanguageModel =
-    LanguageModel::OpenAi(open_ai::Model::FourOmniMini);
+const PREFERRED_SUMMARIZATION_MODEL: open_ai::Model = open_ai::Model::FourOmniMini;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FileSummary {
@@ -404,7 +403,6 @@ impl SummaryIndex {
 
     fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
-        let provider = CompletionProvider::global(cx);
         let model = PREFERRED_SUMMARIZATION_MODEL;
         const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
         let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
@@ -416,7 +414,6 @@ impl SummaryIndex {
         );
 
         let request = LanguageModelRequest {
-            model,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: prompt,
@@ -425,16 +422,15 @@ impl SummaryIndex {
             temperature: 1.0,
         };
 
-        let response = provider.stream_completion_bg(request, cx);
         let code_len = code.len();
+        let stream = LanguageModelCompletionProvider::read_global(cx).complete_bg(
+            request,
+            Arc::new(model),
+            cx,
+        );
 
         cx.background_executor().spawn(async move {
-            let mut chunks = response.await?;
-            let mut answer = String::new();
-
-            while let Some(chunk) = chunks.next().await {
-                answer.push_str(chunk?.as_str());
-            }
+            let answer = stream.await?;
 
             log::info!(
                 "It took {:?} to summarize {:?} bytes of code.",

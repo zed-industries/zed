@@ -13,7 +13,7 @@ use futures::{
     Future, FutureExt, StreamExt as _,
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
@@ -159,29 +159,25 @@ impl WasmHost {
     }
 
     async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
-        use cap_std::{ambient_authority, fs::Dir};
-
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
         self.fs
             .create_dir(&extension_work_dir)
             .await
             .context("failed to create extension work dir")?;
 
-        let work_dir_preopen = Dir::open_ambient_dir(&extension_work_dir, ambient_authority())
-            .context("failed to preopen extension work directory")?;
-        let current_dir_preopen = work_dir_preopen
-            .try_clone()
-            .context("failed to preopen extension current directory")?;
-        let extension_work_dir = extension_work_dir.to_string_lossy();
-
-        let perms = wasi::FilePerms::all();
+        let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
 
         Ok(wasi::WasiCtxBuilder::new()
             .inherit_stdio()
-            .preopened_dir(current_dir_preopen, dir_perms, perms, ".")
-            .preopened_dir(work_dir_preopen, dir_perms, perms, &extension_work_dir)
-            .env("PWD", &extension_work_dir)
+            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
+            .preopened_dir(
+                &extension_work_dir,
+                &extension_work_dir.to_string_lossy(),
+                dir_perms,
+                file_perms,
+            )?
+            .env("PWD", &extension_work_dir.to_string_lossy())
             .env("RUST_BACKTRACE", "full")
             .build())
     }

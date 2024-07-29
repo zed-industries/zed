@@ -5,7 +5,7 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
-use http::HttpClient;
+use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -289,6 +289,13 @@ impl NodeRuntime for RealNodeRuntime {
                     .log_err()
                 {
                     command.env("SYSTEMROOT", val);
+                }
+                // Without ComSpec, the post-install will always fail.
+                if let Some(val) = std::env::var("ComSpec")
+                    .context("Missing environment variable: ComSpec!")
+                    .log_err()
+                {
+                    command.env("ComSpec", val);
                 }
                 command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             }
