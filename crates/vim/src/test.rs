@@ -21,6 +21,7 @@ use crate::{insert::NormalBefore, motion, state::Mode, ModeIndicator};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
+    println!("TEST");
     let mut cx = VimTestContext::new(cx, false).await;
     cx.simulate_keystrokes("h j k l");
     cx.assert_editor_state("hjklˇ");
