@@ -3319,9 +3319,11 @@ dependencies = [
  "project",
  "serde",
  "serde_derive",
+ "serde_json",
  "task",
  "tasks_ui",
  "ui",
+ "util",
  "workspace",
 ]
 

@@ -1,11 +1,13 @@
+use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
 use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
-use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
+use dap::requests::{Disconnect, Request, Scopes, StackTrace, StartDebugging, Variables};
+use dap::transport::Payload;
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
     Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, Scope, ScopesArguments,
-    StackFrame, StackTraceArguments, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
-    Variable, VariablesArguments,
+    StackFrame, StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent, TerminatedEvent,
+    ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -13,17 +15,17 @@ use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
 };
+use serde_json::json;
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use task::DebugRequestType;
 use ui::prelude::*;
+use util::{merge_json_value_into, ResultExt};
 use workspace::Pane;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-
-use crate::debugger_panel_item::DebugPanelItem;
 
 enum DebugCurrentRowHighlight {}
 
@@ -67,24 +69,44 @@ impl DebugPanel {
 
             let _subscriptions = vec![cx.subscribe(&project, {
                 move |this: &mut Self, _, event, cx| match event {
-                    project::Event::DebugClientEvent { event, client_id } => {
-                        Self::handle_debug_client_events(
-                            this,
-                            this.debug_client_by_id(*client_id, cx),
-                            event,
-                            cx,
-                        );
+                    project::Event::DebugClientEvent { payload, client_id } => {
+                        let client = this.debug_client_by_id(*client_id, cx);
+
+                        match payload {
+                            Payload::Event(event) => {
+                                Self::handle_debug_client_events(this, client, event, cx);
+                            }
+                            Payload::Request(request) => {
+                                if StartDebugging::COMMAND == request.command {
+                                    Self::handle_start_debugging_request(this, client, request, cx)
+                                        .log_err();
+                                }
+
+                                // dbg!(request);
+                                // if RunInTerminal::COMMAND == request.command {
+                                //     Self::handle_run_in_terminal_request(&this, request, cx).await?;
+                                // } else if StartDebugging::COMMAND == request.command {
+                                //     Self::handle_start_debugging_request(&this, request, cx).await?;
+                                // } else {
+                                //     unreachable!("Unknown reverse request {}", request.command);
+                                // }
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                     project::Event::DebugClientStarted(client_id) => {
                         let client = this.debug_client_by_id(*client_id, cx);
                         cx.spawn(|_, _| async move {
                             client.initialize().await?;
-                            let request_args = client.config().request_args.map(|a| a.args);
 
                             // send correct request based on adapter config
                             match client.config().request {
-                                DebugRequestType::Launch => client.launch(request_args).await,
-                                DebugRequestType::Attach => client.attach(request_args).await,
+                                DebugRequestType::Launch => {
+                                    client.launch(client.request_args()).await
+                                }
+                                DebugRequestType::Attach => {
+                                    client.attach(client.request_args()).await
+                                }
                             }
                         })
                         .detach_and_log_err(cx);
@@ -125,6 +147,45 @@ impl DebugPanel {
                     .unwrap()
             })
             .unwrap()
+    }
+
+    fn handle_start_debugging_request(
+        this: &mut Self,
+        client: Arc<DebugAdapterClient>,
+        request: &dap::transport::Request,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        let arguments: StartDebuggingRequestArguments =
+            serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
+
+        let mut json = json!({});
+        if let Some(args) = client
+            .config()
+            .request_args
+            .as_ref()
+            .map(|a| a.args.clone())
+        {
+            merge_json_value_into(args, &mut json);
+        }
+        merge_json_value_into(arguments.configuration, &mut json);
+
+        dbg!("start debugging request", &json);
+
+        // todo: start new debug adapter with same config only append the data from the request
+        this.workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                // start debug adapter and force to use json as launch params
+                project.start_debug_adapter_client(
+                    DebugAdapterClientId(2),
+                    client.config(),
+                    client.command.clone(),
+                    client.args.clone(),
+                    client.cwd.clone(),
+                    Some(json),
+                    cx,
+                );
+            })
+        })
     }
 
     fn handle_debug_client_events(
@@ -410,12 +471,20 @@ impl DebugPanel {
 
                     if !existing_item {
                         let debug_panel = cx.view().clone();
-                        this.pane.update(cx, |this, cx| {
-                            let tab = cx.new_view(|cx| {
-                                DebugPanelItem::new(debug_panel, client.clone(), thread_id, cx)
-                            });
 
-                            this.add_item(Box::new(tab.clone()), false, false, None, cx)
+                        let _ = this.workspace.update(cx, |workspace, cx| {
+                            this.pane.update(cx, |this, cx| {
+                                let tab = cx.new_view(|cx| {
+                                    DebugPanelItem::new(
+                                        debug_panel,
+                                        client.clone(),
+                                        thread_id,
+                                        cx,
+                                    )
+                                });
+
+                                this.add_item(Box::new(tab.clone()), false, false, None, cx)
+                            })
                         });
                     }
 

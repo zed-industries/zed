@@ -1,16 +1,15 @@
-use crate::transport::{Events, Payload, Response, Transport};
+use crate::transport::{Payload, Response, Transport};
 use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
-        Restart, RunInTerminal, SetBreakpoints, StartDebugging, StepBack, StepIn, StepOut,
+        Restart, SetBreakpoints, StepBack, StepIn, StepOut,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
-    NextArguments, PauseArguments, RestartArguments, RunInTerminalRequestArguments,
-    RunInTerminalResponse, Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source,
-    SourceBreakpoint, StackFrame, StartDebuggingRequestArguments, StepBackArguments,
+    NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
+    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
     StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
@@ -61,13 +60,23 @@ pub struct ThreadState {
 
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
+    pub args: Vec<String>,
+    pub command: String,
+    pub cwd: PathBuf,
+    pub request_args: Option<Value>,
     _process: Option<Child>,
     server_tx: Sender<Payload>,
     sequence_count: AtomicU64,
-    capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
     config: DebugAdapterConfig,
     thread_states: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
-    sub_client: Arc<Mutex<Option<Arc<Self>>>>,
+    capabilities: Arc<Mutex<Option<dap_types::Capabilities>>>,
+}
+
+pub struct TransportParams {
+    rx: Box<dyn AsyncBufRead + Unpin + Send>,
+    tx: Box<dyn AsyncWrite + Unpin + Send>,
+    err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
+    process: Option<Child>,
 }
 
 impl DebugAdapterClient {
@@ -78,47 +87,49 @@ impl DebugAdapterClient {
     /// - `config`: The adapter specific configurations from debugger task that is starting
     /// - `command`: The command that starts the debugger
     /// - `args`: Arguments of the command that starts the debugger
-    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cwd`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
-        command: &str,
-        args: Vec<&str>,
-        project_path: PathBuf,
+        command: &String,
+        args: &Vec<String>,
+        cwd: &PathBuf,
+        request_args: Option<Value>,
         event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>>
     where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        match config.connection.clone() {
+        let transport_params = match config.connection.clone() {
             DebugConnectionType::TCP(host) => {
-                Self::create_tcp_client(
-                    id,
-                    config,
-                    host,
-                    command,
-                    args,
-                    project_path,
-                    event_handler,
-                    cx,
-                )
-                .await
+                Self::create_tcp_client(host, command, args, cwd, cx).await?
             }
-            DebugConnectionType::STDIO => {
-                Self::create_stdio_client(
-                    id,
-                    config,
-                    command,
-                    args,
-                    project_path,
-                    event_handler,
-                    cx,
-                )
-                .await
-            }
-        }
+            DebugConnectionType::STDIO => Self::create_stdio_client(command, args, cwd).await?,
+        };
+
+        let server_tx = Self::handle_transport(
+            transport_params.rx,
+            transport_params.tx,
+            transport_params.err,
+            event_handler,
+            cx,
+        )?;
+
+        Ok(Arc::new(Self {
+            id,
+            config,
+            server_tx,
+            request_args,
+            cwd: cwd.clone(),
+            args: args.clone(),
+            command: command.clone(),
+            capabilities: Default::default(),
+            thread_states: Default::default(),
+            sequence_count: AtomicU64::new(1),
+            _process: transport_params.process,
+        }))
     }
 
     /// Creates a debug client that connects to an adapter through tcp
@@ -126,26 +137,17 @@ impl DebugAdapterClient {
     /// TCP clients don't have an error communication stream with an adapter
     ///
     /// # Parameters
-    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
-    /// - `config`: The adapter specific configurations from debugger task that is starting
     /// - `command`: The command that starts the debugger
     /// - `args`: Arguments of the command that starts the debugger
-    /// - `project_path`: The absolute path of the project that is being debugged
+    /// - `cwd`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
-    #[allow(clippy::too_many_arguments)]
-    async fn create_tcp_client<F>(
-        id: DebugAdapterClientId,
-        config: DebugAdapterConfig,
+    async fn create_tcp_client(
         host: TCPHost,
-        command: &str,
-        args: Vec<&str>,
-        project_path: PathBuf,
-        event_handler: F,
+        command: &String,
+        args: &Vec<String>,
+        cwd: &PathBuf,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<TransportParams> {
         let mut port = host.port;
         if port.is_none() {
             port = Self::get_port().await;
@@ -153,7 +155,7 @@ impl DebugAdapterClient {
 
         let mut command = process::Command::new(command);
         command
-            .current_dir(project_path)
+            .current_dir(cwd)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -179,16 +181,12 @@ impl DebugAdapterClient {
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
-        Self::handle_transport(
-            id,
-            config,
-            Box::new(BufReader::new(rx)),
-            Box::new(tx),
-            None,
-            Some(process),
-            event_handler,
-            cx,
-        )
+        Ok(TransportParams {
+            rx: Box::new(BufReader::new(rx)),
+            tx: Box::new(tx),
+            err: None,
+            process: Some(process),
+        })
     }
 
     /// Get an open port to use with the tcp client when not supplied by debug config
@@ -206,27 +204,17 @@ impl DebugAdapterClient {
     /// Creates a debug client that connects to an adapter through std input/output
     ///
     /// # Parameters
-    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
-    /// - `config`: The adapter specific configurations from debugger task that is starting
     /// - `command`: The command that starts the debugger
     /// - `args`: Arguments of the command that starts the debugger
-    /// - `project_path`: The absolute path of the project that is being debugged
-    /// - `cx`: The context that the new client belongs too
-    async fn create_stdio_client<F>(
-        id: DebugAdapterClientId,
-        config: DebugAdapterConfig,
-        command: &str,
-        args: Vec<&str>,
-        project_path: PathBuf,
-        event_handler: F,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    /// - `cwd`: The absolute path of the project that is being debugged
+    async fn create_stdio_client(
+        command: &String,
+        args: &Vec<String>,
+        cwd: &PathBuf,
+    ) -> Result<TransportParams> {
         let mut command = process::Command::new(command);
         command
-            .current_dir(project_path)
+            .current_dir(cwd)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -250,65 +238,39 @@ impl DebugAdapterClient {
             .take()
             .ok_or_else(|| anyhow!("Failed to open stderr"))?;
 
-        let stdin = Box::new(stdin);
-        let stdout = Box::new(BufReader::new(stdout));
-        let stderr = Box::new(BufReader::new(stderr));
-
-        Self::handle_transport(
-            id,
-            config,
-            stdout,
-            stdin,
-            Some(stderr),
-            Some(process),
-            event_handler,
-            cx,
-        )
+        Ok(TransportParams {
+            rx: Box::new(BufReader::new(stdout)),
+            tx: Box::new(stdin),
+            err: Some(Box::new(BufReader::new(stderr))),
+            process: Some(process),
+        })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn handle_transport<F>(
-        id: DebugAdapterClientId,
-        config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
-        process: Option<Child>,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>>
+    ) -> Result<Sender<Payload>>
     where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client = Arc::new(Self {
-            id,
-            config,
-            _process: process,
-            sub_client: Default::default(),
-            server_tx: server_tx.clone(),
-            capabilities: Default::default(),
-            thread_states: Default::default(),
-            sequence_count: AtomicU64::new(1),
-        });
-
         cx.update(|cx| {
             cx.background_executor()
-                .spawn(Self::handle_recv(server_rx, client_tx))
+                .spawn(Self::handle_recv(server_rx, client_tx.clone()))
                 .detach_and_log_err(cx);
 
             cx.spawn({
-                let client = client.clone();
-                |mut cx| async move {
-                    Self::handle_events(client, client_rx, server_tx, event_handler, &mut cx).await
-                }
+                |mut cx| async move { Self::handle_events(client_rx, event_handler, &mut cx).await }
             })
             .detach_and_log_err(cx);
-        })?;
 
-        Ok(client)
+            server_tx
+        })
     }
 
     /// Set's up a client's event handler.
@@ -320,111 +282,126 @@ impl DebugAdapterClient {
     ///     should be DebugPanel::handle_debug_client_events
     /// `cx`: The context that this task will run in
     pub async fn handle_events<F>(
-        this: Arc<Self>,
         client_rx: Receiver<Payload>,
-        server_tx: Sender<Payload>,
         mut event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<()>
     where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         while let Ok(payload) = client_rx.recv().await {
-            match payload {
-                Payload::Event(event) => cx.update(|cx| event_handler(*event, cx))?,
-                Payload::Request(request) => {
-                    if RunInTerminal::COMMAND == request.command {
-                        Self::handle_run_in_terminal_request(request, &server_tx).await?;
-                    } else if StartDebugging::COMMAND == request.command {
-                        Self::handle_start_debugging_request(&this, request, cx).await?;
-                    } else {
-                        unreachable!("Unknown reverse request {}", request.command);
-                    }
-                }
-                _ => unreachable!(),
-            }
+            cx.update(|cx| event_handler(payload, cx))?;
         }
 
         anyhow::Ok(())
     }
 
-    async fn handle_run_in_terminal_request(
-        request: crate::transport::Request,
-        server_tx: &Sender<Payload>,
-    ) -> Result<()> {
-        let arguments: RunInTerminalRequestArguments =
-            serde_json::from_value(request.arguments.unwrap_or_default())?;
+    // async fn handle_run_in_terminal_request(
+    //     this: &Arc<Self>,
+    //     request: crate::transport::Request,
+    //     cx: &mut AsyncAppContext,
+    // ) -> Result<()> {
+    //     let arguments: RunInTerminalRequestArguments =
+    //         serde_json::from_value(request.arguments.unwrap_or_default())?;
 
-        let mut args = arguments.args.clone();
-        let mut command = process::Command::new(args.remove(0));
+    //     let mut args = arguments.args.clone();
+    //     let mut command = process::Command::new(args.remove(0));
 
-        let envs = arguments.env.as_ref().and_then(|e| e.as_object()).map(|e| {
-            e.iter()
-                .map(|(key, value)| (key.clone(), value.clone().to_string()))
-                .collect::<HashMap<String, String>>()
-        });
+    //     let envs = arguments.env.as_ref().and_then(|e| e.as_object()).map(|e| {
+    //         e.iter()
+    //             .map(|(key, value)| ((key.clone(), value.clone().to_string())))
+    //             .collect::<Vec<(String, String)>>()
+    //     });
 
-        if let Some(envs) = envs {
-            command.envs(envs);
-        }
+    //     if let Some(envs) = envs {
+    //         command.envs(envs);
+    //     }
 
-        let process = command
-            .current_dir(arguments.cwd)
-            .args(args)
-            .spawn()
-            .with_context(|| "failed to spawn run in terminal command.")?;
+    //     let process = command
+    //         .current_dir(arguments.cwd)
+    //         .args(args)
+    //         .spawn()
+    //         .with_context(|| "failed to spawn run in terminal command.")?;
 
-        server_tx
-            .send(Payload::Response(Response {
-                request_seq: request.seq,
-                success: true,
-                command: RunInTerminal::COMMAND.into(),
-                message: None,
-                body: Some(serde_json::to_value(RunInTerminalResponse {
-                    process_id: Some(process.id() as u64),
-                    shell_process_id: None,
-                })?),
-            }))
-            .await?;
+    //     this.server_tx
+    //         .send(Payload::Response(Response {
+    //             request_seq: request.seq,
+    //             success: true,
+    //             command: RunInTerminal::COMMAND.into(),
+    //             message: None,
+    //             body: Some(serde_json::to_value(RunInTerminalResponse {
+    //                 process_id: Some(process.id() as u64),
+    //                 shell_process_id: None,
+    //             })?),
+    //         }))
+    //         .await?;
 
-        anyhow::Ok(())
-    }
+    //     anyhow::Ok(())
+    // }
 
-    async fn handle_start_debugging_request(
-        this: &Arc<Self>,
-        request: crate::transport::Request,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        dbg!(&request);
-        let arguments: StartDebuggingRequestArguments =
-            serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
+    // async fn handle_start_debugging_request(
+    //     this: &Arc<Self>,
+    //     request: crate::transport::Request,
+    //     cx: &mut AsyncAppContext,
+    // ) -> Result<()> {
+    //     dbg!(&request);
+    //     let arguments: StartDebuggingRequestArguments =
+    //         serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
 
-        let sub_client = DebugAdapterClient::new(
-            DebugAdapterClientId(1),
-            this.config.clone(),
-            "node",
-            vec![
-                "/Users/remcosmits/Downloads/js-debug/src/dapDebugServer.js",
-                "8134",
-                "127.0.0.1",
-            ],
-            PathBuf::from("/Users/remcosmits/Documents/code/prettier-test"),
-            |event, cx| {
-                dbg!(event);
-            },
-            cx,
-        )
-        .await?;
+    //     let mut json = json!({});
+    //     if let Some(args) = this.config.request_args.as_ref().map(|a| a.args.clone()) {
+    //         merge_json_value_into(args, &mut json);
+    //     }
+    //     merge_json_value_into(arguments.configuration, &mut json);
 
-        dbg!(&arguments);
+    //     dbg!(&json);
+    //     let client = this.clone();
+    //     let sub_client = DebugAdapterClient::new(
+    //         this.id,
+    //         this.task_template.clone(),
+    //         this.config.clone(),
+    //         this.task_template.command.as_str(),
+    //         this.task_template.args.iter().map(|ele| &ele[..]).collect(),
+    //         this.task_template.cwd.as_ref().unwrap().into(),
+    //         move |this, event, cx| {
+    //             // if let Events::Initialized(_) = event {
+    //             //     cx.spawn({
+    //             //         let json = json.clone();
+    //             //         |_| async move {
+    //             //             // send correct request based on adapter config
+    //             //             let res = match this.config().request {
+    //             //                 DebugRequestType::Launch => this.launch(Some(json)).await,
+    //             //                 DebugRequestType::Attach => this.attach(Some(json)).await,
+    //             //             };
+    //             //             dbg!(res);
+    //             //         }
+    //             //     })
+    //             //     .detach();
+    //             // } else {
+    //             //     cx.spawn({
+    //             //         let client = client.clone();
+    //             //         |_| async move {
+    //             //             client
+    //             //                 .client_tx
+    //             //                 .send(Payload::Event(Box::new(event)))
+    //             //                 .await
+    //             //                 .log_err();
+    //             //         }
+    //             //     })
+    //             //     .detach();
+    //             // }
 
-        let res = sub_client.launch(request.arguments).await?;
-        dbg!(res);
+    //             // dbg!(event);
+    //             // let e = dbg!(Payload::Event(Box::new(event)));
+    //         },
+    //         cx,
+    //     )
+    //     .await?;
 
-        *this.sub_client.lock() = Some(sub_client);
+    //     sub_client.initialize().await?;
 
-        anyhow::Ok(())
-    }
+    //     anyhow::Ok(())
+    // }
 
     async fn handle_recv(server_rx: Receiver<Payload>, client_tx: Sender<Payload>) -> Result<()> {
         while let Ok(payload) = server_rx.recv().await {
@@ -470,6 +447,10 @@ impl DebugAdapterClient {
         self.config.clone()
     }
 
+    pub fn request_args(&self) -> Option<Value> {
+        self.request_args.clone()
+    }
+
     pub fn request_type(&self) -> DebugRequestType {
         self.config.request.clone()
     }
@@ -479,8 +460,6 @@ impl DebugAdapterClient {
     }
 
     /// Get the next sequence id to be used in a request
-    /// # Side Effect
-    /// This function also increment's client's sequence count by one
     pub fn next_sequence_id(&self) -> u64 {
         self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
@@ -508,14 +487,14 @@ impl DebugAdapterClient {
             path_format: Some(InitializeRequestArgumentsPathFormat::Path),
             supports_variable_type: Some(true),
             supports_variable_paging: Some(false),
-            supports_run_in_terminal_request: Some(false), // TODO: we should support this
+            supports_run_in_terminal_request: Some(true),
             supports_memory_references: Some(true),
             supports_progress_reporting: Some(true),
-            supports_invalidated_event: Some(false),
+            supports_invalidated_event: Some(true),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
             supports_memory_event: Some(true),
-            supports_args_can_be_interpreted_by_shell: None,
+            supports_args_can_be_interpreted_by_shell: Some(true),
             supports_start_debugging_request: Some(true),
         };
 
