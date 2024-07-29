@@ -488,6 +488,23 @@ impl Debug for EditStepOperations {
 }
 
 /// A description of an operation to apply to one location in the codebase.
+///
+/// This object represents a single edit operation that can be performed on a specific file
+/// in the codebase. It encapsulates both the location (file path) and the nature of the
+/// edit to be made.
+///
+/// # Fields
+///
+/// * `path`: A string representing the file path where the edit operation should be applied.
+///           This path is relative to the root of the project or repository.
+///
+/// * `kind`: An enum representing the specific type of edit operation to be performed.
+///
+/// # Usage
+///
+/// `EditOperation` is used within a code editor to represent and apply
+/// programmatic changes to source code. It provides a structured way to describe
+/// edits for features like refactoring tools or AI-assisted coding suggestions.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub struct EditOperation {
     /// The path to the file containing the relevant operation
@@ -527,7 +544,10 @@ impl EditOperation {
                 let candidate = outline
                     .path_candidates
                     .iter()
-                    .find(|item| item.string == symbol)
+                    .max_by(|a, b| {
+                        strsim::jaro_winkler(&a.string, symbol)
+                            .total_cmp(&strsim::jaro_winkler(&b.string, symbol))
+                    })
                     .with_context(|| {
                         format!(
                             "symbol {:?} not found in path {:?}.\ncandidates: {:?}.\nparse status: {:?}. text:\n{}",
@@ -607,51 +627,62 @@ impl EditOperation {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(tag = "kind")]
 pub enum EditOperationKind {
-    /// Rewrite the specified symbol in its entirely based on the given description.
+    /// Rewrites the specified symbol entirely based on the given description.
+    /// This operation completely replaces the existing symbol with new content.
     Update {
-        /// A full path to the symbol to be rewritten from the provided list.
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The path should uniquely identify the symbol within the containing file.
         symbol: String,
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the transformation to apply to the symbol.
         description: String,
     },
-    /// Create a new file with the given path based on the given description.
+    /// Creates a new file with the given path based on the provided description.
+    /// This operation adds a new file to the codebase.
     Create {
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the file to be created.
         description: String,
     },
-    /// Insert a new symbol based on the given description before the specified symbol.
+    /// Inserts a new symbol based on the given description before the specified symbol.
+    /// This operation adds new content immediately preceding an existing symbol.
     InsertSiblingBefore {
-        /// A full path to the symbol to be rewritten from the provided list.
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The new content will be inserted immediately before this symbol.
         symbol: String,
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the new symbol to be inserted.
         description: String,
     },
-    /// Insert a new symbol based on the given description after the specified symbol.
+    /// Inserts a new symbol based on the given description after the specified symbol.
+    /// This operation adds new content immediately following an existing symbol.
     InsertSiblingAfter {
-        /// A full path to the symbol to be rewritten from the provided list.
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The new content will be inserted immediately after this symbol.
         symbol: String,
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the new symbol to be inserted.
         description: String,
     },
-    /// Insert a new symbol as a child of the specified symbol at the start.
+    /// Inserts a new symbol as a child of the specified symbol at the start.
+    /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
     PrependChild {
-        /// An optional full path to the symbol to be rewritten from the provided list.
-        /// If not provided, the edit should be applied at the top of the file.
+        /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// If provided, the new content will be inserted as the first child of this symbol.
+        /// If not provided, the new content will be inserted at the top of the file.
         symbol: Option<String>,
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the new symbol to be inserted.
         description: String,
     },
-    /// Insert a new symbol as a child of the specified symbol at the end.
+    /// Inserts a new symbol as a child of the specified symbol at the end.
+    /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
     AppendChild {
-        /// An optional full path to the symbol to be rewritten from the provided list.
-        /// If not provided, the edit should be applied at the top of the file.
+        /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// If provided, the new content will be inserted as the last child of this symbol.
+        /// If not provided, the new content will be applied at the bottom of the file.
         symbol: Option<String>,
-        /// A brief one-line description of the change that should be applied.
+        /// A brief description of the new symbol to be inserted.
         description: String,
     },
-    /// Delete the specified symbol.
+    /// Deletes the specified symbol from the containing file.
     Delete {
-        /// A full path to the symbol to be rewritten from the provided list.
+        /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
         symbol: String,
     },
 }

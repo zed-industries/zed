@@ -442,6 +442,7 @@ dependencies = [
  "settings",
  "similar",
  "smol",
+ "strsim 0.11.1",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -2232,7 +2233,7 @@ dependencies = [
  "anstream 0.5.0",
  "anstyle",
  "clap_lex",
- "strsim",
+ "strsim 0.10.0",
 ]
 
 [[package]]
@@ -10354,6 +10355,12 @@ name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
