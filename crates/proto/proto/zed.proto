@@ -195,7 +195,7 @@ message Envelope {
         JoinHostedProject join_hosted_project = 164;
 
         QueryLanguageModel query_language_model = 224;
-        QueryLanguageModelResponse query_language_model_response = 225; // current max
+        QueryLanguageModelResponse query_language_model_response = 225;
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -251,6 +251,8 @@ message Envelope {
         AdvertiseContexts advertise_contexts = 211;
         OpenContext open_context = 212;
         OpenContextResponse open_context_response = 213;
+        CreateContext create_context = 226;
+        CreateContextResponse create_context_response = 227; // current max
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
         SynchronizeContextsResponse synchronize_contexts_response = 216;
@@ -2361,6 +2363,14 @@ message OpenContext {
 }
 
 message OpenContextResponse {
+    Context context = 1;
+}
+
+message CreateContext {
+    uint64 project_id = 1;
+}
+
+message CreateContextResponse {
     Context context = 1;
 }
 
