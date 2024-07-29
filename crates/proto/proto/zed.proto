@@ -2371,7 +2371,8 @@ message CreateContext {
 }
 
 message CreateContextResponse {
-    Context context = 1;
+    string context_id = 1;
+    Context context = 2;
 }
 
 message UpdateContext {

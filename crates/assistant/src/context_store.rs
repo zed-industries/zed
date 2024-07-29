@@ -26,6 +26,7 @@ use util::{ResultExt, TryFutureExt};
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
+    client.add_model_request_handler(ContextStore::handle_create_context);
     client.add_model_message_handler(ContextStore::handle_update_context);
     client.add_model_request_handler(ContextStore::handle_synchronize_contexts);
 }
@@ -169,6 +170,33 @@ impl ContextStore {
         })
     }
 
+    async fn handle_create_context(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CreateContext>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::CreateContextResponse> {
+        let (context_id, operations) = this.update(&mut cx, |this, cx| {
+            if this.project.read(cx).is_remote() {
+                // TODO: Is this error message saying the right thing?
+                return Err(anyhow!("can only create contexts as the host"));
+            }
+
+            let context = this.create(cx);
+
+            anyhow::Ok((
+                context.read(cx).id().clone(),
+                context
+                    .read(cx)
+                    .serialize_ops(&ContextVersion::default(), cx),
+            ))
+        })??;
+        let operations = operations.await;
+        Ok(proto::CreateContextResponse {
+            context_id: context_id.to_proto(),
+            context: Some(proto::Context { operations }),
+        })
+    }
+
     async fn handle_update_context(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateContext>,
@@ -297,6 +325,61 @@ impl ContextStore {
         });
         self.register_context(&context, cx);
         context
+    }
+
+    pub fn create_remote_context(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Context>>> {
+        dbg!("create_remote_context");
+        let project = self.project.read(cx);
+        let Some(project_id) = project.remote_id() else {
+            return Task::ready(Err(anyhow!("project was not remote")));
+        };
+        if project.is_local() {
+            return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
+        }
+
+        let replica_id = project.replica_id();
+        let capability = project.capability();
+        let language_registry = self.languages.clone();
+        let telemetry = self.telemetry.clone();
+        let request = self.client.request(proto::CreateContext { project_id });
+        cx.spawn(|this, mut cx| async move {
+            let response = request.await?;
+            let context_id = ContextId::from_proto(response.context_id);
+            let context_proto = response.context.context("invalid context")?;
+            let context = cx.new_model(|cx| {
+                Context::new(
+                    context_id.clone(),
+                    replica_id,
+                    capability,
+                    language_registry,
+                    Some(telemetry),
+                    cx,
+                )
+            })?;
+            let operations = cx
+                .background_executor()
+                .spawn(async move {
+                    context_proto
+                        .operations
+                        .into_iter()
+                        .map(|op| ContextOperation::from_proto(op))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .await?;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            this.update(&mut cx, |this, cx| {
+                if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
+                    existing_context
+                } else {
+                    this.register_context(&context, cx);
+                    this.synchronize_contexts(cx);
+                    context
+                }
+            })
+        })
     }
 
     pub fn open_local_context(
