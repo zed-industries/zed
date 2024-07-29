@@ -45,6 +45,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub use tests::TestDb;
 
 pub use ids::*;
+pub use queries::billing_subscriptions::CreateBillingSubscriptionParams;
 pub use queries::contributors::ContributorSelector;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;

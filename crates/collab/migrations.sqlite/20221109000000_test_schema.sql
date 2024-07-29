@@ -416,3 +416,16 @@ CREATE TABLE dev_server_projects (
     dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
     paths TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    stripe_customer_id TEXT NOT NULL,
+    stripe_subscription_id TEXT NOT NULL,
+    stripe_subscription_status TEXT NOT NULL
+);
+
+CREATE INDEX "ix_billing_subscriptions_on_user_id" ON billing_subscriptions (user_id);
+CREATE INDEX "ix_billing_subscriptions_on_stripe_customer_id" ON billing_subscriptions (stripe_customer_id);
+CREATE UNIQUE INDEX "uix_billing_subscriptions_on_stripe_subscription_id" ON billing_subscriptions (stripe_subscription_id);

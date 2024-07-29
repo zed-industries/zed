@@ -1,4 +1,5 @@
 pub mod access_token;
+pub mod billing_subscription;
 pub mod buffer;
 pub mod buffer_operation;
 pub mod buffer_snapshot;

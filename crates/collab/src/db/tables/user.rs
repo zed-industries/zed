@@ -24,6 +24,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::access_token::Entity")]
     AccessToken,
+    #[sea_orm(has_many = "super::billing_subscription::Entity")]
+    BillingSubscription,
     #[sea_orm(has_one = "super::room_participant::Entity")]
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
