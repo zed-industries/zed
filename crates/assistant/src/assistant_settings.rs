@@ -249,9 +249,7 @@ impl AssistantSettingsContent {
             AssistantSettingsContent::Versioned(settings) => match settings {
                 VersionedAssistantSettingsContent::V1(settings) => match provider.as_ref() {
                     "zed.dev" => {
-                        settings.provider = Some(AssistantProviderContentV1::ZedDotDev {
-                            default_model: CloudModel::from_id(&model).ok(),
-                        });
+                        log::warn!("attempted to set zed.dev model on outdated settings");
                     }
                     "anthropic" => {
                         let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {

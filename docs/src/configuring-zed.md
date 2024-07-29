@@ -602,6 +602,7 @@ To override settings for a language, add an entry for that language server's nam
 ```
 
 4. Or to use multiple formatters consecutively, use an array of formatters:
+
 ```json
 {
   "formatter": [
@@ -613,6 +614,7 @@ To override settings for a language, add an entry for that language server's nam
   ]
 }
 ```
+
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
@@ -1567,20 +1569,22 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"project_panel": {
-  "button": true,
-  "dock": "left",
-  "git_status": true,
-  "default_width": "N/A - width in pixels",
-  "auto_reveal_entries": true,
-  "auto_fold_dirs": false,
-  "file_icons": true,
-  "folder_icons": true,
-  "indent_size" : 20,
-  "scrollbar": {
-    "show": "always"
+{
+  "project_panel": {
+    "button": true,
+    "default_width": 240,
+    "dock": "left",
+    "file_icons": true,
+    "folder_icons": true,
+    "git_status": true,
+    "indent_size": 20,
+    "auto_reveal_entries": true,
+    "auto_fold_dirs": true,
+    "scrollbar": {
+      "show": "always"
+    }
   }
-},
+}
 ```
 
 ### Dock
@@ -1653,7 +1657,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": true,
+  "auto_reveal_entries": true
 }
 ```
 
@@ -1661,7 +1665,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": false,
+  "auto_reveal_entries": false
 }
 ```
 
@@ -1677,7 +1681,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": true,
+  "auto_fold_dirs": true
 }
 ```
 
@@ -1685,7 +1689,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": false,
+  "auto_fold_dirs": false
 }
 ```
 
@@ -1699,10 +1703,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Scrollbar related settings. Possible values: "always", "never".
 - Setting: `scrollbar`
-- Default: ```json
-    "scrollbar": {
-        "show": "always"
-    }```
+- Default:
+
+```json
+"scrollbar": {
+    "show": "always"
+}
+```
 
 **Options**
 
@@ -1710,9 +1717,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "always"
-    }
+  "scrollbar": {
+    "show": "always"
+  }
 }
 ```
 
@@ -1720,9 +1727,47 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "never"
-    }
+  "scrollbar": {
+    "show": "never"
+  }
+}
+```
+
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "button": true,
+  "default_width": 240,
+  "dock": "left",
+  "file_icons": true,
+  "folder_icons": true,
+  "git_status": true,
+  "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
 }
 ```
 

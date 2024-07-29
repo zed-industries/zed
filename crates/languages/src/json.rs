@@ -166,11 +166,9 @@ impl LspAdapter for JsonLspAdapter {
             .await;
 
         if should_install_language_server {
-            // TODO: the postinstall fails on Windows
             self.node
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await
-                .log_err();
+                .await?;
         }
 
         Ok(LanguageServerBinary {

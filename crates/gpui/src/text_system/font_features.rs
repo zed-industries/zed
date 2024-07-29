@@ -12,6 +12,16 @@ impl FontFeatures {
     pub fn tag_value_list(&self) -> &[(String, u32)] {
         &self.0.as_slice()
     }
+
+    /// Returns whether the `calt` feature is enabled.
+    ///
+    /// Returns `None` if the feature is not present.
+    pub fn is_calt_enabled(&self) -> Option<bool> {
+        self.0
+            .iter()
+            .find(|(feature, _)| feature == "calt")
+            .map(|(_, value)| *value == 1)
+    }
 }
 
 impl std::fmt::Debug for FontFeatures {

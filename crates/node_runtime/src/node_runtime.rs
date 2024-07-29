@@ -290,6 +290,13 @@ impl NodeRuntime for RealNodeRuntime {
                 {
                     command.env("SYSTEMROOT", val);
                 }
+                // Without ComSpec, the post-install will always fail.
+                if let Some(val) = std::env::var("ComSpec")
+                    .context("Missing environment variable: ComSpec!")
+                    .log_err()
+                {
+                    command.env("ComSpec", val);
+                }
                 command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             }
 

@@ -7,7 +7,7 @@ use gpui::{
     WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::{stream_completion, Request, RequestMessage};
+use open_ai::stream_completion;
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
@@ -159,35 +159,6 @@ pub struct OpenAiLanguageModel {
     http_client: Arc<dyn HttpClient>,
 }
 
-impl OpenAiLanguageModel {
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
-        Request {
-            model: self.model.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => RequestMessage::User {
-                        content: msg.content,
-                    },
-                    Role::Assistant => RequestMessage::Assistant {
-                        content: Some(msg.content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => RequestMessage::System {
-                        content: msg.content,
-                    },
-                })
-                .collect(),
-            stream: true,
-            stop: request.stop,
-            temperature: request.temperature,
-            tools: Vec::new(),
-            tool_choice: None,
-        }
-    }
-}
-
 impl LanguageModel for OpenAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -226,7 +197,7 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = self.to_open_ai_request(request);
+        let request = request.into_open_ai(self.model.id().into());
 
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
@@ -250,15 +221,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 low_speed_timeout,
             );
             let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
+            Ok(open_ai::extract_text_from_events(response).boxed())
         }
         .boxed()
     }
@@ -341,6 +304,7 @@ impl AuthenticationPrompt {
             color: cx.theme().colors().text,
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
