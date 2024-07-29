@@ -88,6 +88,12 @@ pub(crate) fn one_dark() -> Theme {
                 editor_subheader_background: bg,
                 editor_active_line_background: hsla(222.9 / 360., 13.5 / 100., 20.4 / 100., 1.0),
                 editor_highlighted_line_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.1),
+                editor_debugger_active_line_background: hsla(
+                    207.8 / 360.,
+                    81. / 100.,
+                    66. / 100.,
+                    0.2,
+                ),
                 editor_line_number: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_active_line_number: hsla(216.0 / 360., 5.9 / 100., 49.6 / 100., 1.0),
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),

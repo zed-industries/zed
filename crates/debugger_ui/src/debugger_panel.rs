@@ -192,7 +192,7 @@ impl DebugPanel {
                 editor.go_to_line::<DebugCurrentRowHighlight>(
                     row,
                     column,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    Some(cx.theme().colors().editor_debugger_active_line_background),
                     cx,
                 );
             })
