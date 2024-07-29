@@ -8,7 +8,9 @@ use clock::ReplicaId;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, Task, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
+};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
@@ -51,6 +53,12 @@ pub struct ContextStore {
     client_subscription: Option<client::Subscription>,
     _project_subscriptions: Vec<gpui::Subscription>,
 }
+
+pub enum ContextStoreEvent {
+    ContextCreated(ContextId),
+}
+
+impl EventEmitter<ContextStoreEvent> for ContextStore {}
 
 enum ContextHandle {
     Weak(WeakModel<Context>),
@@ -172,7 +180,7 @@ impl ContextStore {
 
     async fn handle_create_context(
         this: Model<Self>,
-        envelope: TypedEnvelope<proto::CreateContext>,
+        _: TypedEnvelope<proto::CreateContext>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
@@ -182,9 +190,11 @@ impl ContextStore {
             }
 
             let context = this.create(cx);
+            let context_id = context.read(cx).id().clone();
+            cx.emit(ContextStoreEvent::ContextCreated(context_id.clone()));
 
             anyhow::Ok((
-                context.read(cx).id().clone(),
+                context_id,
                 context
                     .read(cx)
                     .serialize_ops(&ContextVersion::default(), cx),
@@ -429,7 +439,11 @@ impl ContextStore {
         })
     }
 
-    fn loaded_context_for_id(&self, id: &ContextId, cx: &AppContext) -> Option<Model<Context>> {
+    pub(super) fn loaded_context_for_id(
+        &self,
+        id: &ContextId,
+        cx: &AppContext,
+    ) -> Option<Model<Context>> {
         self.contexts.iter().find_map(|context| {
             let context = context.upgrade()?;
             if context.read(cx).id() == id {
@@ -566,7 +580,8 @@ impl ContextStore {
                     None
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        dbg!("advertising the new contexts", contexts.len());
         self.client
             .send(proto::AdvertiseContexts {
                 project_id,

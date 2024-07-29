@@ -1,3 +1,4 @@
+use crate::ContextStoreEvent;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -389,6 +390,44 @@ impl AssistantPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
             cx.subscribe(&context_editor_toolbar, Self::handle_toolbar_event),
             cx.subscribe(&model_summary_editor, Self::handle_summary_editor_event),
+            cx.subscribe(&context_store, |this, _context_store, event, cx| {
+                let ContextStoreEvent::ContextCreated(context_id) = event;
+                eprintln!("Created context {}", context_id.to_proto());
+                let Some(context) = this
+                    .context_store
+                    .read(cx)
+                    .loaded_context_for_id(&context_id, cx)
+                else {
+                    dbg!("here");
+                    return;
+                };
+                let Some(workspace) = this.workspace.upgrade() else {
+                    dbg!("here");
+                    return;
+                };
+                let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
+                    make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+                });
+
+                let assistant_panel = cx.view().downgrade();
+                let editor = cx.new_view(|cx| {
+                    let mut editor = ContextEditor::for_context(
+                        context,
+                        this.fs.clone(),
+                        workspace.clone(),
+                        this.project.clone(),
+                        lsp_adapter_delegate,
+                        assistant_panel,
+                        cx,
+                    );
+                    editor.insert_default_prompt(cx);
+                    editor
+                });
+
+                dbg!("showing context");
+
+                this.show_context(editor.clone(), cx);
+            }),
             cx.observe(
                 &LanguageModelCompletionProvider::global(cx),
                 |this, _, cx| {
@@ -692,9 +731,8 @@ impl AssistantPanel {
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
 
-            cx.spawn(|_this, cx| async move {
+            cx.spawn(|_, _| async move {
                 let response = task.await;
-
                 dbg!(&response.is_ok());
             })
             .detach();
