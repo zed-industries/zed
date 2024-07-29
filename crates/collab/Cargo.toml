@@ -20,6 +20,7 @@ test-support = ["sqlite"]
 [dependencies]
 anthropic.workspace = true
 anyhow.workspace = true
+async-stripe.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
