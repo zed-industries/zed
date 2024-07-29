@@ -5,7 +5,10 @@ use language_model::{
     LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelTool,
 };
-use smol::{future::FutureExt, lock::{Semaphore, SemaphoreGuardArc}};
+use smol::{
+    future::FutureExt,
+    lock::{Semaphore, SemaphoreGuardArc},
+};
 use std::{future, pin::Pin, sync::Arc, task::Poll};
 use ui::Context;
 
