@@ -609,7 +609,7 @@ async fn download_release(
     let (installation_id, release_channel, telemetry_enabled, is_staff) = cx.update(|cx| {
         let telemetry = Client::global(cx).telemetry().clone();
         let is_staff = telemetry.is_staff();
-        let installation_id = Client::global(cx).telemetry().installation_id();
+        let installation_id = telemetry.installation_id();
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
         let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
