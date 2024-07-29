@@ -15,7 +15,7 @@ use gpui::{
     Render, Subscription, Task, Transformation,
 };
 use http_client::HttpClient;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
@@ -24,6 +24,7 @@ use ui::{
     VisualContext,
 };
 
+use crate::settings::AllLanguageModelSettings;
 use crate::LanguageModelProviderState;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -48,7 +49,6 @@ pub struct CopilotChatLanguageModelProvider {
 pub struct State {
     oauth_token: Option<String>,
     api_key: Option<(String, NaiveDateTime)>,
-    settings: CopilotChatSettings,
     _subscriptions: [Subscription; 2],
 }
 
@@ -57,7 +57,6 @@ impl CopilotChatLanguageModelProvider {
         let state = cx.new_model(|cx| State {
             oauth_token: CopilotChat::global(cx).oauth_token.clone(),
             api_key: None,
-            settings: CopilotChatSettings::default(),
             _subscriptions: [
                 cx.observe_global::<SettingsStore>(|_, cx| {
                     cx.notify();
@@ -127,26 +126,25 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &AppContext) -> gpui::Task<gpui::Result<()>> {
-        if self.is_authenticated(cx) {
-            return Task::ready(Ok(()));
+        let result = if self.is_authenticated(cx) {
+            Ok(())
+        } else if let Some(copilot) = Copilot::global(cx) {
+            let error_msg = match copilot.read(cx).status() {
+                Status::Disabled => anyhow::anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
+                Status::Error(e) => anyhow::anyhow!(format!("Received the following error while signing into Copilot: {e}")),
+                Status::Starting { task: _ } => anyhow::anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
+                Status::Unauthorized => anyhow::anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
+                Status::Authorized => return Task::ready(Ok(())),
+                Status::SignedOut => anyhow::anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+                Status::SigningIn { prompt: _ } => anyhow::anyhow!("Still signing into Copilot..."),
+            };
+            Err(error_msg)
         } else {
-            // We let the _chat_subscription deal with fetching an OAuth
-            // token when necessary, so here we just need to provide a
-            // helpful error message to the user
-            let copilot = Copilot::global(cx).unwrap();
-
-            match copilot.read(cx).status() {
-                Status::Disabled => Task::ready(Err(anyhow::anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."))),
-                Status::Error(e) => Task::ready(Err(anyhow::anyhow!(format!("Received the following error while signing into Copilot: {e}")))),
-                Status::Starting { task: _ } => Task::ready(Err(anyhow::anyhow!("Copilot is still starting, please wait for Copilot to start then try again"))),
-                Status::Unauthorized => Task::ready(Err(anyhow::anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."))),
-                Status::Authorized => Task::ready(Ok(())),
-                Status::SignedOut => Task::ready(Err(anyhow::anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."))),
-                Status::SigningIn { prompt: _ } => {
-                    Task::ready(Err(anyhow::anyhow!("Still signing into Copilot...")))
-                },
-            }
-        }
+            Err(anyhow::anyhow!(
+                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
+            ))
+        };
+        Task::ready(result)
     }
 
     fn authentication_prompt(&self, cx: &mut ui::WindowContext) -> gpui::AnyView {
@@ -154,17 +152,16 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> gpui::Task<gpui::Result<()>> {
-        if Copilot::global(cx).is_none() {
+        let Some(copilot) = Copilot::global(cx) else {
             return Task::ready(Err(anyhow::anyhow!(
                 "Copilot is not available. Please ensure Copilot is enabled and running and try again."
             )));
-        }
+        };
 
         let state = self.state.clone();
-        let copilot = Copilot::global(cx).clone();
 
         cx.spawn(|mut cx| async move {
-            cx.update_model(&copilot.unwrap(), |model, cx| model.sign_out(cx))?
+            cx.update_model(&copilot, |model, cx| model.sign_out(cx))?
                 .await?;
 
             cx.update_model(&state, |this, cx| {
@@ -248,11 +245,13 @@ impl LanguageModel for CopilotChatLanguageModel {
         let request = self.to_copilot_chat_request(request);
 
         let Ok((oauth_token, api_key, low_speed_timeout)) =
-            cx.read_model(&self.state, |state, _| {
+            cx.read_model(&self.state, |state, cx| {
                 (
                     state.oauth_token.clone().unwrap(),
                     state.api_key.clone(),
-                    state.settings.low_speed_timeout,
+                    AllLanguageModelSettings::get_global(cx)
+                        .copilot_chat
+                        .low_speed_timeout,
                 )
             })
         else {
