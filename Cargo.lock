@@ -12034,6 +12034,7 @@ dependencies = [
  "indoc",
  "itertools 0.11.0",
  "language",
+ "lazy_static",
  "log",
  "lsp",
  "multi_buffer",
