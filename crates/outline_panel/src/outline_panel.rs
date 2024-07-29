@@ -1119,7 +1119,6 @@ impl OutlinePanel {
         }
     }
 
-    // TODO kb reveal last search entry that is on the same line the caret is on
     fn reveal_entry_for_selection(
         &mut self,
         editor: &View<Editor>,
@@ -1172,20 +1171,13 @@ impl OutlinePanel {
                 })
             }
             PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
-            PanelEntry::Search(match_range) => {
-                let ids = if let Some(buffer_id) = match_range.start.buffer_id {
-                    Some((buffer_id, match_range.start.excerpt_id))
-                } else if let Some(buffer_id) = match_range.end.buffer_id {
-                    Some((buffer_id, match_range.end.excerpt_id))
-                } else {
-                    None
-                };
-
-                ids.and_then(|(buffer_id, excerpt_id)| {
+            PanelEntry::Search(match_range) => match_range
+                .start
+                .buffer_id
+                .or(match_range.end.buffer_id)
+                .and_then(|buffer_id| {
                     self.collapsed_entries
                         .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                    self.collapsed_entries
-                        .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
                     let project = self.project.read(cx);
                     let entry_id = project
                         .buffer_for_id(buffer_id, cx)
@@ -1202,8 +1194,7 @@ impl OutlinePanel {
                                 Some((worktree, entry))
                             })
                     })
-                })
-            }
+                }),
             _ => return,
         };
         if let Some((worktree, buffer_entry)) = related_buffer_entry {
@@ -2109,6 +2100,46 @@ impl OutlinePanel {
         let buffer_id = buffer.read(cx).remote_id();
         let selection_display_point = selection.to_display_point(&editor_snapshot);
 
+        match self.mode {
+            ItemsDisplayMode::Search => self
+                .search_matches
+                .iter()
+                .rev()
+                .min_by_key(|&match_range| {
+                    let match_display_range =
+                        match_range.clone().to_display_points(&editor_snapshot);
+                    let start_distance = if selection_display_point < match_display_range.start {
+                        match_display_range.start - selection_display_point
+                    } else {
+                        selection_display_point - match_display_range.start
+                    };
+                    let end_distance = if selection_display_point < match_display_range.end {
+                        match_display_range.end - selection_display_point
+                    } else {
+                        selection_display_point - match_display_range.end
+                    };
+                    start_distance + end_distance
+                })
+                .cloned()
+                .map(PanelEntry::Search),
+            ItemsDisplayMode::Outline => self.outline_location(
+                buffer_id,
+                excerpt_id,
+                multi_buffer_snapshot,
+                editor_snapshot,
+                selection_display_point,
+            ),
+        }
+    }
+
+    fn outline_location(
+        &mut self,
+        buffer_id: BufferId,
+        excerpt_id: ExcerptId,
+        multi_buffer_snapshot: editor::MultiBufferSnapshot,
+        editor_snapshot: editor::EditorSnapshot,
+        selection_display_point: DisplayPoint,
+    ) -> Option<PanelEntry> {
         let excerpt_outlines = self
             .excerpts
             .get(&buffer_id)
