@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::TerminalView;
+use crate::{default_working_directory, TerminalView};
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
@@ -10,11 +10,11 @@ use gpui::{
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use project::{Fs, ProjectEntryId};
+use project::{terminals::TerminalKind, Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId, TerminalWorkDir};
+use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
@@ -348,14 +348,13 @@ impl TerminalPanel {
             return;
         };
 
-        let terminal_work_dir = workspace
-            .project()
-            .read(cx)
-            .terminal_work_dir_for(Some(&action.working_directory), cx);
-
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal(terminal_work_dir, None, RevealStrategy::Always, cx)
+                panel.add_terminal(
+                    TerminalKind::Shell(Some(action.working_directory.clone())),
+                    RevealStrategy::Always,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -484,7 +483,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(spawn_task.cwd.clone(), Some(spawn_task), reveal, cx)
+        self.add_terminal(TerminalKind::Task(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -497,9 +496,11 @@ impl TerminalPanel {
             return;
         };
 
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal(None, None, RevealStrategy::Always, cx)
+                this.add_terminal(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -533,22 +534,14 @@ impl TerminalPanel {
 
     fn add_terminal(
         &mut self,
-        working_directory: Option<TerminalWorkDir>,
-        spawn_task: Option<SpawnInTerminal>,
+        kind: TerminalKind,
         reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         if !self.enabled {
-            if spawn_task.is_none()
-                || !matches!(
-                    spawn_task.as_ref().unwrap().cwd,
-                    Some(TerminalWorkDir::Ssh { .. })
-                )
-            {
-                return Task::ready(Err(anyhow::anyhow!(
-                    "terminal not yet supported for remote projects"
-                )));
-            }
+            return Task::ready(Err(anyhow::anyhow!(
+                "terminal not yet supported for remote projects"
+            )));
         }
 
         let workspace = self.workspace.clone();
@@ -557,18 +550,10 @@ impl TerminalPanel {
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             let result = workspace.update(&mut cx, |workspace, cx| {
-                let working_directory = if let Some(working_directory) = working_directory {
-                    Some(working_directory)
-                } else {
-                    let working_directory_strategy =
-                        TerminalSettings::get_global(cx).working_directory.clone();
-                    crate::get_working_directory(workspace, cx, working_directory_strategy)
-                };
-
                 let window = cx.window_handle();
-                let terminal = workspace.project().update(cx, |project, cx| {
-                    project.create_terminal(working_directory, spawn_task, window, cx)
-                })?;
+                let terminal = workspace
+                    .project()
+                    .update(cx, |project, cx| project.create_terminal(kind, window, cx))?;
                 let terminal_view = Box::new(cx.new_view(|cx| {
                     TerminalView::new(
                         terminal.clone(),
@@ -655,7 +640,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(spawn_task.cwd.clone(), Some(spawn_task), window, cx)
+                .create_terminal(TerminalKind::Task(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
@@ -802,10 +787,19 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.has_no_terminals(cx) {
-            self.add_terminal(None, None, RevealStrategy::Never, cx)
-                .detach_and_log_err(cx)
+        if !active || !self.has_no_terminals(cx) {
+            return;
         }
+        cx.defer(|this, cx| {
+            let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
+                TerminalKind::Shell(default_working_directory(workspace, cx))
+            }) else {
+                return;
+            };
+
+            this.add_terminal(kind, RevealStrategy::Never, cx)
+                .detach_and_log_err(cx)
+        })
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
