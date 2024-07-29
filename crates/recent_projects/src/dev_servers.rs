@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -1642,6 +1643,8 @@ pub async fn spawn_ssh_task(
     let (command, args) = wrap_for_ssh(
         &SshCommand::DevServer(ssh_connection_string.clone()),
         Some((&command, &args)),
+        None,
+        HashMap::default(),
         None,
     );
 
