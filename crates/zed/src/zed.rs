@@ -5,7 +5,6 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
-pub(crate) mod session;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
