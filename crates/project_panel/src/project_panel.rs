@@ -1303,6 +1303,7 @@ impl ProjectPanel {
                         .read(cx)
                         .absolutize(&clip_entry.path)
                         .ok()?;
+                    // TODO, currently the selected not update to paste one
                     cx.spawn(|project_panel, mut cx| async move {
                         project_panel
                             .update(&mut cx, |project_panel, cx| {
@@ -3623,6 +3624,97 @@ mod tests {
                 "      one.two copy.txt",
                 "      one.two.txt",
                 "      one.txt",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "three.txt": ""
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "four.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root1/three.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+
+        select_path(&panel, "root2/one.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+                "v root2",
+                "      four.txt",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt  <== selected",
+            ]
+        );
+
+        select_path(&panel, "root1/three.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "root2/two.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        // TODO, paste same file in worktree, will emit prompt for select replace or cancel
+        // current test, default cancel same file paste different worktree
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+                "v root2",
+                "      four.txt",
+                "      one.txt",
+                "      three.txt",
+                "      two copy.txt  <== selected",
+                "      two.txt",
             ]
         );
     }
