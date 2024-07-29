@@ -32,6 +32,19 @@ impl Database {
         .await
     }
 
+    /// Returns the billing subscription with the specified ID.
+    pub async fn get_billing_subscription_by_id(
+        &self,
+        id: BillingSubscriptionId,
+    ) -> Result<Option<billing_subscription::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_subscription::Entity::find_by_id(id)
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns all of the billing subscriptions for the user with the specified ID.
     ///
     /// Note that this returns the subscriptions regardless of their status.
@@ -44,6 +57,7 @@ impl Database {
         self.transaction(|tx| async move {
             let subscriptions = billing_subscription::Entity::find()
                 .filter(billing_subscription::Column::UserId.eq(user_id))
+                .order_by_asc(billing_subscription::Column::Id)
                 .all(&*tx)
                 .await?;
 
@@ -65,6 +79,7 @@ impl Database {
                             .eq(StripeSubscriptionStatus::Active),
                     ),
                 )
+                .order_by_asc(billing_subscription::Column::Id)
                 .all(&*tx)
                 .await?;
 
