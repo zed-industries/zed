@@ -410,7 +410,6 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
- "feature_flags",
  "fs",
  "futures 0.3.28",
  "fuzzy",
