@@ -425,7 +425,7 @@ impl SummaryIndex {
         let code_len = code.len();
         let stream = LanguageModelCompletionProvider::read_global(cx).complete_bg(
             request,
-            Arc::new(model),
+            todo!(), //Arc::new(model),
             cx,
         );
 
