@@ -580,10 +580,8 @@ impl HoverState {
     pub fn render(
         &mut self,
         snapshot: &EditorSnapshot,
-        _style: &EditorStyle,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        _workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
