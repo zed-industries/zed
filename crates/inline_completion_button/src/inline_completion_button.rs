@@ -455,7 +455,7 @@ fn set_completion_provider(
     cx: &mut AppContext,
     provider: InlineCompletionProvider,
 ) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
             .inline_completion_provider = Some(provider);
