@@ -637,6 +637,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
+            stripe_client: None,
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
@@ -669,6 +670,8 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
+                stripe_api_key: None,
+                stripe_price_id: None,
                 supermaven_admin_api_key: None,
             },
         })
