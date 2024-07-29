@@ -226,13 +226,13 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
             .latest_search_query
             .as_ref()
             .expect("Finder should have a query after the update_matches call");
-        assert_eq!(latest_search_query.path_like.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
         assert_eq!(
-            latest_search_query.path_like.file_query_end,
-            Some(file_query.len())
+            latest_search_query.path_position.column,
+            Some(file_column as u32)
         );
-        assert_eq!(latest_search_query.row, Some(file_row));
-        assert_eq!(latest_search_query.column, Some(file_column as u32));
     });
 
     cx.dispatch_action(SelectNext);
@@ -301,13 +301,13 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
             .latest_search_query
             .as_ref()
             .expect("Finder should have a query after the update_matches call");
-        assert_eq!(latest_search_query.path_like.raw_query, query_outside_file);
+        assert_eq!(latest_search_query.raw_query, query_outside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
         assert_eq!(
-            latest_search_query.path_like.file_query_end,
-            Some(file_query.len())
+            latest_search_query.path_position.column,
+            Some(file_column as u32)
         );
-        assert_eq!(latest_search_query.row, Some(file_row));
-        assert_eq!(latest_search_query.column, Some(file_column as u32));
     });
 
     cx.dispatch_action(SelectNext);
@@ -1854,18 +1854,21 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     })
 }
 
-fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
-    PathLikeWithPosition::parse_str(test_str, |normalized_query, path_like_str| {
-        Ok::<_, std::convert::Infallible>(FileSearchQuery {
-            raw_query: normalized_query.to_owned(),
-            file_query_end: if path_like_str == test_str {
-                None
-            } else {
-                Some(path_like_str.len())
-            },
-        })
+fn test_path_like(test_str: &str) -> FileSearchQuery {
+    let path_position = PathLikeWithPosition::parse_str(&test_str, |_, path_str| {
+        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
     })
-    .unwrap()
+    .unwrap();
+
+    FileSearchQuery {
+        raw_query: test_str.to_owned(),
+        file_query_end: if path_position.path_like.to_str().unwrap() == test_str {
+            None
+        } else {
+            Some(path_position.path_like.to_str().unwrap().len())
+        },
+        path_position,
+    }
 }
 
 fn build_find_picker(
