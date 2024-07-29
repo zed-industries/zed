@@ -527,7 +527,10 @@ impl EditOperation {
                 let candidate = outline
                     .path_candidates
                     .iter()
-                    .find(|item| item.string == symbol)
+                    .max_by(|a, b| {
+                        strsim::jaro_winkler(&a.string, symbol)
+                            .total_cmp(&strsim::jaro_winkler(&b.string, symbol))
+                    })
                     .with_context(|| {
                         format!(
                             "symbol {:?} not found in path {:?}.\ncandidates: {:?}.\nparse status: {:?}. text:\n{}",
