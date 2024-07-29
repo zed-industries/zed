@@ -494,24 +494,8 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .when_some(self.clipboard.as_ref(), |menu, entry| {
-                                let entries_for_worktree_id = (SelectedEntry {
-                                    worktree_id,
-                                    entry_id: ProjectEntryId::MIN,
-                                })
-                                    ..(SelectedEntry {
-                                        worktree_id,
-                                        entry_id: ProjectEntryId::MAX,
-                                    });
-                                menu.when(
-                                    entry
-                                        .items()
-                                        .range(entries_for_worktree_id)
-                                        .next()
-                                        .is_some(),
-                                    |menu| menu.action("Paste", Box::new(Paste)),
-                                )
+                            .when(self.clipboard.as_ref().is_some(), |menu| {
+                                menu.action("Paste", Box::new(Paste))
                             })
                             .separator()
                             .action("Copy Path", Box::new(CopyPath))
