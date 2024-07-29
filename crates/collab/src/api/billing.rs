@@ -1,23 +1,12 @@
 use std::str::FromStr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
-use axum::{
-    extract::{self, Query},
-    routing::{get, post},
-    Extension, Json, Router,
-};
-use chrono::{NaiveDateTime, SecondsFormat};
+use anyhow::anyhow;
+use axum::{extract, routing::post, Extension, Json, Router};
 use collections::HashSet;
 use serde::{Deserialize, Serialize};
-use stripe::{
-    CheckoutSession, CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCustomer,
-    Customer, CustomerId,
-};
+use stripe::{CheckoutSession, CreateCheckoutSession, CreateCheckoutSessionLineItems, CustomerId};
 
-use crate::api::AuthenticatedUserParams;
-use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
-use crate::db::{ContributorSelector, CreateBillingSubscriptionParams};
 use crate::{AppState, Result};
 
 pub fn router() -> Router {
@@ -34,6 +23,7 @@ struct CreateBillingSubscriptionResponse {
     checkout_session_url: String,
 }
 
+/// Initiates a Stripe Checkout session for creating a billing subscription.
 async fn create_billing_subscription(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(body): extract::Json<CreateBillingSubscriptionBody>,
@@ -63,23 +53,6 @@ async fn create_billing_subscription(
             .map(|id| CustomerId::from_str(id).map_err(|err| anyhow!(err)))
             .transpose()
     }?;
-
-    // let customer = if let Some(customer_id) = existing_customer_id {
-    //     Customer::retrieve(&stripe_client, &customer_id, &[]).await?
-    // } else {
-    //     Customer::create(
-    //         &stripe_client,
-    //         CreateCustomer {
-    //             email: user.email_address.as_deref(),
-    //             metadata: Some(std::collections::HashMap::from([(
-    //                 "github_login".into(),
-    //                 user.github_login.clone(),
-    //             )])),
-    //             ..Default::default()
-    //         },
-    //     )
-    //     .await?
-    // };
 
     let checkout_session = {
         let mut params = CreateCheckoutSession::new();
