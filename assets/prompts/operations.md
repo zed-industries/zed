@@ -35,7 +35,7 @@ impl Rectangle {
 
 What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
 
-Assistant (wrong):
+A (wrong):
 {
   "operations": [
     {
@@ -55,7 +55,7 @@ Assistant (wrong):
 
 This demonstrates what NOT to do. NEVER append multiple children at the same location.
 
-Assistant (corrected):
+A (corrected):
 {
   "operations": [
     {
@@ -70,7 +70,7 @@ Assistant (corrected):
 User:
 What are the operations for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -108,7 +108,7 @@ impl User {
 
 What are the operations for the step: <step>Update the 'print_info' method to use formatted output</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -123,7 +123,7 @@ Assistant:
 User:
 What are the operations for the step: <step>Remove the 'email' field from the User struct</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -160,7 +160,7 @@ impl Vehicle {
 
 What are the operations for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -174,7 +174,7 @@ Assistant:
 User:
 What are the operations for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -217,7 +217,7 @@ impl Employee {
 
 What are the operations for the step: <step>Make salary an f32</step>
 
-Assistant (wrong):
+A (wrong):
 {
   "operations": [
     {
@@ -237,7 +237,7 @@ Assistant (wrong):
 
 This example demonstrates what not to do. `struct Employee salary` is a child of `struct Employee`.
 
-Assistant (corrected):
+A (corrected):
 {
   "operations": [
     {
@@ -252,7 +252,7 @@ Assistant (corrected):
 User:
 What are the correct operations for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
 
-Assistant:
+A:
 {
   "operations": [
     {
@@ -269,4 +269,132 @@ Assistant:
   ]
 }
 
-Now generate the operations for the following step.
+Example 5:
+
+User:
+```rs src/game.rs
+struct Player {
+    name: String,
+    health: i32,
+    pub score: u32,
+}
+
+impl Player {
+    pub fn new(name: String) -> Self {
+        Player { name, health: 100, score: 0 }
+    }
+}
+
+struct Game {
+    players: Vec<Player>,
+}
+
+impl Game {
+    fn new() -> Self {
+        Game { players: Vec::new() }
+    }
+}
+```
+
+<step>Add a 'level' field to Player and update the 'new' method</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/game.rs",
+      "symbol": "struct Player pub score",
+      "description": "Add level field to Player"
+    },
+    {
+      "kind": "Update",
+      "path": "src/game.rs",
+      "symbol": "impl Player pub fn new",
+      "description": "Initialize level in new method"
+    }
+  ]
+}
+
+Example 6:
+
+User:
+```rs src/config.rs
+use std::collections::HashMap;
+
+struct Config {
+    settings: HashMap<String, String>,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config { settings: HashMap::new() }
+    }
+}
+```
+
+<step>Add a 'load_from_file' method to Config and import necessary modules</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "PrependChild",
+      "path": "src/config.rs",
+      "description": "Import std::fs and std::io modules"
+    },
+    {
+      "kind": "AppendChild",
+      "path": "src/config.rs",
+      "symbol": "impl Config",
+      "description": "Add load_from_file method"
+    }
+  ]
+}
+
+Example 7:
+
+User:
+```rs src/database.rs
+pub(crate) struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    fn new(url: &str) -> Result<Self, Error> {
+        let connection = Connection::connect(url)?;
+        Ok(Database { connection })
+    }
+
+    async fn query(&self, sql: &str) -> Result<Vec<Row>, Error> {
+        self.connection.query(sql, &[])
+    }
+}
+```
+
+<step>Add error handling to the 'query' method and create a custom error type</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "PrependChild",
+      "path": "src/database.rs",
+      "description": "Import necessary error handling modules"
+    },
+    {
+      "kind": "InsertSiblingBefore",
+      "path": "src/database.rs",
+      "symbol": "pub(crate) struct Database",
+      "description": "Define custom DatabaseError enum"
+    },
+    {
+      "kind": "Update",
+      "path": "src/database.rs",
+      "symbol": "impl Database async fn query",
+      "description": "Implement error handling in query method"
+    }
+  ]
+}
+
+Now generate the operations for the following step:
