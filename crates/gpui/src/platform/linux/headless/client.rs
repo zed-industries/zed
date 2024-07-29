@@ -63,6 +63,10 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
+    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,

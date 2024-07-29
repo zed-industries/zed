@@ -171,6 +171,7 @@ define_connection! {
     //   fullscreen: Option<bool>, // Is the window fullscreen?
     //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
     //   session_id: Option<String>, // Session id
+    //   window_id: Option<u64>, // Window Id
     // )
     //
     // pane_groups(
