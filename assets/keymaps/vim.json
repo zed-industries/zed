@@ -316,6 +316,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
+      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
@@ -325,6 +326,7 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "backspace": "vim::UndoReplace",
       "tab": "vim::Tab",
       "enter": "vim::Enter"
@@ -337,7 +339,8 @@
       "enter": "vim::Enter",
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
+      "ctrl-[": "vim::ClearOperators",
+      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }]
     }
   },
   {
