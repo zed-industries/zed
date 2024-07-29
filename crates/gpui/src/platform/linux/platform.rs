@@ -77,7 +77,7 @@ pub trait LinuxClient {
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>>;
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
 }
 
@@ -240,8 +240,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.active_window()
     }
 
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.windows_ordered()
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.window_stack()
     }
 
     fn open_window(

@@ -469,12 +469,13 @@ impl AppContext {
             .collect()
     }
 
-    /// Returns the window handles ordered by their appearance on screen,
-    /// if the platform supports that.
-    /// Order should be front-to-back, with the first window in the returned vec being
-    /// the active/topmost window of the application.
-    pub fn windows_with_platform_ordering(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.platform.windows_ordered()
+    /// Returns the window handles ordered by their appearance on screen, front to back.
+    ///
+    /// The first window in the returned list is the active/topmost window of the application.
+    ///
+    /// This method returns None if the platform doesn't implement the method yet.
+    pub fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.platform.window_stack()
     }
 
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.

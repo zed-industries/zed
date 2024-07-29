@@ -524,7 +524,7 @@ impl Platform for MacPlatform {
 
     // Returns the windows ordered front-to-back, meaning that the active
     // window is the first one in the returned vec.
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         Some(MacWindow::ordered_windows())
     }
 

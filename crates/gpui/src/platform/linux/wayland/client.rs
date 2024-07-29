@@ -750,7 +750,7 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
 

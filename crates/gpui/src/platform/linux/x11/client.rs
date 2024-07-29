@@ -1346,7 +1346,7 @@ impl LinuxClient for X11Client {
         })
     }
 
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         let state = self.0.borrow();
         let root = state.xcb_connection.setup().roots[state.x_root_index].root;
 

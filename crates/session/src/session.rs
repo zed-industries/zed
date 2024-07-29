@@ -12,7 +12,7 @@ pub struct Session {
 }
 
 const SESSION_ID_KEY: &'static str = "session_id";
-const SESSION_ORDERED_WINDOWS_KEY: &'static str = "session_ordered_window_ids";
+const SESSION_WINDOW_STACK_KEY: &'static str = "session_window_stack";
 
 impl Session {
     pub async fn new() -> Self {
@@ -26,7 +26,7 @@ impl Session {
             .log_err();
 
         let old_window_ids = KEY_VALUE_STORE
-            .read_kvp(&SESSION_ORDERED_WINDOWS_KEY)
+            .read_kvp(&SESSION_WINDOW_STACK_KEY)
             .ok()
             .flatten()
             .and_then(|json| serde_json::from_str::<Vec<u64>>(&json).ok())
@@ -69,12 +69,8 @@ impl AppSession {
 
         let _serialization_task = Some(cx.spawn(|_, cx| async move {
             loop {
-                if let Some(windows) = cx
-                    .update(|cx| cx.windows_with_platform_ordering())
-                    .ok()
-                    .flatten()
-                {
-                    store_window_order(windows).await;
+                if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
+                    store_window_stack(windows).await;
                 }
 
                 cx.background_executor()
@@ -91,8 +87,8 @@ impl AppSession {
     }
 
     fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
-        if let Some(windows) = cx.windows_with_platform_ordering() {
-            cx.background_executor().spawn(store_window_order(windows))
+        if let Some(windows) = cx.window_stack() {
+            cx.background_executor().spawn(store_window_stack(windows))
         } else {
             Task::ready(())
         }
@@ -106,12 +102,12 @@ impl AppSession {
         self.session.old_session_id.as_deref()
     }
 
-    pub fn last_session_windows_order(&self) -> Option<Vec<WindowId>> {
+    pub fn last_session_window_stack(&self) -> Option<Vec<WindowId>> {
         self.session.old_window_ids.clone()
     }
 }
 
-async fn store_window_order(windows: Vec<AnyWindowHandle>) {
+async fn store_window_stack(windows: Vec<AnyWindowHandle>) {
     let window_ids = windows
         .into_iter()
         .map(|window| window.window_id().as_u64())
@@ -119,7 +115,7 @@ async fn store_window_order(windows: Vec<AnyWindowHandle>) {
 
     if let Ok(window_ids_json) = serde_json::to_string(&window_ids) {
         KEY_VALUE_STORE
-            .write_kvp(SESSION_ORDERED_WINDOWS_KEY.to_string(), window_ids_json)
+            .write_kvp(SESSION_WINDOW_STACK_KEY.to_string(), window_ids_json)
             .await
             .log_err();
     }

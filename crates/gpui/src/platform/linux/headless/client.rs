@@ -63,7 +63,7 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
-    fn windows_ordered(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
 

@@ -811,7 +811,7 @@ impl WorkspaceDb {
     pub fn last_session_workspace_locations(
         &self,
         last_session_id: &str,
-        last_session_window_order: Option<Vec<WindowId>>,
+        last_session_window_stack: Option<Vec<WindowId>>,
     ) -> Result<Vec<LocalPaths>> {
         let mut workspaces = Vec::new();
 
@@ -823,10 +823,10 @@ impl WorkspaceDb {
             }
         }
 
-        if let Some(window_order) = last_session_window_order {
+        if let Some(stack) = last_session_window_stack {
             workspaces.sort_by_key(|(_, window_id)| {
                 window_id
-                    .and_then(|id| window_order.iter().position(|&order_id| order_id == id))
+                    .and_then(|id| stack.iter().position(|&order_id| order_id == id))
                     .unwrap_or(usize::MAX)
             });
         }
@@ -1450,7 +1450,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspaces() {
+    async fn test_last_session_workspace_locations() {
         let dir1 = tempfile::TempDir::with_prefix("dir1").unwrap();
         let dir2 = tempfile::TempDir::with_prefix("dir2").unwrap();
         let dir3 = tempfile::TempDir::with_prefix("dir3").unwrap();
@@ -1483,15 +1483,15 @@ mod tests {
             db.save_workspace(workspace.clone()).await;
         }
 
-        let order = Some(Vec::from([
-            WindowId::from(2),
+        let stack = Some(Vec::from([
+            WindowId::from(2), // Top
             WindowId::from(8),
             WindowId::from(5),
-            WindowId::from(9),
+            WindowId::from(9), // Bottom
         ]));
 
         let have = db
-            .last_session_workspace_locations("one-session", order)
+            .last_session_workspace_locations("one-session", stack)
             .unwrap();
         assert_eq!(have.len(), 4);
         assert_eq!(have[0], LocalPaths::new([dir4.path().to_str().unwrap()]));

@@ -4906,9 +4906,9 @@ pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
-    last_session_window_order: Option<Vec<WindowId>>,
+    last_session_window_stack: Option<Vec<WindowId>>,
 ) -> Option<Vec<LocalPaths>> {
-    DB.last_session_workspace_locations(last_session_id, last_session_window_order)
+    DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
 

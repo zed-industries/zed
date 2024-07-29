@@ -709,13 +709,13 @@ pub(crate) async fn restorable_workspace_locations(
         .ok()?;
 
     let session_handle = app_state.session.clone();
-    let (last_session_id, last_session_window_order) = cx
+    let (last_session_id, last_session_window_stack) = cx
         .update(|cx| {
             let session = session_handle.read(cx);
 
             (
                 session.last_session_id().map(|id| id.to_string()),
-                session.last_session_windows_order(),
+                session.last_session_window_stack(),
             )
         })
         .ok()?;
@@ -737,11 +737,11 @@ pub(crate) async fn restorable_workspace_locations(
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
-                let ordered = last_session_window_order.is_some();
+                let ordered = last_session_window_stack.is_some();
 
                 let mut locations = workspace::last_session_workspace_locations(
                     &last_session_id,
-                    last_session_window_order,
+                    last_session_window_stack,
                 )
                 .filter(|locations| !locations.is_empty());
 
