@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 
 struct Detect;
 
@@ -54,13 +54,13 @@ struct Args {
 }
 
 fn parse_path_with_position(argument_str: &str) -> Result<String, std::io::Error> {
-    let path_like = PathLikeWithPosition::parse_str::<Infallible>(argument_str, |_, path_str| {
+    let path = PathWithPosition::parse_str::<Infallible>(argument_str, |path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
     .unwrap();
     let curdir = env::current_dir()?;
 
-    let canonicalized = path_like.map_path_like(|path| match fs::canonicalize(&path) {
+    let canonicalized = path.map_path(|path| match fs::canonicalize(&path) {
         Ok(path) => Ok(path),
         Err(e) => {
             if let Some(mut parent) = path.parent() {

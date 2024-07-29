@@ -28,7 +28,7 @@ use std::{
 };
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
-use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
+use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
@@ -400,7 +400,7 @@ pub enum Event {
 struct FileSearchQuery {
     raw_query: String,
     file_query_end: Option<usize>,
-    path_position: PathLikeWithPosition<PathBuf>,
+    path_position: PathWithPosition,
 }
 
 impl FileSearchQuery {
@@ -797,20 +797,18 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let path_position = PathLikeWithPosition::parse_str(&raw_query, |_, path_str| {
+            let path_position = PathWithPosition::parse_str(&raw_query, |path_str| {
                 Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
             })
             .expect("infallible");
 
             let query = FileSearchQuery {
                 raw_query: raw_query.trim().to_owned(),
-                file_query_end: if path_position.path_like.to_str().unwrap_or(raw_query)
-                    == raw_query
-                {
+                file_query_end: if path_position.path.to_str().unwrap_or(raw_query) == raw_query {
                     None
                 } else {
                     // Safe to unwrap as we won't get here when the unwrap in if fails
-                    Some(path_position.path_like.to_str().unwrap().len())
+                    Some(path_position.path.to_str().unwrap().len())
                 },
                 path_position,
             };

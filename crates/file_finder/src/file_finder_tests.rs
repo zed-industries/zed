@@ -357,7 +357,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
 
     let (picker, _, cx) = build_find_picker(project, cx);
 
-    let query = test_path_like("hi");
+    let query = test_path_position("hi");
     picker
         .update(cx, |picker, cx| {
             picker.delegate.spawn_search(query.clone(), cx)
@@ -450,7 +450,7 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_like("hi"), cx)
+            picker.delegate.spawn_search(test_path_position("hi"), cx)
         })
         .await;
     picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
@@ -478,7 +478,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // is included in the matching, because the worktree is a single file.
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_like("thf"), cx)
+            picker.delegate.spawn_search(test_path_position("thf"), cx)
         })
         .await;
     cx.read(|cx| {
@@ -499,7 +499,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // not match anything.
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("thf/"), cx)
+            f.delegate.spawn_search(test_path_position("thf/"), cx)
         })
         .await;
     picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
@@ -548,7 +548,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let finder = open_file_picker(&workspace, cx);
     finder
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("a.txt"), cx)
+            f.delegate.spawn_search(test_path_position("a.txt"), cx)
         })
         .await;
 
@@ -581,7 +581,7 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("dir"), cx)
+            f.delegate.spawn_search(test_path_position("dir"), cx)
         })
         .await;
     cx.read(|cx| {
@@ -1854,18 +1854,18 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     })
 }
 
-fn test_path_like(test_str: &str) -> FileSearchQuery {
-    let path_position = PathLikeWithPosition::parse_str(&test_str, |_, path_str| {
+fn test_path_position(test_str: &str) -> FileSearchQuery {
+    let path_position = PathWithPosition::parse_str(&test_str, |path_str| {
         Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
     })
     .unwrap();
 
     FileSearchQuery {
         raw_query: test_str.to_owned(),
-        file_query_end: if path_position.path_like.to_str().unwrap() == test_str {
+        file_query_end: if path_position.path.to_str().unwrap() == test_str {
             None
         } else {
-            Some(path_position.path_like.to_str().unwrap().len())
+            Some(path_position.path.to_str().unwrap().len())
         },
         path_position,
     }

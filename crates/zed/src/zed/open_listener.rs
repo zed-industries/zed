@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{process, thread};
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
@@ -28,7 +28,7 @@ use workspace::{AppState, Workspace};
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
-    pub open_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    pub open_paths: Vec<PathWithPosition>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
@@ -59,7 +59,7 @@ impl OpenRequest {
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             if let Some(path_buf) =
-                PathLikeWithPosition::parse_str(&decoded, |_, s| PathBuf::try_from(s)).log_err()
+                PathWithPosition::parse_str(&decoded, |s| PathBuf::try_from(s)).log_err()
             {
                 self.open_paths.push(path_buf)
             }
@@ -193,7 +193,7 @@ fn connect_to_cli(
 }
 
 pub async fn open_paths_with_positions(
-    path_likes: &Vec<PathLikeWithPosition<PathBuf>>,
+    path_positions: &Vec<PathWithPosition>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
@@ -203,10 +203,10 @@ pub async fn open_paths_with_positions(
 )> {
     let mut caret_positions = HashMap::default();
 
-    let paths = path_likes
+    let paths = path_positions
         .iter()
         .map(|path_with_position| {
-            let path = path_with_position.path_like.clone();
+            let path = path_with_position.path.clone();
             if let Some(row) = path_with_position.row {
                 if path.is_file() {
                     let row = row.saturating_sub(1);
@@ -364,8 +364,8 @@ async fn open_workspaces(
                             location
                                 .paths()
                                 .iter()
-                                .map(|path| PathLikeWithPosition {
-                                    path_like: path.clone(),
+                                .map(|path| PathWithPosition {
+                                    path: path.clone(),
                                     row: None,
                                     column: None,
                                 })
@@ -380,7 +380,7 @@ async fn open_workspaces(
         let paths_with_position = paths
             .into_iter()
             .map(|path_with_position_string| {
-                PathLikeWithPosition::parse_str(&path_with_position_string, |_, path_str| {
+                PathWithPosition::parse_str(&path_with_position_string, |path_str| {
                     Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
                 })
                 .expect("Infallible")
@@ -434,7 +434,7 @@ async fn open_workspaces(
 }
 
 async fn open_workspace(
-    workspace_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    workspace_paths: Vec<PathWithPosition>,
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
@@ -542,7 +542,7 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
-    use util::paths::PathLikeWithPosition;
+    use util::paths::PathWithPosition;
     use workspace::{AppState, Workspace};
 
     use crate::zed::{open_listener::open_workspace, tests::init_test};
@@ -656,9 +656,9 @@ mod tests {
     ) {
         let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
 
-        let path_like = PathBuf::from(path);
-        let workspace_paths = vec![PathLikeWithPosition {
-            path_like,
+        let path = PathBuf::from(path);
+        let workspace_paths = vec![PathWithPosition {
+            path,
             row: None,
             column: None,
         }];
