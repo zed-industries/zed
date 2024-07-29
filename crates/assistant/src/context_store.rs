@@ -185,7 +185,6 @@ impl ContextStore {
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
             if this.project.read(cx).is_remote() {
-                // TODO: Is this error message saying the right thing?
                 return Err(anyhow!("can only create contexts as the host"));
             }
 
