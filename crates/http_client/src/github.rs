@@ -34,7 +34,7 @@ pub async fn latest_github_release(
 ) -> Result<GithubRelease, anyhow::Error> {
     let mut response = http
         .get(
-            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases"),
+            format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),
             Default::default(),
             true,
         )
@@ -43,7 +43,6 @@ pub async fn latest_github_release(
 
     let mut body = Vec::new();
     response
-        .body_mut()
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
@@ -83,7 +82,7 @@ pub async fn get_release_by_tag_name(
 ) -> Result<GithubRelease, anyhow::Error> {
     let mut response = http
         .get(
-            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
+            format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
             Default::default(),
             true,
         )
@@ -91,13 +90,13 @@ pub async fn get_release_by_tag_name(
         .context("error fetching latest release")?;
 
     let mut body = Vec::new();
+    let status = response.status();
     response
-        .body_mut()
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
 
-    if response.status().is_client_error() {
+    if status.is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
         bail!(
             "status error {}, response: {text:?}",

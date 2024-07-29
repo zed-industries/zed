@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -174,11 +174,18 @@ pub async fn stream_chat_completion(
         .uri(uri)
         .header("Content-Type", "application/json");
 
+    let mut request = http_client::Request {
+        body: serde_json::to_string(&request)?,
+        method: Method::Post,
+        uri,
+        follow_redirects: false,
+        headers: [("Content-Type".into(), "application/json".into())].into(),
+    };
     if let Some(low_speed_timeout) = low_speed_timeout {
         request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     };
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder.body(AsyncBody::from())?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());

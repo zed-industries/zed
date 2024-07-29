@@ -5261,11 +5261,11 @@ dependencies = [
  "derive_more",
  "futures 0.3.28",
  "futures-lite 1.13.0",
- "http 1.0.0",
- "isahc",
+ "http 0.2.9",
  "log",
  "serde",
  "serde_json",
+ "smol",
  "url",
 ]
 
