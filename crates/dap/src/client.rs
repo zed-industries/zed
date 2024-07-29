@@ -399,8 +399,7 @@ impl DebugAdapterClient {
         request: crate::transport::Request,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        dbg!(&request);
-        let arguments: StartDebuggingRequestArguments =
+        let _arguments: StartDebuggingRequestArguments =
             serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
 
         let sub_client = DebugAdapterClient::new(
@@ -413,17 +412,12 @@ impl DebugAdapterClient {
                 "127.0.0.1",
             ],
             PathBuf::from("/Users/remcosmits/Documents/code/prettier-test"),
-            |event, _cx| {
-                dbg!(event);
-            },
+            |_event, _cx| {},
             cx,
         )
         .await?;
 
-        dbg!(&arguments);
-
-        let res = sub_client.launch(request.arguments).await?;
-        dbg!(res);
+        let _res = sub_client.launch(request.arguments).await?;
 
         *this.sub_client.lock() = Some(sub_client);
 

@@ -67,10 +67,7 @@ use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::RangeExt;
 use util::ResultExt;
-use workspace::{
-    item::{FollowableItem, Item},
-    Workspace,
-};
+use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1630,7 +1627,7 @@ impl EditorElement {
             // See if a user is hovered over a gutter line & if they are display
             // a breakpoint indicator that they can click to add a breakpoint
             // TODO: We should figure out a way to display this side by side with
-            //      the code action button. They currently overlap
+            // the code action button. They currently overlap
             if let Some(gutter_breakpoint) = editor.gutter_breakpoint_indicator {
                 let gutter_anchor = snapshot.display_point_to_anchor(gutter_breakpoint, Bias::Left);
 
@@ -1661,6 +1658,7 @@ impl EditorElement {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
         line_height: Pixels,
