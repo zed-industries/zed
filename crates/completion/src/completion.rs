@@ -5,8 +5,8 @@ use language_model::{
     LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelTool,
 };
-use smol::lock::{Semaphore, SemaphoreGuardArc};
-use std::{pin::Pin, sync::Arc, task::Poll};
+use smol::{future::FutureExt, lock::{Semaphore, SemaphoreGuardArc}};
+use std::{future, pin::Pin, sync::Arc, task::Poll};
 use ui::Context;
 
 pub fn init(cx: &mut AppContext) {
@@ -143,11 +143,11 @@ impl LanguageModelCompletionProvider {
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
-    ) -> Option<BoxFuture<'static, Result<usize>>> {
+    ) -> BoxFuture<'static, Result<usize>> {
         if let Some(model) = self.active_model() {
-            Some(model.count_tokens(request, cx))
+            model.count_tokens(request, cx)
         } else {
-            None
+            future::ready(Err(anyhow!("no active model"))).boxed()
         }
     }
 
@@ -201,6 +201,10 @@ impl LanguageModelCompletionProvider {
         } else {
             Task::ready(Err(anyhow!("No active model set")))
         }
+    }
+
+    pub fn active_model_telemetry_id(&self) -> Option<String> {
+        self.active_model.as_ref().map(|m| m.telemetry_id())
     }
 }
 

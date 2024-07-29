@@ -1155,18 +1155,15 @@ impl Context {
                     .timer(Duration::from_millis(200))
                     .await;
 
-                if let Some(token_count) = cx.update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                })? {
-                    let token_count = token_count.await?;
-
-                    this.update(&mut cx, |this, cx| {
-                        this.token_count = Some(token_count);
-                        cx.notify()
-                    })?;
-                }
-
-                anyhow::Ok(())
+                let token_count = cx
+                    .update(|cx| {
+                        LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                    })?
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    this.token_count = Some(token_count);
+                    cx.notify()
+                })
             }
             .log_err()
         });
