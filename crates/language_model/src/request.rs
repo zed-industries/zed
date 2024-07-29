@@ -106,19 +106,27 @@ impl LanguageModelRequest {
             messages: new_messages
                 .into_iter()
                 .filter_map(|message| {
-                    Some(anthropic::RequestMessage {
+                    Some(anthropic::Message {
                         role: match message.role {
                             Role::User => anthropic::Role::User,
                             Role::Assistant => anthropic::Role::Assistant,
                             Role::System => return None,
                         },
-                        content: message.content,
+                        content: vec![anthropic::Content::Text {
+                            text: message.content,
+                        }],
                     })
                 })
                 .collect(),
-            stream: true,
             max_tokens: 4092,
-            system: system_message,
+            system: Some(system_message),
+            tools: Vec::new(),
+            tool_choice: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+            top_k: None,
+            top_p: None,
         }
     }
 }

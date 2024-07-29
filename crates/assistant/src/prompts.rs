@@ -6,8 +6,7 @@ pub fn generate_content_prompt(
     language_name: Option<&str>,
     buffer: BufferSnapshot,
     range: Range<usize>,
-    _project_name: Option<String>,
-) -> anyhow::Result<String> {
+) -> String {
     let mut prompt = String::new();
 
     let content_type = match language_name {
@@ -15,14 +14,16 @@ pub fn generate_content_prompt(
             writeln!(
                 prompt,
                 "Here's a file of text that I'm going to ask you to make an edit to."
-            )?;
+            )
+            .unwrap();
             "text"
         }
         Some(language_name) => {
             writeln!(
                 prompt,
                 "Here's a file of {language_name} that I'm going to ask you to make an edit to."
-            )?;
+            )
+            .unwrap();
             "code"
         }
     };
@@ -70,7 +71,7 @@ pub fn generate_content_prompt(
     write!(prompt, "</document>\n\n").unwrap();
 
     if is_truncated {
-        writeln!(prompt, "The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.\n")?;
+        writeln!(prompt, "The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.\n").unwrap();
     }
 
     if range.is_empty() {
@@ -107,7 +108,7 @@ pub fn generate_content_prompt(
         prompt.push_str("\n\nImmediately start with the following format with no remarks:\n\n```\n{{REWRITTEN_CODE}}\n```");
     }
 
-    Ok(prompt)
+    prompt
 }
 
 pub fn generate_terminal_assistant_prompt(

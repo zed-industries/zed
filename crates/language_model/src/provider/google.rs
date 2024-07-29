@@ -9,7 +9,7 @@ use gpui::{
 };
 use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -237,6 +237,17 @@ impl LanguageModel for GoogleLanguageModel {
             Ok(google_ai::extract_text_from_events(events).boxed())
         }
         .boxed()
+    }
+
+    fn use_tool(
+        &self,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 

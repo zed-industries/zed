@@ -194,8 +194,12 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        QueryLanguageModel query_language_model = 224;
-        QueryLanguageModelResponse query_language_model_response = 225; // current max
+        CompleteWithLanguageModel complete_with_language_model = 226;
+        CompleteWithLanguageModelResponse complete_with_language_model_response = 227;
+        StreamCompleteWithLanguageModel stream_complete_with_language_model = 228;
+        StreamCompleteWithLanguageModelResponse stream_complete_with_language_model_response = 229;
+        CountLanguageModelTokens count_language_model_tokens = 230;
+        CountLanguageModelTokensResponse count_language_model_tokens_response = 231; // current max
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -267,6 +271,7 @@ message Envelope {
 
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 224 to 225;
 }
 
 // Messages
@@ -2050,25 +2055,37 @@ enum LanguageModelRole {
     reserved 3;
 }
 
-message QueryLanguageModel {
+message CompleteWithLanguageModel {
     LanguageModelProvider provider = 1;
-    LanguageModelRequestKind kind = 2;
-    string request = 3;
+    string request = 2;
+}
+
+message CompleteWithLanguageModelResponse {
+    string completion = 1;
+}
+
+message StreamCompleteWithLanguageModel {
+    LanguageModelProvider provider = 1;
+    string request = 2;
+}
+
+message StreamCompleteWithLanguageModelResponse {
+    string event = 1;
+}
+
+message CountLanguageModelTokens {
+    LanguageModelProvider provider = 1;
+    string request = 2;
+}
+
+message CountLanguageModelTokensResponse {
+    uint32 token_count = 1;
 }
 
 enum LanguageModelProvider {
     Anthropic = 0;
     OpenAI = 1;
     Google = 2;
-}
-
-enum LanguageModelRequestKind {
-    Complete = 0;
-    CountTokens = 1;
-}
-
-message QueryLanguageModelResponse {
-    string response = 1;
 }
 
 message GetCachedEmbeddings {

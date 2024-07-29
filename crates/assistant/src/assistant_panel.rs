@@ -1232,12 +1232,16 @@ impl ContextEditor {
 
     fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(step) = self.active_edit_step.as_ref() {
-            InlineAssistant::update_global(cx, |assistant, cx| {
-                for assist_id in &step.assist_ids {
-                    assistant.start_assist(*assist_id, cx);
-                }
-                !step.assist_ids.is_empty()
-            })
+            let assist_ids = step.assist_ids.clone();
+            cx.window_context().defer(|cx| {
+                InlineAssistant::update_global(cx, |assistant, cx| {
+                    for assist_id in assist_ids {
+                        assistant.start_assist(assist_id, cx);
+                    }
+                })
+            });
+
+            !step.assist_ids.is_empty()
         } else {
             false
         }
@@ -1286,11 +1290,7 @@ impl ContextEditor {
                     .collect::<String>()
             ));
             match &step.operations {
-                Some(EditStepOperations::Parsed {
-                    operations,
-                    raw_output,
-                }) => {
-                    output.push_str(&format!("Raw Output:\n{raw_output}\n"));
+                Some(EditStepOperations::Ready(operations)) => {
                     output.push_str("Parsed Operations:\n");
                     for op in operations {
                         output.push_str(&format!("  {:?}\n", op));
@@ -1794,13 +1794,12 @@ impl ContextEditor {
                                     .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
                         };
-                        let initial_text = suggestion.prepend_newline.then(|| "\n".into());
                         InlineAssistant::update_global(cx, |assistant, cx| {
                             assist_ids.push(assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
-                                initial_text,
+                                suggestion.initial_insertion,
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
@@ -1862,9 +1861,11 @@ impl ContextEditor {
                                             .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                             .unwrap()
                                 };
-                                let initial_text =
-                                    suggestion.prepend_newline.then(|| "\n".to_string());
-                                inline_assist_suggestions.push((range, description, initial_text));
+                                inline_assist_suggestions.push((
+                                    range,
+                                    description,
+                                    suggestion.initial_insertion,
+                                ));
                             }
                         }
                     }
@@ -1875,12 +1876,12 @@ impl ContextEditor {
                     .new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
                 cx.update(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
-                        for (range, description, initial_text) in inline_assist_suggestions {
+                        for (range, description, initial_insertion) in inline_assist_suggestions {
                             assist_ids.push(assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
-                                initial_text,
+                                initial_insertion,
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
@@ -2188,7 +2189,7 @@ impl ContextEditor {
         let button_text = match self.edit_step_for_cursor(cx) {
             Some(edit_step) => match &edit_step.operations {
                 Some(EditStepOperations::Pending(_)) => "Computing Changes...",
-                Some(EditStepOperations::Parsed { .. }) => "Apply Changes",
+                Some(EditStepOperations::Ready(_)) => "Apply Changes",
                 None => "Send",
             },
             None => "Send",
