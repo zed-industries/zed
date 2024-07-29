@@ -29,7 +29,7 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
-use session::Session;
+use session::{AppSession, Session};
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -444,6 +444,8 @@ fn main() {
             }
             .to_string(),
         );
+        let app_session = cx.new_model(|cx| AppSession::new(session, cx));
+
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -452,7 +454,7 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
-            session,
+            session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -706,7 +708,18 @@ pub(crate) async fn restorable_workspace_locations(
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;
 
-    let last_session_id = app_state.session.last_session_id();
+    let session_handle = app_state.session.clone();
+    let (last_session_id, last_session_window_stack) = cx
+        .update(|cx| {
+            let session = session_handle.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_window_stack(),
+            )
+        })
+        .ok()?;
+
     if last_session_id.is_none()
         && matches!(
             restore_behavior,
@@ -724,8 +737,23 @@ pub(crate) async fn restorable_workspace_locations(
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
-                workspace::last_session_workspace_locations(last_session_id)
-                    .filter(|locations| !locations.is_empty())
+                let ordered = last_session_window_stack.is_some();
+
+                let mut locations = workspace::last_session_workspace_locations(
+                    &last_session_id,
+                    last_session_window_stack,
+                )
+                .filter(|locations| !locations.is_empty());
+
+                // Since last_session_window_order returns the windows ordered front-to-back
+                // we need to open the window that was frontmost last.
+                if ordered {
+                    if let Some(locations) = locations.as_mut() {
+                        locations.reverse();
+                    }
+                }
+
+                locations
             } else {
                 None
             }
