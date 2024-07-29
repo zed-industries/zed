@@ -1,4 +1,4 @@
-use std::{path::Path, str, sync::Arc};
+use std::{path::Path, str};
 
 use collections::HashMap;
 
