@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use copilot::copilot_chat::{
     request_api_token, stream_completion, ChatMessage, CopilotChat, Model as CopilotChatModel,
     Request as CopilotChatRequest, Role as CopilotChatRole,
 };
 use copilot::{Copilot, Status};
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     percentage, svg, Animation, AnimationExt, AppContext, AsyncAppContext, Model, ReadGlobal,
@@ -46,8 +49,7 @@ pub struct State {
     oauth_token: Option<String>,
     api_key: Option<(String, NaiveDateTime)>,
     settings: CopilotChatSettings,
-    _settings_subscription: Subscription,
-    _chat_subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl CopilotChatLanguageModelProvider {
@@ -56,15 +58,17 @@ impl CopilotChatLanguageModelProvider {
             oauth_token: CopilotChat::global(cx).oauth_token.clone(),
             api_key: None,
             settings: CopilotChatSettings::default(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
-            }),
-            _chat_subscription: cx.observe_global::<CopilotChat>(|this: &mut State, cx| {
-                let chat = CopilotChat::global(cx);
+            _subscriptions: [
+                cx.observe_global::<SettingsStore>(|_, cx| {
+                    cx.notify();
+                }),
+                cx.observe_global::<CopilotChat>(|this: &mut State, cx| {
+                    let chat = CopilotChat::global(cx);
 
-                this.oauth_token.clone_from(&chat.oauth_token);
-                cx.notify();
-            }),
+                    this.oauth_token.clone_from(&chat.oauth_token);
+                    cx.notify();
+                }),
+            ],
         });
 
         Self { http_client, state }
@@ -98,7 +102,11 @@ impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
 }
 
 impl LanguageModelProvider for CopilotChatLanguageModelProvider {
-    fn name(&self) -> crate::LanguageModelProviderName {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
@@ -106,7 +114,6 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         CopilotChatModel::iter()
             .map(|model| {
                 Arc::new(CopilotChatLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
@@ -169,14 +176,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             Ok(())
         })
     }
-
-    fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
-    }
 }
 
 pub struct CopilotChatLanguageModel {
-    id: LanguageModelId,
     model: CopilotChatModel,
     state: Model<State>,
     http_client: Arc<dyn HttpClient>,
@@ -184,11 +186,15 @@ pub struct CopilotChatLanguageModel {
 
 impl LanguageModel for CopilotChatLanguageModel {
     fn id(&self) -> LanguageModelId {
-        self.id.clone()
+        LanguageModelId::from(self.model.id().to_string())
     }
 
-    fn name(&self) -> crate::LanguageModelName {
+    fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
@@ -205,9 +211,9 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn count_tokens(
         &self,
-        request: crate::LanguageModelRequest,
+        request: LanguageModelRequest,
         cx: &AppContext,
-    ) -> futures::future::BoxFuture<'static, gpui::Result<usize>> {
+    ) -> BoxFuture<'static, Result<usize>> {
         let model = match self.model {
             CopilotChatModel::Gpt4 => open_ai::Model::Four,
             CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
@@ -220,10 +226,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         &self,
         request: crate::LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> futures::future::BoxFuture<
-        'static,
-        gpui::Result<futures::stream::BoxStream<'static, gpui::Result<String>>>,
-    > {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         if let Some(message) = request.messages.last() {
             if message.content.trim().is_empty() {
                 const EMPTY_PROMPT_MSG: &str =
@@ -295,10 +298,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         })
         .boxed()
     }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
-    }
 }
 
 impl CopilotChatLanguageModel {
@@ -330,16 +329,14 @@ impl AuthenticationPrompt {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let copilot = Copilot::global(cx);
 
-        let _subscription = copilot.as_ref().map_or(None, |copilot| {
-            Some(cx.observe(copilot, |this, model, cx| {
-                this.copilot_status = Some(model.read(cx).status());
-                cx.notify();
-            }))
-        });
-
         Self {
-            copilot_status: copilot.map_or(None, |model| Some(model.read(cx).status())),
-            _subscription,
+            copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
+            _subscription: copilot.as_ref().map(|copilot| {
+                cx.observe(copilot, |this, model, cx| {
+                    this.copilot_status = Some(model.read(cx).status());
+                    cx.notify();
+                })
+            }),
         }
     }
 }
@@ -404,8 +401,6 @@ impl Render for AuthenticationPrompt {
                                     .icon_size(IconSize::Medium)
                                     .style(ui::ButtonStyle::Filled)
                                     .full_width()
-                                    // I don't love that using the inline_completion_button module here, but it's the best way to share the logic between the two buttons,
-                                    // without a bunch of refactoring.
                                     .on_click(|_, cx| {
                                         inline_completion_button::initiate_sign_in(cx)
                                     }),

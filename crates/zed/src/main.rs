@@ -165,17 +165,15 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
-    // Initialize each completion provider. Settings are used for toggling between them.
     let copilot_language_server_id = app_state.languages.next_language_server_id();
     copilot::init(
         copilot_language_server_id,
+        app_state.fs.clone(),
         app_state.client.http_client(),
         app_state.node_runtime.clone(),
         cx,
     );
     supermaven::init(app_state.client.clone(), cx);
-    // It's important that the language model is initialized after the completion providers, as
-    // the CopilotChat provider depends on the Copilot language server being initialized.
     language_model::init(app_state.client.clone(), cx);
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
@@ -459,7 +457,6 @@ fn main() {
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);
-        copilot::copilot_chat::init(app_state.fs.clone(), cx);
         init_common(app_state.clone(), cx);
 
         let args = Args::parse();

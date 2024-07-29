@@ -3,6 +3,7 @@ mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
 
+use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -54,10 +55,13 @@ actions!(
 
 pub fn init(
     new_server_id: LanguageServerId,
+    fs: Arc<dyn Fs>,
     http: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
+    copilot_chat::init(fs, cx);
+
     let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
