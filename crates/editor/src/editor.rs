@@ -6013,7 +6013,7 @@ impl Editor {
         };
 
         let buffer_id = buffer.read(cx).remote_id();
-        // let key = (buffer_id, breakpoint_position);
+
         let breakpoint = Breakpoint {
             position: breakpoint_position,
         };

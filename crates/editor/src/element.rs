@@ -67,7 +67,10 @@ use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::RangeExt;
 use util::ResultExt;
-use workspace::{item::Item, Workspace};
+use workspace::{
+    item::{FollowableItem, Item},
+    Workspace,
+};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1580,36 +1583,49 @@ impl EditorElement {
                 return vec![];
             };
 
-            let mut breakpoints_to_render = breakpoints
-                .read()
-                .iter()
-                .flat_map(|(_buffer_id, breakpoint_set)| breakpoint_set.iter())
-                .filter_map(|breakpoint| {
-                    let point = breakpoint
-                        .position
-                        .to_display_point(&snapshot.display_snapshot);
+            let Some(active_buffer) = editor.buffer().read(cx).as_singleton() else {
+                return vec![];
+            };
 
-                    let row = MultiBufferRow { 0: point.row().0 };
+            let active_buffer_id = active_buffer.read(cx).remote_id();
+            let read_guard = breakpoints.read();
 
-                    if snapshot.is_line_folded(row) {
-                        return None;
-                    }
+            let mut breakpoints_to_render = if let Some(breakpoint_set) =
+                read_guard.get(&active_buffer_id)
+            {
+                breakpoint_set
+                    .iter()
+                    .filter_map(|breakpoint| {
+                        let point = breakpoint
+                            .position
+                            .to_display_point(&snapshot.display_snapshot);
 
-                    let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
+                        let row = MultiBufferRow { 0: point.row().0 };
 
-                    let button = prepaint_gutter_button(
-                        button,
-                        point.row(),
-                        line_height,
-                        gutter_dimensions,
-                        scroll_pixel_position,
-                        gutter_hitbox,
-                        rows_with_hunk_bounds,
-                        cx,
-                    );
-                    Some(button)
-                })
-                .collect_vec();
+                        if snapshot.is_line_folded(row) {
+                            return None;
+                        }
+
+                        let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
+
+                        let button = prepaint_gutter_button(
+                            button,
+                            point.row(),
+                            line_height,
+                            gutter_dimensions,
+                            scroll_pixel_position,
+                            gutter_hitbox,
+                            rows_with_hunk_bounds,
+                            cx,
+                        );
+                        Some(button)
+                    })
+                    .collect_vec()
+            } else {
+                vec![]
+            };
+
+            drop(read_guard);
 
             // See if a user is hovered over a gutter line & if they are display
             // a breakpoint indicator that they can click to add a breakpoint
