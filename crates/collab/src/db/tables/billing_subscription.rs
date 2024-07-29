@@ -1,9 +1,8 @@
 use crate::db::{BillingSubscriptionId, UserId};
 use sea_orm::entity::prelude::*;
-use serde::Serialize;
 
 /// A billing subscription.
-#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "billing_subscriptions")]
 pub struct Model {
     #[sea_orm(primary_key)]
@@ -11,6 +10,7 @@ pub struct Model {
     pub user_id: UserId,
     pub stripe_customer_id: String,
     pub stripe_subscription_id: String,
+    pub stripe_subscription_status: StripeSubscriptionStatus,
     pub created_at: DateTime,
 }
 
@@ -31,3 +31,28 @@ impl Related<super::user::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+/// The status of a Stripe subscription.
+///
+/// [Stripe docs](https://docs.stripe.com/api/subscriptions/object#subscription_object-status)
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
+#[sea_orm(rs_type = "String", db_type = "String(None)")]
+pub enum StripeSubscriptionStatus {
+    #[default]
+    #[sea_orm(string_value = "incomplete")]
+    Incomplete,
+    #[sea_orm(string_value = "incomplete_expired")]
+    IncompleteExpired,
+    #[sea_orm(string_value = "trialing")]
+    Trialing,
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "past_due")]
+    PastDue,
+    #[sea_orm(string_value = "canceled")]
+    Canceled,
+    #[sea_orm(string_value = "unpaid")]
+    Unpaid,
+    #[sea_orm(string_value = "paused")]
+    Paused,
+}
