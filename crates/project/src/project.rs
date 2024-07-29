@@ -1914,6 +1914,13 @@ impl Project {
         }
     }
 
+    pub fn is_ssh(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
     pub fn is_remote(&self) -> bool {
         !self.is_local()
     }
@@ -7687,11 +7694,7 @@ impl Project {
     ) -> Option<(Model<Worktree>, PathBuf)> {
         self.worktree_store.read_with(cx, |worktree_store, cx| {
             for tree in worktree_store.worktrees() {
-                if let Some(relative_path) = tree
-                    .read(cx)
-                    .as_local()
-                    .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-                {
+                if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
                     return Some((tree.clone(), relative_path.into()));
                 }
             }

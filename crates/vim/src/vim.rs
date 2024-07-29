@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod digraph;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -193,6 +194,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             Operator::FindForward { .. }
             | Operator::FindBackward { .. }
             | Operator::Replace
+            | Operator::Digraph { .. }
             | Operator::AddSurrounds { .. }
             | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds
@@ -876,6 +878,19 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Digraph { first_char }) => {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        digraph::insert_digraph(first_char, second_char, cx);
+                    }
+                } else {
+                    let first_char = text.chars().next();
+                    Vim::update(cx, |vim, cx| {
+                        vim.pop_operator(cx);
+                        vim.push_operator(Operator::Digraph { first_char }, cx);
+                    });
+                }
+            }
             Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
                 Mode::Normal => {
                     if let Some(target) = target {
@@ -1060,6 +1075,7 @@ struct VimSettings {
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1067,6 +1083,7 @@ struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {
