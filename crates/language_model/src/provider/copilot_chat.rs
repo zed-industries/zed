@@ -11,8 +11,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Animation, AnimationExt, AppContext, AsyncAppContext, Model, ReadGlobal,
-    Render, Subscription, Task, Transformation,
+    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model,
+    ModelContext, ReadGlobal, Render, Subscription, Task, Transformation,
 };
 use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
@@ -21,7 +21,7 @@ use strum::IntoEnumIterator;
 use ui::{
     div, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, IconName,
     IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled, ViewContext,
-    VisualContext,
+    VisualContext, WindowContext,
 };
 
 use crate::settings::AllLanguageModelSettings;
@@ -93,7 +93,7 @@ impl CopilotChatLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+    fn subscribe<T: 'static>(&self, cx: &mut ModelContext<T>) -> Option<Subscription> {
         Some(cx.observe(&self.state, |_, _, cx| {
             cx.notify();
         }))
@@ -109,7 +109,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn crate::LanguageModel>> {
+    fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
             .map(|model| {
                 Arc::new(CopilotChatLanguageModel {
@@ -125,7 +125,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         self.state.read(cx).oauth_token.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> gpui::Task<gpui::Result<()>> {
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         let result = if self.is_authenticated(cx) {
             Ok(())
         } else if let Some(copilot) = Copilot::global(cx) {
@@ -147,11 +147,11 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn authentication_prompt(&self, cx: &mut ui::WindowContext) -> gpui::AnyView {
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> gpui::Task<gpui::Result<()>> {
+    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         let Some(copilot) = Copilot::global(cx) else {
             return Task::ready(Err(anyhow::anyhow!(
                 "Copilot is not available. Please ensure Copilot is enabled and running and try again."
@@ -221,7 +221,7 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn stream_completion(
         &self,
-        request: crate::LanguageModelRequest,
+        request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         if let Some(message) = request.messages.last() {
