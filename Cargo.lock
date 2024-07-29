@@ -5967,7 +5967,6 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "chrono",
  "client",
  "collections",
  "copilot",
