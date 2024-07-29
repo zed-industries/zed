@@ -5,7 +5,7 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    actions, Action, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -68,6 +68,7 @@ pub struct TerminalPanel {
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
+    additional_tab_bar_buttons: Vec<AnyView>,
 }
 
 impl TerminalPanel {
@@ -85,63 +86,6 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let focus_handle = pane.focus_handle(cx);
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
-                    )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Pane::render_menu_overlay(new_item_menu))
-                    })
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    cx,
-                                )
-                            })
-                    })
-                    .into_any_element()
-            });
 
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
@@ -210,8 +154,83 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
+            additional_tab_bar_buttons: Vec::new(),
         };
+        this.apply_tab_bar_buttons(cx);
         this
+    }
+
+    pub fn register_tab_bar_button(
+        &mut self,
+        button: impl Into<AnyView>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.additional_tab_bar_buttons.push(button.into());
+        self.apply_tab_bar_buttons(cx);
+    }
+
+    fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
+        let additional_buttons = self.additional_tab_bar_buttons.clone();
+        self.pane().update(cx, |pane, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                h_flex()
+                    .gap_2()
+                    .children(additional_buttons.clone())
+                    .child(
+                        IconButton::new("plus", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let focus_handle = pane.focus_handle(cx);
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    )
+                                    .entry(
+                                        "Spawn task",
+                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                        move |cx| {
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            cx.focus(&focus_handle);
+                                            cx.dispatch_action(
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            );
+                                        },
+                                    )
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
+                                    pane.new_item_menu = None;
+                                })
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                    )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Pane::render_menu_overlay(new_item_menu))
+                    })
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", IconName::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(IconName::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
+                            })
+                    })
+                    .into_any_element()
+            });
+        });
     }
 
     pub async fn load(
