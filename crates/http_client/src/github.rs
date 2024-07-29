@@ -82,7 +82,7 @@ pub async fn get_release_by_tag_name(
 ) -> Result<GithubRelease, anyhow::Error> {
     let mut response = http
         .get(
-            format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
+            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
             Default::default(),
             true,
         )
