@@ -20,9 +20,12 @@ use git::GitHostingProviderRegistry;
 use gpui::{
     App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
 };
+use http_client::{HttpClient, Uri};
 use image_viewer;
+use isahc::config::Configurable;
 use language::LanguageRegistry;
 use log::LevelFilter;
+use std::time::Duration;
 
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
@@ -59,7 +62,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn fail_to_launch(e: anyhow::Error) {
     eprintln!("Zed failed to launch: {e:?}");
-    App::new().run(move |cx| {
+    App::new(IsahcHttpClient::new(None)).run(move |cx| {
         if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty)) {
             window.update(cx, |_, cx| {
                 let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{e}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed")), &["Exit"]);
@@ -295,6 +298,37 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     Ok(())
 }
 
+struct IsahcHttpClient(isahc::HttpClient);
+
+impl IsahcHttpClient {
+    pub fn new(proxy: Option<Uri>) -> Arc<dyn HttpClient> {
+        Arc::new(IsahcHttpClient(
+            isahc::HttpClient::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .low_speed_timeout(100, Duration::from_secs(5))
+                .proxy(proxy.clone())
+                .build()
+                .unwrap(),
+        ))
+    }
+}
+
+impl HttpClient for IsahcHttpClient {
+    fn proxy(&self) -> Option<&Uri> {
+        None
+    }
+
+    fn send_with_redirect_policy(
+        &self,
+        req: http_client::http::Request<http_client::AsyncBody>,
+        follow_redirects: bool,
+    ) -> future::BoxFuture<'static, Result<http_client::Response, Arc<isahc::http::Error>>> {
+        let client = self.clone();
+
+        Box::pin(async move { Ok(client.0.send_async(req).await.unwrap().into()) })
+    }
+}
+
 fn main() {
     menu::init();
     zed_actions::init();
@@ -307,7 +341,7 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new(IsahcHttpClient::new(None)).with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()

@@ -126,7 +126,7 @@ impl LspAdapter for RustLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.0.body_mut()));
             let mut file = File::create(&destination_path).await?;
             futures::io::copy(decompressed_bytes, &mut file).await?;
             // todo("windows")

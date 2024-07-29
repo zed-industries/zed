@@ -35,6 +35,7 @@ impl FetchSlashCommand {
 
         let mut body = Vec::new();
         response
+            .0
             .body_mut()
             .read_to_end(&mut body)
             .await
@@ -48,7 +49,7 @@ impl FetchSlashCommand {
             );
         }
 
-        let Some(content_type) = response.headers().get("content-type") else {
+        let Some(content_type) = response.0.headers().get("content-type") else {
             bail!("missing Content-Type header");
         };
         let content_type = content_type

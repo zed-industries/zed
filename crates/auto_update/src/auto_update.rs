@@ -9,7 +9,6 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
     SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use isahc::AsyncBody;
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
@@ -20,7 +19,7 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use http_client::{HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::{
@@ -256,7 +255,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                 };
 
                 let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await.ok();
+                response.0.body_mut().read_to_end(&mut body).await.ok();
 
                 let body: serde_json::Result<ReleaseNotesBody> =
                     serde_json::from_slice(body.as_slice());
@@ -448,6 +447,7 @@ impl AutoUpdater {
 
         let mut body = Vec::new();
         response
+            .0
             .body_mut()
             .read_to_end(&mut body)
             .await
@@ -590,7 +590,7 @@ async fn download_remote_server_binary(
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.0.body_mut(), &mut target_file).await?;
     Ok(())
 }
 
@@ -618,7 +618,7 @@ async fn download_release(
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.0.body_mut(), &mut target_file).await?;
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(())

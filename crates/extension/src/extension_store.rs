@@ -243,10 +243,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(
-                ::http_client::client(http_client.proxy().cloned()),
-                build_dir,
-            )),
+            builder: Arc::new(ExtensionBuilder::new(http_client.clone(), build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -589,6 +586,7 @@ impl ExtensionStore {
 
             let mut body = Vec::new();
             response
+                .0
                 .body_mut()
                 .read_to_end(&mut body)
                 .await
@@ -598,7 +596,7 @@ impl ExtensionStore {
                 let text = String::from_utf8_lossy(body.as_slice());
                 bail!(
                     "status error {}, response: {text:?}",
-                    response.status().as_u16()
+                    response.0.status().as_u16()
                 );
             }
 
@@ -663,11 +661,11 @@ impl ExtensionStore {
             .await?;
 
             let content_length = response
-                .headers()
+                .0.headers()
                 .get(isahc::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
-            let mut body = BufReader::new(response.body_mut());
+            let mut body = BufReader::new(response.0.body_mut());
             let mut tar_gz_bytes = Vec::new();
             body.read_to_end(&mut tar_gz_bytes).await?;
 

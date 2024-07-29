@@ -234,8 +234,6 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http_client::Error),
-    #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
@@ -246,7 +244,7 @@ pub enum EstablishConnectionError {
 impl From<WebsocketError> for EstablishConnectionError {
     fn from(error: WebsocketError) -> Self {
         if let WebsocketError::Http(response) = &error {
-            match response.0.status() {
+            match response.status() {
                 StatusCode::UNAUTHORIZED => return EstablishConnectionError::Unauthorized,
                 StatusCode::UPGRADE_REQUIRED => return EstablishConnectionError::UpgradeRequired,
                 _ => {}
@@ -543,6 +541,7 @@ impl Client {
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
             ProxySettings::get_global(cx).proxy.clone(),
         ));
@@ -1131,6 +1130,7 @@ impl Client {
             let response = http.get(&url, Default::default(), false).await?;
             let collab_url = if response.0.status().is_redirection() {
                 response
+                    .0
                     .headers()
                     .get("Location")
                     .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
@@ -1389,7 +1389,7 @@ impl Client {
 
         let mut response = http.send(request).await?;
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response.0.body_mut().read_to_string(&mut body).await?;
         if !response.0.status().is_success() {
             Err(anyhow!(
                 "admin user request failed {} - {}",

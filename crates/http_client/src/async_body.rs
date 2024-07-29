@@ -18,6 +18,13 @@ pub(super) enum Inner {
 }
 
 impl AsyncBody {
+    /// Create a new empty body.
+    ///
+    /// An empty body represents the *absence* of a body, which is semantically
+    /// different than the presence of a body of zero length.
+    pub fn empty() -> Self {
+        Self(Inner::Empty)
+    }
     /// Create a streaming body that reads from the given reader.
     pub fn from_reader<R>(read: R) -> Self
     where

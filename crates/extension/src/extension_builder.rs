@@ -364,7 +364,7 @@ impl ExtensionBuilder {
             .await?;
 
         let mut content = Vec::new();
-        let mut body = BufReader::new(response.body_mut());
+        let mut body = BufReader::new(response.0.body_mut());
         body.read_to_end(&mut content).await?;
 
         fs::write(&cache_path, &content)
@@ -399,7 +399,7 @@ impl ExtensionBuilder {
 
         log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-        let body = BufReader::new(response.body_mut());
+        let body = BufReader::new(response.0.body_mut());
         let body = GzipDecoder::new(body);
         let tar = Archive::new(body);
         tar.unpack(&tar_out_dir)

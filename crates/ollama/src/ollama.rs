@@ -174,7 +174,7 @@ pub async fn stream_chat_completion(
         .header("Content-Type", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        // request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
@@ -217,7 +217,7 @@ pub async fn get_models(
         .header("Accept", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        //request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     };
 
     let request = request_builder.body(AsyncBody::default())?;
@@ -259,23 +259,23 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
         Ok(response) => response,
         Err(err) => {
             // Be ok with a timeout during preload of the model
-            if err.is_timeout() {
-                return Ok(());
-            } else {
-                return Err(err.into());
-            }
+            // if err.is_timeout() {
+            //     return Ok(());
+            // } else {
+            return Err(err.into());
+            //}
         }
     };
 
-    if response.status().is_success() {
+    if response.0.status().is_success() {
         Ok(())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response.0.body_mut().read_to_string(&mut body).await?;
 
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.status(),
+            response.0.status(),
             body,
         ))
     }
