@@ -601,6 +601,9 @@ impl Server {
                 forward_mutating_project_request::<proto::OpenContext>,
             ))
             .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::CreateContext>,
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::SynchronizeContexts>,
             ))
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)

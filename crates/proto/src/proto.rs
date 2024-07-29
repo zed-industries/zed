@@ -398,6 +398,8 @@ messages!(
     (AdvertiseContexts, Foreground),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
@@ -523,6 +525,7 @@ request_messages!(
     (RenameDevServer, Ack),
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
+    (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (AddWorktree, AddWorktreeResponse),
 );
@@ -589,6 +592,7 @@ entity_messages!(
     LspExtExpandMacro,
     AdvertiseContexts,
     OpenContext,
+    CreateContext,
     UpdateContext,
     SynchronizeContexts,
 );
