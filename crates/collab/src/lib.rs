@@ -26,6 +26,7 @@ pub enum Error {
     Http(StatusCode, String),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
+    Stripe(stripe::StripeError),
 }
 
 impl From<anyhow::Error> for Error {
@@ -37,6 +38,12 @@ impl From<anyhow::Error> for Error {
 impl From<sea_orm::error::DbErr> for Error {
     fn from(error: sea_orm::error::DbErr) -> Self {
         Self::Database(error)
+    }
+}
+
+impl From<stripe::StripeError> for Error {
+    fn from(error: stripe::StripeError) -> Self {
+        Self::Stripe(error)
     }
 }
 
@@ -81,6 +88,14 @@ impl IntoResponse for Error {
                 );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
+            Error::Stripe(error) => {
+                log::error!(
+                    "HTTP error {}: {:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
         }
     }
 }
@@ -91,6 +106,7 @@ impl std::fmt::Debug for Error {
             Error::Http(code, message) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }
@@ -101,6 +117,7 @@ impl std::fmt::Display for Error {
             Error::Http(code, message) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }

@@ -61,6 +61,17 @@ impl Database {
         .await
     }
 
+    /// Returns a user by GitHub user ID. There are no access checks here, so this should only be used internally.
+    pub async fn get_user_by_github_user_id(&self, github_user_id: i32) -> Result<Option<User>> {
+        self.transaction(|tx| async move {
+            Ok(user::Entity::find()
+                .filter(user::Column::GithubUserId.eq(github_user_id))
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns a user by GitHub login. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
         self.transaction(|tx| async move {

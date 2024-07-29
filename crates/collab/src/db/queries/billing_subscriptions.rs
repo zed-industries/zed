@@ -32,6 +32,26 @@ impl Database {
         .await
     }
 
+    /// Returns all of the billing subscriptions for the user with the specified ID.
+    ///
+    /// Note that this returns the subscriptions regardless of their status.
+    /// If you're wanting to check if a use has an active billing subscription,
+    /// use `get_active_billing_subscriptions` instead.
+    pub async fn get_billing_subscriptions(
+        &self,
+        user_id: UserId,
+    ) -> Result<Vec<billing_subscription::Model>> {
+        self.transaction(|tx| async move {
+            let subscriptions = billing_subscription::Entity::find()
+                .filter(billing_subscription::Column::UserId.eq(user_id))
+                .all(&*tx)
+                .await?;
+
+            Ok(subscriptions)
+        })
+        .await
+    }
+
     /// Returns all of the active billing subscriptions for the user with the specified ID.
     pub async fn get_active_billing_subscriptions(
         &self,
