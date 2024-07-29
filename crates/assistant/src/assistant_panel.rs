@@ -731,11 +731,43 @@ impl AssistantPanel {
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
 
-            cx.spawn(|_, _| async move {
-                let response = task.await;
-                dbg!(&response.is_ok());
+            cx.spawn(|this, mut cx| async move {
+                let context = task.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    let Some(workspace) = this.workspace.upgrade() else {
+                        return Ok(());
+                    };
+                    let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
+                        make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+                    });
+
+                    let fs = this.fs.clone();
+                    let project = this.project.clone();
+                    let weak_assistant_panel = cx.view().downgrade();
+
+                    let editor = cx.new_view(|cx| {
+                        let mut editor = ContextEditor::for_context(
+                            context,
+                            fs,
+                            workspace.clone(),
+                            project,
+                            lsp_adapter_delegate,
+                            weak_assistant_panel,
+                            cx,
+                        );
+                        editor.insert_default_prompt(cx);
+                        editor
+                    });
+
+                    this.show_context(editor, cx);
+
+                    anyhow::Ok(())
+                })??;
+
+                anyhow::Ok(())
             })
-            .detach();
+            .detach_and_log_err(cx);
 
             None
         } else {
