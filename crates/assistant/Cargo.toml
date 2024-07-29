@@ -75,7 +75,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
-roxmltree = "0.20.0"
 
 [dev-dependencies]
 completion = { workspace = true, features = ["test-support"] }

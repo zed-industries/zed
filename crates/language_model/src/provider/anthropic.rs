@@ -1,5 +1,9 @@
-use anthropic::stream_completion;
-use anyhow::{anyhow, Result};
+use crate::{
+    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, Role,
+};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -14,12 +18,6 @@ use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
-
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
-};
 
 const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
@@ -188,6 +186,61 @@ pub fn count_anthropic_tokens(
         .boxed()
 }
 
+impl AnthropicModel {
+    fn request_completion(
+        &self,
+        request: anthropic::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<anthropic::Response>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request).await
+        }
+        .boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        request: anthropic::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event>>>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
+            request.await
+        }
+        .boxed()
+    }
+}
+
 impl LanguageModel for AnthropicModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -227,31 +280,50 @@ impl LanguageModel for AnthropicModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = request.into_anthropic(self.model.id().into());
-
-        let http_client = self.http_client.clone();
-
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
+        let request = self.stream_completion(request, cx);
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
             let response = request.await?;
             Ok(anthropic::extract_text_from_events(response).boxed())
+        }
+        .boxed()
+    }
+
+    fn use_tool(
+        &self,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        input_schema: serde_json::Value,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        let mut request = request.into_anthropic(self.model.id().into());
+        request.tool_choice = Some(anthropic::ToolChoice::Tool {
+            name: tool_name.clone(),
+        });
+        request.tools = vec![anthropic::Tool {
+            name: tool_name.clone(),
+            description: tool_description,
+            input_schema,
+        }];
+
+        let response = self.request_completion(request, cx);
+        async move {
+            let response = response.await?;
+            response
+                .content
+                .into_iter()
+                .find_map(|content| {
+                    if let anthropic::Content::ToolUse { name, input, .. } = content {
+                        if name == tool_name {
+                            Some(input)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .context("tool not used")
         }
         .boxed()
     }
