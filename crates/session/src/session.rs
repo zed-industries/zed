@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AnyWindowHandle, AppContext, Subscription, Task, WindowId};
+use gpui::{AnyWindowHandle, ModelContext, Subscription, Task, WindowId};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -9,8 +9,6 @@ pub struct Session {
     session_id: String,
     old_session_id: Option<String>,
     old_window_ids: Option<Vec<WindowId>>,
-    _serialization_task: Option<Task<()>>,
-    _on_app_quit: Option<Subscription>,
 }
 
 const SESSION_ID_KEY: &'static str = "session_id";
@@ -42,8 +40,6 @@ impl Session {
             session_id,
             old_session_id,
             old_window_ids,
-            _serialization_task: None,
-            _on_app_quit: None,
         }
     }
 
@@ -53,32 +49,25 @@ impl Session {
             session_id: Uuid::new_v4().to_string(),
             old_session_id: None,
             old_window_ids: None,
-            _serialization_task: Some(Task::ready(())),
-            _on_app_quit: None,
         }
     }
 
     pub fn id(&self) -> &str {
         &self.session_id
     }
+}
 
-    pub fn last_session_id(&self) -> Option<&str> {
-        self.old_session_id.as_deref()
-    }
+pub struct AppSession {
+    session: Session,
+    _serialization_task: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
+}
 
-    pub fn last_session_windows_order(&self) -> Option<Vec<WindowId>> {
-        self.old_window_ids.clone()
-    }
+impl AppSession {
+    pub fn new(session: Session, cx: &mut ModelContext<Self>) -> Self {
+        let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
-    pub fn start_serialization(&mut self, cx: &mut AppContext) {
-        self._on_app_quit = Some(cx.on_app_quit(|cx| {
-            if let Some(windows) = cx.windows_with_platform_ordering() {
-                cx.background_executor().spawn(store_window_order(windows))
-            } else {
-                Task::ready(())
-            }
-        }));
-        self._serialization_task = Some(cx.spawn(|cx| async move {
+        let _serialization_task = Some(cx.spawn(|_, cx| async move {
             loop {
                 if let Some(windows) = cx
                     .update(|cx| cx.windows_with_platform_ordering())
@@ -92,7 +81,33 @@ impl Session {
                     .timer(Duration::from_millis(100))
                     .await;
             }
-        }))
+        }));
+
+        Self {
+            session,
+            _subscriptions,
+            _serialization_task,
+        }
+    }
+
+    fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+        if let Some(windows) = cx.windows_with_platform_ordering() {
+            cx.background_executor().spawn(store_window_order(windows))
+        } else {
+            Task::ready(())
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        self.session.id()
+    }
+
+    pub fn last_session_id(&self) -> Option<&str> {
+        self.session.old_session_id.as_deref()
+    }
+
+    pub fn last_session_windows_order(&self) -> Option<Vec<WindowId>> {
+        self.session.old_window_ids.clone()
     }
 }
 

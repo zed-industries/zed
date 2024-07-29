@@ -29,7 +29,7 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
-use session::Session;
+use session::{AppSession, Session};
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -315,7 +315,7 @@ fn main() {
         .ok()
         .unzip();
 
-    let mut session = app.background_executor().block(Session::new());
+    let session = app.background_executor().block(Session::new());
 
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     reliability::init_panic_hook(
@@ -411,8 +411,6 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
-        session.start_serialization(cx);
-
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
@@ -446,6 +444,8 @@ fn main() {
             }
             .to_string(),
         );
+        let app_session = cx.new_model(|cx| AppSession::new(session, cx));
+
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -454,7 +454,7 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
-            session,
+            session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -708,7 +708,18 @@ pub(crate) async fn restorable_workspace_locations(
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;
 
-    let last_session_id = app_state.session.last_session_id();
+    let session_handle = app_state.session.clone();
+    let (last_session_id, last_session_window_order) = cx
+        .update(|cx| {
+            let session = session_handle.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_windows_order(),
+            )
+        })
+        .ok()?;
+
     if last_session_id.is_none()
         && matches!(
             restore_behavior,
@@ -726,12 +737,13 @@ pub(crate) async fn restorable_workspace_locations(
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
-                let window_order = app_state.session.last_session_windows_order();
-                let ordered = window_order.is_some();
+                let ordered = last_session_window_order.is_some();
 
-                let mut locations =
-                    workspace::last_session_workspace_locations(last_session_id, window_order)
-                        .filter(|locations| !locations.is_empty());
+                let mut locations = workspace::last_session_workspace_locations(
+                    &last_session_id,
+                    last_session_window_order,
+                )
+                .filter(|locations| !locations.is_empty());
 
                 // Since last_session_window_order returns the windows ordered front-to-back
                 // we need to open the window that was frontmost last.

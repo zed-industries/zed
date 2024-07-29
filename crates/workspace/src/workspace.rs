@@ -58,7 +58,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use session::Session;
+use session::AppSession;
 use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
@@ -539,7 +539,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
-    pub session: Session,
+    pub session: Model<AppSession>,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -587,7 +587,7 @@ impl AppState {
         let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
-        let session = Session::test();
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -917,7 +917,7 @@ impl Workspace {
 
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
-        let session_id = app_state.session.id().to_owned();
+        let session_id = app_state.session.read(cx).id().to_owned();
 
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
@@ -4292,6 +4292,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
@@ -4301,7 +4302,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
         let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
