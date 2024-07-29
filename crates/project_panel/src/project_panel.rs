@@ -94,7 +94,7 @@ enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EntryDetails {
     filename: String,
-    icon: Option<Arc<str>>,
+    icon: Option<SharedString>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -108,7 +108,7 @@ pub struct EntryDetails {
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<PathBuf>,
+    canonical_path: Option<Box<Path>>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -2538,7 +2538,7 @@ impl Render for DraggedProjectEntryView {
                         .indent_level(self.details.depth)
                         .indent_step_size(px(settings.indent_size))
                         .child(if let Some(icon) = &self.details.icon {
-                            div().child(Icon::from_path(icon.to_string()))
+                            div().child(Icon::from_path(icon.clone()))
                         } else {
                             div()
                         })
