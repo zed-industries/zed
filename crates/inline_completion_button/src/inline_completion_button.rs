@@ -15,7 +15,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::ResultExt;
+use util::{with_clone, ResultExt};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -220,23 +220,24 @@ impl InlineCompletionButton {
 
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
-        ContextMenu::build(cx, |mut menu, _| {
-            menu = menu.entry("Sign In", None, initiate_sign_in);
-            {
-                let fs = fs.clone();
-                menu = menu.entry("Disable Copilot", None, move |cx| {
-                    hide_copilot(fs.clone(), cx)
-                });
-            }
-
-            {
-                let fs = fs.clone();
-                menu = menu.entry("Use Supermaven", None, move |cx| {
-                    set_completion_provider(fs.clone(), cx, InlineCompletionProvider::Supermaven)
-                });
-            }
-
-            menu
+        ContextMenu::build(cx, |menu, _| {
+            menu.entry("Sign In", None, initiate_sign_in)
+                .entry(
+                    "Disable Copilot",
+                    None,
+                    with_clone!(fs, move |cx| hide_copilot(fs.clone(), cx)),
+                )
+                .entry(
+                    "Use Supermaven",
+                    None,
+                    with_clone!(fs, move |cx| {
+                        set_completion_provider(
+                            fs.clone(),
+                            cx,
+                            InlineCompletionProvider::Supermaven,
+                        )
+                    }),
+                )
         })
     }
 
