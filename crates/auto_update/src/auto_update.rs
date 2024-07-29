@@ -56,6 +56,7 @@ struct UpdateRequestBody {
     release_channel: Option<&'static str>,
     telemetry: bool,
     is_staff: Option<bool>,
+    destination: &'static str,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -589,6 +590,7 @@ async fn download_remote_server_binary(
         release_channel,
         telemetry: telemetry_enabled,
         is_staff: None,
+        destination: "remote",
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
@@ -625,6 +627,7 @@ async fn download_release(
         release_channel,
         telemetry: telemetry_enabled,
         is_staff,
+        destination: "local",
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
