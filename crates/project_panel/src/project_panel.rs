@@ -2440,10 +2440,6 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_click(cx.listener(|this, event: &gpui::ClickEvent, cx| {
-                            // trigger new_file when double-clicked on the blank space
-                            //
-                            // NOTE: this multi-click event triggered only when the blank space is clicked
-                            // (the click event on entry will not be propagated to this event)
                             if event.up.click_count > 1 {
                                 if let Some(entry_id) = this.last_worktree_root_id {
                                     let project = this.project.read(cx);
