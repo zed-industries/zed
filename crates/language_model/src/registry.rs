@@ -1,16 +1,16 @@
+use crate::{
+    provider::{
+        anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
+        google::GoogleLanguageModelProvider, ollama::OllamaLanguageModelProvider,
+        open_ai::OpenAiLanguageModelProvider,
+    },
+    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderState,
+};
 use client::Client;
 use collections::BTreeMap;
 use gpui::{AppContext, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
-
-use crate::{
-    provider::{
-        anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
-        ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
-    },
-    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderState,
-};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
@@ -38,6 +38,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         OllamaLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        GoogleLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
 

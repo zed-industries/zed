@@ -734,26 +734,29 @@ impl PromptLibrary {
                     const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-                    let token_count = cx
-                        .update(|cx| {
-                            LanguageModelCompletionProvider::read_global(cx).count_tokens(
-                                LanguageModelRequest {
-                                    messages: vec![LanguageModelRequestMessage {
-                                        role: Role::System,
-                                        content: body.to_string(),
-                                    }],
-                                    stop: Vec::new(),
-                                    temperature: 1.,
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?;
-                    this.update(&mut cx, |this, cx| {
-                        let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
-                        prompt_editor.token_count = Some(token_count);
-                        cx.notify();
-                    })
+                    if let Some(token_count) = cx.update(|cx| {
+                        LanguageModelCompletionProvider::read_global(cx).count_tokens(
+                            LanguageModelRequest {
+                                messages: vec![LanguageModelRequestMessage {
+                                    role: Role::System,
+                                    content: body.to_string(),
+                                }],
+                                stop: Vec::new(),
+                                temperature: 1.,
+                            },
+                            cx,
+                        )
+                    })? {
+                        let token_count = token_count.await?;
+
+                        this.update(&mut cx, |this, cx| {
+                            let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
+                            prompt_editor.token_count = Some(token_count);
+                            cx.notify();
+                        })
+                    } else {
+                        Ok(())
+                    }
                 }
                 .log_err()
             });

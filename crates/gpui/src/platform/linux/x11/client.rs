@@ -111,7 +111,9 @@ pub struct X11ClientState {
 
     pub(crate) scale_factor: f32,
 
+    xkb_context: xkbc::Context,
     pub(crate) xcb_connection: Rc<XCBConnection>,
+    xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
@@ -253,7 +255,9 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let events = xkb::EventType::STATE_NOTIFY;
+        let events = xkb::EventType::STATE_NOTIFY
+            | xkb::EventType::MAP_NOTIFY
+            | xkb::EventType::NEW_KEYBOARD_NOTIFY;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
@@ -267,8 +271,8 @@ impl X11Client {
         assert!(xkb.supported);
 
         let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_state = {
-            let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
                 &xkb_context,
                 &xcb_connection,
@@ -349,7 +353,9 @@ impl X11Client {
             current_count: 0,
             scale_factor,
 
+            xkb_context,
             xcb_connection,
+            xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
             _resource_database: resource_database,
@@ -620,6 +626,23 @@ impl X11Client {
                 drop(state);
                 self.disable_ime();
                 window.handle_ime_delete();
+            }
+            Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
+                let mut state = self.0.borrow_mut();
+                let xkb_state = {
+                    let xkb_keymap = xkbc::x11::keymap_new_from_device(
+                        &state.xkb_context,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                        xkbc::KEYMAP_COMPILE_NO_FLAGS,
+                    );
+                    xkbc::x11::state_new_from_device(
+                        &xkb_keymap,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                    )
+                };
+                state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();

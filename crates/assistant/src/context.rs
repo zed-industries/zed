@@ -532,7 +532,21 @@ impl EditOperation {
                     .path_candidates
                     .iter()
                     .find(|item| item.string == symbol)
-                    .context("symbol not found")?;
+                    .with_context(|| {
+                        format!(
+                            "symbol {:?} not found in path {:?}.\ncandidates: {:?}.\nparse status: {:?}. text:\n{}",
+                            symbol,
+                            path,
+                            outline
+                                .path_candidates
+                                .iter()
+                                .map(|candidate| &candidate.string)
+                                .collect::<Vec<_>>(),
+                            *parse_status.borrow(),
+                            buffer.read_with(&cx, |buffer, _| buffer.text()).unwrap_or_else(|_| "error".to_string())
+                        )
+                    })?;
+
                 buffer.update(&mut cx, |buffer, _| {
                     let outline_item = &outline.items[candidate.id];
                     let symbol_range = outline_item.range.to_point(buffer);
@@ -1123,16 +1137,17 @@ impl Context {
                     .timer(Duration::from_millis(200))
                     .await;
 
-                let token_count = cx
-                    .update(|cx| {
-                        LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                    })?
-                    .await?;
+                if let Some(token_count) = cx.update(|cx| {
+                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+                })? {
+                    let token_count = token_count.await?;
 
-                this.update(&mut cx, |this, cx| {
-                    this.token_count = Some(token_count);
-                    cx.notify()
-                })?;
+                    this.update(&mut cx, |this, cx| {
+                        this.token_count = Some(token_count);
+                        cx.notify()
+                    })?;
+                }
+
                 anyhow::Ok(())
             }
             .log_err()

@@ -5085,6 +5085,9 @@ mod tests {
             Project::init_settings(cx);
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
@@ -5102,6 +5105,15 @@ mod tests {
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

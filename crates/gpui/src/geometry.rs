@@ -940,6 +940,15 @@ where
     pub fn half_perimeter(&self) -> T {
         self.size.width.clone() + self.size.height.clone()
     }
+
+    /// centered_at creates a new bounds centered at the given point.
+    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
+        let origin = Point {
+            x: center.x - size.width.half(),
+            y: center.y - size.height.half(),
+        };
+        Self::new(origin, size)
+    }
 }
 
 impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {

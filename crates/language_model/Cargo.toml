@@ -28,6 +28,7 @@ collections.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
+google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 http_client.workspace = true
 menu.workspace = true

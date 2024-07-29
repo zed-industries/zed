@@ -219,7 +219,7 @@ impl SlashCommand for DocsSlashCommand {
                     if index {
                         // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
                         // until it completes.
-                        let _ = store.clone().index(package.as_str().into());
+                        drop(store.clone().index(package.as_str().into()));
                     }
 
                     let items = store.search(package).await;

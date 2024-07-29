@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
@@ -98,21 +98,13 @@ impl From<Role> for String {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    #[serde(serialize_with = "serialize_request_model")]
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub system: String,
     pub max_tokens: u32,
-}
-
-fn serialize_request_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&model.id())
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -121,7 +113,7 @@ pub struct RequestMessage {
     pub content: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseEvent {
     MessageStart {
@@ -146,7 +138,7 @@ pub enum ResponseEvent {
     MessageStop {},
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseMessage {
     #[serde(rename = "type")]
     pub message_type: Option<String>,
@@ -159,19 +151,19 @@ pub struct ResponseMessage {
     pub usage: Option<Usage>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
     Text { text: String },
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TextDelta {
     TextDelta { text: String },
@@ -232,6 +224,25 @@ pub async fn stream_completion(
             )),
         }
     }
+}
+
+pub fn extract_text_from_events(
+    response: impl Stream<Item = Result<ResponseEvent>>,
+) -> impl Stream<Item = Result<String>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(response) => match response {
+                ResponseEvent::ContentBlockStart { content_block, .. } => match content_block {
+                    ContentBlock::Text { text } => Some(Ok(text)),
+                },
+                ResponseEvent::ContentBlockDelta { delta, .. } => match delta {
+                    TextDelta::TextDelta { text } => Some(Ok(text)),
+                },
+                _ => None,
+            },
+            Err(error) => Some(Err(error)),
+        }
+    })
 }
 
 // #[cfg(test)]

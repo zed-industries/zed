@@ -248,7 +248,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -261,15 +261,6 @@ impl ParsedMarkdown {
 
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
         return &self.events;
-    }
-}
-
-impl Default for ParsedMarkdown {
-    fn default() -> Self {
-        Self {
-            source: SharedString::default(),
-            events: Arc::from([]),
-        }
     }
 }
 

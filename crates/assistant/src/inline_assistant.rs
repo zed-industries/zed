@@ -1420,27 +1420,34 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
-                        self.fs.clone(),
-                        IconButton::new("context", IconName::Settings)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    format!(
-                                        "Using {}",
-                                        LanguageModelCompletionProvider::read_global(cx)
-                                            .active_model()
-                                            .map(|model| model.name().0)
-                                            .unwrap_or_else(|| "No model selected".into()),
-                                    ),
-                                    None,
-                                    "Change Model",
-                                    cx,
-                                )
-                            }),
-                    ))
+                    .child(
+                        ModelSelector::new(
+                            self.fs.clone(),
+                            IconButton::new("context", IconName::SlidersAlt)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(
+                                        format!(
+                                            "Using {}",
+                                            LanguageModelCompletionProvider::read_global(cx)
+                                                .active_model()
+                                                .map(|model| model.name().0)
+                                                .unwrap_or_else(|| "No model selected".into()),
+                                        ),
+                                        None,
+                                        "Change Model",
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_info_text(
+                            "Inline edits use context\n\
+                            from the currently selected\n\
+                            assistant panel tab.",
+                        ),
+                    )
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
                             let error_message = SharedString::from(error.to_string());
@@ -1628,15 +1635,18 @@ impl PromptEditor {
                 })?
                 .await?;
 
-            let token_count = cx
-                .update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                })?
-                .await?;
-            this.update(&mut cx, |this, cx| {
-                this.token_count = Some(token_count);
-                cx.notify();
-            })
+            if let Some(token_count) = cx.update(|cx| {
+                LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+            })? {
+                let token_count = token_count.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.token_count = Some(token_count);
+                    cx.notify();
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 
@@ -1825,6 +1835,7 @@ impl PromptEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),

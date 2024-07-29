@@ -707,15 +707,18 @@ impl PromptEditor {
                     inline_assistant.request_for_inline_assist(assist_id, cx)
                 })??;
 
-            let token_count = cx
-                .update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                })?
-                .await?;
-            this.update(&mut cx, |this, cx| {
-                this.token_count = Some(token_count);
-                cx.notify();
-            })
+            if let Some(token_count) = cx.update(|cx| {
+                LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+            })? {
+                let token_count = token_count.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.token_count = Some(token_count);
+                    cx.notify();
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 
@@ -906,6 +909,7 @@ impl PromptEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
@@ -943,7 +947,7 @@ impl TerminalTransaction {
     }
 
     pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
-        // Ensure that the assistant cannot accidently execute commands that are streamed into the terminal
+        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = hunk.replace(CARRIAGE_RETURN, " ");
         self.terminal
             .update(cx, |terminal, _| terminal.input(input));
