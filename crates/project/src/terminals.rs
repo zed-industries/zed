@@ -255,14 +255,13 @@ impl Project {
             .directories
             .into_iter()
             .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
-            .filter(|venv_path| {
+            .find(|venv_path| {
                 self.find_worktree(&venv_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })
                     .is_some()
             })
-            .next()
     }
 
     fn python_activate_command(
@@ -327,7 +326,7 @@ pub fn wrap_for_ssh(
         }
     }
     if let Some(venv_directory) = venv_directory {
-        if let Some(str) = shlex::try_quote(&venv_directory.to_string_lossy().to_string()).ok() {
+        if let Some(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()).ok() {
             env_changes.push_str(&format!("PATH={}:$PATH ", str));
         }
     }

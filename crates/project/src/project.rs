@@ -1914,6 +1914,13 @@ impl Project {
         }
     }
 
+    pub fn is_ssh(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
     pub fn is_remote(&self) -> bool {
         !self.is_local()
     }
