@@ -10,7 +10,7 @@ use crate::{
         ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
-    AppState, Error, RateLimit, RateLimiter, Result,
+    AppState, Config, Error, RateLimit, RateLimiter, Result,
 };
 use anyhow::{anyhow, bail, Context as _};
 use async_tungstenite::tungstenite::{
@@ -608,40 +608,36 @@ impl Server {
             .add_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
-                    complete_with_language_model(
-                        request,
-                        response,
-                        session,
-                        app_state.config.openai_api_key.clone(),
-                        app_state.config.google_ai_api_key.clone(),
-                        app_state.config.anthropic_api_key.clone(),
-                    )
+                    let app_state = app_state.clone();
+                    async move {
+                        complete_with_language_model(request, response, session, &app_state.config)
+                            .await
+                    }
                 }
             })
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
-                    stream_complete_with_language_model(
-                        request,
-                        response,
-                        session,
-                        app_state.config.openai_api_key.clone(),
-                        app_state.config.google_ai_api_key.clone(),
-                        app_state.config.anthropic_api_key.clone(),
-                    )
+                    let app_state = app_state.clone();
+                    async move {
+                        stream_complete_with_language_model(
+                            request,
+                            response,
+                            session,
+                            &app_state.config,
+                        )
+                        .await
+                    }
                 }
             })
             .add_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
-                    count_language_model_tokens(
-                        request,
-                        response,
-                        session,
-                        app_state.config.openai_api_key.clone(),
-                        app_state.config.google_ai_api_key.clone(),
-                        app_state.config.anthropic_api_key.clone(),
-                    )
+                    let app_state = app_state.clone();
+                    async move {
+                        count_language_model_tokens(request, response, session, &app_state.config)
+                            .await
+                    }
                 }
             })
             .add_request_handler({
@@ -4532,9 +4528,7 @@ async fn complete_with_language_model(
     request: proto::CompleteWithLanguageModel,
     response: Response<proto::CompleteWithLanguageModel>,
     session: Session,
-    _open_ai_api_key: Option<Arc<str>>,
-    _google_ai_api_key: Option<Arc<str>>,
-    anthropic_api_key: Option<Arc<str>>,
+    config: &Config,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -4548,12 +4542,14 @@ async fn complete_with_language_model(
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
         Some(proto::LanguageModelProvider::Anthropic) => {
-            let api_key =
-                anthropic_api_key.context("no Anthropic AI API key configured on the server")?;
+            let api_key = config
+                .anthropic_api_key
+                .as_ref()
+                .context("no Anthropic AI API key configured on the server")?;
             anthropic::complete(
                 session.http_client.as_ref(),
                 anthropic::ANTHROPIC_API_URL,
-                &api_key,
+                api_key,
                 serde_json::from_str(&request.request)?,
             )
             .await?
@@ -4572,9 +4568,7 @@ async fn stream_complete_with_language_model(
     request: proto::StreamCompleteWithLanguageModel,
     response: StreamingResponse<proto::StreamCompleteWithLanguageModel>,
     session: Session,
-    open_ai_api_key: Option<Arc<str>>,
-    google_ai_api_key: Option<Arc<str>>,
-    anthropic_api_key: Option<Arc<str>>,
+    config: &Config,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -4588,12 +4582,14 @@ async fn stream_complete_with_language_model(
 
     match proto::LanguageModelProvider::from_i32(request.provider) {
         Some(proto::LanguageModelProvider::Anthropic) => {
-            let api_key =
-                anthropic_api_key.context("no Anthropic AI API key configured on the server")?;
+            let api_key = config
+                .anthropic_api_key
+                .as_ref()
+                .context("no Anthropic AI API key configured on the server")?;
             let mut chunks = anthropic::stream_completion(
                 session.http_client.as_ref(),
                 anthropic::ANTHROPIC_API_URL,
-                &api_key,
+                api_key,
                 serde_json::from_str(&request.request)?,
                 None,
             )
@@ -4606,11 +4602,14 @@ async fn stream_complete_with_language_model(
             }
         }
         Some(proto::LanguageModelProvider::OpenAi) => {
-            let api_key = open_ai_api_key.context("no OpenAI API key configured on the server")?;
+            let api_key = config
+                .openai_api_key
+                .as_ref()
+                .context("no OpenAI API key configured on the server")?;
             let mut events = open_ai::stream_completion(
                 session.http_client.as_ref(),
                 open_ai::OPEN_AI_API_URL,
-                &api_key,
+                api_key,
                 serde_json::from_str(&request.request)?,
                 None,
             )
@@ -4623,12 +4622,14 @@ async fn stream_complete_with_language_model(
             }
         }
         Some(proto::LanguageModelProvider::Google) => {
-            let api_key =
-                google_ai_api_key.context("no Google AI API key configured on the server")?;
+            let api_key = config
+                .google_ai_api_key
+                .as_ref()
+                .context("no Google AI API key configured on the server")?;
             let mut events = google_ai::stream_generate_content(
                 session.http_client.as_ref(),
                 google_ai::API_URL,
-                &api_key,
+                api_key,
                 serde_json::from_str(&request.request)?,
             )
             .await?;
@@ -4649,9 +4650,7 @@ async fn count_language_model_tokens(
     request: proto::CountLanguageModelTokens,
     response: Response<proto::CountLanguageModelTokens>,
     session: Session,
-    open_ai_api_key: Option<Arc<str>>,
-    google_ai_api_key: Option<Arc<str>>,
-    anthropic_api_key: Option<Arc<str>>,
+    config: &Config,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -4665,12 +4664,14 @@ async fn count_language_model_tokens(
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
         Some(proto::LanguageModelProvider::Google) => {
-            let api_key =
-                google_ai_api_key.context("no Google AI API key configured on the server")?;
+            let api_key = config
+                .google_ai_api_key
+                .as_ref()
+                .context("no Google AI API key configured on the server")?;
             google_ai::count_tokens(
                 session.http_client.as_ref(),
                 google_ai::API_URL,
-                &api_key,
+                api_key,
                 serde_json::from_str(&request.request)?,
             )
             .await?
