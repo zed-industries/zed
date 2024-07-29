@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, LanguageModelCompletionProvider,
-    MessageId, MessageStatus,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, InitialInsertion,
+    LanguageModelCompletionProvider, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -352,7 +352,7 @@ pub struct EditSuggestion {
     pub range: Range<language::Anchor>,
     /// If None, assume this is a suggestion to delete the range rather than transform it.
     pub description: Option<String>,
-    pub prepend_newline: bool,
+    pub initial_insertion: Option<InitialInsertion>,
 }
 
 impl EditStep {
@@ -519,7 +519,7 @@ impl EditOperation {
                 parse_status.changed().await?;
             }
 
-            let prepend_newline = kind.prepend_newline();
+            let initial_insertion = kind.initial_insertion();
             let suggestion_range = if let Some(symbol) = kind.symbol() {
                 let outline = buffer
                     .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
@@ -597,7 +597,7 @@ impl EditOperation {
                 EditSuggestion {
                     range: suggestion_range,
                     description: kind.description().map(ToString::to_string),
-                    prepend_newline,
+                    initial_insertion,
                 },
             ))
         })
@@ -681,13 +681,13 @@ impl EditOperationKind {
         }
     }
 
-    pub fn prepend_newline(&self) -> bool {
+    pub fn initial_insertion(&self) -> Option<InitialInsertion> {
         match self {
-            Self::PrependChild { .. }
-            | Self::AppendChild { .. }
-            | Self::InsertSiblingAfter { .. }
-            | Self::InsertSiblingBefore { .. } => true,
-            _ => false,
+            EditOperationKind::InsertSiblingBefore { .. } => Some(InitialInsertion::NewlineAfter),
+            EditOperationKind::InsertSiblingAfter { .. } => Some(InitialInsertion::NewlineBefore),
+            EditOperationKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
+            EditOperationKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
+            _ => None,
         }
     }
 }
