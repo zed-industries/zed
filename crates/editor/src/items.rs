@@ -1153,7 +1153,12 @@ impl SearchableItem for Editor {
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        if self
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .is_some()
+        {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {

@@ -2019,7 +2019,6 @@ impl OutlinePanel {
         let buffer_search_subscription = cx.subscribe(
             &new_active_editor,
             |outline_panel: &mut Self, _, e: &SearchEvent, cx: &mut ViewContext<'_, Self>| {
-                dbg!(e);
                 outline_panel.update_search_matches(cx);
                 outline_panel.autoscroll(cx);
             },
@@ -2411,6 +2410,7 @@ impl OutlinePanel {
         });
     }
 
+    // TODO kb file does not get appended in search mode
     fn generate_cached_entries(
         &self,
         is_singleton: bool,
@@ -2835,7 +2835,6 @@ impl OutlinePanel {
         self.autoscroll(cx);
     }
 
-    // TODO kb does not trigger (no event is sent) when no matches are found
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let project_search_matches = self
             .workspace
