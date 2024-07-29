@@ -17,7 +17,7 @@ mod blame_entry_tooltip;
 mod blink_manager;
 mod debounced_delay;
 pub mod display_map;
-mod editor_settings;
+pub mod editor_settings;
 mod editor_settings_controls;
 mod element;
 mod git;

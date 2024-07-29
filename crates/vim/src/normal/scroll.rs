@@ -91,12 +91,13 @@ fn scroll_editor(
         s.move_with(|map, selection| {
             let mut head = selection.head();
             let top = top_anchor.to_display_point(map);
+            let starting_column = head.column();
 
             if preserve_cursor_position {
                 let old_top = old_top_anchor.to_display_point(map);
                 let new_row = if old_top.row() == top.row() {
                     DisplayRow(
-                        top.row()
+                        head.row()
                             .0
                             .saturating_add_signed(amount.lines(visible_line_count) as i32),
                     )
@@ -105,22 +106,25 @@ fn scroll_editor(
                 };
                 head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
             }
+
             let min_row = if top.row().0 == 0 {
                 DisplayRow(0)
             } else {
                 DisplayRow(top.row().0 + vertical_scroll_margin as u32)
             };
-            let max_row = DisplayRow(
-                top.row().0 + visible_line_count as u32 - vertical_scroll_margin as u32 - 1,
-            );
+            let max_row = DisplayRow(map.max_point().row().0.max(top.row().0.saturating_add(
+                (visible_line_count as u32).saturating_sub((1.0 + vertical_scroll_margin) as u32),
+            )));
 
-            let new_head = if head.row() < min_row {
-                map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)
+            let new_row = if head.row() < min_row {
+                min_row
             } else if head.row() > max_row {
-                map.clip_point(DisplayPoint::new(max_row, head.column()), Bias::Left)
+                max_row
             } else {
-                head
+                head.row()
             };
+            let new_head = map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
+
             if selection.is_empty() {
                 selection.collapse_to(new_head, selection.goal)
             } else {
@@ -136,9 +140,12 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
+    use editor::editor_settings::ScrollBeyondLastLine;
+    use editor::EditorSettings;
     use gpui::{point, px, size, Context};
     use indoc::indoc;
     use language::Point;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
@@ -269,6 +276,47 @@ mod test {
         // test returning to top
         cx.simulate_shared_keystrokes("g g ctrl-d ctrl-u ctrl-u")
             .await;
+        cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_scroll_beyond_last_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_scroll_height(10).await;
+        cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
+
+        pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
+            let mut text = String::new();
+            for row in 0..rows {
+                let c: char = (start_char as u32 + row as u32) as u8 as char;
+                let mut line = c.to_string().repeat(cols);
+                if row < rows - 1 {
+                    line.push('\n');
+                }
+                text += &line;
+            }
+            text
+        }
+        let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
+        cx.set_shared_state(&content).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| {
+                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off)
+            });
+        });
+
+        // ctrl-d can reach the end and the cursor stays in the first column
+        cx.simulate_shared_keystrokes("shift-g k").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+
+        // ctrl-u from the last line
+        // cx.simulate_shared_keystrokes("shift-g").await;
+        // cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-u").await;
         cx.shared_state().await.assert_matches();
     }
 }
