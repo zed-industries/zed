@@ -4,10 +4,11 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::{extract, routing::post, Extension, Json, Router};
 use collections::HashSet;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use stripe::{CheckoutSession, CreateCheckoutSession, CreateCheckoutSessionLineItems, CustomerId};
 
-use crate::{AppState, Result};
+use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
     Router::new().route("/billing/subscriptions", post(create_billing_subscription))
@@ -34,7 +35,17 @@ async fn create_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
-    let stripe_client = stripe::Client::new("");
+    let Some((stripe_client, stripe_price_id)) = app
+        .stripe_client
+        .clone()
+        .zip(app.config.stripe_price_id.clone())
+    else {
+        log::error!("failed to retrieve Stripe client or price ID");
+        Err(Error::Http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
 
     let existing_customer_id = {
         let existing_subscriptions = app.db.get_billing_subscriptions(user.id).await?;
@@ -60,7 +71,7 @@ async fn create_billing_subscription(
         params.customer = existing_customer_id;
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            price: Some("".into()),
+            price: Some(stripe_price_id.to_string()),
             quantity: Some(1),
             ..Default::default()
         }]);
