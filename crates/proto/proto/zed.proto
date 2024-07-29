@@ -199,7 +199,7 @@ message Envelope {
         StreamCompleteWithLanguageModel stream_complete_with_language_model = 228;
         StreamCompleteWithLanguageModelResponse stream_complete_with_language_model_response = 229;
         CountLanguageModelTokens count_language_model_tokens = 230;
-        CountLanguageModelTokensResponse count_language_model_tokens_response = 231; // current max
+        CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -255,6 +255,8 @@ message Envelope {
         AdvertiseContexts advertise_contexts = 211;
         OpenContext open_context = 212;
         OpenContextResponse open_context_response = 213;
+        CreateContext create_context = 232;
+        CreateContextResponse create_context_response = 233; // current max
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
         SynchronizeContextsResponse synchronize_contexts_response = 216;
@@ -2379,6 +2381,15 @@ message OpenContext {
 
 message OpenContextResponse {
     Context context = 1;
+}
+
+message CreateContext {
+    uint64 project_id = 1;
+}
+
+message CreateContextResponse {
+    string context_id = 1;
+    Context context = 2;
 }
 
 message UpdateContext {
