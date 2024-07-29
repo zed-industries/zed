@@ -36,7 +36,7 @@ use gpui::{
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowId, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -4032,6 +4032,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                window_id: Some(cx.window_handle().window_id().as_u64()),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
@@ -4902,8 +4903,11 @@ pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
-pub fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
-    DB.last_session_workspace_locations(last_session_id)
+pub fn last_session_workspace_locations(
+    last_session_id: &str,
+    last_session_window_order: Option<Vec<WindowId>>,
+) -> Option<Vec<LocalPaths>> {
+    DB.last_session_workspace_locations(last_session_id, last_session_window_order)
         .log_err()
 }
 

@@ -315,7 +315,7 @@ fn main() {
         .ok()
         .unzip();
 
-    let session = app.background_executor().block(Session::new());
+    let mut session = app.background_executor().block(Session::new());
 
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     reliability::init_panic_hook(
@@ -410,6 +410,8 @@ fn main() {
         git_hosting_providers::init(cx);
 
         OpenListener::set_global(cx, open_listener.clone());
+
+        session.start_serialization(cx);
 
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
@@ -724,8 +726,22 @@ pub(crate) async fn restorable_workspace_locations(
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
-                workspace::last_session_workspace_locations(last_session_id)
-                    .filter(|locations| !locations.is_empty())
+                let window_order = app_state.session.last_session_windows_order();
+                let ordered = window_order.is_some();
+
+                let mut locations =
+                    workspace::last_session_workspace_locations(last_session_id, window_order)
+                        .filter(|locations| !locations.is_empty());
+
+                // Since last_session_window_order returns the windows ordered front-to-back
+                // we need to open the window that was frontmost last.
+                if ordered {
+                    if let Some(locations) = locations.as_mut() {
+                        locations.reverse();
+                    }
+                }
+
+                locations
             } else {
                 None
             }

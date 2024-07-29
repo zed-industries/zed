@@ -9605,6 +9605,8 @@ name = "session"
 version = "0.1.0"
 dependencies = [
  "db",
+ "gpui",
+ "serde_json",
  "util",
  "uuid",
 ]
@@ -13357,6 +13359,7 @@ dependencies = [
  "smallvec",
  "sqlez",
  "task",
+ "tempfile",
  "theme",
  "ui",
  "util",
