@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
+    u32,
 };
 
 use anyhow::Context;
@@ -15,7 +16,8 @@ use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
-    AnchorRangeExt, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
+    RangeToAnchorExt,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -1290,7 +1292,7 @@ impl OutlinePanel {
         let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx)?;
         let excerpt_range = range.context.to_point(&buffer_snapshot);
         let label_element = Label::new(format!(
-            "Lines {}-{}",
+            "Lines {}- {}",
             excerpt_range.start.row + 1,
             excerpt_range.end.row + 1,
         ))
@@ -1536,14 +1538,14 @@ impl OutlinePanel {
         )
     }
 
-    // TODO kb render it better
+    // TODO kb render it like an outline item, but for the entire line without the whitespaces
     fn render_search_match(
         &self,
         match_range: &Range<editor::Anchor>,
-        depth: usize,
+        parent_depth: usize,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
-        let Some(match_text) = self.text_for_match(&match_range, cx) else {
+        let Some(match_text) = self.text_for_match(match_range, cx) else {
             return div().id("empty-match-range");
         };
         let Some(active_editor) = self
@@ -1555,25 +1557,59 @@ impl OutlinePanel {
         };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         let match_point_range = match_range.to_point(&multi_buffer_snapshot);
+        let entire_row_range_start = language::Point::new(match_point_range.start.row, 0);
+        let entire_row_range_end = multi_buffer_snapshot.clip_point(
+            language::Point::new(match_point_range.end.row, u32::MAX),
+            Bias::Right,
+        );
+        let entire_row_range =
+            (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
+        let Some(line_text) = self.text_for_match(&entire_row_range, cx) else {
+            return div().id("empty-match-range");
+        };
 
         let is_active = match &self.selected_entry {
             Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
             _ => false,
         };
 
-        let label_element = Label::new(format!(
-            "{match_text} (lines {} -{})",
-            match_point_range.start.row + 1,
-            match_point_range.end.row + 1,
-        ))
-        .single_line()
+        let label = if match_point_range.start.row != match_point_range.end.row {
+            format!(
+                "{line_text} (lines {} -{})",
+                match_point_range.start.row + 1,
+                match_point_range.end.row + 1,
+            )
+        } else {
+            format!("{line_text} (lines {})", match_point_range.start.row + 1)
+        };
+        let highlight_indices = label
+            .find(&match_text)
+            .map(|match_start| (match_start..match_start + match_text.len()));
+
+        let label_element = language::render_item(
+            &OutlineItem {
+                depth: parent_depth + 1,
+                range: entire_row_range.clone(),
+                text: label,
+                highlight_ranges: Vec::new(), // TODO kb or reverse, remove match_ranges?
+                name_ranges: highlight_indices.iter().cloned().collect(),
+                body_range: Some(entire_row_range),
+            },
+            highlight_indices,
+            cx,
+        )
         .into_any_element();
+        let icon = if self.is_singleton_active(cx) {
+            None
+        } else {
+            Some(empty_icon())
+        };
 
         self.entry_element(
             PanelEntry::Search(match_range.clone()),
-            ElementId::from(SharedString::from(format!("{match_range:?}"))),
-            depth,
-            None,
+            ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
+            parent_depth + 1,
+            icon,
             is_active,
             label_element,
             cx,
@@ -2018,7 +2054,7 @@ impl OutlinePanel {
         self.clear_previous(cx);
         let buffer_search_subscription = cx.subscribe(
             &new_active_editor,
-            |outline_panel: &mut Self, _, e: &SearchEvent, cx: &mut ViewContext<'_, Self>| {
+            |outline_panel: &mut Self, _, _: &SearchEvent, cx: &mut ViewContext<'_, Self>| {
                 outline_panel.update_search_matches(cx);
                 outline_panel.autoscroll(cx);
             },
@@ -3274,11 +3310,7 @@ impl Render for OutlinePanel {
                         div().border_1().child(IconButton::new("outline-panel-menu", IconName::Menu)
                             .shape(IconButtonShape::Square)
                             .on_click(|e, cx| {
-                                dbg!("!!!!!!!! TODO kb show a context menu with multiple layouts");
-                                // Ideas:
-                                // * show a different icon per view mode selected, with a different hover
-                                // * clear filter on the new category [auto]selection, re-reveal the selection again in the new list
-                                // * have a togglable "pin" button to forbid the list from updating for the new mode/editor at all.
+                                dbg!("!!!!!!!! TODO kb add a pin icon here, and keep the editor until it's not upgradable");
                             }))
                         ,
                     ),
