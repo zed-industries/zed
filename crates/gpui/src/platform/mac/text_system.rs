@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
-use collections::{BTreeSet, HashMap};
+use collections::HashMap;
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},

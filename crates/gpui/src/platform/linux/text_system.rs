@@ -77,17 +77,6 @@ impl PlatformTextSystem for CosmicTextSystem {
         result
     }
 
-    fn all_font_families(&self) -> Vec<String> {
-        self.0
-            .read()
-            .font_system
-            .db()
-            .faces()
-            // todo(linux) this will list the same font family multiple times
-            .filter_map(|face| face.families.first().map(|family| family.0.clone()))
-            .collect_vec()
-    }
-
     fn font_id(&self, font: &Font) -> Result<FontId> {
         // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
         let mut state = self.0.write();
