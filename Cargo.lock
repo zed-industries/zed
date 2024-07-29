@@ -86,7 +86,7 @@ version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "bitflags 2.6.0",
  "home",
  "libc",
@@ -109,7 +109,7 @@ name = "alacritty_terminal"
 version = "0.24.1-dev"
 source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "bitflags 2.6.0",
  "home",
  "libc",
@@ -1471,9 +1471,9 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
-version = "0.22.0"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9475866fec1451be56a3c2400fd081ff546538961565ccb5b7142cbd22bc7a51"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64-simd"
@@ -2433,7 +2433,7 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "axum-extra",
- "base64 0.22.0",
+ "base64 0.22.1",
  "call",
  "channel",
  "chrono",
@@ -7542,7 +7542,7 @@ version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "serde",
 ]
 
@@ -7750,7 +7750,7 @@ version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42cf17e9a1800f5f396bc67d193dc9411b59012a5876445ef450d449881e1016"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "indexmap 2.2.6",
  "quick-xml 0.32.0",
  "serde",
@@ -8704,7 +8704,7 @@ dependencies = [
  "alacritty_terminal 0.23.0",
  "anyhow",
  "async-dispatcher",
- "base64 0.22.0",
+ "base64 0.22.1",
  "client",
  "collections",
  "command_palette_hooks",
@@ -8930,7 +8930,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
- "base64 0.22.0",
+ "base64 0.22.1",
  "chrono",
  "collections",
  "env_logger",
@@ -8978,7 +8978,7 @@ dependencies = [
  "anyhow",
  "async-dispatcher",
  "async-std",
- "base64 0.22.0",
+ "base64 0.22.1",
  "bytes 1.5.0",
  "chrono",
  "data-encoding",
@@ -11871,7 +11871,7 @@ version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c704361d822337cfc00387672c7b59eaa72a1f0744f62b2a68aa228a0c6927d"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "data-url",
  "flate2",
  "imagesize",
