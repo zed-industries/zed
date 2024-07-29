@@ -11881,6 +11881,7 @@ checksum = "72139d247e5f97a3eff96229a7ae85ead5328a39efe76f8bf5a06313d505b6ea"
 dependencies = [
  "base64 0.22.0",
  "flate2",
+ "http 0.2.9",
  "log",
  "once_cell",
  "rustls 0.23.12",

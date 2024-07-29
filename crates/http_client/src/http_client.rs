@@ -11,7 +11,7 @@ pub use isahc::{
     http::{Method, Request, Response, StatusCode, Uri},
     Error, HttpClient as IsahcHttpClient,
 };
-use smol::Unblock;
+use smol::{unblock, Unblock};
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
@@ -388,6 +388,40 @@ impl HttpClient for isahc::HttpClient {
     ) -> BoxFuture<'static, Result<Response<HttpBody>, Error>> {
         let client = self.clone();
         Box::pin(async move { client.send_async(req).await })
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        None
+    }
+}
+
+struct UreqHttpClient {
+    redirecting_agent: ureq::Agent,
+    no_follow_agent: ureq::Agent,
+}
+
+impl UreqHttpClient {
+    fn send_with_redirect_policy(
+        &self,
+        req: Request<HttpBodyNew>,
+        follow_redirects: bool,
+    ) -> BoxFuture<'static, Result<Response<HttpBody>, anyhow::Error>> {
+        let agent = if follow_redirects {
+            self.redirecting_agent
+        } else {
+            self.no_follow_agent
+        }
+        .clone();
+
+        Box::pin(async move {
+            unblock(move || {
+                let (parts, body) = req.into_parts();
+                let request: ureq::Request = parts.into();
+                // agent.send_request(path)
+
+                Err(anyhow!("TODO"))
+            })
+        })
     }
 
     fn proxy(&self) -> Option<&Uri> {

@@ -30,4 +30,4 @@ serde_json.workspace = true
 futures-lite.workspace = true
 url.workspace = true
 smol.workspace = true
-ureq = "2.10.0"
+ureq = { version = "2.10.0", features = ["http-interop"] }
