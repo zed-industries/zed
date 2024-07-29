@@ -114,15 +114,11 @@ impl PathWithPosition {
     }
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
-    /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    /// If on Windows, `s` will replace `/` with `\` for compatibility.
+    /// If the suffix parsing fails, the whole string is parsed as a path.
     pub fn parse_str<E>(
         s: &str,
         parse_path_str: impl Fn(&str) -> Result<PathBuf, E>,
     ) -> Result<Self, E> {
-        #[cfg(target_os = "windows")]
-        let s = &s.replace('/', "\\");
-
         let fallback = |fallback_str| {
             Ok(Self {
                 path: parse_path_str(fallback_str)?,
@@ -132,23 +128,29 @@ impl PathWithPosition {
         };
 
         let trimmed = s.trim();
-
-        #[cfg(target_os = "windows")]
-        {
-            let is_absolute = trimmed.starts_with(r"\\?\");
-            if is_absolute {
-                return Self::parse_absolute_path(trimmed, |p| parse_path_str(p));
-            }
+        let path = Path::new(trimmed);
+        let maybe_file_name_with_row_col = path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default();
+        if maybe_file_name_with_row_col.is_empty() {
+            return fallback(s);
         }
 
-        match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
-            Some((path_str, maybe_row_and_col_str)) => {
-                let path_str = path_str.trim();
+        match maybe_file_name_with_row_col.split_once(FILE_ROW_COLUMN_DELIMITER) {
+            Some((file_name, maybe_row_and_col_str)) => {
+                let file_name = file_name.trim();
                 let maybe_row_and_col_str = maybe_row_and_col_str.trim();
-                if path_str.is_empty() {
-                    fallback(s)
-                } else if maybe_row_and_col_str.is_empty() {
-                    fallback(path_str)
+                if file_name.is_empty() {
+                    return fallback(s);
+                }
+
+                let suffix_length = maybe_row_and_col_str.len() + 1;
+                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
+
+                if maybe_row_and_col_str.is_empty() {
+                    fallback(path_without_suffix)
                 } else {
                     let (row_parse_result, maybe_col_str) =
                         match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
@@ -162,7 +164,7 @@ impl PathWithPosition {
                         Ok(row) => {
                             if maybe_col_str.is_empty() {
                                 Ok(Self {
-                                    path: parse_path_str(path_str)?,
+                                    path: parse_path_str(path_without_suffix)?,
                                     row: Some(row),
                                     column: None,
                                 })
@@ -171,12 +173,12 @@ impl PathWithPosition {
                                     maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
                                 match maybe_col_str.parse::<u32>() {
                                     Ok(col) => Ok(Self {
-                                        path: parse_path_str(path_str)?,
+                                        path: parse_path_str(path_without_suffix)?,
                                         row: Some(row),
                                         column: Some(col),
                                     }),
                                     Err(_) => Ok(Self {
-                                        path: parse_path_str(path_str)?,
+                                        path: parse_path_str(path_without_suffix)?,
                                         row: Some(row),
                                         column: None,
                                     }),
@@ -184,7 +186,7 @@ impl PathWithPosition {
                             }
                         }
                         Err(_) => Ok(Self {
-                            path: parse_path_str(path_str)?,
+                            path: parse_path_str(path_without_suffix)?,
                             row: None,
                             column: None,
                         }),
@@ -193,58 +195,6 @@ impl PathWithPosition {
             }
             None => fallback(s),
         }
-    }
-
-    /// This helper function is used for parsing absolute paths on Windows. It exists because absolute paths on Windows are quite different from other platforms. See [this page](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#dos-device-paths) for more information.
-    #[cfg(target_os = "windows")]
-    fn parse_absolute_path<E>(
-        s: &str,
-        parse_path_str: impl Fn(&str) -> Result<PathBuf, E>,
-    ) -> Result<Self, E> {
-        let fallback = |fallback_str| {
-            Ok(Self {
-                path: parse_path_str(fallback_str)?,
-                row: None,
-                column: None,
-            })
-        };
-
-        let mut iterator = s.split(FILE_ROW_COLUMN_DELIMITER);
-
-        let drive_prefix = iterator.next().unwrap_or_default();
-        let file_path = iterator.next().unwrap_or_default();
-
-        // TODO: How to handle drives without a letter? UNC paths?
-        let complete_path = drive_prefix.replace("\\\\?\\", "") + ":" + &file_path;
-
-        if let Some(row_str) = iterator.next() {
-            if let Some(column_str) = iterator.next() {
-                match row_str.parse::<u32>() {
-                    Ok(row) => match column_str.parse::<u32>() {
-                        Ok(col) => {
-                            return Ok(Self {
-                                path: parse_path_str(&complete_path)?,
-                                row: Some(row),
-                                column: Some(col),
-                            });
-                        }
-
-                        Err(_) => {
-                            return Ok(Self {
-                                path: parse_path_str(&complete_path)?,
-                                row: Some(row),
-                                column: None,
-                            });
-                        }
-                    },
-
-                    Err(_) => {
-                        return fallback(&complete_path);
-                    }
-                }
-            }
-        }
-        return fallback(&complete_path);
     }
 
     pub fn map_path<E>(
@@ -455,7 +405,7 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
                 PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -463,7 +413,7 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
                 PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -471,9 +421,17 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
                 PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: None,
+                },
+            ),
+            (
+                "C:\\Users\\someone\\test_file.rs:1902:13:",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
                 },
             ),
             (
