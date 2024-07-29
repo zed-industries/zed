@@ -1,6 +1,6 @@
 use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
 
-use futures::{io::Cursor, AsyncRead, AsyncReadExt};
+use futures::{AsyncRead, AsyncReadExt};
 
 /// Based on the implementation of AsyncBody in
 /// https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs
@@ -37,6 +37,20 @@ impl std::io::Read for AsyncBody {
     }
 }
 
+/// todo
+pub struct Response(pub http::Response<AsyncBody>);
+
+impl futures::AsyncRead for Response {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let inner = unsafe { self.get_unchecked_mut().0.body_mut() };
+
+        AsyncRead::poll_read(std::pin::pin!(inner), cx, buf)
+    }
+}
 impl futures::AsyncRead for AsyncBody {
     fn poll_read(
         self: Pin<&mut Self>,

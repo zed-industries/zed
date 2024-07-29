@@ -246,7 +246,7 @@ pub enum EstablishConnectionError {
 impl From<WebsocketError> for EstablishConnectionError {
     fn from(error: WebsocketError) -> Self {
         if let WebsocketError::Http(response) = &error {
-            match response.status() {
+            match response.0.status() {
                 StatusCode::UNAUTHORIZED => return EstablishConnectionError::Unauthorized,
                 StatusCode::UPGRADE_REQUIRED => return EstablishConnectionError::UpgradeRequired,
                 _ => {}
@@ -1129,7 +1129,7 @@ impl Client {
             }
 
             let response = http.get(&url, Default::default(), false).await?;
-            let collab_url = if response.status().is_redirection() {
+            let collab_url = if response.0.status().is_redirection() {
                 response
                     .headers()
                     .get("Location")
@@ -1140,7 +1140,7 @@ impl Client {
             } else {
                 Err(anyhow!(
                     "unexpected /rpc response status {}",
-                    response.status()
+                    response.0.status()
                 ))?
             };
 
@@ -1390,10 +1390,10 @@ impl Client {
         let mut response = http.send(request).await?;
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        if !response.status().is_success() {
+        if !response.0.status().is_success() {
             Err(anyhow!(
                 "admin user request failed {} - {}",
-                response.status().as_u16(),
+                response.0.status().as_u16(),
                 body,
             ))?;
         }

@@ -141,7 +141,7 @@ impl http_client::Host for WasmState {
                 .get(url, AsyncBody::default(), true)
                 .await?;
 
-            if response.status().is_client_error() || response.status().is_server_error() {
+            if response.0.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
 

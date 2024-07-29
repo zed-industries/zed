@@ -47,11 +47,11 @@ pub async fn latest_github_release(
         .await
         .context("error reading latest release")?;
 
-    if response.status().is_client_error() {
+    if response.0.status().is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
         bail!(
             "status error {}, response: {text:?}",
-            response.status().as_u16()
+            response.0.status().as_u16()
         );
     }
 
@@ -90,7 +90,7 @@ pub async fn get_release_by_tag_name(
         .context("error fetching latest release")?;
 
     let mut body = Vec::new();
-    let status = response.status();
+    let status = response.0.status();
     response
         .read_to_end(&mut body)
         .await
@@ -100,7 +100,7 @@ pub async fn get_release_by_tag_name(
         let text = String::from_utf8_lossy(body.as_slice());
         bail!(
             "status error {}, response: {text:?}",
-            response.status().as_u16()
+            response.0.status().as_u16()
         );
     }
 

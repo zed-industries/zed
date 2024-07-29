@@ -453,7 +453,7 @@ impl AutoUpdater {
             .await
             .context("error reading release")?;
 
-        if !response.status().is_success() {
+        if !response.0.status().is_success() {
             Err(anyhow!(
                 "failed to fetch release: {:?}",
                 String::from_utf8_lossy(&body),

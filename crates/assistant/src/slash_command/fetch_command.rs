@@ -40,11 +40,11 @@ impl FetchSlashCommand {
             .await
             .context("error reading response body")?;
 
-        if response.status().is_client_error() {
+        if response.0.status().is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
             bail!(
                 "status error {}, response: {text:?}",
-                response.status().as_u16()
+                response.0.status().as_u16()
             );
         }
 

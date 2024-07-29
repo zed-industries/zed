@@ -19,8 +19,8 @@ pub async fn stream_generate_content(
 
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
+    if response.0.status().is_success() {
+        let reader = BufReader::new(response.0.into_body());
         Ok(reader
             .lines()
             .filter_map(|line| async move {
@@ -41,10 +41,10 @@ pub async fn stream_generate_content(
             .boxed())
     } else {
         let mut text = String::new();
-        response.body_mut().read_to_string(&mut text).await?;
+        response.0.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
             "error during streamGenerateContent, status code: {:?}, body: {}",
-            response.status(),
+            response.0.status(),
             text
         ))
     }
@@ -63,13 +63,13 @@ pub async fn count_tokens(
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
     let mut text = String::new();
-    response.body_mut().read_to_string(&mut text).await?;
-    if response.status().is_success() {
+    response.0.body_mut().read_to_string(&mut text).await?;
+    if response.0.status().is_success() {
         Ok(serde_json::from_str::<CountTokensResponse>(&text)?)
     } else {
         Err(anyhow!(
             "error during countTokens, status code: {:?}, body: {}",
-            response.status(),
+            response.0.status(),
             text
         ))
     }

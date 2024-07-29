@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
@@ -169,26 +168,19 @@ pub async fn stream_chat_completion(
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = HttpRequest::builder()
+    let mut request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let mut request = http_client::Request {
-        body: serde_json::to_string(&request)?,
-        method: Method::Post,
-        uri,
-        follow_redirects: false,
-        headers: [("Content-Type".into(), "application/json".into())].into(),
-    };
     if let Some(low_speed_timeout) = low_speed_timeout {
         request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
     };
 
-    let request = request_builder.body(AsyncBody::from())?;
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
+    if response.0.status().is_success() {
+        let reader = BufReader::new(response.0.into_body());
 
         Ok(reader
             .lines()
@@ -203,11 +195,11 @@ pub async fn stream_chat_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response.0.body_mut().read_to_string(&mut body).await?;
 
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.status(),
+            response.0.status(),
             body,
         ))
     }
@@ -233,9 +225,9 @@ pub async fn get_models(
     let mut response = client.send(request).await?;
 
     let mut body = String::new();
-    response.body_mut().read_to_string(&mut body).await?;
+    response.0.body_mut().read_to_string(&mut body).await?;
 
-    if response.status().is_success() {
+    if response.0.status().is_success() {
         let response: LocalModelsResponse =
             serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
 
@@ -243,7 +235,7 @@ pub async fn get_models(
     } else {
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.status(),
+            response.0.status(),
             body,
         ))
     }
