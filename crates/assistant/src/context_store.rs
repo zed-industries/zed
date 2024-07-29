@@ -341,7 +341,6 @@ impl ContextStore {
         &mut self,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Context>>> {
-        dbg!("create_remote_context");
         let project = self.project.read(cx);
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
@@ -580,8 +579,7 @@ impl ContextStore {
                     None
                 }
             })
-            .collect::<Vec<_>>();
-        dbg!("advertising the new contexts", contexts.len());
+            .collect();
         self.client
             .send(proto::AdvertiseContexts {
                 project_id,
