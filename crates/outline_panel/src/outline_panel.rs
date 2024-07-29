@@ -1538,11 +1538,12 @@ impl OutlinePanel {
         )
     }
 
-    // TODO kb render it like an outline item, but for the entire line without the whitespaces
+    // TODO kb render it like an outline item, but for the entire line without the whitespaces.
+    // Need to fill the `highlight_ranges` with a proper style, see `buffer.rs`
     fn render_search_match(
         &self,
         match_range: &Range<editor::Anchor>,
-        parent_depth: usize,
+        depth: usize,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
         let Some(match_text) = self.text_for_match(match_range, cx) else {
@@ -1588,10 +1589,10 @@ impl OutlinePanel {
 
         let label_element = language::render_item(
             &OutlineItem {
-                depth: parent_depth + 1,
+                depth,
                 range: entire_row_range.clone(),
                 text: label,
-                highlight_ranges: Vec::new(), // TODO kb or reverse, remove match_ranges?
+                highlight_ranges: Vec::new(),
                 name_ranges: highlight_indices.iter().cloned().collect(),
                 body_range: Some(entire_row_range),
             },
@@ -1599,17 +1600,12 @@ impl OutlinePanel {
             cx,
         )
         .into_any_element();
-        let icon = if self.is_singleton_active(cx) {
-            None
-        } else {
-            Some(empty_icon())
-        };
 
         self.entry_element(
             PanelEntry::Search(match_range.clone()),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
-            parent_depth + 1,
-            icon,
+            depth,
+            None,
             is_active,
             label_element,
             cx,
@@ -2446,7 +2442,6 @@ impl OutlinePanel {
         });
     }
 
-    // TODO kb file does not get appended in search mode
     fn generate_cached_entries(
         &self,
         is_singleton: bool,
@@ -2661,6 +2656,7 @@ impl OutlinePanel {
                             entry,
                             depth,
                             track_matches,
+                            is_singleton,
                             &mut entries,
                             &mut match_candidates,
                             cx,
@@ -2990,6 +2986,7 @@ impl OutlinePanel {
         entry: &FsEntry,
         parent_depth: usize,
         track_matches: bool,
+        is_singleton: bool,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
         cx: &mut ViewContext<Self>,
@@ -3010,12 +3007,13 @@ impl OutlinePanel {
             if related_excerpts.contains(&match_range.start.excerpt_id)
                 || related_excerpts.contains(&match_range.end.excerpt_id)
             {
+                let depth = if is_singleton { 0 } else { parent_depth + 1 };
                 self.push_entry(
                     entries,
                     match_candidates,
                     track_matches,
                     PanelEntry::Search(match_range.clone()),
-                    parent_depth + 1,
+                    depth,
                     cx,
                 );
             }
