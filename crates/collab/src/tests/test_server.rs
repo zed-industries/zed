@@ -32,7 +32,7 @@ use rpc::{
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
-use session::Session;
+use session::{AppSession, Session};
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -270,6 +270,7 @@ impl TestServer {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -278,7 +279,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -399,6 +400,7 @@ impl TestServer {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -407,7 +409,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
 
         cx.update(|cx| {
