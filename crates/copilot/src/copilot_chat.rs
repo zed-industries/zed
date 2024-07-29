@@ -1,17 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, NaiveDateTime};
+use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{AppContext, Global};
+use gpui::{AppContext, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::watch_config_file;
 use strum::EnumIter;
-use util::ResultExt;
+use ui::Context;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
     "https://api.githubcopilot.com/chat/completions";
@@ -116,45 +115,149 @@ pub struct ResponseDelta {
     pub role: Option<Role>,
 }
 
+#[derive(Deserialize)]
+struct ApiTokenResponse {
+    token: String,
+    expires_at: i64,
+}
+
+#[derive(Clone)]
+struct ApiToken {
+    api_key: String,
+    expires_at: DateTime<chrono::Utc>,
+}
+
+impl ApiToken {
+    pub fn remaining_seconds(&self) -> i64 {
+        self.expires_at
+            .timestamp()
+            .saturating_sub(chrono::Utc::now().timestamp())
+    }
+}
+
+impl TryFrom<ApiTokenResponse> for ApiToken {
+    type Error = anyhow::Error;
+
+    fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
+        let expires_at = DateTime::from_timestamp(response.expires_at, 0)
+            .ok_or_else(|| anyhow!("invalid expires_at"))?;
+
+        Ok(Self {
+            api_key: response.token,
+            expires_at,
+        })
+    }
+}
+
+struct GlobalCopilotChat(gpui::Model<CopilotChat>);
+
+impl Global for GlobalCopilotChat {}
+
 pub struct CopilotChat {
-    pub oauth_token: Option<String>,
+    oauth_token: Option<String>,
+    api_token: Option<ApiToken>,
+    client: Arc<dyn HttpClient>,
 }
 
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    cx.set_global(CopilotChat::new(fs, cx));
+pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
+    let copilot_chat = cx.new_model(|cx| CopilotChat::new(fs, client, cx));
+    cx.set_global(GlobalCopilotChat(copilot_chat));
 }
-
-impl Global for CopilotChat {}
 
 impl CopilotChat {
-    pub fn new(fs: Arc<dyn Fs>, cx: &AppContext) -> Self {
+    pub fn global(cx: &AppContext) -> Option<gpui::Model<Self>> {
+        cx.try_global::<GlobalCopilotChat>()
+            .map(|model| model.0.clone())
+    }
+
+    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
         let mut config_file_rx = watch_config_file(
             cx.background_executor(),
             fs,
             paths::copilot_chat_config_path().clone(),
         );
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|cx| async move {
             while let Some(contents) = config_file_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
 
-                cx.update_global::<CopilotChat, _>(|this, _| {
-                    this.oauth_token = oauth_token;
-                })
-                .log_err();
+                cx.update(|cx| {
+                    if let Some(this) = Self::global(cx).as_ref() {
+                        this.update(cx, |this, cx| {
+                            this.oauth_token = oauth_token;
+                            cx.notify();
+                        });
+                    }
+                })?;
             }
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
 
-        Self { oauth_token: None }
+        Self {
+            oauth_token: None,
+            api_token: None,
+            client,
+        }
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.oauth_token.is_some()
+    }
+
+    pub async fn stream_completion(
+        request: Request,
+        low_speed_timeout: Option<Duration>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+        let Some(handle) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
+            return Err(anyhow!("Copilot chat is not enabled"));
+        };
+
+        let (oauth_token, api_token, client) = handle.read_with(cx, |this, _| {
+            (
+                this.oauth_token.clone(),
+                this.api_token.clone(),
+                this.client.clone(),
+            )
+        })?;
+
+        let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
+
+        let token = match api_token {
+            Some(api_token) => {
+                if api_token.remaining_seconds() < 5 * 60 {
+                    let token =
+                        request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
+                    handle.update(cx, |this, cx| {
+                        this.api_token = Some(token.clone());
+                        cx.notify();
+                    })?;
+                    token
+                } else {
+                    api_token.clone()
+                }
+            }
+            None => {
+                let token =
+                    request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
+                handle.update(cx, |this, cx| {
+                    this.api_token = Some(token.clone());
+                    cx.notify();
+                })?;
+                token
+            }
+        };
+
+        stream_completion(client.clone(), token.api_key, request, low_speed_timeout).await
     }
 }
 
-pub async fn request_api_token(
+async fn request_api_token(
     oauth_token: &str,
     client: Arc<dyn HttpClient>,
     low_speed_timeout: Option<Duration>,
-) -> Result<(String, NaiveDateTime), anyhow::Error> {
+) -> Result<ApiToken> {
     let mut request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(COPILOT_CHAT_AUTH_URL)
@@ -175,13 +278,8 @@ pub async fn request_api_token(
 
         let body_str = std::str::from_utf8(&body)?;
 
-        let parsed: Value = serde_json::from_str(body_str)?;
-        Ok((
-            parsed["token"].as_str().unwrap().to_string(),
-            DateTime::from_timestamp(parsed["expires_at"].as_i64().unwrap(), 0)
-                .unwrap()
-                .naive_utc(),
-        ))
+        let parsed: ApiTokenResponse = serde_json::from_str(body_str)?;
+        ApiToken::try_from(parsed)
     } else {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
@@ -192,7 +290,7 @@ pub async fn request_api_token(
     }
 }
 
-pub fn extract_oauth_token(contents: String) -> Option<String> {
+fn extract_oauth_token(contents: String) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
             v["github.com"]["oauth_token"]
@@ -203,7 +301,7 @@ pub fn extract_oauth_token(contents: String) -> Option<String> {
         .flatten()
 }
 
-pub async fn stream_completion(
+async fn stream_completion(
     client: Arc<dyn HttpClient>,
     api_key: String,
     request: Request,

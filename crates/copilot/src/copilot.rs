@@ -60,7 +60,7 @@ pub fn init(
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
-    copilot_chat::init(fs, cx);
+    copilot_chat::init(fs, http.clone(), cx);
 
     let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();

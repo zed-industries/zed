@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::{NaiveDateTime, TimeDelta, Utc};
 use copilot::copilot_chat::{
-    request_api_token, stream_completion, ChatMessage, CopilotChat, Model as CopilotChatModel,
-    Request as CopilotChatRequest, Role as CopilotChatRole,
+    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
+    Role as CopilotChatRole,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
@@ -12,9 +11,8 @@ use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model,
-    ModelContext, ReadGlobal, Render, Subscription, Task, Transformation,
+    ModelContext, Render, Subscription, Task, Transformation,
 };
-use http_client::HttpClient;
 use settings::{Settings, SettingsStore};
 use std::time::Duration;
 use strum::IntoEnumIterator;
@@ -42,53 +40,28 @@ pub struct CopilotChatSettings {
 }
 
 pub struct CopilotChatLanguageModelProvider {
-    http_client: Arc<dyn HttpClient>,
     state: Model<State>,
 }
 
 pub struct State {
-    oauth_token: Option<String>,
-    api_key: Option<(String, NaiveDateTime)>,
-    _subscriptions: [Subscription; 2],
+    _copilot_chat_subscription: Option<Subscription>,
+    _settings_subscription: Subscription,
 }
 
 impl CopilotChatLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| State {
-            oauth_token: CopilotChat::global(cx).oauth_token.clone(),
-            api_key: None,
-            _subscriptions: [
-                cx.observe_global::<SettingsStore>(|_, cx| {
+    pub fn new(cx: &mut AppContext) -> Self {
+        let state = cx.new_model(|cx| {
+            let _copilot_chat_subscription = CopilotChat::global(cx)
+                .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
+            State {
+                _copilot_chat_subscription,
+                _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     cx.notify();
                 }),
-                cx.observe_global::<CopilotChat>(|this: &mut State, cx| {
-                    let chat = CopilotChat::global(cx);
-
-                    this.oauth_token.clone_from(&chat.oauth_token);
-                    cx.notify();
-                }),
-            ],
+            }
         });
 
-        Self { http_client, state }
-    }
-
-    async fn get_new_api_token(
-        cx: &mut AsyncAppContext,
-        oauth_token: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        state: &Model<State>,
-    ) -> Result<String, anyhow::Error> {
-        let (api_key, expires_at) =
-            request_api_token(&oauth_token, http_client.clone(), low_speed_timeout).await?;
-
-        cx.update_model(state, |state, cx| {
-            state.api_key = Some((api_key.clone(), expires_at));
-            cx.notify();
-        })?;
-
-        Ok(api_key)
+        Self { state }
     }
 }
 
@@ -111,18 +84,14 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| Arc::new(CopilotChatLanguageModel { model }) as Arc<dyn LanguageModel>)
             .collect()
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.state.read(cx).oauth_token.is_some()
+        CopilotChat::global(cx)
+            .map(|m| m.read(cx).is_authenticated())
+            .unwrap_or(false)
     }
 
     fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
@@ -164,9 +133,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             cx.update_model(&copilot, |model, cx| model.sign_out(cx))?
                 .await?;
 
-            cx.update_model(&state, |this, cx| {
-                this.oauth_token = None;
-                this.api_key = None;
+            cx.update_model(&state, |_, cx| {
                 cx.notify();
             })?;
 
@@ -177,8 +144,6 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
 pub struct CopilotChatLanguageModel {
     model: CopilotChatModel,
-    state: Model<State>,
-    http_client: Arc<dyn HttpClient>,
 }
 
 impl LanguageModel for CopilotChatLanguageModel {
@@ -240,50 +205,24 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
         let request = self.to_copilot_chat_request(request);
-
-        let Ok((oauth_token, api_key, low_speed_timeout)) =
-            cx.read_model(&self.state, |state, cx| {
-                (
-                    state.oauth_token.clone().unwrap(),
-                    state.api_key.clone(),
-                    AllLanguageModelSettings::get_global(cx)
-                        .copilot_chat
-                        .low_speed_timeout,
-                )
-            })
-        else {
+        let Ok(low_speed_timeout) = cx.update(|cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .copilot_chat
+                .low_speed_timeout
+        }) else {
             return futures::future::ready(Err(anyhow::anyhow!("App state dropped"))).boxed();
         };
 
         cx.spawn(|mut cx| async move {
-
-            let api_key = match api_key {
-                Some((key, expires_at)) => {
-                    if expires_at - Utc::now().naive_utc() < TimeDelta::minutes(5) {
-                        CopilotChatLanguageModelProvider::get_new_api_token(&mut cx, oauth_token, http_client.clone(), low_speed_timeout, &state ).await?
-                    } else {
-                        key
-                    }
-                },
-                None => CopilotChatLanguageModelProvider::get_new_api_token(&mut cx, oauth_token, http_client.clone(), low_speed_timeout, &state).await?
-            };
-            let response = stream_completion(
-                http_client,
-                api_key,
-                request,
-                low_speed_timeout,
-            )
-            .await?;
+            let response = CopilotChat::stream_completion(request, low_speed_timeout, &mut cx).await?;
             let stream = response
                 .filter_map(|response| async move {
                     match response {
                         Ok(result) => {
                             let choice = result.choices.first();
                             match choice {
-                                Some(choice) => Some(Ok(choice.delta.content.clone().unwrap())),
+                                Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
                                 None => Some(Err(anyhow::anyhow!(
                                     "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
                                 ))),
