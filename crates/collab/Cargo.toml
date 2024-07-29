@@ -117,3 +117,6 @@ util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 headless.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["async-stripe"]
