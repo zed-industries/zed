@@ -703,11 +703,11 @@ impl EditorElement {
         editor.set_gutter_hovered(gutter_hovered, cx);
 
         if gutter_hovered {
-            // TODO: Show breakpoint indicator on line closest to mouse
             let point_for_position =
                 position_map.point_for_position(text_hitbox.bounds, event.position);
             let position = point_for_position.previous_valid;
             editor.gutter_breakpoint_indicator = Some(position);
+            cx.notify();
         } else {
             editor.gutter_breakpoint_indicator = None;
         }
