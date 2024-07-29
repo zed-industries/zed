@@ -487,8 +487,10 @@ impl Debug for EditStepOperations {
     }
 }
 
+/// A description of an operation to apply to one location in the codebase.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub struct EditOperation {
+    /// The path to the file containing the relevant operation
     pub path: String,
     #[serde(flatten)]
     pub kind: EditOperationKind,
@@ -605,30 +607,51 @@ impl EditOperation {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(tag = "kind")]
 pub enum EditOperationKind {
+    /// Rewrite the specified symbol in its entirely based on the given description.
     Update {
+        /// A full path to the symbol to be rewritten from the provided list.
         symbol: String,
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Create a new file with the given path based on the given description.
     Create {
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Insert a new symbol based on the given description before the specified symbol.
     InsertSiblingBefore {
+        /// A full path to the symbol to be rewritten from the provided list.
         symbol: String,
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Insert a new symbol based on the given description after the specified symbol.
     InsertSiblingAfter {
+        /// A full path to the symbol to be rewritten from the provided list.
         symbol: String,
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Insert a new symbol as a child of the specified symbol at the start.
     PrependChild {
+        /// An optional full path to the symbol to be rewritten from the provided list.
+        /// If not provided, the edit should be applied at the top of the file.
         symbol: Option<String>,
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Insert a new symbol as a child of the specified symbol at the end.
     AppendChild {
+        /// An optional full path to the symbol to be rewritten from the provided list.
+        /// If not provided, the edit should be applied at the top of the file.
         symbol: Option<String>,
+        /// A brief one-line description of the change that should be applied.
         description: String,
     },
+    /// Delete the specified symbol.
     Delete {
+        /// A full path to the symbol to be rewritten from the provided list.
         symbol: String,
     },
 }
@@ -1302,6 +1325,8 @@ impl Context {
     ) -> Task<Option<()>> {
         #[derive(Debug, Deserialize, JsonSchema)]
         struct EditTool {
+            /// A sequence of operations to apply to the codebase.
+            /// When multiple operations are required for a step, be sure to include multiple operations in this list.
             operations: Vec<EditOperation>,
         }
 
