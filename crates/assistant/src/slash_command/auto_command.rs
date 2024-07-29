@@ -7,7 +7,6 @@ use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use semantic_index::{FileSummary, SemanticIndex};
-use serde::{Deserialize, Serialize};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
@@ -62,7 +61,6 @@ impl SlashCommand for AutoCommand {
 
         let original_prompt = argument.to_string();
         let project = workspace.read(cx).project().clone();
-        let fs = project.read(cx).fs().clone();
         let project_index =
             cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
 

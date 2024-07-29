@@ -1,6 +1,6 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
-    summary_index::{self, FileSummary},
+    summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
 use anyhow::{anyhow, Context, Result};
@@ -14,9 +14,8 @@ use language::LanguageRegistry;
 use log;
 use project::{Project, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
-use serde_json::{ser::CompactFormatter, Serializer, Value};
 use smol::channel;
-use std::{cmp::Ordering, io::Cursor, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Ordering, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 pub struct SearchResult {
@@ -390,7 +389,7 @@ impl ProjectIndex {
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
             let worktree_index = worktree_index.clone();
-            let summaries_tx = summaries_tx.clone();
+            let summaries_tx: channel::Sender<(String, String)> = summaries_tx.clone();
             worktree_scan_tasks.push(cx.spawn(|cx| async move {
                 let index = match worktree_index {
                     WorktreeIndexHandle::Loading { index } => {
@@ -409,12 +408,12 @@ impl ProjectIndex {
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
-                                .context("failed to create read transaction")?;
+                                .context("failed to create db read transaction")?;
                             let db_entries = file_digest_db
                                 .iter(&txn)
                                 .context("failed to iterate database")?;
                             for db_entry in db_entries {
-                                let (_key, db_file) = db_entry?;
+                                let (file_path, db_file) = db_entry?;
 
                                 match summary_db.get(&txn, &db_file.digest) {
                                     Ok(opt_summary) => {
@@ -423,8 +422,10 @@ impl ProjectIndex {
                                         // If we want to do just-in-time summarization, this would be the place to do it!
                                         if let Some(summary) = opt_summary {
                                             summaries_tx
-                                                .send((db_file.path.clone(), summary.clone()))
+                                                .send((file_path.to_string(), summary.to_string()))
                                                 .await?;
+                                        } else {
+                                            log::warn!("No summary found for {:?}", &db_file);
                                         }
                                     }
                                     Err(err) => {
@@ -471,10 +472,7 @@ impl ProjectIndex {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
                             while let Ok((filename, summary)) = summaries_rx.recv().await {
-                                results.push(FileSummary {
-                                    filename: filename.display().to_string(),
-                                    summary: summary.to_string(),
-                                });
+                                results.push(FileSummary { filename, summary });
                             }
                         });
                     }

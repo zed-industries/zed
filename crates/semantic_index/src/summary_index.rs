@@ -29,7 +29,7 @@ use crate::indexing::{IndexingEntryHandle, IndexingEntrySet};
 const PREFERRED_SUMMARIZATION_MODEL: LanguageModel =
     LanguageModel::OpenAi(open_ai::Model::FourOmniMini);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct FileSummary {
     pub filename: String,
     pub summary: String,
@@ -39,8 +39,10 @@ pub struct FileSummary {
 struct UnsummarizedFile {
     // Path to the file on disk
     path: String,
+    // The mtime of the file on disk
+    mtime: Option<SystemTime>,
     // BLAKE3 hash of the source file's contents
-    content_hash: String,
+    digest: Blake3Digest,
     // The source file's contents
     contents: String,
 }
@@ -49,18 +51,19 @@ struct UnsummarizedFile {
 struct SummarizedFile {
     // Path to the file on disk
     path: String,
+    // The mtime of the file on disk
+    mtime: Option<SystemTime>,
     // BLAKE3 hash of the source file's contents
-    content_hash: String,
+    digest: Blake3Digest,
     // The LLM's summary of the file's contents
     summary: String,
 }
 
 /// This is what blake3's to_hex() method returns - see https://docs.rs/blake3/1.5.3/src/blake3/lib.rs.html#246
-type Blake3Digest = ArrayString<{ blake3::OUT_LEN * 2 }>;
+pub type Blake3Digest = ArrayString<{ blake3::OUT_LEN * 2 }>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileDigest {
-    pub path: Arc<Path>,
     pub mtime: Option<SystemTime>,
     pub digest: Blake3Digest,
 }
@@ -80,7 +83,7 @@ pub struct SummaryIndex {
     fs: Arc<dyn Fs>,
     db_connection: heed::Env,
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
-    summary_db: heed::Database<Str, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
+    summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
 }
 
@@ -100,7 +103,7 @@ impl SummaryIndex {
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
-        summary_db: heed::Database<Str, Str>,
+        summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
     ) -> Self {
         Self {
@@ -117,7 +120,7 @@ impl SummaryIndex {
         self.file_digest_db
     }
 
-    pub fn summary_db(&self) -> heed::Database<Str, Str> {
+    pub fn summary_db(&self) -> heed::Database<SerdeBincode<Blake3Digest>, Str> {
         self.summary_db
     }
 
@@ -195,14 +198,14 @@ impl SummaryIndex {
                     .read_txn()
                     .context("Failed to create read transaction for checking which hashes are in summary cache")?;
 
-                match db.get(&tx, &file.content_hash) {
+                match db.get(&tx, &file.digest) {
                     Ok(opt_answer) => {
                         if opt_answer.is_none() {
                             // It's not in the summary cache db, so we need to summarize it.
-                            log::debug!("{:?} was NOT in the db cache and needs to be resummarized.", &file.content_hash);
+                            log::debug!("{:?} was NOT in the db cache and needs to be resummarized.", &file.digest);
                             needs_summary_tx.send(file).await?;
                         } else {
-                            log::debug!("{:?} was in the db cache and does not need to be resummarized.", &file.content_hash);
+                            log::debug!("{:?} was in the db cache and does not need to be resummarized.", &file.digest);
                         }
                     }
                     Err(err) => {
@@ -325,7 +328,7 @@ impl SummaryIndex {
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
-                            while let Ok((entry, handle)) = entries.recv().await {
+                            while let Ok((entry, _handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
                                 let Some(text) = fs
                                     .load(&entry_abs_path)
@@ -338,18 +341,17 @@ impl SummaryIndex {
                                     continue;
                                 };
 
-                                let content_hash = {
+                                let digest = {
                                     let mut hasher = blake3::Hasher::new();
-
                                     hasher.update(text.as_bytes());
-
-                                    hasher.finalize().to_hex().to_string()
+                                    hasher.finalize().to_hex()
                                 };
 
                                 let unsummarized_file = UnsummarizedFile {
-                                    content_hash,
+                                    digest,
                                     contents: text,
                                     path: entry.path.display().to_string(),
+                                    mtime: entry.mtime,
                                 };
 
                                 if let Err(err) = might_need_summary_tx
@@ -389,8 +391,9 @@ impl SummaryIndex {
                 summarized_tx
                     .send(SummarizedFile {
                         path: file.path,
-                        content_hash: file.content_hash,
+                        digest: file.digest,
                         summary: summary.await?,
+                        mtime: file.mtime,
                     })
                     .await?
             }
@@ -448,7 +451,8 @@ impl SummaryIndex {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let db = self.summary_db;
+        let digest_db = self.file_digest_db;
+        let summary_db = self.summary_db;
         cx.background_executor().spawn(async move {
             let mut summaries = summaries.chunks_timeout(4096, Duration::from_secs(2));
             while let Some(summaries) = summaries.next().await {
@@ -457,9 +461,17 @@ impl SummaryIndex {
                     log::debug!(
                         "Saving {} bytes of summary for content hash {:?}",
                         file.summary.len(),
-                        file.content_hash
+                        file.digest
                     );
-                    db.put(&mut txn, &file.content_hash, &file.summary)?;
+                    digest_db.put(
+                        &mut txn,
+                        &file.path,
+                        &FileDigest {
+                            mtime: file.mtime,
+                            digest: file.digest,
+                        },
+                    )?;
+                    summary_db.put(&mut txn, &file.digest, &file.summary)?;
                 }
                 txn.commit()?;
 
