@@ -8,6 +8,8 @@ use gpui::{
     WhiteSpace,
 };
 use http_client::HttpClient;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
@@ -28,7 +30,13 @@ const PROVIDER_NAME: &str = "Anthropic";
 pub struct AnthropicSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<anthropic::Model>,
+    pub available_models: Vec<AvailableModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    name: String,
+    max_tokens: usize,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -86,7 +94,13 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .available_models
             .iter()
         {
-            models.insert(model.id().to_string(), model.clone());
+            models.insert(
+                model.name.clone(),
+                anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                },
+            );
         }
 
         models

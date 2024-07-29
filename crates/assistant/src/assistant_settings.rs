@@ -377,6 +377,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
             "anthropic".into(),
+            "google".into(),
             "ollama".into(),
             "openai".into(),
             "zed.dev".into(),

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
 use crate::provider::{
+    self,
     anthropic::AnthropicSettings,
     cloud::{self, ZedDotDevSettings},
     google::GoogleSettings,
@@ -42,7 +43,7 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
-    pub available_models: Option<Vec<anthropic::Model>>,
+    pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -62,7 +63,7 @@ pub struct OpenAiSettingsContent {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
-    pub available_models: Option<Vec<google_ai::Model>>,
+    pub available_models: Option<Vec<provider::google::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
