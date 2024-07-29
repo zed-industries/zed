@@ -64,8 +64,7 @@ async fn create_billing_subscription(
             quantity: Some(1),
             ..Default::default()
         }]);
-        params.return_url = Some("");
-        params.success_url = Some("");
+        params.success_url = Some("https://zed.dev/billing/success");
 
         CheckoutSession::create(&stripe_client, params).await?
     };
