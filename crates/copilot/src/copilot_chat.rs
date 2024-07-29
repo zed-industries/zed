@@ -210,11 +210,11 @@ impl CopilotChat {
         low_speed_timeout: Option<Duration>,
         cx: &mut AsyncAppContext,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let Some(handle) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
+        let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
             return Err(anyhow!("Copilot chat is not enabled"));
         };
 
-        let (oauth_token, api_token, client) = handle.read_with(cx, |this, _| {
+        let (oauth_token, api_token, client) = this.read_with(cx, |this, _| {
             (
                 this.oauth_token.clone(),
                 this.api_token.clone(),
@@ -225,23 +225,11 @@ impl CopilotChat {
         let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
 
         let token = match api_token {
-            Some(api_token) => {
-                if api_token.remaining_seconds() < 5 * 60 {
-                    let token =
-                        request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
-                    handle.update(cx, |this, cx| {
-                        this.api_token = Some(token.clone());
-                        cx.notify();
-                    })?;
-                    token
-                } else {
-                    api_token.clone()
-                }
-            }
-            None => {
+            Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
+            _ => {
                 let token =
                     request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
-                handle.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
                 })?;
