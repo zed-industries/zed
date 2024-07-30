@@ -1,6 +1,7 @@
+use std::future;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
     Role as CopilotChatRole,
@@ -235,6 +236,17 @@ impl LanguageModel for CopilotChatLanguageModel {
             Ok(stream)
         })
         .boxed()
+    }
+
+    fn use_tool(
+        &self,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 
