@@ -4,6 +4,14 @@ use super::*;
 pub struct CreateBillingCustomerParams {
     pub user_id: UserId,
     pub stripe_customer_id: String,
+    pub last_stripe_event_id: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct UpdateBillingCustomerParams {
+    pub user_id: ActiveValue<UserId>,
+    pub stripe_customer_id: ActiveValue<String>,
+    pub last_stripe_event_id: ActiveValue<Option<String>>,
 }
 
 impl Database {
@@ -22,6 +30,28 @@ impl Database {
             .await?;
 
             Ok(customer)
+        })
+        .await
+    }
+
+    /// Updates the specified billing customer.
+    pub async fn update_billing_customer(
+        &self,
+        id: BillingCustomerId,
+        params: &UpdateBillingCustomerParams,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            billing_customer::Entity::update(billing_customer::ActiveModel {
+                id: ActiveValue::set(id),
+                user_id: params.user_id.clone(),
+                stripe_customer_id: params.stripe_customer_id.clone(),
+                last_stripe_event_id: params.last_stripe_event_id.clone(),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?;
+
+            Ok(())
         })
         .await
     }
