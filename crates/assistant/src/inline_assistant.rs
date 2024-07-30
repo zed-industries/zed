@@ -324,6 +324,19 @@ impl InlineAssistant {
         assist_id
     }
 
+    pub fn prompt_editor_height(
+        &self,
+        assist_id: InlineAssistId,
+        cx: &WindowContext,
+    ) -> Option<u8> {
+        self.assists.get(&assist_id).and_then(|assist| {
+            assist
+                .decorations
+                .as_ref()
+                .map(|decorations| decorations.prompt_editor.read(cx).height_in_lines)
+        })
+    }
+
     fn insert_assist_blocks(
         &self,
         editor: &View<Editor>,
