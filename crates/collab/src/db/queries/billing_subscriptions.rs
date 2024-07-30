@@ -1,5 +1,3 @@
-use sea_orm::IntoActiveValue;
-
 use crate::db::billing_subscription::StripeSubscriptionStatus;
 
 use super::*;
@@ -9,7 +7,6 @@ pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
-    pub last_stripe_event_id: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -17,7 +14,6 @@ pub struct UpdateBillingSubscriptionParams {
     pub billing_customer_id: ActiveValue<BillingCustomerId>,
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
-    pub last_stripe_event_id: ActiveValue<Option<String>>,
 }
 
 impl Database {
@@ -31,7 +27,6 @@ impl Database {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
-                last_stripe_event_id: params.last_stripe_event_id.clone().into_active_value(),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)
@@ -54,7 +49,6 @@ impl Database {
                 billing_customer_id: params.billing_customer_id.clone(),
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
-                last_stripe_event_id: params.last_stripe_event_id.clone(),
                 ..Default::default()
             })
             .exec(&*tx)

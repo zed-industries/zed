@@ -12,7 +12,7 @@ use stripe::{
     CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CreateCustomer, Customer, CustomerId, EventId, EventObject, EventType, Expandable, ListEvents,
+    CreateCustomer, Customer, CustomerId, EventObject, EventType, Expandable, ListEvents,
     SubscriptionStatus,
 };
 use util::ResultExt;
@@ -20,7 +20,8 @@ use util::ResultExt;
 use crate::db::billing_subscription::StripeSubscriptionStatus;
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-    CreateBillingSubscriptionParams, UpdateBillingCustomerParams, UpdateBillingSubscriptionParams,
+    CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
+    UpdateBillingSubscriptionParams,
 };
 use crate::{AppState, Error, Result};
 
@@ -230,22 +231,26 @@ async fn poll_stripe_events(
     app: &Arc<AppState>,
     stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
-    let event_types = [
-        EventType::CustomerCreated.to_string(),
-        EventType::CustomerUpdated.to_string(),
-        EventType::CustomerSubscriptionCreated.to_string(),
-        EventType::CustomerSubscriptionUpdated.to_string(),
-        EventType::CustomerSubscriptionPaused.to_string(),
-        EventType::CustomerSubscriptionResumed.to_string(),
-        EventType::CustomerSubscriptionDeleted.to_string(),
-    ]
-    .into_iter()
-    .map(|event_type| {
+    fn event_type_to_string(event_type: EventType) -> String {
         // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
         // so we need to unquote it.
-        event_type.trim_matches('"').to_string()
-    })
+        event_type.to_string().trim_matches('"').to_string()
+    }
+
+    let event_types = [
+        EventType::CustomerCreated,
+        EventType::CustomerUpdated,
+        EventType::CustomerSubscriptionCreated,
+        EventType::CustomerSubscriptionUpdated,
+        EventType::CustomerSubscriptionPaused,
+        EventType::CustomerSubscriptionResumed,
+        EventType::CustomerSubscriptionDeleted,
+    ]
+    .into_iter()
+    .map(event_type_to_string)
     .collect::<Vec<_>>();
+
+    let mut unprocessed_events = Vec::new();
 
     loop {
         log::info!("retrieving events from Stripe: {}", event_types.join(", "));
@@ -255,29 +260,71 @@ async fn poll_stripe_events(
         params.limit = Some(100);
 
         let events = stripe::Event::list(stripe_client, &params).await?;
+
+        let processed_event_ids = {
+            let event_ids = &events
+                .data
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>();
+
+            app.db
+                .get_processed_stripe_events_by_event_ids(event_ids)
+                .await?
+                .into_iter()
+                .map(|event| event.stripe_event_id)
+                .collect::<Vec<_>>()
+        };
+
         for event in events.data {
-            match event.type_ {
-                EventType::CustomerCreated | EventType::CustomerUpdated => {
-                    handle_customer_event(app, stripe_client, event)
-                        .await
-                        .log_err();
-                }
-                EventType::CustomerSubscriptionCreated
-                | EventType::CustomerSubscriptionUpdated
-                | EventType::CustomerSubscriptionPaused
-                | EventType::CustomerSubscriptionResumed
-                | EventType::CustomerSubscriptionDeleted => {
-                    handle_customer_subscription_event(app, stripe_client, event)
-                        .await
-                        .log_err();
-                }
-                _ => {}
+            if processed_event_ids.contains(&event.id.to_string()) {
+                log::info!("Stripe event {} already processed: skipping", event.id);
+            } else {
+                unprocessed_events.push(event);
             }
         }
 
         if !events.has_more {
             break;
         }
+    }
+
+    log::info!(
+        "unprocessed events from Stripe: {}",
+        unprocessed_events.len()
+    );
+
+    // Sort all of the unprocessed events in ascending order, so we can handle them in the order they occurred.
+    unprocessed_events.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+
+    for event in unprocessed_events {
+        let processed_event_params = CreateProcessedStripeEventParams {
+            stripe_event_id: event.id.to_string(),
+            stripe_event_type: event_type_to_string(event.type_),
+            stripe_event_created_timestamp: event.created,
+        };
+
+        match event.type_ {
+            EventType::CustomerCreated | EventType::CustomerUpdated => {
+                handle_customer_event(app, stripe_client, event)
+                    .await
+                    .log_err();
+            }
+            EventType::CustomerSubscriptionCreated
+            | EventType::CustomerSubscriptionUpdated
+            | EventType::CustomerSubscriptionPaused
+            | EventType::CustomerSubscriptionResumed
+            | EventType::CustomerSubscriptionDeleted => {
+                handle_customer_subscription_event(app, stripe_client, event)
+                    .await
+                    .log_err();
+            }
+            _ => {}
+        }
+
+        app.db
+            .create_processed_stripe_event(&processed_event_params)
+            .await?;
     }
 
     Ok(())
@@ -309,22 +356,12 @@ async fn handle_customer_event(
         .get_billing_customer_by_stripe_customer_id(&customer.id)
         .await?
     {
-        if should_ignore_event(&event.id, existing_customer.last_stripe_event_id.as_deref()) {
-            log::info!(
-                "ignoring Stripe event {} based on last seen event ID",
-                event.id
-            );
-            return Ok(());
-        }
-
         app.db
             .update_billing_customer(
                 existing_customer.id,
                 &UpdateBillingCustomerParams {
-                    // For now we just update the last event ID for the customer
-                    // and leave the rest of the information as-is, as it is not
+                    // For now we just leave the information as-is, as it is not
                     // likely to change.
-                    last_stripe_event_id: ActiveValue::set(Some(event.id.to_string())),
                     ..Default::default()
                 },
             )
@@ -334,7 +371,6 @@ async fn handle_customer_event(
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id: user.id,
                 stripe_customer_id: customer.id.to_string(),
-                last_stripe_event_id: Some(event.id.to_string()),
             })
             .await?;
     }
@@ -353,37 +389,16 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let billing_customer = find_or_create_billing_customer(
-        app,
-        stripe_client,
-        // Even though we're handling a subscription event, we can still set
-        // the ID as the last seen event ID on the customer in the event that
-        // we have to create it.
-        //
-        // This is done to avoid any potential rollback in the customer's values
-        // if we then see an older event that pertains to the customer.
-        &event.id,
-        subscription.customer,
-    )
-    .await?
-    .ok_or_else(|| anyhow!("billing customer not found"))?;
+    let billing_customer =
+        find_or_create_billing_customer(app, stripe_client, subscription.customer)
+            .await?
+            .ok_or_else(|| anyhow!("billing customer not found"))?;
 
     if let Some(existing_subscription) = app
         .db
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
-        if should_ignore_event(
-            &event.id,
-            existing_subscription.last_stripe_event_id.as_deref(),
-        ) {
-            log::info!(
-                "ignoring Stripe event {} based on last seen event ID",
-                event.id
-            );
-            return Ok(());
-        }
-
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
@@ -391,7 +406,6 @@ async fn handle_customer_subscription_event(
                     billing_customer_id: ActiveValue::set(billing_customer.id),
                     stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
                     stripe_subscription_status: ActiveValue::set(subscription.status.into()),
-                    last_stripe_event_id: ActiveValue::set(Some(event.id.to_string())),
                 },
             )
             .await?;
@@ -401,7 +415,6 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
-                last_stripe_event_id: Some(event.id.to_string()),
             })
             .await?;
     }
@@ -428,7 +441,6 @@ impl From<SubscriptionStatus> for StripeSubscriptionStatus {
 async fn find_or_create_billing_customer(
     app: &Arc<AppState>,
     stripe_client: &stripe::Client,
-    event_id: &EventId,
     customer_or_id: Expandable<Customer>,
 ) -> anyhow::Result<Option<billing_customer::Model>> {
     let customer_id = match &customer_or_id {
@@ -466,70 +478,8 @@ async fn find_or_create_billing_customer(
         .create_billing_customer(&CreateBillingCustomerParams {
             user_id: user.id,
             stripe_customer_id: customer.id.to_string(),
-            last_stripe_event_id: Some(event_id.to_string()),
         })
         .await?;
 
     Ok(Some(billing_customer))
-}
-
-/// Returns whether an [`Event`] should be ignored, based on its ID and the last
-/// seen event ID for this object.
-#[inline]
-fn should_ignore_event(event_id: &EventId, last_event_id: Option<&str>) -> bool {
-    !should_apply_event(event_id, last_event_id)
-}
-
-/// Returns whether an [`Event`] should be applied, based on its ID and the last
-/// seen event ID for this object.
-fn should_apply_event(event_id: &EventId, last_event_id: Option<&str>) -> bool {
-    let Some(last_event_id) = last_event_id else {
-        return true;
-    };
-
-    event_id.as_str() < last_event_id
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_should_apply_event() {
-        let subscription_created_event = EventId::from_str("evt_1Pi5s9RxOf7d5PNafuZSGsmh").unwrap();
-        let subscription_updated_event = EventId::from_str("evt_1Pi5s9RxOf7d5PNa5UZLSsto").unwrap();
-
-        assert_eq!(
-            should_apply_event(
-                &subscription_created_event,
-                Some(subscription_created_event.as_str())
-            ),
-            false,
-            "Events should not be applied when the IDs are the same."
-        );
-
-        assert_eq!(
-            should_apply_event(
-                &subscription_created_event,
-                Some(subscription_updated_event.as_str())
-            ),
-            false,
-            "Events should not be applied when the last event ID is newer than the event ID."
-        );
-
-        assert_eq!(
-            should_apply_event(&subscription_created_event, None),
-            true,
-            "Events should be applied when we don't have a last event ID."
-        );
-
-        assert_eq!(
-            should_apply_event(
-                &subscription_updated_event,
-                Some(subscription_created_event.as_str())
-            ),
-            true,
-            "Events should be applied when the event ID is newer than the last event ID."
-        );
-    }
 }

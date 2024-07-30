@@ -14,6 +14,7 @@ pub mod extensions;
 pub mod hosted_projects;
 pub mod messages;
 pub mod notifications;
+pub mod processed_stripe_events;
 pub mod projects;
 pub mod rate_buckets;
 pub mod rooms;
