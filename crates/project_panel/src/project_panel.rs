@@ -24,7 +24,10 @@ use gpui::{
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
+    WorktreeId,
+};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1233,6 +1236,27 @@ impl ProjectPanel {
             cx.notify();
         }
     }
+    fn create_relative_path(
+        &self,
+        source_entry: &SelectedEntry,
+        (worktree, target_entry): (Model<Worktree>, &Entry),
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
+        let source_path = worktree.read(cx).absolutize(&target_entry.path).ok()?;
+        let base_path = source_path.parent().unwrap();
+        let source_worktree = self
+            .project
+            .read(cx)
+            .worktree_for_id(source_entry.worktree_id, cx)?;
+        let source_entry = source_worktree
+            .read(cx)
+            .entry_for_id(source_entry.entry_id)?;
+        let path = source_worktree
+            .read(cx)
+            .absolutize(&source_entry.path)
+            .ok()?;
+        Some(relativize_path(base_path, path.as_path()))
+    }
 
     fn create_paste_path(
         &self,
@@ -1291,33 +1315,20 @@ impl ProjectPanel {
             let mut tasks = Vec::new();
 
             for clipboard_entry in clipboard_entries.items() {
+                let new_path =
+                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
                 if clipboard_entry.worktree_id != worktree_id {
-                    let clipboard_worktree = self
-                        .project
-                        .read(cx)
-                        .worktree_for_id(clipboard_entry.worktree_id, cx)?;
-                    let clip_entry = clipboard_worktree
-                        .read(cx)
-                        .entry_for_id(clipboard_entry.entry_id)?;
-                    let path = clipboard_worktree
-                        .read(cx)
-                        .absolutize(&clip_entry.path)
-                        .ok()?;
-                    // TODO, currently the selected not update to paste one
-                    cx.spawn(|project_panel, mut cx| async move {
-                        project_panel
-                            .update(&mut cx, |project_panel, cx| {
-                                project_panel.drop_external_files(&[path], entry.id, cx);
-                            })
-                            .ok()
-                    })
-                    .detach();
-                } else {
-                    let new_path = self.create_paste_path(
+                    let relative_path = self.create_relative_path(
                         clipboard_entry,
                         self.selected_entry_handle(cx)?,
                         cx,
                     )?;
+                    self.project
+                        .update(cx, |project, cx| {
+                            project.copy_relative_entry(entry.id, relative_path, new_path, cx)
+                        })
+                        .detach_and_log_err(cx);
+                } else {
                     if clipboard_entries.is_cut() {
                         self.project
                             .update(cx, |project, cx| {
@@ -3638,7 +3649,12 @@ mod tests {
             json!({
                 "one.txt": "",
                 "two.txt": "",
-                "three.txt": ""
+                "three.txt": "",
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
             }),
         )
         .await;
@@ -3648,7 +3664,11 @@ mod tests {
             json!({
                 "one.txt": "",
                 "two.txt": "",
-                "four.txt": ""
+                "four.txt": "",
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
             }),
         )
         .await;
@@ -3676,10 +3696,12 @@ mod tests {
             &[
                 //
                 "v root1",
+                "    > a",
                 "      one.txt",
                 "      three.txt",
                 "      two.txt",
                 "v root2",
+                "    > b",
                 "      four.txt",
                 "      one.txt",
                 "      three.txt",
@@ -3693,7 +3715,6 @@ mod tests {
         });
         select_path(&panel, "root2/two.txt", cx);
         panel.update(cx, |panel, cx| {
-            panel.copy(&Default::default(), cx);
             panel.select_next(&Default::default(), cx);
             panel.paste(&Default::default(), cx);
         });
@@ -3706,15 +3727,48 @@ mod tests {
             &[
                 //
                 "v root1",
+                "    > a",
                 "      one.txt",
                 "      three.txt",
                 "      two.txt",
                 "v root2",
+                "    > b",
                 "      four.txt",
                 "      one.txt",
+                "      three copy.txt",
                 "      three.txt",
-                "      two copy.txt  <== selected",
+                "      two.txt  <== selected",
+            ]
+        );
+
+        select_path(&panel, "root1/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "root2/two.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "    > a",
+                "      one.txt",
+                "      three.txt",
                 "      two.txt",
+                "v root2",
+                "    > a",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three copy.txt",
+                "      three.txt",
+                "      two.txt  <== selected",
             ]
         );
     }

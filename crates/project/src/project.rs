@@ -1552,6 +1552,21 @@ impl Project {
         })
     }
 
+    pub fn copy_relative_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        relative_path: PathBuf,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Entry>>> {
+        let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
+            return Task::ready(Ok(None));
+        };
+        worktree.update(cx, |worktree, cx| {
+            worktree.copy_relative_entry(entry_id, relative_path, new_path, cx)
+        })
+    }
+
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -11098,7 +11113,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
     }
 }
 
-fn relativize_path(base: &Path, path: &Path) -> PathBuf {
+pub fn relativize_path(base: &Path, path: &Path) -> PathBuf {
     let mut path_components = path.components();
     let mut base_components = base.components();
     let mut components: Vec<Component> = Vec::new();
