@@ -30,19 +30,7 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 #[cfg(target_os = "windows")]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    let x = vec![
-        "-File".into(),
-        // format!("{}", server_path.display())
-        //     .replace('/', "\\")
-        //     .into(),
-        server_path.into(),
-        "--stdio".into(),
-        // format!("& '{}' --stdio", server_path.display()).into(),
-    ];
-    // let x = "s".to_string()
-    println!("--> {:?}", x);
-    x
-    // vec![format!("\"& '{}' --stdio\"", server_path.display()).into()]
+    vec!["-File".into(), server_path.into(), "--stdio".into()]
 }
 
 pub struct TailwindLspAdapter {
@@ -142,7 +130,6 @@ impl LspAdapter for TailwindLspAdapter {
             let mut env = HashMap::default();
             env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
 
-            println!("--> {}", server_path.display());
             Ok(LanguageServerBinary {
                 path: "powershell.exe".into(),
                 env: Some(env),
