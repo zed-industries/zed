@@ -48,6 +48,11 @@ impl FeatureFlag for GroupedDiagnostics {
     const NAME: &'static str = "grouped-diagnostics";
 }
 
+pub struct ZedPro {}
+impl FeatureFlag for ZedPro {
+    const NAME: &'static str = "zed-pro";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
