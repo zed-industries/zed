@@ -3538,16 +3538,13 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
-    let active_subscriptions = session
-        .db()
-        .await
-        .get_active_billing_subscriptions(user_id)
-        .await?;
+    let db = session.db().await;
+    let active_subscriptions = db.get_active_billing_subscriptions(user_id).await?;
 
-    let plan = if active_subscriptions.is_empty() {
-        proto::Plan::Free
-    } else {
+    let plan = if session.is_staff() || !active_subscriptions.is_empty() {
         proto::Plan::ZedPro
+    } else {
+        proto::Plan::Free
     };
 
     session
