@@ -115,11 +115,19 @@ pub fn generate_terminal_assistant_prompt(
     user_prompt: &str,
     shell: Option<&str>,
     working_directory: Option<&str>,
+    latest_output: &[String],
 ) -> String {
     let mut prompt = String::new();
     writeln!(&mut prompt, "You are an expert terminal user.").unwrap();
     writeln!(&mut prompt, "You will be given a description of a command and you need to respond with a command that matches the description.").unwrap();
     writeln!(&mut prompt, "Do not include markdown blocks or any other text formatting in your response, always respond with a single command that can be executed in the given shell.").unwrap();
+    writeln!(
+        &mut prompt,
+        "Current OS name is '{}', architecture is '{}'.",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .unwrap();
     if let Some(shell) = shell {
         writeln!(&mut prompt, "Current shell is '{shell}'.").unwrap();
     }
@@ -127,6 +135,15 @@ pub fn generate_terminal_assistant_prompt(
         writeln!(
             &mut prompt,
             "Current working directory is '{working_directory}'."
+        )
+        .unwrap();
+    }
+    if !latest_output.is_empty() {
+        writeln!(
+            &mut prompt,
+            "Latest non-empty {} lines of the terminal output: {:?}",
+            latest_output.len(),
+            latest_output
         )
         .unwrap();
     }

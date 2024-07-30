@@ -1,6 +1,6 @@
 use crate::{
     humanize_token_count, prompts::generate_terminal_assistant_prompt, AssistantPanel,
-    AssistantPanelEvent, ModelSelector,
+    AssistantPanelEvent, ModelSelector, DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -217,17 +217,18 @@ impl TerminalInlineAssistant {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
         let shell = std::env::var("SHELL").ok();
-        let working_directory = assist
+        let (latest_output, working_directory) = assist
             .terminal
             .update(cx, |terminal, cx| {
-                terminal
-                    .model()
-                    .read(cx)
+                let terminal = terminal.model().read(cx);
+                let latest_output = terminal.last_n_non_empty_lines(DEFAULT_CONTEXT_LINES);
+                let working_directory = terminal
                     .working_directory()
-                    .map(|path| path.to_string_lossy().to_string())
+                    .map(|path| path.to_string_lossy().to_string());
+                (latest_output, working_directory)
             })
             .ok()
-            .flatten();
+            .unwrap_or_default();
 
         let context_request = if assist.include_context {
             assist.workspace.as_ref().and_then(|workspace| {
@@ -254,6 +255,7 @@ impl TerminalInlineAssistant {
                 .prompt(cx),
             shell.as_deref(),
             working_directory.as_deref(),
+            &latest_output,
         );
 
         let mut messages = Vec::new();
