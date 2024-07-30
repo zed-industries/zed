@@ -17,17 +17,6 @@ pub struct RateLimitGuard<T> {
     _guard: SemaphoreGuardArc,
 }
 
-impl<T> Future for RateLimitGuard<T>
-where
-    T: Future,
-{
-    type Output = T::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        unsafe { Pin::map_unchecked_mut(self, |this| &mut this.inner).poll(cx) }
-    }
-}
-
 impl<T> Stream for RateLimitGuard<T>
 where
     T: Stream,
@@ -49,9 +38,26 @@ impl RateLimiter {
     pub fn run<'a, Fut, T>(
         &self,
         f: impl 'a + FnOnce() -> Fut,
-    ) -> impl 'a + Future<Output = Result<RateLimitGuard<T>>>
+    ) -> impl 'a + Future<Output = Result<T>>
     where
         Fut: Future<Output = Result<T>>,
+    {
+        let guard = self.semaphore.acquire_arc();
+        async move {
+            let guard = guard.await;
+            let result = f().await?;
+            drop(guard);
+            Ok(result)
+        }
+    }
+
+    pub fn stream<'a, Fut, T>(
+        &self,
+        f: impl 'a + FnOnce() -> Fut,
+    ) -> impl 'a + Future<Output = Result<impl Stream<Item = T::Item>>>
+    where
+        Fut: Future<Output = Result<T>>,
+        T: Stream,
     {
         let guard = self.semaphore.acquire_arc();
         async move {

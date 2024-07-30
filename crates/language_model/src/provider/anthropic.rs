@@ -283,15 +283,11 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = request.into_anthropic(self.model.id().into());
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.run(|| async move {
+        let future = self.request_limiter.stream(|| async move {
             let response = request.await?;
             Ok(anthropic::extract_text_from_events(response))
         });
-        async move {
-            let stream = future.await?;
-            Ok(stream.boxed())
-        }
-        .boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn use_tool(
@@ -313,25 +309,26 @@ impl LanguageModel for AnthropicModel {
         }];
 
         let response = self.request_completion(request, cx);
-        async move {
-            let response = response.await?;
-            response
-                .content
-                .into_iter()
-                .find_map(|content| {
-                    if let anthropic::Content::ToolUse { name, input, .. } = content {
-                        if name == tool_name {
-                            Some(input)
+        self.request_limiter
+            .run(|| async move {
+                let response = response.await?;
+                response
+                    .content
+                    .into_iter()
+                    .find_map(|content| {
+                        if let anthropic::Content::ToolUse { name, input, .. } = content {
+                            if name == tool_name {
+                                Some(input)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
-                })
-                .context("tool not used")
-        }
-        .boxed()
+                    })
+                    .context("tool not used")
+            })
+            .boxed()
     }
 }
 
