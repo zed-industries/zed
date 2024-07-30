@@ -52,7 +52,8 @@ pub struct AssistantSettings {
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_model: AssistantDefaultModel,
+    pub default_model: LanguageModelSelection,
+    pub step_resolution_model: LanguageModelSelection,
     pub using_outdated_settings_version: bool,
 }
 
@@ -179,30 +180,31 @@ impl AssistantSettingsContent {
                         .clone()
                         .and_then(|provider| match provider {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "zed.dev".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "openai".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Anthropic { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "anthropic".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "ollama".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                         }),
+                    step_resolution_model: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -212,7 +214,7 @@ impl AssistantSettingsContent {
                 dock: settings.dock,
                 default_width: settings.default_width,
                 default_height: settings.default_height,
-                default_model: Some(AssistantDefaultModel {
+                default_model: Some(LanguageModelSelection {
                     provider: "openai".to_string(),
                     model: settings
                         .default_open_ai_model
@@ -221,6 +223,7 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
+                step_resolution_model: None,
             },
         }
     }
@@ -306,7 +309,7 @@ impl AssistantSettingsContent {
                     _ => {}
                 },
                 VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_model = Some(AssistantDefaultModel { provider, model });
+                    settings.default_model = Some(LanguageModelSelection { provider, model });
                 }
             },
             AssistantSettingsContent::Legacy(settings) => {
@@ -336,6 +339,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
+            step_resolution_model: None,
         })
     }
 }
@@ -363,11 +367,13 @@ pub struct AssistantSettingsContentV2 {
     /// Default: 320
     default_height: Option<f32>,
     /// The default model to use when creating new contexts.
-    default_model: Option<AssistantDefaultModel>,
+    default_model: Option<LanguageModelSelection>,
+    /// The model to use when resolving edit steps.
+    step_resolution_model: Option<LanguageModelSelection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct AssistantDefaultModel {
+pub struct LanguageModelSelection {
     #[schemars(schema_with = "providers_schema")]
     pub provider: String,
     pub model: String,
@@ -387,7 +393,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
     .into()
 }
 
-impl Default for AssistantDefaultModel {
+impl Default for LanguageModelSelection {
     fn default() -> Self {
         Self {
             provider: "openai".to_string(),
@@ -484,6 +490,10 @@ impl Settings for AssistantSettings {
             merge(
                 &mut settings.default_model,
                 value.default_model.map(Into::into),
+            );
+            merge(
+                &mut settings.step_resolution_model,
+                value.step_resolution_model.map(Into::into),
             );
         }
 
