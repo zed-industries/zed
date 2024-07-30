@@ -8,6 +8,8 @@ use gpui::{
 };
 use http_client::HttpClient;
 use open_ai::stream_completion;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
@@ -28,7 +30,14 @@ const PROVIDER_NAME: &str = "OpenAI";
 pub struct OpenAiSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<open_ai::Model>,
+    pub available_models: Vec<AvailableModel>,
+    pub needs_setting_migration: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    pub name: String,
+    pub max_tokens: usize,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -86,7 +95,13 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .openai
             .available_models
         {
-            models.insert(model.id().to_string(), model.clone());
+            models.insert(
+                model.name.clone(),
+                open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                },
+            );
         }
 
         models

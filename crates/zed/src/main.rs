@@ -174,7 +174,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx,
     );
     supermaven::init(app_state.client.clone(), cx);
-    language_model::init(app_state.client.clone(), cx);
+    language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
