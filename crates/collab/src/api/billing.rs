@@ -250,6 +250,8 @@ async fn poll_stripe_events(
     .map(event_type_to_string)
     .collect::<Vec<_>>();
 
+    let mut unprocessed_events = Vec::new();
+
     loop {
         log::info!("retrieving events from Stripe: {}", event_types.join(", "));
 
@@ -259,38 +261,55 @@ async fn poll_stripe_events(
 
         let events = stripe::Event::list(stripe_client, &params).await?;
         for event in events.data {
-            let processed_event_params = CreateProcessedStripeEventParams {
-                stripe_event_id: event.id.to_string(),
-                stripe_event_type: event_type_to_string(event.type_),
-                stripe_event_created_timestamp: event.created,
-            };
-
-            match event.type_ {
-                EventType::CustomerCreated | EventType::CustomerUpdated => {
-                    handle_customer_event(app, stripe_client, event)
-                        .await
-                        .log_err();
-                }
-                EventType::CustomerSubscriptionCreated
-                | EventType::CustomerSubscriptionUpdated
-                | EventType::CustomerSubscriptionPaused
-                | EventType::CustomerSubscriptionResumed
-                | EventType::CustomerSubscriptionDeleted => {
-                    handle_customer_subscription_event(app, stripe_client, event)
-                        .await
-                        .log_err();
-                }
-                _ => {}
+            // TODO: Maybe do this in bulk?
+            if app.db.already_processed_stripe_event(&event.id).await? {
+                log::info!("Stripe event {} already processed: skipping", event.id);
+            } else {
+                unprocessed_events.push(event);
             }
-
-            app.db
-                .create_processed_stripe_event(&processed_event_params)
-                .await?;
         }
 
         if !events.has_more {
             break;
         }
+    }
+
+    log::info!(
+        "unprocessed events from Stripe: {}",
+        unprocessed_events.len()
+    );
+
+    // Sort all of the unprocessed events in ascending order, so we can handle them in the order they occurred.
+    unprocessed_events.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+
+    for event in unprocessed_events {
+        let processed_event_params = CreateProcessedStripeEventParams {
+            stripe_event_id: event.id.to_string(),
+            stripe_event_type: event_type_to_string(event.type_),
+            stripe_event_created_timestamp: event.created,
+        };
+
+        match event.type_ {
+            EventType::CustomerCreated | EventType::CustomerUpdated => {
+                handle_customer_event(app, stripe_client, event)
+                    .await
+                    .log_err();
+            }
+            EventType::CustomerSubscriptionCreated
+            | EventType::CustomerSubscriptionUpdated
+            | EventType::CustomerSubscriptionPaused
+            | EventType::CustomerSubscriptionResumed
+            | EventType::CustomerSubscriptionDeleted => {
+                handle_customer_subscription_event(app, stripe_client, event)
+                    .await
+                    .log_err();
+            }
+            _ => {}
+        }
+
+        app.db
+            .create_processed_stripe_event(&processed_event_params)
+            .await?;
     }
 
     Ok(())
@@ -322,11 +341,6 @@ async fn handle_customer_event(
         .get_billing_customer_by_stripe_customer_id(&customer.id)
         .await?
     {
-        if app.db.already_processed_stripe_event(&event.id).await? {
-            log::info!("Stripe event {} already processed: skipping", event.id);
-            return Ok(());
-        }
-
         app.db
             .update_billing_customer(
                 existing_customer.id,
@@ -370,11 +384,6 @@ async fn handle_customer_subscription_event(
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
-        if app.db.already_processed_stripe_event(&event.id).await? {
-            log::info!("Stripe event {} already processed: skipping", event.id);
-            return Ok(());
-        }
-
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
