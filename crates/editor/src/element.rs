@@ -702,6 +702,16 @@ impl EditorElement {
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
         editor.set_gutter_hovered(gutter_hovered, cx);
 
+        if gutter_hovered {
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
+            let position = point_for_position.previous_valid;
+            editor.gutter_breakpoint_indicator = Some(position);
+            cx.notify();
+        } else {
+            editor.gutter_breakpoint_indicator = None;
+        }
+
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {
             let point_for_position =
@@ -1566,34 +1576,89 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            editor
-                .breakpoints
-                .iter()
-                .filter_map(|(_, breakpoint)| {
-                    if snapshot.is_line_folded(breakpoint.row) {
-                        return None;
-                    }
-                    let display_row = Point::new(breakpoint.row.0, 0)
-                        .to_display_point(snapshot)
-                        .row();
-                    let button = editor.render_breakpoint(display_row, cx);
+            let Some(breakpoints) = &editor.breakpoints else {
+                return vec![];
+            };
 
-                    let button = prepaint_gutter_button(
-                        button,
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_pixel_position,
-                        gutter_hitbox,
-                        rows_with_hunk_bounds,
-                        cx,
-                    );
-                    Some(button)
-                })
-                .collect_vec()
+            let Some(active_buffer) = editor.buffer().read(cx).as_singleton() else {
+                return vec![];
+            };
+
+            let active_buffer_id = active_buffer.read(cx).remote_id();
+            let read_guard = breakpoints.read();
+
+            let mut breakpoints_to_render = if let Some(breakpoint_set) =
+                read_guard.get(&active_buffer_id)
+            {
+                breakpoint_set
+                    .iter()
+                    .filter_map(|breakpoint| {
+                        let point = breakpoint
+                            .position
+                            .to_display_point(&snapshot.display_snapshot);
+
+                        let row = MultiBufferRow { 0: point.row().0 };
+
+                        if snapshot.is_line_folded(row) {
+                            return None;
+                        }
+
+                        let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
+
+                        let button = prepaint_gutter_button(
+                            button,
+                            point.row(),
+                            line_height,
+                            gutter_dimensions,
+                            scroll_pixel_position,
+                            gutter_hitbox,
+                            rows_with_hunk_bounds,
+                            cx,
+                        );
+                        Some(button)
+                    })
+                    .collect_vec()
+            } else {
+                vec![]
+            };
+
+            drop(read_guard);
+
+            // See if a user is hovered over a gutter line & if they are display
+            // a breakpoint indicator that they can click to add a breakpoint
+            // TODO: We should figure out a way to display this side by side with
+            // the code action button. They currently overlap
+            if let Some(gutter_breakpoint) = editor.gutter_breakpoint_indicator {
+                let gutter_anchor = snapshot.display_point_to_anchor(gutter_breakpoint, Bias::Left);
+
+                let button = IconButton::new("gutter_breakpoint_indicator", ui::IconName::Play)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
+                    .icon_color(Color::Hint)
+                    .on_click(cx.listener(move |editor, _e, cx| {
+                        editor.focus(cx);
+                        editor.toggle_breakpoint_at_row(gutter_anchor, cx) //TODO handle folded
+                    }));
+
+                let button = prepaint_gutter_button(
+                    button,
+                    gutter_breakpoint.row(),
+                    line_height,
+                    gutter_dimensions,
+                    scroll_pixel_position,
+                    gutter_hitbox,
+                    rows_with_hunk_bounds,
+                    cx,
+                );
+
+                breakpoints_to_render.push(button);
+            }
+
+            breakpoints_to_render
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
         line_height: Pixels,

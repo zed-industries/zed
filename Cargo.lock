@@ -3233,7 +3233,9 @@ dependencies = [
  "dap-types",
  "futures 0.3.28",
  "gpui",
+ "language",
  "log",
+ "multi_buffer",
  "parking_lot",
  "postage",
  "release_channel",
@@ -3243,6 +3245,7 @@ dependencies = [
  "serde_json_lenient",
  "smol",
  "task",
+ "text",
  "util",
 ]
 
@@ -3593,6 +3596,7 @@ dependencies = [
  "collections",
  "convert_case 0.6.0",
  "ctor",
+ "dap",
  "db",
  "emojis",
  "env_logger",

@@ -97,6 +97,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
+use dap::client::Breakpoint;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
@@ -450,12 +451,6 @@ struct ResolvedTasks {
     position: Anchor,
 }
 
-#[derive(Clone, Debug)]
-struct Breakpoint {
-    row: MultiBufferRow,
-    _line: BufferRow,
-}
-
 #[derive(Copy, Clone, Debug)]
 struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -575,7 +570,13 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    breakpoints: BTreeMap<(BufferId, BufferRow), Breakpoint>,
+    /// All the breakpoints that are active within a project
+    /// Is shared with editor's active project
+    breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
+    /// Allow's a user to create a breakpoint by selecting this indicator
+    /// It should be None while a user is not hovering over the gutter
+    /// Otherwise it represents the point that the breakpoint will be shown
+    pub gutter_breakpoint_indicator: Option<DisplayPoint>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
@@ -1789,6 +1790,12 @@ impl Editor {
             None
         };
 
+        let breakpoints = if let Some(project) = project.as_ref() {
+            Some(project.update(cx, |project, _cx| project.breakpoints.clone()))
+        } else {
+            None
+        };
+
         let mut this = Self {
             focus_handle,
             show_cursor_when_unfocused: false,
@@ -1891,7 +1898,8 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            breakpoints: Default::default(),
+            breakpoints,
+            gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -5141,14 +5149,19 @@ impl Editor {
         }
     }
 
-    fn render_breakpoint(&self, row: DisplayRow, cx: &mut ViewContext<Self>) -> IconButton {
+    fn render_breakpoint(
+        &self,
+        position: Anchor,
+        row: DisplayRow,
+        cx: &mut ViewContext<Self>,
+    ) -> IconButton {
         IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Error)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_row(row.0, cx) //TODO handle folded
+                editor.toggle_breakpoint_at_row(position, cx) //TODO handle folded
             }))
     }
 
@@ -5972,33 +5985,58 @@ impl Editor {
 
     pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
         let cursor_position: Point = self.selections.newest(cx).head();
-        self.toggle_breakpoint_at_row(cursor_position.row, cx);
+
+        let breakpoint_position = self
+            .snapshot(cx)
+            .display_snapshot
+            .buffer_snapshot
+            .anchor_before(cursor_position);
+
+        self.toggle_breakpoint_at_row(breakpoint_position, cx);
     }
 
-    pub fn toggle_breakpoint_at_row(&mut self, row: u32, cx: &mut ViewContext<Self>) {
+    pub fn toggle_breakpoint_at_row(
+        &mut self,
+        breakpoint_position: Anchor,
+        cx: &mut ViewContext<Self>,
+    ) {
         let Some(project) = &self.project else {
             return;
         };
+
+        let Some(breakpoints) = &self.breakpoints else {
+            return;
+        };
+
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
             return;
         };
 
         let buffer_id = buffer.read(cx).remote_id();
-        let key = (buffer_id, row);
 
-        if self.breakpoints.remove(&key).is_none() {
-            self.breakpoints.insert(
-                key,
-                Breakpoint {
-                    row: MultiBufferRow(row),
-                    _line: row,
-                },
-            );
+        let breakpoint = Breakpoint {
+            position: breakpoint_position,
+        };
+
+        // Putting the write guard within it's own scope so it's dropped
+        // before project updates it's breakpoints. This is done to prevent
+        // a data race condition where project waits to get a read lock
+        {
+            let mut write_guard = breakpoints.write();
+
+            let breakpoint_set = write_guard.entry(buffer_id).or_default();
+
+            if !breakpoint_set.remove(&breakpoint) {
+                breakpoint_set.insert(breakpoint);
+            }
         }
 
         project.update(cx, |project, cx| {
-            project.update_breakpoint(buffer, row + 1, cx);
+            if project.has_active_debugger() {
+                project.update_file_breakpoints(buffer_id, cx);
+            }
         });
+
         cx.notify();
     }
 

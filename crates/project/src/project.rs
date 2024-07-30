@@ -25,9 +25,8 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId},
+    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId},
     transport::Events,
-    SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
 use futures::{
@@ -56,8 +55,8 @@ use language::{
         deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
         serialize_version, split_operations,
     },
-    range_from_lsp, Bias, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability,
-    CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
     Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
     LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
@@ -182,7 +181,7 @@ pub struct Project {
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    breakpoints: HashMap<BufferId, Vec<Breakpoint>>,
+    pub breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -313,10 +312,6 @@ impl PartialEq for LanguageServerPromptRequest {
     fn eq(&self, other: &Self) -> bool {
         self.message == other.message && self.actions == other.actions
     }
-}
-
-struct Breakpoint {
-    row: BufferRow,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1160,11 +1155,19 @@ impl Project {
             let task = project.update(&mut cx, |project, cx| {
                 let mut tasks = Vec::new();
 
-                for (buffer_id, breakpoints) in project.breakpoints.iter() {
-                    let res = maybe!({
+                for (buffer_id, breakpoints) in project.breakpoints.read().iter() {
+                    let buffer = maybe!({
                         let buffer = project.buffer_for_id(*buffer_id, cx)?;
+                        Some(buffer.read(cx))
+                    });
 
-                        let project_path = buffer.read(cx).project_path(cx)?;
+                    if buffer.is_none() {
+                        continue;
+                    }
+                    let buffer = buffer.as_ref().unwrap();
+
+                    let res = maybe!({
+                        let project_path = buffer.project_path(cx)?;
                         let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
                         let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
@@ -1174,18 +1177,11 @@ impl Project {
                     if let Some((path, breakpoints)) = res {
                         tasks.push(
                             client.set_breakpoints(
-                                path,
+                                path.clone(),
                                 Some(
                                     breakpoints
                                         .iter()
-                                        .map(|b| SourceBreakpoint {
-                                            line: b.row as u64,
-                                            condition: None,
-                                            hit_condition: None,
-                                            log_message: None,
-                                            column: None,
-                                            mode: None,
-                                        })
+                                        .map(|b| b.to_source_breakpoint(buffer))
                                         .collect::<Vec<_>>(),
                                 ),
                             ),
@@ -1200,6 +1196,10 @@ impl Project {
 
             Ok(())
         })
+    }
+
+    pub fn has_active_debugger(&self) -> bool {
+        self.debug_adapters.len() > 0
     }
 
     pub fn start_debug_adapter_client(
@@ -1263,26 +1263,7 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
-    pub fn update_breakpoint(
-        &mut self,
-        buffer: Model<Buffer>,
-        row: BufferRow,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let breakpoints_for_buffer = self
-            .breakpoints
-            .entry(buffer.read(cx).remote_id())
-            .or_insert(Vec::new());
-
-        if let Some(ix) = breakpoints_for_buffer
-            .iter()
-            .position(|breakpoint| breakpoint.row == row)
-        {
-            breakpoints_for_buffer.remove(ix);
-        } else {
-            breakpoints_for_buffer.push(Breakpoint { row });
-        }
-
+    pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         let clients = self
             .debug_adapters
             .iter()
@@ -1292,18 +1273,49 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let mut tasks = Vec::new();
-        for client in clients {
-            tasks.push(self.send_breakpoints(client, cx));
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        let buffer = buffer.read(cx);
+
+        let file_path = maybe!({
+            let project_path = buffer.project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
+
+            Some(path)
+        });
+
+        let Some(file_path) = file_path else {
+            return;
+        };
+
+        let read_guard = self.breakpoints.read();
+
+        let breakpoints_locations = read_guard.get(&buffer_id);
+
+        if let Some(breakpoints_locations) = breakpoints_locations {
+            let breakpoints_locations = Some(
+                breakpoints_locations
+                    .iter()
+                    .map(|bp| bp.to_source_breakpoint(&buffer))
+                    .collect(),
+            );
+
+            // TODO: Send correct value for sourceModified
+            for client in clients {
+                let bps = breakpoints_locations.clone();
+                let file_path = file_path.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        client.set_breakpoints(file_path, bps).await?;
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx)
+            }
         }
-
-        cx.background_executor()
-            .spawn(async move {
-                try_join_all(tasks).await?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx)
     }
 
     fn shutdown_language_servers(

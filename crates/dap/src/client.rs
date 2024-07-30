@@ -15,6 +15,7 @@ use dap_types::{
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
+use language::Buffer;
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
@@ -35,6 +36,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType, TCPHost};
+use text::Point;
 use util::ResultExt;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -331,7 +333,9 @@ impl DebugAdapterClient {
     {
         while let Ok(payload) = client_rx.recv().await {
             match payload {
-                Payload::Event(event) => cx.update(|cx| event_handler(*event, cx))?,
+                Payload::Event(event) => cx
+                    .update(|cx| event_handler(*event, cx))
+                    .context("Event handler failed")?,
                 Payload::Request(request) => {
                     if RunInTerminal::COMMAND == request.command {
                         Self::handle_run_in_terminal_request(request, &server_tx).await?;
@@ -395,8 +399,7 @@ impl DebugAdapterClient {
         request: crate::transport::Request,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        dbg!(&request);
-        let arguments: StartDebuggingRequestArguments =
+        let _arguments: StartDebuggingRequestArguments =
             serde_json::from_value(request.arguments.clone().unwrap_or_default())?;
 
         let sub_client = DebugAdapterClient::new(
@@ -416,10 +419,7 @@ impl DebugAdapterClient {
         )
         .await?;
 
-        dbg!(&arguments);
-
-        let res = sub_client.launch(request.arguments).await?;
-        dbg!(res);
+        let _res = sub_client.launch(request.arguments).await?;
 
         *this.sub_client.lock() = Some(sub_client);
 
@@ -455,6 +455,7 @@ impl DebugAdapterClient {
         self.server_tx.send(Payload::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
+        let _ = self.next_sequence_id();
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
@@ -642,5 +643,26 @@ impl DebugAdapterClient {
     pub async fn configuration_done(&self) -> Result<()> {
         self.request::<ConfigurationDone>(ConfigurationDoneArguments)
             .await
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Breakpoint {
+    pub position: multi_buffer::Anchor,
+}
+
+impl Breakpoint {
+    pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: (buffer
+                .summary_for_anchor::<Point>(&self.position.text_anchor)
+                .row
+                + 1) as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
     }
 }
