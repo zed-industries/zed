@@ -122,11 +122,13 @@ impl LanguageModelRegistry {
         self.providers.values()
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    pub fn available_models<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
             .flat_map(|provider| provider.provided_models(cx))
-            .collect()
     }
 
     pub fn provider(

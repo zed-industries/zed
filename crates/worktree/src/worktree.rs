@@ -5067,6 +5067,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
+            size: Some(entry.size),
         }
     }
 }
@@ -5089,6 +5090,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
+            size: entry.size.unwrap_or(0),
             canonical_path: None,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,

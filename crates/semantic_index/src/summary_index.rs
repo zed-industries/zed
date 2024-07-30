@@ -9,7 +9,10 @@ use heed::{
     types::{SerdeBincode, Str},
     RoTxn,
 };
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelName, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role,
+};
 use log;
 use parking_lot::Mutex;
 use project::{Entry, UpdatedEntriesSet, Worktree};
@@ -25,12 +28,6 @@ use util::ResultExt;
 use worktree::Snapshot;
 
 use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
-
-/// This model should be good for summarizing code - fast, low price, and good at outputting English.
-///
-/// It's called "preferred" because if the model isn't available (e.g. due to lacking the necessary API key),
-/// we fall back on the global CompletionProvider's selected model.
-const PREFERRED_SUMMARIZATION_MODEL: open_ai::Model = open_ai::Model::FourOmniMini;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FileSummary {
@@ -87,8 +84,8 @@ pub struct SummaryIndex {
     db_connection: heed::Env,
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
     summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
-    entry_ids_being_indexed: Arc<IndexingEntrySet>,
     backlog: Arc<Mutex<SummaryBacklog>>,
+    _entry_ids_being_indexed: Arc<IndexingEntrySet>, // TODO can this be removed?
 }
 
 struct Backlogged {
@@ -108,7 +105,7 @@ impl SummaryIndex {
         db_connection: heed::Env,
         file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
         summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>,
-        entry_ids_being_indexed: Arc<IndexingEntrySet>,
+        _entry_ids_being_indexed: Arc<IndexingEntrySet>,
     ) -> Self {
         Self {
             worktree,
@@ -116,7 +113,7 @@ impl SummaryIndex {
             db_connection,
             file_digest_db,
             summary_db,
-            entry_ids_being_indexed,
+            _entry_ids_being_indexed,
             backlog: Default::default(),
         }
     }
@@ -240,7 +237,12 @@ impl SummaryIndex {
                 .context("failed to create read transaction")?;
 
             for entry in worktree.files(false, 0) {
-                Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry, &tx);
+                let needs_summary =
+                    Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry);
+
+                if !needs_summary.is_empty() {
+                    tx.send(needs_summary).await?;
+                }
             }
 
             // TODO delete db entries for deleted files
@@ -259,8 +261,7 @@ impl SummaryIndex {
         digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
         txn: &RoTxn<'_>,
         entry: &Entry,
-        tx: &channel::Sender<Vec<(Arc<Path>, Option<SystemTime>)>>,
-    ) {
+    ) -> Vec<(Arc<Path>, Option<SystemTime>)> {
         let entry_db_key = db_key_for_path(&entry.path);
 
         match digest_db.get(&txn, &entry_db_key) {
@@ -268,23 +269,12 @@ impl SummaryIndex {
                 // The file path is the same, but the mtime is different. (Or there was no mtime.)
                 // It needs updating, so add it to the backlog! Then, if the backlog is full, drain it and summarize its contents.
                 if entry.mtime != opt_saved_digest.and_then(|digest| digest.mtime) {
-                    // Accumulate all of these into a Vec immediately, so we can release the lock as soon as possible.
-                    let paths_to_digest = {
-                        let mut backlog = backlog.lock();
+                    let mut backlog = backlog.lock();
 
-                        backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
+                    backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
 
-                        if backlog.needs_drain() {
-                            backlog
-                                .drain()
-                                .collect::<Vec<(Arc<Path>, Option<SystemTime>)>>()
-                        } else {
-                            Vec::new()
-                        }
-                    };
-
-                    if !paths_to_digest.is_empty() {
-                        tx.send(paths_to_digest);
+                    if backlog.needs_drain() {
+                        return backlog.drain().collect();
                     }
                 }
             }
@@ -296,6 +286,8 @@ impl SummaryIndex {
                 );
             }
         }
+
+        Vec::new()
     }
 
     fn scan_updated_entries(
@@ -322,13 +314,16 @@ impl SummaryIndex {
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
-                                Self::add_to_backlog(
+                                let needs_summary = Self::add_to_backlog(
                                     Arc::clone(&backlog),
                                     digest_db,
                                     &txn,
                                     entry,
-                                    &tx,
                                 );
+
+                                if !needs_summary.is_empty() {
+                                    tx.send(needs_summary).await?;
+                                }
                             }
                         }
                     }
@@ -450,13 +445,21 @@ impl SummaryIndex {
 
     fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
-        let model = PREFERRED_SUMMARIZATION_MODEL;
+        let summary_model_name: LanguageModelName = "gpt-4o-mini".to_string().into(); // TODO read this from the user's settings.
+        let Some(model) = LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .find(|model| model.name() == summary_model_name)
+        else {
+            return cx.background_executor().spawn(async move {
+                Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_name))
+            });
+        };
         const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
         let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
 
         log::debug!(
             "Summarizing code by sending this prompt to {:?}: {:?}",
-            &model,
+            model.name(),
             &prompt
         );
 
@@ -470,11 +473,8 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        let stream = LanguageModelCompletionProvider::read_global(cx).complete_bg(
-            request,
-            todo!(), //Arc::new(model),
-            cx,
-        );
+        let stream =
+            LanguageModelCompletionProvider::read_global(cx).complete_bg(request, model, cx);
 
         cx.background_executor().spawn(async move {
             let answer = stream.await?;

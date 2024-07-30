@@ -61,7 +61,7 @@ impl LanguageModelCompletionProvider {
             let mut this = Self::new(cx);
             let available_model = LanguageModelRegistry::read_global(cx)
                 .available_models(cx)
-                .first()
+                .next()
                 .unwrap()
                 .clone();
             this.set_active_model(available_model, cx);
@@ -234,9 +234,9 @@ mod tests {
 
         let model = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
-            .first()
-            .cloned()
-            .unwrap();
+            .next()
+            .unwrap()
+            .clone();
 
         let provider = cx.new_model(|cx| {
             let mut provider = LanguageModelCompletionProvider::new(cx);
