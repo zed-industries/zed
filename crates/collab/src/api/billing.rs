@@ -204,6 +204,8 @@ async fn manage_billing_subscription(
 
 const POLL_EVENTS_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// Polls the Stripe events API periodically to reconcile the records in our
+/// database with the data in Stripe.
 pub fn poll_stripe_events_periodically(app: Arc<AppState>) {
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::warn!("failed to retrieve Stripe client");
@@ -249,7 +251,6 @@ async fn poll_stripe_events(
         let mut params = ListEvents::new();
         params.types = Some(event_types.clone());
         params.limit = Some(100);
-        // params.starting_after
 
         let events = stripe::Event::list(stripe_client, &params).await?;
         for event in events.data {
