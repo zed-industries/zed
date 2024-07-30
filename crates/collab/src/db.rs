@@ -45,7 +45,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub use tests::TestDb;
 
 pub use ids::*;
-pub use queries::billing_customers::CreateBillingCustomerParams;
+pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
 pub use queries::billing_subscriptions::{
     CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };

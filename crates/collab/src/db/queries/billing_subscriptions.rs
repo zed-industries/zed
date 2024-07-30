@@ -12,7 +12,7 @@ pub struct CreateBillingSubscriptionParams {
     pub last_stripe_event_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct UpdateBillingSubscriptionParams {
     pub billing_customer_id: ActiveValue<BillingCustomerId>,
     pub stripe_subscription_id: ActiveValue<String>,

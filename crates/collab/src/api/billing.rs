@@ -20,7 +20,7 @@ use util::ResultExt;
 use crate::db::billing_subscription::StripeSubscriptionStatus;
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-    CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
+    CreateBillingSubscriptionParams, UpdateBillingCustomerParams, UpdateBillingSubscriptionParams,
 };
 use crate::{AppState, Error, Result};
 
@@ -232,6 +232,7 @@ async fn poll_stripe_events(
 ) -> anyhow::Result<()> {
     let event_types = [
         EventType::CustomerCreated.to_string(),
+        EventType::CustomerUpdated.to_string(),
         EventType::CustomerSubscriptionCreated.to_string(),
         EventType::CustomerSubscriptionUpdated.to_string(),
         EventType::CustomerSubscriptionPaused.to_string(),
@@ -256,7 +257,7 @@ async fn poll_stripe_events(
         let events = stripe::Event::list(stripe_client, &params).await?;
         for event in events.data {
             match event.type_ {
-                EventType::CustomerCreated => {
+                EventType::CustomerCreated | EventType::CustomerUpdated => {
                     handle_customer_event(app, stripe_client, event)
                         .await
                         .log_err();
@@ -284,15 +285,59 @@ async fn poll_stripe_events(
 
 async fn handle_customer_event(
     app: &Arc<AppState>,
-    stripe_client: &stripe::Client,
+    _stripe_client: &stripe::Client,
     event: stripe::Event,
 ) -> anyhow::Result<()> {
     let EventObject::Customer(customer) = event.data.object else {
         bail!("unexpected event payload for {}", event.id);
     };
 
-    find_or_create_billing_customer(app, stripe_client, Expandable::Object(Box::new(customer)))
-        .await?;
+    log::info!("handling Stripe {} event: {}", event.type_, event.id);
+
+    let Some(email) = customer.email else {
+        log::info!("Stripe customer has no email: skipping");
+        return Ok(());
+    };
+
+    let Some(user) = app.db.get_user_by_email(&email).await? else {
+        log::info!("no user found for email: skipping");
+        return Ok(());
+    };
+
+    if let Some(existing_customer) = app
+        .db
+        .get_billing_customer_by_stripe_customer_id(&customer.id)
+        .await?
+    {
+        if should_ignore_event(&event.id, existing_customer.last_stripe_event_id.as_deref()) {
+            log::info!(
+                "ignoring Stripe event {} based on last seen event ID",
+                event.id
+            );
+            return Ok(());
+        }
+
+        app.db
+            .update_billing_customer(
+                existing_customer.id,
+                &UpdateBillingCustomerParams {
+                    // For now we just update the last event ID for the customer
+                    // and leave the rest of the information as-is, as it is not
+                    // likely to change.
+                    last_stripe_event_id: ActiveValue::set(Some(event.id.to_string())),
+                    ..Default::default()
+                },
+            )
+            .await?;
+    } else {
+        app.db
+            .create_billing_customer(&CreateBillingCustomerParams {
+                user_id: user.id,
+                stripe_customer_id: customer.id.to_string(),
+                last_stripe_event_id: Some(event.id.to_string()),
+            })
+            .await?;
+    }
 
     Ok(())
 }
@@ -308,10 +353,20 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let billing_customer =
-        find_or_create_billing_customer(app, stripe_client, subscription.customer)
-            .await?
-            .ok_or_else(|| anyhow!("billing customer not found"))?;
+    let billing_customer = find_or_create_billing_customer(
+        app,
+        stripe_client,
+        // Even though we're handling a subscription event, we can still set
+        // the ID as the last seen event ID on the customer in the event that
+        // we have to create it.
+        //
+        // This is done to avoid any potential rollback in the customer's values
+        // if we then see an older event that pertains to the customer.
+        &event.id,
+        subscription.customer,
+    )
+    .await?
+    .ok_or_else(|| anyhow!("billing customer not found"))?;
 
     if let Some(existing_subscription) = app
         .db
@@ -322,6 +377,10 @@ async fn handle_customer_subscription_event(
             &event.id,
             existing_subscription.last_stripe_event_id.as_deref(),
         ) {
+            log::info!(
+                "ignoring Stripe event {} based on last seen event ID",
+                event.id
+            );
             return Ok(());
         }
 
@@ -329,10 +388,10 @@ async fn handle_customer_subscription_event(
             .update_billing_subscription(
                 existing_subscription.id,
                 &UpdateBillingSubscriptionParams {
-                    billing_customer_id: ActiveValue::Set(billing_customer.id),
-                    stripe_subscription_id: ActiveValue::Set(subscription.id.to_string()),
-                    stripe_subscription_status: ActiveValue::Set(subscription.status.into()),
-                    last_stripe_event_id: ActiveValue::Set(Some(event.id.to_string())),
+                    billing_customer_id: ActiveValue::set(billing_customer.id),
+                    stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
+                    stripe_subscription_status: ActiveValue::set(subscription.status.into()),
+                    last_stripe_event_id: ActiveValue::set(Some(event.id.to_string())),
                 },
             )
             .await?;
@@ -369,6 +428,7 @@ impl From<SubscriptionStatus> for StripeSubscriptionStatus {
 async fn find_or_create_billing_customer(
     app: &Arc<AppState>,
     stripe_client: &stripe::Client,
+    event_id: &EventId,
     customer_or_id: Expandable<Customer>,
 ) -> anyhow::Result<Option<billing_customer::Model>> {
     let customer_id = match &customer_or_id {
@@ -406,6 +466,7 @@ async fn find_or_create_billing_customer(
         .create_billing_customer(&CreateBillingCustomerParams {
             user_id: user.id,
             stripe_customer_id: customer.id.to_string(),
+            last_stripe_event_id: Some(event_id.to_string()),
         })
         .await?;
 
