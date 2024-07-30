@@ -10,7 +10,6 @@ pub struct Model {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
-    pub last_stripe_event_id: Option<String>,
     pub created_at: DateTime,
 }
 

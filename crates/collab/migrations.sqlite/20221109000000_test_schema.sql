@@ -421,8 +421,7 @@ CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users(id),
-    stripe_customer_id TEXT NOT NULL,
-    last_stripe_event_id TEXT
+    stripe_customer_id TEXT NOT NULL
 );
 
 CREATE UNIQUE INDEX "uix_billing_customers_on_user_id" ON billing_customers (user_id);
@@ -433,8 +432,7 @@ CREATE TABLE IF NOT EXISTS billing_subscriptions (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     billing_customer_id INTEGER NOT NULL REFERENCES billing_customers(id),
     stripe_subscription_id TEXT NOT NULL,
-    stripe_subscription_status TEXT NOT NULL,
-    last_stripe_event_id TEXT
+    stripe_subscription_status TEXT NOT NULL
 );
 
 CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);
