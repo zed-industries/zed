@@ -114,7 +114,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None),
+            http_client::client(None, None),
         ))
     }
 
@@ -125,7 +125,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None),
+            http_client::client(None, None),
         ))
     }
 
@@ -667,7 +667,7 @@ impl AppContext {
     }
 
     /// Updates the http client assigned to GPUI
-    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
 
