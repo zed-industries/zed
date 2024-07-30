@@ -1128,9 +1128,8 @@ impl Client {
             }
 
             let response = http.get(&url, Default::default(), false).await?;
-            let collab_url = if response.0.status().is_redirection() {
+            let collab_url = if response.status().is_redirection() {
                 response
-                    .0
                     .headers()
                     .get("Location")
                     .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
@@ -1140,7 +1139,7 @@ impl Client {
             } else {
                 Err(anyhow!(
                     "unexpected /rpc response status {}",
-                    response.0.status()
+                    response.status()
                 ))?
             };
 
@@ -1389,11 +1388,11 @@ impl Client {
 
         let mut response = http.send(request).await?;
         let mut body = String::new();
-        response.0.body_mut().read_to_string(&mut body).await?;
-        if !response.0.status().is_success() {
+        response.body_mut().read_to_string(&mut body).await?;
+        if !response.status().is_success() {
             Err(anyhow!(
                 "admin user request failed {} - {}",
-                response.0.status().as_u16(),
+                response.status().as_u16(),
                 body,
             ))?;
         }

@@ -141,16 +141,12 @@ impl http_client::Host for WasmState {
                 .get(url, AsyncBody::default(), true)
                 .await?;
 
-            if response.0.status().is_client_error() || response.0.status().is_server_error() {
-                bail!(
-                    "failed to fetch '{url}': status code {}",
-                    response.0.status()
-                )
+            if response.status().is_client_error() || response.status().is_server_error() {
+                bail!("failed to fetch '{url}': status code {}", response.status())
             }
 
             let mut body = Vec::new();
             response
-                .0
                 .body_mut()
                 .read_to_end(&mut body)
                 .await
@@ -396,13 +392,13 @@ impl ExtensionImports for WasmState {
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
 
-            if !response.0.status().is_success() {
+            if !response.status().is_success() {
                 Err(anyhow!(
                     "download failed with status {}",
-                    response.0.status().to_string()
+                    response.status().to_string()
                 ))?;
             }
-            let body = BufReader::new(response.0.body_mut());
+            let body = BufReader::new(response.body_mut());
 
             match file_type {
                 DownloadedFileType::Uncompressed => {

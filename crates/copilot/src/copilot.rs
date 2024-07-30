@@ -999,7 +999,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                 .get(url, Default::default(), true)
                 .await
                 .context("error downloading copilot release")?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.0.body_mut()));
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(dist_dir).await?;
 

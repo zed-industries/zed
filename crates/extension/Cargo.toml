@@ -57,6 +57,7 @@ task.workspace = true
 serde_json_lenient.workspace = true
 
 [dev-dependencies]
+isahc_http_client.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 parking_lot.workspace = true

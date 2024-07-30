@@ -65,13 +65,13 @@ impl Github {
             .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
 
         let mut body = Vec::new();
-        response.0.body_mut().read_to_end(&mut body).await?;
+        response.body_mut().read_to_end(&mut body).await?;
 
-        if response.0.status().is_client_error() {
+        if response.status().is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
             bail!(
                 "status error {}, response: {text:?}",
-                response.0.status().as_u16()
+                response.status().as_u16()
             );
         }
 

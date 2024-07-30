@@ -35,21 +35,20 @@ impl FetchSlashCommand {
 
         let mut body = Vec::new();
         response
-            .0
             .body_mut()
             .read_to_end(&mut body)
             .await
             .context("error reading response body")?;
 
-        if response.0.status().is_client_error() {
+        if response.status().is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
             bail!(
                 "status error {}, response: {text:?}",
-                response.0.status().as_u16()
+                response.status().as_u16()
             );
         }
 
-        let Some(content_type) = response.0.headers().get("content-type") else {
+        let Some(content_type) = response.headers().get("content-type") else {
             bail!("missing Content-Type header");
         };
         let content_type = content_type

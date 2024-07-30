@@ -333,11 +333,8 @@ pub fn monitor_main_thread_hangs(
                     };
 
                     if let Some(response) = http_client.send(request).await.log_err() {
-                        if response.0.status() != 200 {
-                            log::error!(
-                                "Failed to send hang report: HTTP {:?}",
-                                response.0.status()
-                            );
+                        if response.status() != 200 {
+                            log::error!("Failed to send hang report: HTTP {:?}", response.status());
                         }
                     }
                 }
@@ -429,8 +426,8 @@ async fn upload_previous_panics(
                 };
 
                 let response = http.send(request).await.context("error sending panic")?;
-                if !response.0.status().is_success() {
-                    log::error!("Error uploading panic to server: {}", response.0.status());
+                if !response.status().is_success() {
+                    log::error!("Error uploading panic to server: {}", response.status());
                 }
             }
         }
@@ -507,8 +504,8 @@ async fn upload_previous_crashes(
             let request = request.body(body.into())?;
 
             let response = http.send(request).await.context("error sending crash")?;
-            if !response.0.status().is_success() {
-                log::error!("Error uploading crash to server: {}", response.0.status());
+            if !response.status().is_success() {
+                log::error!("Error uploading crash to server: {}", response.status());
             }
 
             if uploaded < filename {

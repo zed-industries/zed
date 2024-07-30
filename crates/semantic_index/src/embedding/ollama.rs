@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
+use futures::{future::BoxFuture, AsyncReadExt as _, FutureExt};
 use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -56,7 +56,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
                     .await?;
 
                 let mut body = String::new();
-                response.0.into_body().read_to_string(&mut body).await?;
+                response.into_body().read_to_string(&mut body).await?;
 
                 let response: OllamaEmbeddingResponse =
                     serde_json::from_str(&body).context("Unable to pull response")?;

@@ -32,6 +32,7 @@ use axum::{
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
@@ -42,7 +43,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -992,13 +992,7 @@ impl Server {
             tracing::Span::current().record("connection_id", format!("{}", connection_id));
             tracing::info!("connection opened");
 
-            let http_client = match IsahcHttpClient::new() {
-                Ok(http_client) => Arc::new(http_client),
-                Err(error) => {
-                    tracing::error!(?error, "failed to create HTTP client");
-                    return;
-                }
-            };
+            let http_client = IsahcHttpClient::new(None);
 
             let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
                 Some(Arc::new(SupermavenAdminApi::new(

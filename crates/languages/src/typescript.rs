@@ -443,15 +443,14 @@ impl LspAdapter for EsLintLspAdapter {
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
-                    let decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(response.0.body_mut()));
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
                     archive.unpack(&destination_path).await?;
                 }
                 AssetKind::Zip => {
                     node_runtime::extract_zip(
                         &destination_path,
-                        BufReader::new(response.0.body_mut()),
+                        BufReader::new(response.body_mut()),
                     )
                     .await?;
                 }

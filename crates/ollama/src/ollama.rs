@@ -179,8 +179,8 @@ pub async fn stream_chat_completion(
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-    if response.0.status().is_success() {
-        let reader = BufReader::new(response.0.into_body());
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
 
         Ok(reader
             .lines()
@@ -195,11 +195,11 @@ pub async fn stream_chat_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.0.body_mut().read_to_string(&mut body).await?;
+        response.body_mut().read_to_string(&mut body).await?;
 
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.0.status(),
+            response.status(),
             body,
         ))
     }
@@ -225,9 +225,9 @@ pub async fn get_models(
     let mut response = client.send(request).await?;
 
     let mut body = String::new();
-    response.0.body_mut().read_to_string(&mut body).await?;
+    response.body_mut().read_to_string(&mut body).await?;
 
-    if response.0.status().is_success() {
+    if response.status().is_success() {
         let response: LocalModelsResponse =
             serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
 
@@ -235,7 +235,7 @@ pub async fn get_models(
     } else {
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.0.status(),
+            response.status(),
             body,
         ))
     }
@@ -267,15 +267,15 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
         }
     };
 
-    if response.0.status().is_success() {
+    if response.status().is_success() {
         Ok(())
     } else {
         let mut body = String::new();
-        response.0.body_mut().read_to_string(&mut body).await?;
+        response.body_mut().read_to_string(&mut body).await?;
 
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
-            response.0.status(),
+            response.status(),
             body,
         ))
     }

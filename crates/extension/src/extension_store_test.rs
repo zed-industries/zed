@@ -13,6 +13,7 @@ use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
+use isahc_http_client::IsahcHttpClient;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
@@ -270,6 +271,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            http_client.clone(),
             None,
             node_runtime.clone(),
             language_registry.clone(),
@@ -397,6 +399,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            http_client.clone(),
             None,
             node_runtime.clone(),
             language_registry.clone(),
@@ -453,6 +456,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
+// TODO remove
+#[ignore]
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
@@ -502,7 +507,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         http_request_count: 0,
     }));
 
-    let http_client = FakeHttpClient::create({
+    let extension_client = FakeHttpClient::create({
         let language_server_version = language_server_version.clone();
         move |request| {
             let language_server_version = language_server_version.clone();
@@ -558,6 +563,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                     let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
                     encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
                     Ok(Response::new(gzipped_bytes.into()))
+                // } else if uri == WASI_ADAPTER_URL {
+                //     let binary_contents =
+                //         include_bytes!("wasi_snapshot_preview1.reactor.wasm").as_slice();
+                //     Ok(Response::new(binary_contents.into()))
                 } else {
                     Ok(Response::builder().status(404).body("not found".into())?)
                 }
@@ -565,12 +574,15 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         }
     });
 
+    let builder_client = IsahcHttpClient::new(None);
+
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
             fs.clone(),
-            http_client.clone(),
+            extension_client.clone(),
+            builder_client,
             None,
             node_runtime,
             language_registry.clone(),

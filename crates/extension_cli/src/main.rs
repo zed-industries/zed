@@ -14,6 +14,7 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageConfig;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
@@ -60,7 +61,7 @@ async fn main() -> Result<()> {
 
     log::info!("compiling extension");
 
-    let http_client = Arc::new(HttpClientWithProxy::new(None));
+    let http_client = Arc::new(HttpClientWithProxy::new(IsahcHttpClient::new(None), None));
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(

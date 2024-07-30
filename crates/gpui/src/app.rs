@@ -107,25 +107,25 @@ pub struct App(Rc<AppCell>);
 impl App {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
-    pub fn new(client: Arc<dyn HttpClient>) -> Self {
+    pub fn new() -> Self {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            client,
+            Arc::new(NullHttpClient),
         ))
     }
 
     /// Build an app in headless mode. This prevents opening windows,
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
-    pub fn headless(client: Arc<dyn HttpClient>) -> Self {
+    pub fn headless() -> Self {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            client,
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -135,6 +135,15 @@ impl App {
         let asset_source = Arc::new(asset_source);
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        drop(context_lock);
+        self
+    }
+
+    /// Set the http client for the application
+    pub fn with_http_client(self, http_client: impl HttpClient) -> Self {
+        let mut context_lock = self.0.borrow_mut();
+        let http_client = Arc::new(http_client);
+        context_lock.http_client = http_client;
         drop(context_lock);
         self
     }
@@ -1463,4 +1472,23 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+}
+
+struct NullHttpClient;
+
+impl HttpClient for NullHttpClient {
+    fn send_with_redirect_policy(
+        &self,
+        _req: http_client::Request<http_client::AsyncBody>,
+        _follow_redirects: bool,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+    > {
+        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Uri> {
+        None
+    }
 }

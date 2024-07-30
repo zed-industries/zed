@@ -189,6 +189,7 @@ pub fn init(
             None,
             fs,
             client.http_client().clone(),
+            client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
             language_registry,
@@ -224,6 +225,7 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
@@ -243,7 +245,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(http_client.clone(), build_dir)),
+            builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -586,17 +588,16 @@ impl ExtensionStore {
 
             let mut body = Vec::new();
             response
-                .0
                 .body_mut()
                 .read_to_end(&mut body)
                 .await
                 .context("error reading extensions")?;
 
-            if response.0.status().is_client_error() {
+            if response.status().is_client_error() {
                 let text = String::from_utf8_lossy(body.as_slice());
                 bail!(
                     "status error {}, response: {text:?}",
-                    response.0.status().as_u16()
+                    response.status().as_u16()
                 );
             }
 
@@ -661,11 +662,11 @@ impl ExtensionStore {
             .await?;
 
             let content_length = response
-                .0.headers()
+                .headers()
                 .get(isahc::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
-            let mut body = BufReader::new(response.0.body_mut());
+            let mut body = BufReader::new(response.body_mut());
             let mut tar_gz_bytes = Vec::new();
             body.read_to_end(&mut tar_gz_bytes).await?;
 
@@ -818,7 +819,6 @@ impl ExtensionStore {
             let mut extension_manifest =
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
-
             if !this.update(&mut cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
@@ -842,7 +842,6 @@ impl ExtensionStore {
                     .ok();
                 }
             });
-
             cx.background_executor()
                 .spawn({
                     let extension_source_path = extension_source_path.clone();
@@ -873,10 +872,8 @@ impl ExtensionStore {
                     bail!("extension {extension_id} is already installed");
                 }
             }
-
             fs.create_symlink(output_path, extension_source_path)
                 .await?;
-
             this.update(&mut cx, |this, cx| this.reload(None, cx))?
                 .await;
             Ok(())

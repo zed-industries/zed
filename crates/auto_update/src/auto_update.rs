@@ -255,7 +255,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                 };
 
                 let mut body = Vec::new();
-                response.0.body_mut().read_to_end(&mut body).await.ok();
+                response.body_mut().read_to_end(&mut body).await.ok();
 
                 let body: serde_json::Result<ReleaseNotesBody> =
                     serde_json::from_slice(body.as_slice());
@@ -447,13 +447,12 @@ impl AutoUpdater {
 
         let mut body = Vec::new();
         response
-            .0
             .body_mut()
             .read_to_end(&mut body)
             .await
             .context("error reading release")?;
 
-        if !response.0.status().is_success() {
+        if !response.status().is_success() {
             Err(anyhow!(
                 "failed to fetch release: {:?}",
                 String::from_utf8_lossy(&body),
@@ -590,7 +589,7 @@ async fn download_remote_server_binary(
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.0.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.body_mut(), &mut target_file).await?;
     Ok(())
 }
 
@@ -618,7 +617,7 @@ async fn download_release(
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.0.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.body_mut(), &mut target_file).await?;
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(())

@@ -315,8 +315,8 @@ impl FeedbackModal {
             .body(json_bytes.into())?;
         let mut response = http_client.send(request).await?;
         let mut body = String::new();
-        response.0.body_mut().read_to_string(&mut body).await?;
-        let response_status = response.0.status();
+        response.body_mut().read_to_string(&mut body).await?;
+        let response_status = response.status();
         if !response_status.is_success() {
             bail!("Feedback API failed with error: {}", response_status)
         }

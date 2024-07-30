@@ -2457,6 +2457,7 @@ dependencies = [
  "hex",
  "http_client",
  "indoc",
+ "isahc_http_client",
  "language",
  "language_model",
  "live_kit_client",
@@ -3897,6 +3898,7 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "isahc",
+ "isahc_http_client",
  "language",
  "log",
  "lsp",
@@ -3936,6 +3938,7 @@ dependencies = [
  "extension",
  "fs",
  "http_client",
+ "isahc_http_client",
  "language",
  "log",
  "rpc",
@@ -5727,6 +5730,17 @@ dependencies = [
  "tracing-futures",
  "url",
  "waker-fn",
+]
+
+[[package]]
+name = "isahc_http_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "http_client",
+ "isahc",
+ "util",
 ]
 
 [[package]]
@@ -9447,6 +9461,7 @@ dependencies = [
  "gpui",
  "heed",
  "http_client",
+ "isahc_http_client",
  "language",
  "languages",
  "log",
@@ -13666,6 +13681,7 @@ dependencies = [
  "inline_completion_button",
  "install_cli",
  "isahc",
+ "isahc_http_client",
  "journal",
  "language",
  "language_model",

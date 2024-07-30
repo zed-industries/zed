@@ -89,18 +89,18 @@ pub async fn complete(
     let request = request_builder.body(AsyncBody::from(serialized_request))?;
 
     let mut response = client.send(request).await?;
-    if response.0.status().is_success() {
+    if response.status().is_success() {
         let mut body = Vec::new();
-        response.0.body_mut().read_to_end(&mut body).await?;
+        response.body_mut().read_to_end(&mut body).await?;
         let response_message: Response = serde_json::from_slice(&body)?;
         Ok(response_message)
     } else {
         let mut body = Vec::new();
-        response.0.body_mut().read_to_end(&mut body).await?;
+        response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
         Err(anyhow!(
             "Failed to connect to API: {} {}",
-            response.0.status(),
+            response.status(),
             body_str
         ))
     }
@@ -132,8 +132,8 @@ pub async fn stream_completion(
     let request = request_builder.body(AsyncBody::from(serialized_request))?;
 
     let mut response = client.send(request).await?;
-    if response.0.status().is_success() {
-        let reader = BufReader::new(response.0.into_body());
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
             .filter_map(|line| async move {
@@ -151,7 +151,7 @@ pub async fn stream_completion(
             .boxed())
     } else {
         let mut body = Vec::new();
-        response.0.body_mut().read_to_end(&mut body).await?;
+        response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
 
@@ -162,7 +162,7 @@ pub async fn stream_completion(
             )),
             Err(_) => Err(anyhow!(
                 "Failed to connect to API: {} {}",
-                response.0.status(),
+                response.status(),
                 body_str,
             )),
         }

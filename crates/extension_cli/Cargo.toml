@@ -19,6 +19,7 @@ env_logger.workspace = true
 extension = { workspace = true, features = ["no-webrtc"] }
 fs.workspace = true
 http_client.workspace = true
+isahc_http_client.workspace = true
 language.workspace = true
 log.workspace = true
 rpc.workspace = true
