@@ -543,7 +543,7 @@ impl Client {
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let user_agent = format!(
             "Zed/{} ({}; {})",
-            AppVersion::global(cx).to_string(),
+            AppVersion::global(cx),
             std::env::consts::OS,
             std::env::consts::ARCH
         );
