@@ -95,18 +95,27 @@ impl<T: AsRef<Path>> PathExt for T {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-/// Regex parser for row-column suffixes
-/// This matches the following forms in order
-/// file_name:row:column.*
-/// file_name:row.*
-/// file_name:+.*
-/// If any of these match, only the part before the first ':' is taken as the path
-// All cases need to have three capture groups for extract(): file_name, row and column.
-// Valid patterns that don't have row and/or column, should have empty groups in their place.
-const ROW_COL_CAPTURE_REGEX: &str = r#"([^\:]*)(?:\:(\d+)\:(\d+)|\:(\d+)()|\:+()())"#;
+/// Extracts filename and row-column suffixes.
+/// Parenthesis format is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
+// NOTE: All cases need to have exactly three capture groups for extract(): file_name, row and column.
+// Valid patterns that don't contain row and/or column should have empty groups in their place.
+const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
+    ([^\(]+)(?:
+        \((\d+),(\d+)\) # filename(row,column)
+        |
+        \((\d+)\)()     # filename(row)
+    )
+    |
+    ([^\:]+)(?:
+        \:(\d+)\:(\d+)  # filename:row:column
+        |
+        \:(\d+)()       # filename:row
+        |
+        \:()()          # filename:
+    )";
 
 /// A representation of a path-like string with optional row and column numbers.
-/// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
+/// Matching values example: `te`, `test.rs:22`, `te:22:5`, `test.c(22)`, `test.c(22,5)`etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathWithPosition {
     pub path: PathBuf,
@@ -124,7 +133,7 @@ impl PathWithPosition {
             column: None,
         }
     }
-    /// Parses a string that possibly has `:row:column` suffix.
+    /// Parses a string that possibly has `:row:column` or `(row, column)` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
     pub fn parse_str(s: &str) -> Self {
@@ -398,6 +407,22 @@ mod tests {
                 },
             ),
             (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902,13):",
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902):",
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: None,
+                },
+            ),
+            (
                 "C:\\Users\\someone\\test_file.rs:1902:13:",
                 PathWithPosition {
                     path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
@@ -410,6 +435,22 @@ mod tests {
                 PathWithPosition {
                     path: PathBuf::from("crates\\utils\\paths.rs"),
                     row: None,
+                    column: None,
+                },
+            ),
+            (
+                "C:\\Users\\someone\\test_file.rs(1902,13):",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "C:\\Users\\someone\\test_file.rs(1902):",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
                     column: None,
                 },
             ),
