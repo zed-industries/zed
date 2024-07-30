@@ -25,12 +25,14 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+copilot = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 http_client.workspace = true
+inline_completion_button.workspace = true
 menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }

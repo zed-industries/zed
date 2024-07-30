@@ -380,6 +380,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
             "ollama".into(),
             "openai".into(),
             "zed.dev".into(),
+            "copilot_chat".into(),
         ]),
         ..Default::default()
     }
@@ -419,7 +420,7 @@ pub struct AssistantSettingsContentV1 {
     default_height: Option<f32>,
     /// The provider of the assistant service.
     ///
-    /// This can either be the internal `zed.dev` service or an external `openai` service,
+    /// This can be "openai", "anthropic", "ollama", "zed.dev"
     /// each with their respective default models and configurations.
     provider: Option<AssistantProviderContentV1>,
 }

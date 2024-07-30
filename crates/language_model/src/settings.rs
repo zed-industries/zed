@@ -9,6 +9,7 @@ use settings::{Settings, SettingsSources};
 use crate::provider::{
     anthropic::AnthropicSettings,
     cloud::{self, ZedDotDevSettings},
+    copilot_chat::CopilotChatSettings,
     google::GoogleSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
@@ -26,6 +27,7 @@ pub struct AllLanguageModelSettings {
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
+    pub copilot_chat: CopilotChatSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -36,6 +38,7 @@ pub struct AllLanguageModelSettingsContent {
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub copilot_chat: Option<CopilotChatSettingsContent>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -68,6 +71,11 @@ pub struct GoogleSettingsContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
     available_models: Option<Vec<cloud::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct CopilotChatSettingsContent {
+    low_speed_timeout_in_seconds: Option<u64>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {
@@ -165,6 +173,15 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
+
+            if let Some(low_speed_timeout) = value
+                .copilot_chat
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.copilot_chat.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout));
+            }
         }
 
         Ok(settings)

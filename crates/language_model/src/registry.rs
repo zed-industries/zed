@@ -1,8 +1,8 @@
 use crate::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
-        google::GoogleLanguageModelProvider, ollama::OllamaLanguageModelProvider,
-        open_ai::OpenAiLanguageModelProvider,
+        copilot_chat::CopilotChatLanguageModelProvider, google::GoogleLanguageModelProvider,
+        ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
     },
     LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderState,
 };
@@ -44,6 +44,7 @@ fn register_language_model_providers(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
+    registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
         let client = client.clone();

@@ -3456,6 +3456,11 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client().clone(),
+                cx,
+            );
             language_model::init(app_state.client.clone(), cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(
