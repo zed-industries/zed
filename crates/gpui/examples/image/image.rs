@@ -85,7 +85,7 @@ impl Render for ImageShowcase {
                 self.remote_resource.clone(),
             ))
             .child(ImageContainer::new(
-                "Image loaded from a asset",
+                "Image loaded from an asset",
                 self.asset_resource.clone(),
             ))
     }
