@@ -1,4 +1,4 @@
-use crate::db::{BillingSubscriptionId, UserId};
+use crate::db::{BillingCustomerId, BillingSubscriptionId};
 use sea_orm::entity::prelude::*;
 
 /// A billing subscription.
@@ -7,8 +7,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: BillingSubscriptionId,
-    pub user_id: UserId,
-    pub stripe_customer_id: String,
+    pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub created_at: DateTime,
@@ -17,16 +16,16 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::user::Entity",
-        from = "Column::UserId",
-        to = "super::user::Column::Id"
+        belongs_to = "super::billing_customer::Entity",
+        from = "Column::BillingCustomerId",
+        to = "super::billing_customer::Column::Id"
     )]
-    User,
+    BillingCustomer,
 }
 
-impl Related<super::user::Entity> for Entity {
+impl Related<super::billing_customer::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::User.def()
+        Relation::BillingCustomer.def()
     }
 }
 
