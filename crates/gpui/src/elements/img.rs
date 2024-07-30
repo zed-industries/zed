@@ -538,7 +538,7 @@ pub enum ImageCacheError {
         /// The HTTP response body.
         body: String,
     },
-    /// And error that occurred while processing an asset.
+    /// An error that occurred while processing an asset.
     #[error("asset error: {0}")]
     Asset(SharedString),
     /// An error that occurred while processing an image.
