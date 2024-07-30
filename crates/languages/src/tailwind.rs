@@ -23,8 +23,26 @@ const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
 #[cfg(not(target_os = "windows"))]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
+#[cfg(not(target_os = "windows"))]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
+}
+
+#[cfg(target_os = "windows")]
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    let x = vec![
+        "-File".into(),
+        // format!("{}", server_path.display())
+        //     .replace('/', "\\")
+        //     .into(),
+        server_path.into(),
+        "--stdio".into(),
+        // format!("& '{}' --stdio", server_path.display()).into(),
+    ];
+    // let x = "s".to_string()
+    println!("--> {:?}", x);
+    x
+    // vec![format!("\"& '{}' --stdio\"", server_path.display()).into()]
 }
 
 pub struct TailwindLspAdapter {
@@ -113,13 +131,7 @@ impl LspAdapter for TailwindLspAdapter {
 
         #[cfg(target_os = "windows")]
         {
-            let mut env_path = vec![self
-                .node
-                .binary_path()
-                .await?
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
+            let mut env_path = vec![self.node.binary_path().await?.to_path_buf()];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
@@ -130,6 +142,7 @@ impl LspAdapter for TailwindLspAdapter {
             let mut env = HashMap::default();
             env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
 
+            println!("--> {}", server_path.display());
             Ok(LanguageServerBinary {
                 path: "powershell.exe".into(),
                 env: Some(env),
