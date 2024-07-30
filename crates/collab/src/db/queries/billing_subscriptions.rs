@@ -4,8 +4,7 @@ use super::*;
 
 #[derive(Debug)]
 pub struct CreateBillingSubscriptionParams {
-    pub user_id: UserId,
-    pub stripe_customer_id: String,
+    pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
 }
@@ -18,8 +17,7 @@ impl Database {
     ) -> Result<()> {
         self.transaction(|tx| async move {
             billing_subscription::Entity::insert(billing_subscription::ActiveModel {
-                user_id: ActiveValue::set(params.user_id),
-                stripe_customer_id: ActiveValue::set(params.stripe_customer_id.clone()),
+                billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
                 ..Default::default()
@@ -56,7 +54,8 @@ impl Database {
     ) -> Result<Vec<billing_subscription::Model>> {
         self.transaction(|tx| async move {
             let subscriptions = billing_subscription::Entity::find()
-                .filter(billing_subscription::Column::UserId.eq(user_id))
+                .inner_join(billing_customer::Entity)
+                .filter(billing_customer::Column::UserId.eq(user_id))
                 .order_by_asc(billing_subscription::Column::Id)
                 .all(&*tx)
                 .await?;
@@ -73,8 +72,9 @@ impl Database {
     ) -> Result<Vec<billing_subscription::Model>> {
         self.transaction(|tx| async move {
             let subscriptions = billing_subscription::Entity::find()
+                .inner_join(billing_customer::Entity)
                 .filter(
-                    billing_subscription::Column::UserId.eq(user_id).and(
+                    billing_customer::Column::UserId.eq(user_id).and(
                         billing_subscription::Column::StripeSubscriptionStatus
                             .eq(StripeSubscriptionStatus::Active),
                     ),

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use axum::{extract, routing::post, Extension, Json, Router};
-use collections::HashSet;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use stripe::{
@@ -11,7 +10,7 @@ use stripe::{
     CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CustomerId,
+    CreateCustomer, Customer, CustomerId,
 };
 
 use crate::db::BillingSubscriptionId;
@@ -59,28 +58,27 @@ async fn create_billing_subscription(
         ))?
     };
 
-    let existing_customer_id = {
-        let existing_subscriptions = app.db.get_billing_subscriptions(user.id).await?;
-        let distinct_customer_ids = existing_subscriptions
-            .iter()
-            .map(|subscription| subscription.stripe_customer_id.as_str())
-            .collect::<HashSet<_>>();
-        // Sanity: Make sure we can determine a single Stripe customer ID for the user.
-        if distinct_customer_ids.len() > 1 {
-            Err(anyhow!("user has multiple existing customer IDs"))?;
-        }
+    let customer_id =
+        if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
+            CustomerId::from_str(&existing_customer.stripe_customer_id)
+                .context("failed to parse customer ID")?
+        } else {
+            let customer = Customer::create(
+                &stripe_client,
+                CreateCustomer {
+                    email: user.email_address.as_deref(),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
-        distinct_customer_ids
-            .into_iter()
-            .next()
-            .map(|id| CustomerId::from_str(id).context("failed to parse customer ID"))
-            .transpose()
-    }?;
+            customer.id
+        };
 
     let checkout_session = {
         let mut params = CreateCheckoutSession::new();
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
-        params.customer = existing_customer_id;
+        params.customer = Some(customer_id);
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
             price: Some(stripe_price_id.to_string()),
@@ -140,6 +138,14 @@ async fn manage_billing_subscription(
         ))?
     };
 
+    let customer = app
+        .db
+        .get_billing_customer_by_user_id(user.id)
+        .await?
+        .ok_or_else(|| anyhow!("billing customer not found"))?;
+    let customer_id = CustomerId::from_str(&customer.stripe_customer_id)
+        .context("failed to parse customer ID")?;
+
     let subscription = if let Some(subscription_id) = body.subscription_id {
         app.db
             .get_billing_subscription_by_id(subscription_id)
@@ -157,9 +163,6 @@ async fn manage_billing_subscription(
             .next()
             .ok_or_else(|| anyhow!("user has no active subscriptions"))?
     };
-
-    let customer_id = CustomerId::from_str(&subscription.stripe_customer_id)
-        .context("failed to parse customer ID")?;
 
     let flow = match body.intent {
         ManageSubscriptionIntent::Cancel => CreateBillingPortalSessionFlowData {
