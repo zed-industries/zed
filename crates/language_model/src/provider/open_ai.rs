@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
-    WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FocusHandle, FocusableView, FontStyle, Subscription,
+    Task, TextStyle, View, WhiteSpace,
 };
 use http_client::HttpClient;
 use open_ai::stream_completion;
@@ -149,9 +149,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         }
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx))
-            .into()
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+        let view = cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx));
+        let focus_handle = view.focus_handle(cx);
+        (view.into(), Some(focus_handle))
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -352,6 +353,12 @@ impl AuthenticationPrompt {
                 ..Default::default()
             },
         )
+    }
+}
+
+impl FocusableView for AuthenticationPrompt {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.api_key.read(cx).focus_handle(cx)
     }
 }
 

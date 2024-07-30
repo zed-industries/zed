@@ -47,6 +47,7 @@ actions!(
         ToggleFocus,
         ResetKey,
         InsertActivePrompt,
+        DeployConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,

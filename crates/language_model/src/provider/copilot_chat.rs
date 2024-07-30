@@ -11,8 +11,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
-    Subscription, Task, Transformation,
+    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, FocusHandle,
+    Model, Render, Subscription, Task, Transformation,
 };
 use settings::{Settings, SettingsStore};
 use std::time::Duration;
@@ -122,8 +122,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+        let view = cx.new_view(|cx| AuthenticationPrompt::new(cx)).into();
+        (view, None)
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {

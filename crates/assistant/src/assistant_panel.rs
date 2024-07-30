@@ -1,4 +1,3 @@
-use crate::ContextStoreEvent;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -15,6 +14,7 @@ use crate::{
     MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, ResetKey, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
+use crate::{ContextStoreEvent, DeployConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::proto;
@@ -365,6 +365,7 @@ impl AssistantPanel {
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action("Configure", Box::new(DeployConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
@@ -588,7 +589,7 @@ impl AssistantPanel {
     fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
         if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
             if !provider.is_authenticated(cx) {
-                return Some(provider.authentication_prompt(cx));
+                return Some(provider.authentication_prompt(cx).0);
             }
         }
         None
@@ -899,6 +900,29 @@ impl AssistantPanel {
         }
     }
 
+    fn deploy_configuration(&mut self, _: &DeployConfiguration, cx: &mut ViewContext<Self>) {
+        let configuration_item_ix = self
+            .pane
+            .read(cx)
+            .items()
+            .position(|item| item.downcast::<ConfigurationView>().is_some());
+
+        if let Some(configuration_item_ix) = configuration_item_ix {
+            self.pane.update(cx, |pane, cx| {
+                pane.activate_item(configuration_item_ix, true, true, cx);
+            });
+        } else {
+            let pane = self.pane.downgrade();
+            let configuration = cx.new_view(|cx| ConfigurationView {
+                fallback_handle: cx.focus_handle(),
+                focus_handles: Vec::new(),
+            });
+            self.pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(configuration), true, true, None, cx);
+            });
+        }
+    }
+
     fn deploy_history(&mut self, _: &DeployHistory, cx: &mut ViewContext<Self>) {
         let history_item_ix = self
             .pane
@@ -1104,6 +1128,7 @@ impl AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
+            .on_action(cx.listener(AssistantPanel::deploy_configuration))
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::reset_credentials))
@@ -2988,6 +3013,69 @@ impl Item for ContextHistory {
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("History".into())
+    }
+}
+
+pub struct ConfigurationView {
+    fallback_handle: FocusHandle,
+    focus_handles: Vec<FocusHandle>,
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        self.focus_handles.clear();
+
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+
+        let provider_views = providers.into_iter().map(|provider| {
+            let provider_content = if provider.is_authenticated(cx) {
+                let button_id = SharedString::from(format!("reset-key-{}", provider.id().0));
+                div()
+                    .child("authenticated")
+                    .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
+                        let provider = provider.clone();
+                        move |_, _, cx| {
+                            provider.reset_credentials(cx).detach_and_log_err(cx);
+                            cx.notify();
+                        }
+                    })))
+            } else {
+                let (view, focus_handle) = provider.authentication_prompt(cx);
+                if let Some(focus_handle) = focus_handle {
+                    self.focus_handles.push(focus_handle)
+                }
+                div().child(view)
+            };
+
+            div()
+                .child(Headline::new(provider.name().0.clone()))
+                .child(provider_content)
+        });
+
+        let header = Headline::new("Configure Zed's AI Assistant")
+            .size(HeadlineSize::Large)
+            .into_element();
+
+        div().size_full().child(header).children(provider_views)
+    }
+}
+
+impl EventEmitter<()> for ConfigurationView {}
+
+impl FocusableView for ConfigurationView {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handles
+            .first()
+            .cloned()
+            .unwrap_or(self.fallback_handle.clone())
+    }
+}
+
+impl Item for ConfigurationView {
+    type Event = ();
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Configuration".into())
     }
 }
 
