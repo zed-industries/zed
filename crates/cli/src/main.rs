@@ -5,7 +5,6 @@ use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use parking_lot::Mutex;
 use std::{
-    convert::Infallible,
     env, fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -54,10 +53,7 @@ struct Args {
 }
 
 fn parse_path_with_position(argument_str: &str) -> Result<String, std::io::Error> {
-    let path = PathWithPosition::parse_str::<Infallible>(argument_str, |path_str| {
-        Ok(Path::new(path_str).to_path_buf())
-    })
-    .unwrap();
+    let path = PathWithPosition::parse_str(argument_str);
     let curdir = env::current_dir()?;
 
     let canonicalized = path.map_path(|path| match fs::canonicalize(&path) {

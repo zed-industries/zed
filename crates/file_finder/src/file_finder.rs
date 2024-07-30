@@ -797,10 +797,7 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let path_position = PathWithPosition::parse_str(&raw_query, |path_str| {
-                Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-            })
-            .expect("infallible");
+            let path_position = PathWithPosition::parse_str(&raw_query);
 
             let query = FileSearchQuery {
                 raw_query: raw_query.trim().to_owned(),

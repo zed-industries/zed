@@ -115,16 +115,11 @@ impl PathWithPosition {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
-    pub fn parse_str<E>(
-        s: &str,
-        parse_path_str: impl Fn(&str) -> Result<PathBuf, E>,
-    ) -> Result<Self, E> {
-        let fallback = |fallback_str| {
-            Ok(Self {
-                path: parse_path_str(fallback_str)?,
-                row: None,
-                column: None,
-            })
+    pub fn parse_str(s: &str) -> Self {
+        let fallback = |fallback_str| Self {
+            path: Path::new(fallback_str).to_path_buf(),
+            row: None,
+            column: None,
         };
 
         let trimmed = s.trim();
@@ -160,36 +155,38 @@ impl PathWithPosition {
                             None => (maybe_row_and_col_str.parse::<u32>(), ""),
                         };
 
+                    let path = Path::new(path_without_suffix).to_path_buf();
+
                     match row_parse_result {
                         Ok(row) => {
                             if maybe_col_str.is_empty() {
-                                Ok(Self {
-                                    path: parse_path_str(path_without_suffix)?,
+                                Self {
+                                    path,
                                     row: Some(row),
                                     column: None,
-                                })
+                                }
                             } else {
                                 let (maybe_col_str, _) =
                                     maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
                                 match maybe_col_str.parse::<u32>() {
-                                    Ok(col) => Ok(Self {
-                                        path: parse_path_str(path_without_suffix)?,
+                                    Ok(col) => Self {
+                                        path,
                                         row: Some(row),
                                         column: Some(col),
-                                    }),
-                                    Err(_) => Ok(Self {
-                                        path: parse_path_str(path_without_suffix)?,
+                                    },
+                                    Err(_) => Self {
+                                        path,
                                         row: Some(row),
                                         column: None,
-                                    }),
+                                    },
                                 }
                             }
                         }
-                        Err(_) => Ok(Self {
-                            path: parse_path_str(path_without_suffix)?,
+                        Err(_) => Self {
+                            path,
                             row: None,
                             column: None,
-                        }),
+                        },
                     }
                 }
             }
@@ -285,11 +282,6 @@ impl PathMatcher {
 mod tests {
     use super::*;
 
-    fn parse_str(s: &str) -> PathWithPosition {
-        PathWithPosition::parse_str(s, |s| Ok::<_, std::convert::Infallible>(PathBuf::from(s)))
-            .expect("infallible")
-    }
-
     #[test]
     fn path_with_position_parsing_positive() {
         let input_and_expected = [
@@ -320,7 +312,7 @@ mod tests {
         ];
 
         for (input, expected) in input_and_expected {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual, expected,
                 "For positive case input str '{input}', got a parse mismatch"
@@ -340,7 +332,7 @@ mod tests {
             ("test_file.rs:1::2", Some(1), None),
             ("test_file.rs:1:2:3", Some(1), Some(2)),
         ] {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual,
                 PathWithPosition {
@@ -453,7 +445,7 @@ mod tests {
         ];
 
         for (input, expected) in input_and_expected {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual, expected,
                 "For special case input str '{input}', got a parse mismatch"

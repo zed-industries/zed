@@ -14,8 +14,6 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
 use remote::SshConnectionOptions;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{process, thread};
@@ -58,11 +56,8 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
-            if let Some(path_buf) =
-                PathWithPosition::parse_str(&decoded, |s| PathBuf::try_from(s)).log_err()
-            {
-                self.open_paths.push(path_buf)
-            }
+            let path_buf = PathWithPosition::parse_str(&decoded);
+            self.open_paths.push(path_buf)
         }
     }
 
@@ -380,10 +375,7 @@ async fn open_workspaces(
         let paths_with_position = paths
             .into_iter()
             .map(|path_with_position_string| {
-                PathWithPosition::parse_str(&path_with_position_string, |path_str| {
-                    Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-                })
-                .expect("Infallible")
+                PathWithPosition::parse_str(&path_with_position_string)
             })
             .collect();
         vec![paths_with_position]

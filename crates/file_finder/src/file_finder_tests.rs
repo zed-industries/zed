@@ -1855,10 +1855,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_position(test_str: &str) -> FileSearchQuery {
-    let path_position = PathWithPosition::parse_str(&test_str, |path_str| {
-        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-    })
-    .unwrap();
+    let path_position = PathWithPosition::parse_str(&test_str);
 
     FileSearchQuery {
         raw_query: test_str.to_owned(),

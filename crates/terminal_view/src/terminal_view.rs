@@ -782,10 +782,7 @@ fn possible_open_targets(
     maybe_path: &String,
     cx: &mut ViewContext<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
-    let path_position = PathWithPosition::parse_str(maybe_path.as_str(), |path_str| {
-        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-    })
-    .expect("infallible");
+    let path_position = PathWithPosition::parse_str(maybe_path.as_str());
     let row = path_position.row;
     let column = path_position.column;
     let maybe_path = path_position.path;
