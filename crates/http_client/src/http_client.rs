@@ -204,20 +204,6 @@ impl HttpClient for HttpClientWithUrl {
     }
 }
 
-// pub fn client(proxy: Option<Uri>) -> Arc<dyn HttpClient> {
-//     Arc::new(HttpClientWithProxy {
-//         client: Arc::new(
-//             isahc::HttpClient::builder()
-//                 .connect_timeout(Duration::from_secs(5))
-//                 .low_speed_timeout(100, Duration::from_secs(5))
-//                 .proxy(proxy.clone())
-//                 .build()
-//                 .unwrap(),
-//         ),
-//         proxy,
-//     })
-// }
-
 fn read_proxy_from_env() -> Option<Uri> {
     const ENV_VARS: &[&str] = &[
         "ALL_PROXY",
@@ -236,17 +222,6 @@ fn read_proxy_from_env() -> Option<Uri> {
 
     None
 }
-
-// impl HttpClient for isahc::HttpClient {
-//     fn send(&self, req: Request) -> BoxFuture<'static, Result<Response>> {
-//         let client = self.clone();
-//         Box::pin(async move { client.send_async(req).await })
-//     }
-
-//     fn proxy(&self) -> Option<&Uri> {
-//         None
-//     }
-// }
 
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<

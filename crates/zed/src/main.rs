@@ -22,7 +22,7 @@ use gpui::{
 };
 use http_client::{HttpClient, Uri};
 use image_viewer;
-use isahc::config::Configurable;
+use isahc::config::{Configurable, RedirectPolicy};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use std::time::Duration;
@@ -323,6 +323,12 @@ impl HttpClient for IsahcHttpClient {
         req: http_client::http::Request<http_client::AsyncBody>,
         follow_redirects: bool,
     ) -> future::BoxFuture<'static, Result<http_client::Response, Arc<isahc::http::Error>>> {
+        req.redirect_policy(if follow_redirects {
+            RedirectPolicy::Follow
+        } else {
+            RedirectPolicy::None
+        });
+
         let client = self.clone();
 
         Box::pin(async move { Ok(client.0.send_async(req).await.unwrap().into()) })
