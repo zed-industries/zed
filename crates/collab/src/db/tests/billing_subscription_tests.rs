@@ -29,6 +29,7 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id,
                 stripe_customer_id: "cus_active_user".into(),
+                last_stripe_event_id: None,
             })
             .await
             .unwrap();
@@ -64,6 +65,7 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id,
                 stripe_customer_id: "cus_past_due_user".into(),
+                last_stripe_event_id: None,
             })
             .await
             .unwrap();
