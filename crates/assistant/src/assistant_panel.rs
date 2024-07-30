@@ -3074,7 +3074,9 @@ impl Render for ConfigurationView {
 
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
-        self.set_active_tab(providers[0].id(), cx);
+        if self.active_tab.is_none() && !providers.is_empty() {
+            self.set_active_tab(providers[0].id(), cx);
+        }
 
         let header = Headline::new("Configure Zed's AI Assistant")
             .size(HeadlineSize::Large)
@@ -3084,6 +3086,26 @@ impl Render for ConfigurationView {
             .size_full()
             .p(Spacing::XLarge.rems(cx))
             .child(header)
+            .child(h_flex().children(providers.iter().map(|provider| {
+                let id = provider.id();
+                let button_id = SharedString::from(format!("tab-{}", id.0));
+                let is_active = self.active_tab == Some(id);
+                ButtonLike::new(button_id).child(
+                    div()
+                        .py_1()
+                        .px_2()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_selected)
+                        .text_color(cx.theme().colors().text_accent)
+                        .child(provider.name().0),
+                )
+                // .on_click(cx.listener({
+                //     let id = id.clone();
+                //     move |_, cx| {
+                //         self.set_active_tab(id, cx);
+                //     }
+                // }))
+            })))
             .children(self.render_active_tab(cx))
     }
 }
