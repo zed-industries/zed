@@ -497,6 +497,7 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
+                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
                             .when(self.clipboard.as_ref().is_some(), |menu| {
                                 menu.action("Paste", Box::new(Paste))
                             })
@@ -1236,14 +1237,14 @@ impl ProjectPanel {
             cx.notify();
         }
     }
-    fn create_relative_path(
+    fn relative_path_for_entry(
         &self,
         source_entry: &SelectedEntry,
         (worktree, target_entry): (Model<Worktree>, &Entry),
         cx: &AppContext,
     ) -> Option<PathBuf> {
-        let source_path = worktree.read(cx).absolutize(&target_entry.path).ok()?;
-        let base_path = source_path.parent().unwrap();
+        let target_path = worktree.read(cx).absolutize(&target_entry.path).ok()?;
+        let target_base_path = target_path.parent().unwrap();
         let source_worktree = self
             .project
             .read(cx)
@@ -1251,11 +1252,11 @@ impl ProjectPanel {
         let source_entry = source_worktree
             .read(cx)
             .entry_for_id(source_entry.entry_id)?;
-        let path = source_worktree
+        let source_path = source_worktree
             .read(cx)
             .absolutize(&source_entry.path)
             .ok()?;
-        Some(relativize_path(base_path, path.as_path()))
+        Some(relativize_path(target_base_path, source_path.as_path()))
     }
 
     fn create_paste_path(
@@ -1318,11 +1319,12 @@ impl ProjectPanel {
                 let new_path =
                     self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
                 if clipboard_entry.worktree_id != worktree_id {
-                    let relative_path = self.create_relative_path(
+                    let relative_path = self.relative_path_for_entry(
                         clipboard_entry,
                         self.selected_entry_handle(cx)?,
                         cx,
                     )?;
+                    // TODO current paste not selected, should fix keep same behavior below
                     self.project
                         .update(cx, |project, cx| {
                             project.copy_relative_entry(entry.id, relative_path, new_path, cx)
@@ -3718,8 +3720,6 @@ mod tests {
             panel.select_next(&Default::default(), cx);
             panel.paste(&Default::default(), cx);
         });
-        // TODO, paste same file in worktree, will emit prompt for select replace or cancel
-        // current test, default cancel same file paste different worktree
 
         cx.executor().run_until_parked();
         assert_eq!(
