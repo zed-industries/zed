@@ -429,9 +429,9 @@ CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscr
 CREATE UNIQUE INDEX "uix_billing_subscriptions_on_stripe_subscription_id" ON billing_subscriptions (stripe_subscription_id);
 
 CREATE TABLE IF NOT EXISTS billing_customers (
-    id SERIAL PRIMARY KEY,
-    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     stripe_customer_id TEXT NOT NULL
 );
 
