@@ -105,7 +105,7 @@ impl ProjectIndex {
         event: &project::Event,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
+        match dbg!(event) {
             project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
                 self.update_worktree_indices(cx);
             }
@@ -115,6 +115,7 @@ impl ProjectIndex {
 
     fn update_worktree_indices(&mut self, cx: &mut ModelContext<Self>) {
         let Some(project) = self.project.upgrade() else {
+            dbg!("short circuit");
             return;
         };
 
@@ -132,6 +133,7 @@ impl ProjectIndex {
 
         self.worktree_indices
             .retain(|worktree_id, _| worktrees.contains_key(worktree_id));
+        dbg!(worktrees.len());
         for (worktree_id, worktree) in worktrees {
             self.worktree_indices.entry(worktree_id).or_insert_with(|| {
                 let worktree_index = WorktreeIndex::load(

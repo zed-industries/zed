@@ -1,7 +1,7 @@
 use collections::HashMap;
 use std::{path::Path, sync::Arc, time::SystemTime};
 
-const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1MB
+const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 2; // 2 MB
 
 #[derive(Default, Debug)]
 pub struct SummaryBacklog {

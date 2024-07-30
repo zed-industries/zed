@@ -271,9 +271,15 @@ impl SummaryIndex {
                 if entry.mtime != opt_saved_digest.and_then(|digest| digest.mtime) {
                     let mut backlog = backlog.lock();
 
+                    eprintln!(
+                        "* * * * * * * * * Inserting {:?}B entry into backlog: {:?}",
+                        entry.size, &entry.path
+                    );
+
                     backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
 
                     if backlog.needs_drain() {
+                        eprintln!("* * * * * * * * * DRAINING BACKLOG!");
                         return backlog.drain().collect();
                     }
                 }
@@ -296,6 +302,7 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> Backlogged {
+        eprintln!("* * * Scanning for updated entries...");
         let (tx, rx) = channel::bounded(512);
         // let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
@@ -361,6 +368,11 @@ impl SummaryIndex {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
                             while let Ok(pairs) = paths.recv().await {
+                                eprintln!(
+                                    "* * * * * * Reading files to look up their digests {:?}",
+                                    pairs
+                                );
+
                                 // Note: we could process all these files concurrently if desired. Might or might not speed things up.
                                 for (path, mtime) in pairs {
                                     let entry_abs_path = worktree_abs_path.join(&path);
@@ -524,6 +536,10 @@ impl SummaryIndex {
                         "Saving {} bytes of summary for content digest {:?}",
                         file.summary.len(),
                         file.digest
+                    );
+                    eprintln!(
+                        "- - - Persisting digest {:?} for {:?} with summary: {:?}",
+                        &file.path, &file.digest, &file.summary
                     );
                     digest_db.put(
                         &mut txn,

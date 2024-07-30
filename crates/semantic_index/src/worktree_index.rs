@@ -58,7 +58,9 @@ impl WorktreeIndex {
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
                     let db_connection = db_connection.clone();
                     async move {
+                        dbg!("txn");
                         let mut txn = db_connection.write_txn()?;
+                        dbg!("txn completed");
                         let embedding_index = {
                             let db_name = worktree_abs_path.to_string_lossy();
                             let db = db_connection.create_database(&mut txn, Some(&db_name))?;
