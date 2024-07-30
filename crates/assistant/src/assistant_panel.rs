@@ -42,7 +42,7 @@ use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
-use language_model::{LanguageModelRegistry, Role};
+use language_model::{LanguageModelProviderId, LanguageModelRegistry, Role};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -138,6 +138,7 @@ pub struct AssistantPanel {
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
+    authentificate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
 }
 
 #[derive(Clone)]
@@ -411,6 +412,7 @@ impl AssistantPanel {
             authentication_prompt: None,
             model_selector_menu_handle,
             model_summary_editor,
+            authentificate_provider_task: None,
         }
     }
 
@@ -557,18 +559,42 @@ impl AssistantPanel {
             })
         }
 
-        if self.active_context_editor(cx).is_none() {
-            self.new_context(cx);
-        }
+        let Some(new_provider_id) = LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map(|p| p.id())
+        else {
+            return;
+        };
 
-        let authentication_prompt = Self::authentication_prompt(cx);
-        for context_editor in self.context_editors(cx) {
-            context_editor.update(cx, |editor, cx| {
-                editor.set_authentication_prompt(authentication_prompt.clone(), cx);
+        if self
+            .authentificate_provider_task
+            .as_ref()
+            .map_or(true, |(old_provider_id, _)| {
+                *old_provider_id != new_provider_id
+            })
+        {
+            let load_credentials = self.authenticate(cx);
+            let task = cx.spawn(|this, mut cx| async move {
+                let _ = load_credentials.await;
+                this.update(&mut cx, |this, cx| {
+                    if this.active_context_editor(cx).is_none() {
+                        this.new_context(cx);
+                    }
+
+                    let authentication_prompt = Self::authentication_prompt(cx);
+                    for context_editor in this.context_editors(cx) {
+                        context_editor.update(cx, |editor, cx| {
+                            editor.set_authentication_prompt(authentication_prompt.clone(), cx);
+                        });
+                    }
+
+                    cx.notify();
+                })
+                .log_err();
             });
-        }
 
-        cx.notify();
+            self.authentificate_provider_task = Some((new_provider_id, task));
+        }
     }
 
     fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
@@ -685,13 +711,11 @@ impl AssistantPanel {
                 .focus_handle(cx)
                 .contains_focused(cx)
             {
-                if let Some(terminal_view) = terminal_panel
-                    .read(cx)
-                    .pane()
-                    .read(cx)
-                    .active_item()
-                    .and_then(|t| t.downcast::<TerminalView>())
-                {
+                if let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                    pane.read(cx)
+                        .active_item()
+                        .and_then(|t| t.downcast::<TerminalView>())
+                }) {
                     return Some(InlineAssistTarget::Terminal(terminal_view));
                 }
             }
