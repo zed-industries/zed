@@ -119,14 +119,7 @@ impl LspAdapter for TailwindLspAdapter {
 
         #[cfg(target_os = "windows")]
         {
-            let mut env_path = vec![self.node.binary_path().await?.to_path_buf()];
-
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-                env_path.append(&mut paths);
-            }
-
-            let env_path = std::env::join_paths(env_path)?;
+            let env_path = self.node.node_environment_path().await?;
             let mut env = HashMap::default();
             env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
 
