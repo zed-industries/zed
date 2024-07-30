@@ -5,13 +5,14 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context};
 use axum::{extract, routing::post, Extension, Json, Router};
 use reqwest::StatusCode;
+use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use stripe::{
     BillingPortalSession, CheckoutSession, CreateBillingPortalSession,
     CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CreateCustomer, Customer, CustomerId, EventObject, EventType, Expandable, ListEvents,
+    CreateCustomer, Customer, CustomerId, EventId, EventObject, EventType, Expandable, ListEvents,
     SubscriptionStatus,
 };
 use util::ResultExt;
@@ -19,7 +20,7 @@ use util::ResultExt;
 use crate::db::billing_subscription::StripeSubscriptionStatus;
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-    CreateBillingSubscriptionParams,
+    CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };
 use crate::{AppState, Error, Result};
 
@@ -305,18 +306,46 @@ async fn handle_customer_subscription_event(
         bail!("unexpected event payload for {}", event.id);
     };
 
+    log::info!("handling Stripe {} event: {}", event.type_, event.id);
+
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
             .await?
             .ok_or_else(|| anyhow!("billing customer not found"))?;
 
-    app.db
-        .upsert_billing_subscription_by_stripe_subscription_id(&CreateBillingSubscriptionParams {
-            billing_customer_id: billing_customer.id,
-            stripe_subscription_id: subscription.id.to_string(),
-            stripe_subscription_status: subscription.status.into(),
-        })
-        .await?;
+    if let Some(existing_subscription) = app
+        .db
+        .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
+        .await?
+    {
+        if should_ignore_event(
+            &event.id,
+            existing_subscription.last_stripe_event_id.as_deref(),
+        ) {
+            return Ok(());
+        }
+
+        app.db
+            .update_billing_subscription(
+                existing_subscription.id,
+                &UpdateBillingSubscriptionParams {
+                    billing_customer_id: ActiveValue::Set(billing_customer.id),
+                    stripe_subscription_id: ActiveValue::Set(subscription.id.to_string()),
+                    stripe_subscription_status: ActiveValue::Set(subscription.status.into()),
+                    last_stripe_event_id: ActiveValue::Set(Some(event.id.to_string())),
+                },
+            )
+            .await?;
+    } else {
+        app.db
+            .create_billing_subscription(&CreateBillingSubscriptionParams {
+                billing_customer_id: billing_customer.id,
+                stripe_subscription_id: subscription.id.to_string(),
+                stripe_subscription_status: subscription.status.into(),
+                last_stripe_event_id: Some(event.id.to_string()),
+            })
+            .await?;
+    }
 
     Ok(())
 }
@@ -381,4 +410,65 @@ async fn find_or_create_billing_customer(
         .await?;
 
     Ok(Some(billing_customer))
+}
+
+/// Returns whether an [`Event`] should be ignored, based on its ID and the last
+/// seen event ID for this object.
+#[inline]
+fn should_ignore_event(event_id: &EventId, last_event_id: Option<&str>) -> bool {
+    !should_apply_event(event_id, last_event_id)
+}
+
+/// Returns whether an [`Event`] should be applied, based on its ID and the last
+/// seen event ID for this object.
+fn should_apply_event(event_id: &EventId, last_event_id: Option<&str>) -> bool {
+    let Some(last_event_id) = last_event_id else {
+        return true;
+    };
+
+    event_id.as_str() < last_event_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_apply_event() {
+        let subscription_created_event = EventId::from_str("evt_1Pi5s9RxOf7d5PNafuZSGsmh").unwrap();
+        let subscription_updated_event = EventId::from_str("evt_1Pi5s9RxOf7d5PNa5UZLSsto").unwrap();
+
+        assert_eq!(
+            should_apply_event(
+                &subscription_created_event,
+                Some(subscription_created_event.as_str())
+            ),
+            false,
+            "Events should not be applied when the IDs are the same."
+        );
+
+        assert_eq!(
+            should_apply_event(
+                &subscription_created_event,
+                Some(subscription_updated_event.as_str())
+            ),
+            false,
+            "Events should not be applied when the last event ID is newer than the event ID."
+        );
+
+        assert_eq!(
+            should_apply_event(&subscription_created_event, None),
+            true,
+            "Events should be applied when we don't have a last event ID."
+        );
+
+        assert_eq!(
+            should_apply_event(
+                &subscription_updated_event,
+                Some(subscription_created_event.as_str())
+            ),
+            true,
+            "Events should be applied when the event ID is newer than the last event ID."
+        );
+    }
 }

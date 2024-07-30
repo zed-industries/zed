@@ -38,6 +38,7 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             billing_customer_id: customer.id,
             stripe_subscription_id: "sub_active_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::Active,
+            last_stripe_event_id: None,
         })
         .await
         .unwrap();
@@ -72,6 +73,7 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             billing_customer_id: customer.id,
             stripe_subscription_id: "sub_past_due_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::PastDue,
+            last_stripe_event_id: None,
         })
         .await
         .unwrap();
