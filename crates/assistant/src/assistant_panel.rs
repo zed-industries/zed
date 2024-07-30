@@ -686,13 +686,11 @@ impl AssistantPanel {
                 .focus_handle(cx)
                 .contains_focused(cx)
             {
-                if let Some(terminal_view) = terminal_panel
-                    .read(cx)
-                    .pane()
-                    .read(cx)
-                    .active_item()
-                    .and_then(|t| t.downcast::<TerminalView>())
-                {
+                if let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                    pane.read(cx)
+                        .active_item()
+                        .and_then(|t| t.downcast::<TerminalView>())
+                }) {
                     return Some(InlineAssistTarget::Terminal(terminal_view));
                 }
             }

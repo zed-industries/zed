@@ -171,7 +171,7 @@ impl TerminalPanel {
 
     fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
         let additional_buttons = self.additional_tab_bar_buttons.clone();
-        self.pane().update(cx, |pane, cx| {
+        self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 h_flex()
                     .gap_2()
@@ -683,10 +683,6 @@ impl TerminalPanel {
         Some(())
     }
 
-    pub fn pane(&self) -> &View<Pane> {
-        &self.pane
-    }
-
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
         self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
@@ -848,6 +844,10 @@ impl Panel for TerminalPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
     }
 }
 

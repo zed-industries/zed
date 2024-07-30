@@ -9,7 +9,7 @@ use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{dock::Panel, Workspace};
 
 use super::create_label_for_command;
 
@@ -65,13 +65,11 @@ impl SlashCommand for TermSlashCommand {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Err(anyhow::anyhow!("no terminal panel open")));
         };
-        let Some(active_terminal) = terminal_panel
-            .read(cx)
-            .pane()
-            .read(cx)
-            .active_item()
-            .and_then(|t| t.downcast::<TerminalView>())
-        else {
+        let Some(active_terminal) = terminal_panel.read(cx).pane().and_then(|pane| {
+            pane.read(cx)
+                .active_item()
+                .and_then(|t| t.downcast::<TerminalView>())
+        }) else {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
