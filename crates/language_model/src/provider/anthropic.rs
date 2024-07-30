@@ -298,7 +298,7 @@ impl LanguageModel for AnthropicModel {
         input_schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        let mut request = request.into_anthropic(self.model.id().into());
+        let mut request = request.into_anthropic(self.model.tool_model_id().into());
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
         });

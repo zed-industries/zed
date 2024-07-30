@@ -41,6 +41,7 @@ pub struct AvailableModel {
     provider: AvailableProvider,
     name: String,
     max_tokens: usize,
+    tool_override: Option<String>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -142,6 +143,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
@@ -320,7 +322,7 @@ impl LanguageModel for CloudLanguageModel {
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_anthropic(model.id().into());
+                let mut request = request.into_anthropic(model.tool_model_id().into());
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
                 });
