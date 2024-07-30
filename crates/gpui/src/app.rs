@@ -107,25 +107,25 @@ pub struct App(Rc<AppCell>);
 impl App {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+    pub fn new(client: Arc<dyn HttpClient>) -> Self {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None),
+            client,
         ))
     }
 
     /// Build an app in headless mode. This prevents opening windows,
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
-    pub fn headless() -> Self {
+    pub fn headless(client: Arc<dyn HttpClient>) -> Self {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None),
+            client,
         ))
     }
 

@@ -142,16 +142,17 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 
                     let mut body = Vec::new();
                     response
+                        .0
                         .body_mut()
                         .read_to_end(&mut body)
                         .await
                         .context("error reading docs.rs response body")?;
 
-                    if response.status().is_client_error() {
+                    if response.0.status().is_client_error() {
                         let text = String::from_utf8_lossy(body.as_slice());
                         bail!(
                             "status error {}, response: {text:?}",
-                            response.status().as_u16()
+                            response.0.status().as_u16()
                         );
                     }
 

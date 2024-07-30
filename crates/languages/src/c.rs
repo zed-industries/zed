@@ -108,13 +108,13 @@ impl super::LspAdapter for CLspAdapter {
                 .await
                 .context("error downloading release")?;
             let mut file = File::create(&zip_path).await?;
-            if !response.status().is_success() {
+            if !response.0.status().is_success() {
                 Err(anyhow!(
                     "download failed with status {}",
-                    response.status().to_string()
+                    response.0.status().to_string()
                 ))?;
             }
-            futures::io::copy(response.body_mut(), &mut file).await?;
+            futures::io::copy(response.0.body_mut(), &mut file).await?;
 
             let unzip_status = smol::process::Command::new("unzip")
                 .current_dir(&container_dir)

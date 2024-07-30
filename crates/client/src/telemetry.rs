@@ -659,8 +659,8 @@ impl Telemetry {
                         .body(json_bytes.into());
 
                     let response = this.http_client.send(request?).await?;
-                    if response.status() != 200 {
-                        log::error!("Failed to send events: HTTP {:?}", response.status());
+                    if response.0.status() != 200 {
+                        log::error!("Failed to send events: HTTP {:?}", response.0.status());
                     }
                     anyhow::Ok(())
                 }

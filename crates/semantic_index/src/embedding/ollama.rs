@@ -56,7 +56,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
                     .await?;
 
                 let mut body = String::new();
-                response.into_body().read_to_string(&mut body).await?;
+                response.0.into_body().read_to_string(&mut body).await?;
 
                 let response: OllamaEmbeddingResponse =
                     serde_json::from_str(&body).context("Unable to pull response")?;

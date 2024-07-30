@@ -189,10 +189,11 @@ impl RealNodeRuntime {
                 .await
                 .context("error downloading Node binary tarball")?;
 
-            let body = response.body_mut();
+            let body = response.0.body_mut();
             match archive_type {
                 ArchiveType::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.0.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
                     archive.unpack(&node_containing_dir).await?;
                 }

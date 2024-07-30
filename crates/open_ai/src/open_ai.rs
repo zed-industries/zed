@@ -244,8 +244,8 @@ pub async fn stream_completion(
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
+    if response.0.status().is_success() {
+        let reader = BufReader::new(response.0.into_body());
         Ok(reader
             .lines()
             .filter_map(|line| async move {
@@ -267,7 +267,7 @@ pub async fn stream_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response.0.body_mut().read_to_string(&mut body).await?;
 
         #[derive(Deserialize)]
         struct OpenAiResponse {
@@ -287,7 +287,7 @@ pub async fn stream_completion(
 
             _ => Err(anyhow!(
                 "Failed to connect to OpenAI API: {} {}",
-                response.status(),
+                response.0.status(),
                 body,
             )),
         }
@@ -343,16 +343,16 @@ pub fn embed<'a>(
     async move {
         let mut response = request?.await?;
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response.0.body_mut().read_to_string(&mut body).await?;
 
-        if response.status().is_success() {
+        if response.0.status().is_success() {
             let response: OpenAiEmbeddingResponse =
                 serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
             Ok(response)
         } else {
             Err(anyhow!(
                 "error during embedding, status: {:?}, body: {:?}",
-                response.status(),
+                response.0.status(),
                 body
             ))
         }

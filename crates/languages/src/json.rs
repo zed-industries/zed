@@ -331,11 +331,11 @@ impl LspAdapter for NodeVersionAdapter {
             if version.url.ends_with(".zip") {
                 node_runtime::extract_zip(
                     &destination_container_path,
-                    BufReader::new(response.body_mut()),
+                    BufReader::new(response.0.body_mut()),
                 )
                 .await?;
             } else if version.url.ends_with(".tar.gz") {
-                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.0.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
                 archive.unpack(&destination_container_path).await?;
             }

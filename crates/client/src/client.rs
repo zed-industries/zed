@@ -234,8 +234,6 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http_client::Error),
-    #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
@@ -543,6 +541,7 @@ impl Client {
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
             ProxySettings::get_global(cx).proxy.clone(),
         ));
@@ -1129,8 +1128,9 @@ impl Client {
             }
 
             let response = http.get(&url, Default::default(), false).await?;
-            let collab_url = if response.status().is_redirection() {
+            let collab_url = if response.0.status().is_redirection() {
                 response
+                    .0
                     .headers()
                     .get("Location")
                     .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
@@ -1140,7 +1140,7 @@ impl Client {
             } else {
                 Err(anyhow!(
                     "unexpected /rpc response status {}",
-                    response.status()
+                    response.0.status()
                 ))?
             };
 
@@ -1389,11 +1389,11 @@ impl Client {
 
         let mut response = http.send(request).await?;
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        if !response.status().is_success() {
+        response.0.body_mut().read_to_string(&mut body).await?;
+        if !response.0.status().is_success() {
             Err(anyhow!(
                 "admin user request failed {} - {}",
-                response.status().as_u16(),
+                response.0.status().as_u16(),
                 body,
             ))?;
         }

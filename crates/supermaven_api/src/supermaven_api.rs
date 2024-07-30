@@ -84,16 +84,16 @@ impl SupermavenAdminApi {
             .with_context(|| "Unable to get Supermaven API Key".to_string())?;
 
         let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+        response.0.body_mut().read_to_end(&mut body).await?;
 
-        if response.status().is_client_error() {
+        if response.0.status().is_client_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
             if error.message == "User not found" {
                 return Ok(None);
             } else {
                 return Err(anyhow!("Supermaven API error: {}", error.message));
             }
-        } else if response.status().is_server_error() {
+        } else if response.0.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
             return Err(anyhow!("Supermaven API server error").context(error.message));
         }
@@ -123,11 +123,11 @@ impl SupermavenAdminApi {
             .with_context(|| "Unable to create Supermaven API Key".to_string())?;
 
         let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+        response.0.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
 
-        if !response.status().is_success() {
+        if !response.0.status().is_success() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
             return Err(anyhow!("Supermaven API server error").context(error.message));
         }
@@ -148,16 +148,16 @@ impl SupermavenAdminApi {
             .with_context(|| "Unable to delete Supermaven User".to_string())?;
 
         let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+        response.0.body_mut().read_to_end(&mut body).await?;
 
-        if response.status().is_client_error() {
+        if response.0.status().is_client_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
             if error.message == "User not found" {
                 return Ok(());
             } else {
                 return Err(anyhow!("Supermaven API error: {}", error.message));
             }
-        } else if response.status().is_server_error() {
+        } else if response.0.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
             return Err(anyhow!("Supermaven API server error").context(error.message));
         }
@@ -199,9 +199,9 @@ pub async fn latest_release(
         .with_context(|| "Unable to acquire Supermaven Agent".to_string())?;
 
     let mut body = Vec::new();
-    response.body_mut().read_to_end(&mut body).await?;
+    response.0.body_mut().read_to_end(&mut body).await?;
 
-    if response.status().is_client_error() || response.status().is_server_error() {
+    if response.0.status().is_client_error() || response.0.status().is_server_error() {
         let body_str = std::str::from_utf8(&body)?;
         let error: SupermavenApiError = serde_json::from_str(body_str)?;
         return Err(anyhow!("Supermaven API error: {}", error.message));
@@ -266,7 +266,7 @@ pub fn get_supermaven_agent_path(
             .await
             .with_context(|| format!("Unable to create file at {:?}", binary_path))?;
 
-        futures::io::copy(BufReader::new(response.body_mut()), &mut file)
+        futures::io::copy(BufReader::new(response.0.body_mut()), &mut file)
             .await
             .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
