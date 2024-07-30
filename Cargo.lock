@@ -6047,6 +6047,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum",
  "text",
  "theme",

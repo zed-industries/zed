@@ -1,5 +1,6 @@
 mod model;
 pub mod provider;
+mod rate_limiter;
 mod registry;
 mod request;
 mod role;
@@ -13,6 +14,7 @@ use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
 
 pub use model::*;
+pub(crate) use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;

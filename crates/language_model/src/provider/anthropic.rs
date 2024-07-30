@@ -1,7 +1,7 @@
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
@@ -95,6 +95,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
+                    request_limiter: RateLimiter::new(3),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -156,6 +157,7 @@ pub struct AnthropicModel {
     model: anthropic::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
+    request_limiter: RateLimiter,
 }
 
 pub fn count_anthropic_tokens(
@@ -281,9 +283,13 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = request.into_anthropic(self.model.id().into());
         let request = self.stream_completion(request, cx);
-        async move {
+        let future = self.request_limiter.run(|| async move {
             let response = request.await?;
-            Ok(anthropic::extract_text_from_events(response).boxed())
+            Ok(anthropic::extract_text_from_events(response))
+        });
+        async move {
+            let stream = future.await?;
+            Ok(stream.boxed())
         }
         .boxed()
     }
