@@ -916,6 +916,7 @@ impl AssistantPanel {
             let configuration = cx.new_view(|cx| ConfigurationView {
                 fallback_handle: cx.focus_handle(),
                 focus_handles: Vec::new(),
+                active_tab: None,
             });
             self.pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(configuration), true, true, None, cx);
@@ -3019,6 +3020,52 @@ impl Item for ContextHistory {
 pub struct ConfigurationView {
     fallback_handle: FocusHandle,
     focus_handles: Vec<FocusHandle>,
+    active_tab: Option<LanguageModelProviderId>,
+}
+
+impl ConfigurationView {
+    fn set_active_tab(&mut self, tab: LanguageModelProviderId, cx: &mut ViewContext<Self>) {
+        self.active_tab = Some(tab);
+        cx.notify();
+    }
+
+    fn render_active_tab(&self, cx: &mut ViewContext<Self>) -> Option<Div> {
+        let mut focus_handles = self.focus_handles.clone();
+
+        let providers = LanguageModelRegistry::read_global(cx)
+            .providers()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let active_provider = providers
+            .iter()
+            .find(|provider| Some(provider.id()) == self.active_tab);
+
+        if let Some(active_provider) = active_provider {
+            let provider_content = if active_provider.is_authenticated(cx) {
+                let button_id = SharedString::from(format!("reset-key-{}", active_provider.id().0));
+                div()
+                    .child("authenticated")
+                    .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
+                        let provider = active_provider.clone();
+                        move |_, _, cx| {
+                            provider.reset_credentials(cx).detach_and_log_err(cx);
+                            cx.notify();
+                        }
+                    })))
+            } else {
+                let (view, focus_handle) = active_provider.authentication_prompt(cx);
+                if let Some(focus_handle) = focus_handle {
+                    focus_handles.push(focus_handle)
+                }
+                div().child(view)
+            };
+
+            return Some(div().child(provider_content));
+        }
+
+        None
+    }
 }
 
 impl Render for ConfigurationView {
@@ -3027,36 +3074,17 @@ impl Render for ConfigurationView {
 
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
-        let provider_views = providers.into_iter().map(|provider| {
-            let provider_content = if provider.is_authenticated(cx) {
-                let button_id = SharedString::from(format!("reset-key-{}", provider.id().0));
-                div()
-                    .child("authenticated")
-                    .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
-                        let provider = provider.clone();
-                        move |_, _, cx| {
-                            provider.reset_credentials(cx).detach_and_log_err(cx);
-                            cx.notify();
-                        }
-                    })))
-            } else {
-                let (view, focus_handle) = provider.authentication_prompt(cx);
-                if let Some(focus_handle) = focus_handle {
-                    self.focus_handles.push(focus_handle)
-                }
-                div().child(view)
-            };
-
-            div()
-                .child(Headline::new(provider.name().0.clone()))
-                .child(provider_content)
-        });
+        self.set_active_tab(providers[0].id(), cx);
 
         let header = Headline::new("Configure Zed's AI Assistant")
             .size(HeadlineSize::Large)
             .into_element();
 
-        div().size_full().child(header).children(provider_views)
+        div()
+            .size_full()
+            .p(Spacing::XLarge.rems(cx))
+            .child(header)
+            .children(self.render_active_tab(cx))
     }
 }
 
