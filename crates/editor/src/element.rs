@@ -2415,7 +2415,7 @@ impl EditorElement {
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
                 available_space,
                 style: BlockStyle::Fixed,
@@ -2460,7 +2460,7 @@ impl EditorElement {
             );
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
                 available_space,
                 style,
@@ -2507,7 +2507,7 @@ impl EditorElement {
 
                         blocks.push(BlockLayout {
                             id: block.id(),
-                            row: rows.end,
+                            row: None,
                             element,
                             available_space,
                             style,
@@ -2530,11 +2530,17 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) {
         for block in blocks {
-            let mut origin = hitbox.origin
-                + point(
-                    Pixels::ZERO,
-                    block.row.as_f32() * line_height - scroll_pixel_position.y,
-                );
+            let mut origin = if let Some(row) = block.row {
+                hitbox.origin
+                    + point(
+                        Pixels::ZERO,
+                        row.as_f32() * line_height - scroll_pixel_position.y,
+                    )
+            } else {
+                // Position the block outside the visible area
+                hitbox.origin + point(Pixels::ZERO, hitbox.size.height)
+            };
+
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
             }
@@ -5868,7 +5874,7 @@ impl PositionMap {
 
 struct BlockLayout {
     id: BlockId,
-    row: DisplayRow,
+    row: Option<DisplayRow>,
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,

@@ -401,6 +401,7 @@ similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
+strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
@@ -458,6 +459,19 @@ wasmtime = { version = "21.0.1", default-features = false, features = [
 wasmtime-wasi = "21.0.1"
 which = "6.0.0"
 wit-component = "0.201"
+
+[workspace.dependencies.async-stripe]
+version = "0.37"
+default-features = false
+features = [
+    "runtime-tokio-hyper-rustls",
+    "billing",
+    "checkout",
+    "events",
+    # The features below are only enabled to get the `events` feature to build.
+    "chrono",
+    "connect",
+]
 
 [workspace.dependencies.windows]
 version = "0.58"

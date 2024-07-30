@@ -1884,7 +1884,6 @@ impl Editor {
                         if active {
                             blink_manager.enable(cx);
                         } else {
-                            blink_manager.show_cursor(cx);
                             blink_manager.disable(cx);
                         }
                     });

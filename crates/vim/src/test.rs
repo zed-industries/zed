@@ -1448,3 +1448,15 @@ async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("shift-v 2 <");
     cx.assert_state("    ˇhi", Mode::Normal);
 }
+
+#[gpui::test]
+async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes(">").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.shared_state().await.assert_eq("ˇhello world"); // takes a _long_ time
+}

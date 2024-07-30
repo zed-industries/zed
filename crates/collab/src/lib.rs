@@ -26,6 +26,7 @@ pub enum Error {
     Http(StatusCode, String),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
+    Stripe(stripe::StripeError),
 }
 
 impl From<anyhow::Error> for Error {
@@ -37,6 +38,12 @@ impl From<anyhow::Error> for Error {
 impl From<sea_orm::error::DbErr> for Error {
     fn from(error: sea_orm::error::DbErr) -> Self {
         Self::Database(error)
+    }
+}
+
+impl From<stripe::StripeError> for Error {
+    fn from(error: stripe::StripeError) -> Self {
+        Self::Stripe(error)
     }
 }
 
@@ -81,6 +88,14 @@ impl IntoResponse for Error {
                 );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
+            Error::Stripe(error) => {
+                log::error!(
+                    "HTTP error {}: {:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
         }
     }
 }
@@ -91,6 +106,7 @@ impl std::fmt::Debug for Error {
             Error::Http(code, message) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }
@@ -101,6 +117,7 @@ impl std::fmt::Display for Error {
             Error::Http(code, message) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }
@@ -137,6 +154,8 @@ pub struct Config {
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
+    pub stripe_api_key: Option<String>,
+    pub stripe_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
 }
 
@@ -150,6 +169,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
+    pub stripe_client: Option<Arc<stripe::Client>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub clickhouse_client: Option<clickhouse::Client>,
@@ -183,6 +203,10 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
+            stripe_client: build_stripe_client(&config)
+                .await
+                .map(|client| Arc::new(client))
+                .log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config
@@ -193,6 +217,15 @@ impl AppState {
         };
         Ok(Arc::new(this))
     }
+}
+
+async fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
+    let api_key = config
+        .stripe_api_key
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing stripe_api_key"))?;
+
+    Ok(stripe::Client::new(api_key))
 }
 
 async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::Client> {

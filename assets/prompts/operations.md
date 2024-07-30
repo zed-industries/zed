@@ -6,7 +6,7 @@ Guidelines:
 - Don't create and then update a file.
 - We'll create it in one shot.
 - Prefer updating symbols lower in the syntax tree if possible.
-- Never include operations on a parent symbol and one of its children in the same <operations> block.
+- Never include operations on a parent symbol and one of its children in the same operations block.
 - Never nest an operation with another operation or include CDATA or other content. All operations are leaf nodes.
 - Include a description attribute for each operation with a brief, one-line description of the change to perform.
 - Descriptions are required for all operations except delete.
@@ -14,66 +14,73 @@ Guidelines:
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 - Don't generate multiple operations at the same location. Instead, combine them together in a single operation with a succinct combined description.
 
-The available operation types are:
-
-1. <update>: Modify an existing symbol in a file.
-2. <create_file>: Create a new file.
-3. <insert_sibling_after>: Add a new symbol as sibling after an existing symbol in a file.
-4. <append_child>: Add a new symbol as the last child of an existing symbol in a file.
-5. <prepend_child>: Add a new symbol as the first child of an existing symbol in a file.
-6. <delete>: Remove an existing symbol from a file. The `description` attribute is invalid for delete, but required for other ops.
-
-All operations *require* a path.
-Operations that *require* a symbol: <update>, <insert_sibling_after>, <delete>
-Operations that don't allow a symbol: <create>
-Operations that have an *optional* symbol: <prepend_child>, <append_child>
-
 Example 1:
 
 User:
-  ```rs src/rectangle.rs
-  struct Rectangle {
-      width: f64,
-      height: f64,
-  }
+```rs src/rectangle.rs
+struct Rectangle {
+    width: f64,
+    height: f64,
+}
 
-  impl Rectangle {
-      fn new(width: f64, height: f64) -> Self {
-          Rectangle { width, height }
-      }
-  }
-  ```
+impl Rectangle {
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+}
+```
 
-  Symbols for src/rectangle.rs:
-  - struct Rectangle
-  - impl Rectangle
-  - impl Rectangle fn new
+<step>Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct</step>
+<step>Implement the 'Display' trait for the Rectangle struct</step>
 
-  <step>Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct</step>
-  <step>Implement the 'Display' trait for the Rectangle struct</step>
+What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
 
-  What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
-
-Assistant (wrong):
-<operations>
-    <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate_area method" />
-    <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate_perimeter method" />
-</operations>
+A (wrong):
+{
+  "operations": [
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate_area method"
+    },
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate_perimeter method"
+    }
+  ]
+}
 
 This demonstrates what NOT to do. NEVER append multiple children at the same location.
 
-Assistant (corrected):
-<operations>
-    <append_child path="src/shapes.rs" symbol="impl Rectangle" description="Add calculate area and perimeter methods" />
-</operations>
+A (corrected):
+{
+  "operations": [
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate area and perimeter methods"
+    }
+  ]
+}
 
 User:
 What are the operations for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
 
-Assistant:
-<operations>
-    <insert_sibling_after path="src/shapes.rs" symbol="impl Rectangle" description="Implement Display trait for Rectangle"/>
-</operations>
+A:
+{
+  "operations": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Implement Display trait for Rectangle"
+    }
+  ]
+}
 
 Example 2:
 
@@ -96,32 +103,36 @@ impl User {
 }
 ```
 
-Symbols for src/user.rs:
-- struct User
-- struct User pub name
-- struct User age
-- struct User email
-- impl User
-- impl User fn new
-- impl User pub fn print_info
-
 <step>Update the 'print_info' method to use formatted output</step>
 <step>Remove the 'email' field from the User struct</step>
 
 What are the operations for the step: <step>Update the 'print_info' method to use formatted output</step>
 
-Assistant:
-<operations>
-    <update path="src/user.rs" symbol="impl User fn print_info" description="Use formatted output" />
-</operations>
+A:
+{
+  "operations": [
+    {
+      "kind": "Update",
+      "path": "src/user.rs",
+      "symbol": "impl User pub fn print_info",
+      "description": "Use formatted output"
+    }
+  ]
+}
 
 User:
 What are the operations for the step: <step>Remove the 'email' field from the User struct</step>
 
-Assistant:
-<operations>
-    <delete path="src/user.rs" symbol="struct User email" description="Remove the email field" />
-</operations>
+A:
+{
+  "operations": [
+    {
+      "kind": "Delete",
+      "path": "src/user.rs",
+      "symbol": "struct User email"
+    }
+  ]
+}
 
 Example 3:
 
@@ -144,32 +155,36 @@ impl Vehicle {
 }
 ```
 
-Symbols for src/vehicle.rs:
-- struct Vehicle
-- struct Vehicle make
-- struct Vehicle model
-- struct Vehicle year
-- impl Vehicle
-- impl Vehicle fn new
-- impl Vehicle fn print_year
-
 <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
 What are the operations for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 
-Assistant:
-<operations>
-    <prepend_child path="src/vehicle.rs" description="Add 'use std::fmt' statement" />
-</operations>
+A:
+{
+  "operations": [
+    {
+      "kind": "PrependChild",
+      "path": "src/vehicle.rs",
+      "description": "Add 'use std::fmt' statement"
+    }
+  ]
+}
 
 User:
 What are the operations for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
-Assistant:
-<operations>
-    <insert_sibling_after path="src/vehicle.rs" symbol="impl Vehicle fn new" description="Add start_engine method"/>
-</operations>
+A:
+{
+  "operations": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/vehicle.rs",
+      "symbol": "impl Vehicle fn new",
+      "description": "Add start_engine method"
+    }
+  ]
+}
 
 Example 4:
 
@@ -198,44 +213,188 @@ impl Employee {
 }
 ```
 
-Symbols for src/employee.rs:
-- struct Employee
-- struct Employee name
-- struct Employee position
-- struct Employee salary
-- struct Employee department
-- impl Employee
-- impl Employee fn new
-- impl Employee fn print_details
-- impl Employee fn give_raise
-
 <step>Make salary an f32</step>
 
 What are the operations for the step: <step>Make salary an f32</step>
 
 A (wrong):
-  <operations>
-      <update path="src/employee.rs" symbol="struct Employee" description="Change the type of salary to an f32" />
-      <update path="src/employee.rs" symbol="struct Employee salary" description="Change the type to an f32" />
-  </operations>
+{
+  "operations": [
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee",
+      "description": "Change the type of salary to an f32"
+    },
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee salary",
+      "description": "Change the type to an f32"
+    }
+  ]
+}
 
 This example demonstrates what not to do. `struct Employee salary` is a child of `struct Employee`.
 
 A (corrected):
-  <operations>
-      <update path="src/employee.rs" symbol="struct Employee salary" description="Change the type to an f32" />
-  </operations>
+{
+  "operations": [
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee salary",
+      "description": "Change the type to an f32"
+    }
+  ]
+}
 
 User:
-  What are the correct operations for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
+What are the correct operations for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
 
 A:
-  <operations>
-      <delete path="src/employee.rs" symbol="struct Employee department" />
-      <update path="src/employee.rs" symbol="impl Employee fn print_details" description="Don't print the 'department' field" />
-  </operations>
+{
+  "operations": [
+    {
+      "kind": "Delete",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee department"
+    },
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "impl Employee fn print_details",
+      "description": "Don't print the 'department' field"
+    }
+  ]
+}
 
-Now generate the operations for the following step.
-Output only valid XML containing valid operations with their required attributes.
-NEVER output code or any other text inside <operation> tags. If you do, you will replaced with another model.
-Your response *MUST* begin with <operations> and end with </operations>:
+Example 5:
+
+User:
+```rs src/game.rs
+struct Player {
+    name: String,
+    health: i32,
+    pub score: u32,
+}
+
+impl Player {
+    pub fn new(name: String) -> Self {
+        Player { name, health: 100, score: 0 }
+    }
+}
+
+struct Game {
+    players: Vec<Player>,
+}
+
+impl Game {
+    fn new() -> Self {
+        Game { players: Vec::new() }
+    }
+}
+```
+
+<step>Add a 'level' field to Player and update the 'new' method</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/game.rs",
+      "symbol": "struct Player pub score",
+      "description": "Add level field to Player"
+    },
+    {
+      "kind": "Update",
+      "path": "src/game.rs",
+      "symbol": "impl Player pub fn new",
+      "description": "Initialize level in new method"
+    }
+  ]
+}
+
+Example 6:
+
+User:
+```rs src/config.rs
+use std::collections::HashMap;
+
+struct Config {
+    settings: HashMap<String, String>,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config { settings: HashMap::new() }
+    }
+}
+```
+
+<step>Add a 'load_from_file' method to Config and import necessary modules</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "PrependChild",
+      "path": "src/config.rs",
+      "description": "Import std::fs and std::io modules"
+    },
+    {
+      "kind": "AppendChild",
+      "path": "src/config.rs",
+      "symbol": "impl Config",
+      "description": "Add load_from_file method"
+    }
+  ]
+}
+
+Example 7:
+
+User:
+```rs src/database.rs
+pub(crate) struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    fn new(url: &str) -> Result<Self, Error> {
+        let connection = Connection::connect(url)?;
+        Ok(Database { connection })
+    }
+
+    async fn query(&self, sql: &str) -> Result<Vec<Row>, Error> {
+        self.connection.query(sql, &[])
+    }
+}
+```
+
+<step>Add error handling to the 'query' method and create a custom error type</step>
+
+A:
+{
+  "operations": [
+    {
+      "kind": "PrependChild",
+      "path": "src/database.rs",
+      "description": "Import necessary error handling modules"
+    },
+    {
+      "kind": "InsertSiblingBefore",
+      "path": "src/database.rs",
+      "symbol": "pub(crate) struct Database",
+      "description": "Define custom DatabaseError enum"
+    },
+    {
+      "kind": "Update",
+      "path": "src/database.rs",
+      "symbol": "impl Database async fn query",
+      "description": "Implement error handling in query method"
+    }
+  ]
+}
+
+Now generate the operations for the following step:

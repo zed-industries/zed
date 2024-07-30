@@ -43,11 +43,6 @@ impl FeatureFlag for LanguageModels {
     const NAME: &'static str = "language-models";
 }
 
-pub struct TerminalInlineAssist {}
-impl FeatureFlag for TerminalInlineAssist {
-    const NAME: &'static str = "terminal-inline-assist";
-}
-
 pub struct GroupedDiagnostics {}
 impl FeatureFlag for GroupedDiagnostics {
     const NAME: &'static str = "grouped-diagnostics";
