@@ -53,7 +53,6 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
-    pub step_resolution_model: LanguageModelSelection,
     pub using_outdated_settings_version: bool,
 }
 
@@ -204,7 +203,6 @@ impl AssistantSettingsContent {
                                 })
                             }
                         }),
-                    step_resolution_model: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -223,7 +221,6 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
-                step_resolution_model: None,
             },
         }
     }
@@ -339,7 +336,6 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
-            step_resolution_model: None,
         })
     }
 }
@@ -368,8 +364,6 @@ pub struct AssistantSettingsContentV2 {
     default_height: Option<f32>,
     /// The default model to use when creating new contexts.
     default_model: Option<LanguageModelSelection>,
-    /// The model to use when resolving edit steps.
-    step_resolution_model: Option<LanguageModelSelection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -490,10 +484,6 @@ impl Settings for AssistantSettings {
             merge(
                 &mut settings.default_model,
                 value.default_model.map(Into::into),
-            );
-            merge(
-                &mut settings.step_resolution_model,
-                value.step_resolution_model.map(Into::into),
             );
         }
 
