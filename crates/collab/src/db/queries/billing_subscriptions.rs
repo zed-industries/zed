@@ -30,6 +30,31 @@ impl Database {
         .await
     }
 
+    /// Upserts the billing subscription by its Stripe subscription ID.
+    pub async fn upsert_billing_subscription_by_stripe_subscription_id(
+        &self,
+        params: &CreateBillingSubscriptionParams,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            billing_subscription::Entity::insert(billing_subscription::ActiveModel {
+                billing_customer_id: ActiveValue::set(params.billing_customer_id),
+                stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
+                stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+                ..Default::default()
+            })
+            .on_conflict(
+                OnConflict::columns([billing_subscription::Column::StripeSubscriptionId])
+                    .update_columns([billing_subscription::Column::StripeSubscriptionStatus])
+                    .to_owned(),
+            )
+            .exec_with_returning(&*tx)
+            .await?;
+
+            Ok(())
+        })
+        .await
+    }
+
     /// Returns the billing subscription with the specified ID.
     pub async fn get_billing_subscription_by_id(
         &self,
