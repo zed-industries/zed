@@ -1330,6 +1330,15 @@ impl ProjectPanel {
                             project.copy_relative_entry(entry.id, relative_path, new_path, cx)
                         })
                         .detach_and_log_err(cx);
+                    if clipboard_entries.is_cut() {
+                        self.project
+                            .update(cx, |project, cx| {
+                                project
+                                    .delete_entry(clipboard_entry.entry_id, true, cx)
+                                    .unwrap()
+                            })
+                            .detach_and_log_err(cx);
+                    }
                 } else {
                     if clipboard_entries.is_cut() {
                         self.project
