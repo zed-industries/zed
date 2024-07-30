@@ -5,9 +5,13 @@ use fs::Fs;
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Model, Task};
-use heed::types::{SerdeBincode, Str};
+use heed::{
+    types::{SerdeBincode, Str},
+    RoTxn,
+};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
 use log;
+use parking_lot::Mutex;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
@@ -20,7 +24,7 @@ use std::{
 use util::ResultExt;
 use worktree::Snapshot;
 
-use crate::indexing::{IndexingEntryHandle, IndexingEntrySet};
+use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
 
 /// This model should be good for summarizing code - fast, low price, and good at outputting English.
 ///
@@ -37,7 +41,7 @@ pub struct FileSummary {
 #[derive(Debug, Serialize, Deserialize)]
 struct UnsummarizedFile {
     // Path to the file on disk
-    path: String,
+    path: Arc<Path>,
     // The mtime of the file on disk
     mtime: Option<SystemTime>,
     // BLAKE3 hash of the source file's contents
@@ -67,13 +71,13 @@ pub struct FileDigest {
     pub digest: Blake3Digest,
 }
 
-struct SummarizeFiles {
-    files: channel::Receiver<SummarizedFile>,
+struct NeedsSummary {
+    files: channel::Receiver<UnsummarizedFile>,
     task: Task<Result<()>>,
 }
 
-struct NeedsSummary {
-    files: channel::Receiver<UnsummarizedFile>,
+struct SummarizeFiles {
+    files: channel::Receiver<SummarizedFile>,
     task: Task<Result<()>>,
 }
 
@@ -84,10 +88,11 @@ pub struct SummaryIndex {
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
     summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
+    backlog: Arc<Mutex<SummaryBacklog>>,
 }
 
-struct ScanEntries {
-    updated_entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
+struct Backlogged {
+    paths_to_digest: channel::Receiver<Vec<(Arc<Path>, Option<SystemTime>)>>,
     task: Task<Result<()>>,
 }
 
@@ -112,6 +117,7 @@ impl SummaryIndex {
             file_digest_db,
             summary_db,
             entry_ids_being_indexed,
+            backlog: Default::default(),
         }
     }
 
@@ -130,15 +136,15 @@ impl SummaryIndex {
         let start = Instant::now();
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_entries(worktree, cx);
-        let digest = self.digest_files(worktree_abs_path, scan.updated_entries, cx);
+        let backlogged = self.scan_entries(worktree, cx);
+        let digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
         let needs_summary = self.check_summary_cache(digest.files, cx);
         let summaries = self.summarize_files(needs_summary.files, cx);
         let persist = self.persist_summaries(summaries.files, cx);
 
         async move {
             futures::try_join!(
-                scan.task,
+                backlogged.task,
                 digest.task,
                 needs_summary.task,
                 summaries.task,
@@ -155,22 +161,23 @@ impl SummaryIndex {
     }
 
     pub fn index_updated_entries(
-        &self,
+        &mut self,
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
         let start = Instant::now();
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
-        let digest = self.digest_files(worktree_abs_path, scan.updated_entries, cx);
+        let backlogged = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+
+        let digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
         let needs_summary = self.check_summary_cache(digest.files, cx);
         let summaries = self.summarize_files(needs_summary.files, cx);
         let persist = self.persist_summaries(summaries.files, cx);
 
         async move {
             futures::try_join!(
-                scan.task,
+                backlogged.task,
                 digest.task,
                 needs_summary.task,
                 summaries.task,
@@ -201,10 +208,10 @@ impl SummaryIndex {
                     Ok(opt_answer) => {
                         if opt_answer.is_none() {
                             // It's not in the summary cache db, so we need to summarize it.
-                            log::debug!("{:?} was NOT in the db cache and needs to be resummarized.", &file.digest);
+                            log::debug!("File {:?} (digest {:?}) was NOT in the db cache and needs to be resummarized.", file.path.display(), &file.digest);
                             needs_summary_tx.send(file).await?;
                         } else {
-                            log::debug!("{:?} was in the db cache and does not need to be resummarized.", &file.digest);
+                            log::debug!("File {:?} (digest {:?}) was in the db cache and does not need to be resummarized.", file.path.display(), &file.digest);
                         }
                     }
                     Err(err) => {
@@ -222,35 +229,18 @@ impl SummaryIndex {
         }
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
+    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> Backlogged {
+        let (tx, rx) = channel::bounded(512);
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
-        let entries_being_indexed = self.entry_ids_being_indexed.clone();
+        let backlog = Arc::clone(&self.backlog);
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
 
             for entry in worktree.files(false, 0) {
-                let entry_db_key = db_key_for_path(&entry.path);
-
-                match digest_db.get(&txn, &entry_db_key) {
-                    Ok(opt_saved_digest) => {
-                        // The file path is the same, but the mtime is different. Update it!
-                        if entry.mtime != opt_saved_digest.and_then(|digest| digest.mtime) {
-                            let handle = entries_being_indexed.insert(entry.id);
-                            updated_entries_tx.send((entry.clone(), handle)).await?;
-                        }
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Error trying to get file digest db entry {:?}: {:?}",
-                            &entry_db_key,
-                            err
-                        );
-                    }
-                }
+                Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry, &tx);
             }
 
             // TODO delete db entries for deleted files
@@ -258,9 +248,53 @@ impl SummaryIndex {
             Ok(())
         });
 
-        ScanEntries {
-            updated_entries: updated_entries_rx,
+        Backlogged {
+            paths_to_digest: rx,
             task,
+        }
+    }
+
+    fn add_to_backlog(
+        backlog: Arc<Mutex<SummaryBacklog>>,
+        digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
+        txn: &RoTxn<'_>,
+        entry: &Entry,
+        tx: &channel::Sender<Vec<(Arc<Path>, Option<SystemTime>)>>,
+    ) {
+        let entry_db_key = db_key_for_path(&entry.path);
+
+        match digest_db.get(&txn, &entry_db_key) {
+            Ok(opt_saved_digest) => {
+                // The file path is the same, but the mtime is different. (Or there was no mtime.)
+                // It needs updating, so add it to the backlog! Then, if the backlog is full, drain it and summarize its contents.
+                if entry.mtime != opt_saved_digest.and_then(|digest| digest.mtime) {
+                    // Accumulate all of these into a Vec immediately, so we can release the lock as soon as possible.
+                    let paths_to_digest = {
+                        let mut backlog = backlog.lock();
+
+                        backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
+
+                        if backlog.needs_drain() {
+                            backlog
+                                .drain()
+                                .collect::<Vec<(Arc<Path>, Option<SystemTime>)>>()
+                        } else {
+                            Vec::new()
+                        }
+                    };
+
+                    if !paths_to_digest.is_empty() {
+                        tx.send(paths_to_digest);
+                    }
+                }
+            }
+            Err(err) => {
+                log::error!(
+                    "Error trying to get file digest db entry {:?}: {:?}",
+                    &entry_db_key,
+                    err
+                );
+            }
         }
     }
 
@@ -269,20 +303,32 @@ impl SummaryIndex {
         worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
-    ) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
+    ) -> Backlogged {
+        let (tx, rx) = channel::bounded(512);
         // let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
-        let entries_being_indexed = self.entry_ids_being_indexed.clone();
+        let db_connection = self.db_connection.clone();
+        let digest_db = self.file_digest_db;
+        let backlog = Arc::clone(&self.backlog);
         let task = cx.background_executor().spawn(async move {
+            let txn = db_connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+
             for (path, entry_id, status) in updated_entries.iter() {
                 match status {
-                    project::PathChange::Added
+                    project::PathChange::Loaded
+                    | project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
-                                let handle = entries_being_indexed.insert(entry.id);
-                                updated_entries_tx.send((entry.clone(), handle)).await?;
+                                Self::add_to_backlog(
+                                    Arc::clone(&backlog),
+                                    digest_db,
+                                    &txn,
+                                    entry,
+                                    &tx,
+                                );
                             }
                         }
                     }
@@ -293,17 +339,14 @@ impl SummaryIndex {
                         //     .send((Bound::Included(db_path.clone()), Bound::Included(db_path)))
                         //     .await?;
                     }
-                    project::PathChange::Loaded => {
-                        // Do nothing.
-                    }
                 }
             }
 
             Ok(())
         });
 
-        ScanEntries {
-            updated_entries: updated_entries_rx,
+        Backlogged {
+            paths_to_digest: rx,
             // deleted_entry_ranges: deleted_entry_ranges_rx,
             task,
         }
@@ -311,51 +354,58 @@ impl SummaryIndex {
 
     fn digest_files(
         &self,
+        paths: channel::Receiver<Vec<(Arc<Path>, Option<SystemTime>)>>,
         worktree_abs_path: Arc<Path>,
-        entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
-        let (might_need_summary_tx, might_need_summary_rx) = channel::bounded(2048);
+        let (rx, tx) = channel::bounded(2048);
         let task = cx.spawn(|cx| async move {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
-                            while let Ok((entry, _handle)) = entries.recv().await {
-                                let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                let Some(text) = fs
-                                    .load(&entry_abs_path)
-                                    .await
-                                    .with_context(|| {
-                                        format!("failed to read path {entry_abs_path:?}")
-                                    })
-                                    .log_err()
-                                else {
-                                    continue;
-                                };
+                            while let Ok(pairs) = paths.recv().await {
+                                // Note: we could process all these files concurrently if desired. Might or might not speed things up.
+                                for (path, mtime) in pairs {
+                                    let entry_abs_path = worktree_abs_path.join(&path);
 
-                                let digest = {
-                                    let mut hasher = blake3::Hasher::new();
-                                    hasher.update(text.as_bytes());
-                                    hasher.finalize().to_hex()
-                                };
+                                    // Load the file's contents and compute its hash digest.
+                                    let unsummarized_file = {
+                                        let Some(contents) = fs
+                                            .load(&entry_abs_path)
+                                            .await
+                                            .with_context(|| {
+                                                format!("failed to read path {entry_abs_path:?}")
+                                            })
+                                            .log_err()
+                                        else {
+                                            continue;
+                                        };
 
-                                let unsummarized_file = UnsummarizedFile {
-                                    digest,
-                                    contents: text,
-                                    path: entry.path.display().to_string(),
-                                    mtime: entry.mtime,
-                                };
+                                        let digest = {
+                                            let mut hasher = blake3::Hasher::new();
+                                            hasher.update(contents.as_bytes());
+                                            hasher.finalize().to_hex()
+                                        };
 
-                                if let Err(err) = might_need_summary_tx
-                                    .send(unsummarized_file)
-                                    .map_err(|error| anyhow!(error))
-                                    .await
-                                {
-                                    log::error!("Error: {:?}", err);
+                                        UnsummarizedFile {
+                                            digest,
+                                            contents,
+                                            path,
+                                            mtime,
+                                        }
+                                    };
 
-                                    return;
+                                    if let Err(err) = rx
+                                        .send(unsummarized_file)
+                                        .map_err(|error| anyhow!(error))
+                                        .await
+                                    {
+                                        log::error!("Error: {:?}", err);
+
+                                        return;
+                                    }
                                 }
                             }
                         });
@@ -365,10 +415,7 @@ impl SummaryIndex {
             Ok(())
         });
 
-        MightNeedSummaryFiles {
-            files: might_need_summary_rx,
-            task,
-        }
+        MightNeedSummaryFiles { files: tx, task }
     }
 
     fn summarize_files(
@@ -384,7 +431,7 @@ impl SummaryIndex {
 
                 summarized_tx
                     .send(SummarizedFile {
-                        path: file.path,
+                        path: file.path.display().to_string(),
                         digest: file.digest,
                         summary: summary.await?,
                         mtime: file.mtime,

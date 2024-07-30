@@ -4,6 +4,7 @@ mod embedding_index;
 mod indexing;
 mod project_index;
 mod project_index_debug_view;
+mod summary_backlog;
 mod summary_index;
 mod worktree_index;
 

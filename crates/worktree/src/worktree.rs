@@ -3146,6 +3146,8 @@ pub struct Entry {
     pub git_status: Option<GitFileStatus>,
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
+    /// The entry's size on disk, in bytes.
+    pub size: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3198,6 +3200,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
+            size: metadata.len,
             canonical_path,
             is_symlink: metadata.is_symlink,
             is_ignored: false,

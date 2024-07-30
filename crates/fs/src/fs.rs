@@ -149,6 +149,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub len: u64,
 }
 
 #[derive(Default)]
@@ -421,6 +422,7 @@ impl Fs for RealFs {
         Ok(Some(Metadata {
             inode,
             mtime: metadata.modified().unwrap(),
+            len: metadata.len(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
         }))
@@ -674,11 +676,13 @@ enum FakeFsEntry {
     File {
         inode: u64,
         mtime: SystemTime,
+        len: u64,
         content: Vec<u8>,
     },
     Dir {
         inode: u64,
         mtime: SystemTime,
+        len: u64,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
         git_repo_state: Option<Arc<Mutex<git::repository::FakeGitRepositoryState>>>,
     },
@@ -807,6 +811,7 @@ impl FakeFs {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
                     mtime: SystemTime::UNIX_EPOCH,
+                    len: 0,
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
@@ -859,6 +864,7 @@ impl FakeFs {
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
+            len: content.len() as u64,
             content,
         }));
         state.write_path(path, move |entry| {
@@ -1206,6 +1212,7 @@ impl Fs for FakeFs {
                     Arc::new(Mutex::new(FakeFsEntry::Dir {
                         inode,
                         mtime,
+                        len: 0,
                         entries: Default::default(),
                         git_repo_state: None,
                     }))
@@ -1228,6 +1235,7 @@ impl Fs for FakeFs {
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
+            len: 0,
             content: Vec::new(),
         }));
         state.write_path(path, |entry| {
@@ -1368,6 +1376,7 @@ impl Fs for FakeFs {
                 e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
                     inode,
                     mtime,
+                    len: content.len() as u64,
                     content: Vec::new(),
                 })))
                 .clone(),
@@ -1523,15 +1532,21 @@ impl Fs for FakeFs {
 
             let entry = entry.lock();
             Ok(Some(match &*entry {
-                FakeFsEntry::File { inode, mtime, .. } => Metadata {
+                FakeFsEntry::File {
+                    inode, mtime, len, ..
+                } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
+                    len: *len,
                     is_dir: false,
                     is_symlink,
                 },
-                FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
+                FakeFsEntry::Dir {
+                    inode, mtime, len, ..
+                } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
+                    len: *len,
                     is_dir: true,
                     is_symlink,
                 },
