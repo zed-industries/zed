@@ -1,0 +1,45 @@
+use super::*;
+
+#[derive(Debug)]
+pub struct CreateProcessedStripeEventParams {
+    pub stripe_event_id: String,
+    pub stripe_event_type: String,
+    pub stripe_event_created_timestamp: i64,
+}
+
+impl Database {
+    /// Creates a new processed Stripe event.
+    pub async fn create_processed_stripe_event(
+        &self,
+        params: &CreateProcessedStripeEventParams,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            processed_stripe_event::Entity::insert(processed_stripe_event::ActiveModel {
+                stripe_event_id: ActiveValue::set(params.stripe_event_id.clone()),
+                stripe_event_type: ActiveValue::set(params.stripe_event_type.clone()),
+                stripe_event_created_timestamp: ActiveValue::set(
+                    params.stripe_event_created_timestamp,
+                ),
+                ..Default::default()
+            })
+            .exec_without_returning(&*tx)
+            .await?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Returns the processed Stripe event with the specified event ID.
+    pub async fn get_processed_stripe_event_by_event_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<processed_stripe_event::Model>> {
+        self.transaction(|tx| async move {
+            Ok(processed_stripe_event::Entity::find_by_id(id)
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+}
