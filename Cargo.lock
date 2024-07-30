@@ -10759,7 +10759,6 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
- "terminal_view",
  "theme",
  "ui",
  "util",
