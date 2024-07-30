@@ -26,7 +26,7 @@ use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dap::{
     client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId},
-    transport::Events,
+    transport::Payload,
 };
 use debounced_delay::DebouncedDelay;
 use futures::{
@@ -115,7 +115,8 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    DebugAdapterConfig, HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate,
+    TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -325,7 +326,7 @@ pub enum Event {
     DebugClientStarted(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
-        event: Events,
+        payload: Payload,
     },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -1199,15 +1200,16 @@ impl Project {
     }
 
     pub fn has_active_debugger(&self) -> bool {
-        self.debug_adapters.len() > 0
+        self.debug_adapters
+            .values()
+            .any(|c| matches!(c, DebugAdapterClientState::Starting(_)))
     }
 
-    pub fn start_debug_adapter_client(
+    pub fn start_debug_adapter_client_from_task(
         &mut self,
         debug_task: task::ResolvedTask,
         cx: &mut ModelContext<Self>,
     ) {
-        let id = DebugAdapterClientId(self.next_debugger_id());
         let debug_template = debug_task.original_task();
         let cwd = debug_template
             .cwd
@@ -1217,23 +1219,46 @@ impl Project {
             .debug_adapter_config()
             .expect("Debug tasks need to specify adapter configuration");
 
+        let debug_template = debug_template.clone();
         let command = debug_template.command.clone();
         let args = debug_template.args.clone();
+        let request_args = adapter_config.request_args.as_ref().map(|a| a.args.clone());
 
+        self.start_debug_adapter_client(
+            adapter_config,
+            command,
+            args,
+            cwd.into(),
+            request_args,
+            cx,
+        );
+    }
+
+    pub fn start_debug_adapter_client(
+        &mut self,
+        config: DebugAdapterConfig,
+        command: String,
+        args: Vec<String>,
+        cwd: PathBuf,
+        request_args: Option<serde_json::Value>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let id = DebugAdapterClientId(self.next_debugger_id());
         let task = cx.spawn(|this, mut cx| async move {
             let project = this.clone();
             let client = DebugAdapterClient::new(
                 id,
-                adapter_config.clone(),
+                config,
                 &command,
-                args.iter().map(|ele| &ele[..]).collect(),
-                cwd.into(),
+                &args,
+                &cwd,
+                request_args,
                 move |event, cx| {
                     project
                         .update(cx, |_, cx| {
                             cx.emit(Event::DebugClientEvent {
                                 client_id: id,
-                                event,
+                                payload: event,
                             })
                         })
                         .log_err();

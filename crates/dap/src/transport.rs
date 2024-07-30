@@ -16,7 +16,7 @@ use smol::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Payload {
     Event(Box<Events>),
@@ -49,13 +49,19 @@ pub enum Events {
     Other(HashMap<String, Value>),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Request {
     #[serde(skip)]
     pub back_ch: Option<Sender<Result<Response>>>,
     pub seq: u64,
     pub command: String,
     pub arguments: Option<Value>,
+}
+
+impl PartialEq for Request {
+    fn eq(&self, other: &Self) -> bool {
+        self.seq == other.seq && self.command == other.command && self.arguments == other.arguments
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -219,7 +225,6 @@ impl Transport {
         match payload {
             Payload::Response(res) => {
                 if let Some(tx) = self.pending_requests.lock().await.remove(&res.request_seq) {
-
                     if !tx.is_closed() {
                         tx.send(Self::process_response(res)).await?;
                     } else {

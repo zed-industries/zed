@@ -352,7 +352,7 @@ impl PickerDelegate for TasksModalDelegate {
                     // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
                     TaskType::Debug => workspace.project().update(cx, |project, cx| {
-                        project.start_debug_adapter_client(task, cx)
+                        project.start_debug_adapter_client_from_task(task, cx)
                     }),
                 };
             })
@@ -507,7 +507,7 @@ impl PickerDelegate for TasksModalDelegate {
                     // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
                     TaskType::Debug => workspace.project().update(cx, |project, cx| {
-                        project.start_debug_adapter_client(task, cx)
+                        project.start_debug_adapter_client_from_task(task, cx)
                     }),
                 };
             })
