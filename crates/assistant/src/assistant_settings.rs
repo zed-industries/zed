@@ -456,7 +456,7 @@ pub struct LegacyAssistantSettingsContent {
 impl Settings for AssistantSettings {
     const KEY: Option<&'static str> = Some("assistant");
 
-    const ALWAYS_PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AssistantSettingsContent;
 

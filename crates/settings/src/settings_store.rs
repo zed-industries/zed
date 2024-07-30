@@ -34,7 +34,7 @@ pub trait Settings: 'static + Send + Sync {
     /// This is useful for tagged [`FileContent`]s where the tag is a "version" field
     /// that should always be persisted, even if the current user settings match the
     /// current version of the settings.
-    const ALWAYS_PRESERVED_KEYS: Option<&'static [&'static str]> = None;
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
     type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema;
@@ -415,7 +415,7 @@ impl SettingsStore {
     ) -> Vec<(Range<usize>, String)> {
         let setting_type_id = TypeId::of::<T>();
 
-        let preserved_keys = T::ALWAYS_PRESERVED_KEYS.unwrap_or_default();
+        let preserved_keys = T::PRESERVED_KEYS.unwrap_or_default();
 
         let setting = self
             .setting_values

@@ -57,8 +57,6 @@ impl AppCell {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
-            let mut stack = std::backtrace::Backtrace::capture();
-            eprintln!("{:?}", stack);
         }
         AppRef(self.app.borrow())
     }
@@ -69,8 +67,6 @@ impl AppCell {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
-            let mut stack = std::backtrace::Backtrace::capture();
-            eprintln!("{:?}", stack);
         }
         AppRefMut(self.app.borrow_mut())
     }
