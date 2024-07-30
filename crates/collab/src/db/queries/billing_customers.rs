@@ -39,4 +39,18 @@ impl Database {
         })
         .await
     }
+
+    /// Returns the billing customer for the user with the specified Stripe customer ID.
+    pub async fn get_billing_customer_by_stripe_customer_id(
+        &self,
+        stripe_customer_id: &str,
+    ) -> Result<Option<billing_customer::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_customer::Entity::find()
+                .filter(billing_customer::Column::StripeCustomerId.eq(stripe_customer_id))
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
 }

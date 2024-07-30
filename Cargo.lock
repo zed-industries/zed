@@ -840,6 +840,7 @@ version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2f14b5943a52cf051bbbbb68538e93a69d1e291934174121e769f4b181113f5"
 dependencies = [
+ "chrono",
  "futures-util",
  "http-types",
  "hyper",
