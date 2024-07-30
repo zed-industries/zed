@@ -43,6 +43,22 @@ impl Database {
         .await
     }
 
+    /// Returns the processed Stripe events with the specified event IDs.
+    pub async fn get_processed_stripe_events_by_event_ids(
+        &self,
+        event_ids: &[&str],
+    ) -> Result<Vec<processed_stripe_event::Model>> {
+        self.transaction(|tx| async move {
+            Ok(processed_stripe_event::Entity::find()
+                .filter(
+                    processed_stripe_event::Column::StripeEventId.is_in(event_ids.iter().copied()),
+                )
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns whether the Stripe event with the specified ID has already been processed.
     pub async fn already_processed_stripe_event(&self, event_id: &str) -> Result<bool> {
         Ok(self

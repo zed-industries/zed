@@ -260,9 +260,24 @@ async fn poll_stripe_events(
         params.limit = Some(100);
 
         let events = stripe::Event::list(stripe_client, &params).await?;
+
+        let processed_event_ids = {
+            let event_ids = &events
+                .data
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>();
+
+            app.db
+                .get_processed_stripe_events_by_event_ids(event_ids)
+                .await?
+                .into_iter()
+                .map(|event| event.stripe_event_id)
+                .collect::<Vec<_>>()
+        };
+
         for event in events.data {
-            // TODO: Maybe do this in bulk?
-            if app.db.already_processed_stripe_event(&event.id).await? {
+            if processed_event_ids.contains(&event.id.to_string()) {
                 log::info!("Stripe event {} already processed: skipping", event.id);
             } else {
                 unprocessed_events.push(event);
