@@ -27,7 +27,7 @@ use crate::settings::AllLanguageModelSettings;
 use crate::LanguageModelProviderState;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, Role,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
 };
 
 use super::open_ai::count_open_ai_tokens;
@@ -85,7 +85,12 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| Arc::new(CopilotChatLanguageModel { model }) as Arc<dyn LanguageModel>)
+            .map(|model| {
+                Arc::new(CopilotChatLanguageModel {
+                    model,
+                    request_limiter: RateLimiter::new(4),
+                }) as Arc<dyn LanguageModel>
+            })
             .collect()
     }
 
@@ -145,6 +150,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
 pub struct CopilotChatLanguageModel {
     model: CopilotChatModel,
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for CopilotChatLanguageModel {
@@ -215,27 +221,32 @@ impl LanguageModel for CopilotChatLanguageModel {
             return futures::future::ready(Err(anyhow::anyhow!("App state dropped"))).boxed();
         };
 
-        cx.spawn(|mut cx| async move {
-            let response = CopilotChat::stream_completion(request, low_speed_timeout, &mut cx).await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(result) => {
-                            let choice = result.choices.first();
-                            match choice {
-                                Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
-                                None => Some(Err(anyhow::anyhow!(
-                                    "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
-                                ))),
+        let request_limiter = self.request_limiter.clone();
+        let future = cx.spawn(|cx| async move {
+            let response = CopilotChat::stream_completion(request, low_speed_timeout, cx);
+            request_limiter.stream(async move {
+                let response = response.await?;
+                let stream = response
+                    .filter_map(|response| async move {
+                        match response {
+                            Ok(result) => {
+                                let choice = result.choices.first();
+                                match choice {
+                                    Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
+                                    None => Some(Err(anyhow::anyhow!(
+                                        "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
+                                    ))),
+                                }
                             }
+                            Err(err) => Some(Err(err)),
                         }
-                        Err(err) => Some(Err(err)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        })
-        .boxed()
+                    })
+                    .boxed();
+                Ok(stream)
+            }).await
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn use_tool(

@@ -95,7 +95,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(3),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -283,7 +283,7 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = request.into_anthropic(self.model.id().into());
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream(|| async move {
+        let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(anthropic::extract_text_from_events(response))
         });
@@ -310,7 +310,7 @@ impl LanguageModel for AnthropicModel {
 
         let response = self.request_completion(request, cx);
         self.request_limiter
-            .run(|| async move {
+            .run(async move {
                 let response = response.await?;
                 response
                     .content

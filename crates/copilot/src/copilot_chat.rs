@@ -208,13 +208,13 @@ impl CopilotChat {
     pub async fn stream_completion(
         request: Request,
         low_speed_timeout: Option<Duration>,
-        cx: &mut AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
             return Err(anyhow!("Copilot chat is not enabled"));
         };
 
-        let (oauth_token, api_token, client) = this.read_with(cx, |this, _| {
+        let (oauth_token, api_token, client) = this.read_with(&cx, |this, _| {
             (
                 this.oauth_token.clone(),
                 this.api_token.clone(),
@@ -229,7 +229,7 @@ impl CopilotChat {
             _ => {
                 let token =
                     request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
-                this.update(cx, |this, cx| {
+                this.update(&mut cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
                 })?;

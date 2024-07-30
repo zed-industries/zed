@@ -12,7 +12,7 @@ use ui::{prelude::*, ButtonLike, ElevationIndex};
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -140,6 +140,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     id: LanguageModelId::from(model.name.clone()),
                     model: model.clone(),
                     http_client: self.http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -185,6 +186,7 @@ pub struct OllamaLanguageModel {
     id: LanguageModelId,
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
+    request_limiter: RateLimiter,
 }
 
 impl OllamaLanguageModel {
@@ -275,10 +277,10 @@ impl LanguageModel for OllamaLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        async move {
-            let request =
-                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);
-            let response = request.await?;
+        let future = self.request_limiter.stream(async move {
+            let response =
+                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout)
+                    .await?;
             let stream = response
                 .filter_map(|response| async move {
                     match response {
@@ -295,8 +297,9 @@ impl LanguageModel for OllamaLanguageModel {
                 })
                 .boxed();
             Ok(stream)
-        }
-        .boxed()
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn use_tool(

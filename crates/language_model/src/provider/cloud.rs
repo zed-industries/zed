@@ -2,7 +2,7 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::Client;
@@ -162,6 +162,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     client: self.client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -191,6 +192,7 @@ pub struct CloudLanguageModel {
     id: LanguageModelId,
     model: CloudModel,
     client: Arc<Client>,
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for CloudLanguageModel {
@@ -256,7 +258,7 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
                 let request = request.into_anthropic(model.id().into());
-                async move {
+                let future = self.request_limiter.stream(async move {
                     let request = serde_json::to_string(&request)?;
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
@@ -266,15 +268,14 @@ impl LanguageModel for CloudLanguageModel {
                         .await?;
                     Ok(anthropic::extract_text_from_events(
                         stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    )
-                    .boxed())
-                }
-                .boxed()
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
                 let request = request.into_open_ai(model.id().into());
-                async move {
+                let future = self.request_limiter.stream(async move {
                     let request = serde_json::to_string(&request)?;
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
@@ -284,15 +285,14 @@ impl LanguageModel for CloudLanguageModel {
                         .await?;
                     Ok(open_ai::extract_text_from_events(
                         stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    )
-                    .boxed())
-                }
-                .boxed()
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let request = request.into_google(model.id().into());
-                async move {
+                let future = self.request_limiter.stream(async move {
                     let request = serde_json::to_string(&request)?;
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
@@ -302,10 +302,9 @@ impl LanguageModel for CloudLanguageModel {
                         .await?;
                     Ok(google_ai::extract_text_from_events(
                         stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    )
-                    .boxed())
-                }
-                .boxed()
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
         }
     }
@@ -331,32 +330,34 @@ impl LanguageModel for CloudLanguageModel {
                     input_schema,
                 }];
 
-                async move {
-                    let request = serde_json::to_string(&request)?;
-                    let response = client
-                        .request(proto::CompleteWithLanguageModel {
-                            provider: proto::LanguageModelProvider::Anthropic as i32,
-                            request,
-                        })
-                        .await?;
-                    let response: anthropic::Response = serde_json::from_str(&response.completion)?;
-                    response
-                        .content
-                        .into_iter()
-                        .find_map(|content| {
-                            if let anthropic::Content::ToolUse { name, input, .. } = content {
-                                if name == tool_name {
-                                    Some(input)
+                self.request_limiter
+                    .run(async move {
+                        let request = serde_json::to_string(&request)?;
+                        let response = client
+                            .request(proto::CompleteWithLanguageModel {
+                                provider: proto::LanguageModelProvider::Anthropic as i32,
+                                request,
+                            })
+                            .await?;
+                        let response: anthropic::Response =
+                            serde_json::from_str(&response.completion)?;
+                        response
+                            .content
+                            .into_iter()
+                            .find_map(|content| {
+                                if let anthropic::Content::ToolUse { name, input, .. } = content {
+                                    if name == tool_name {
+                                        Some(input)
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
-                            }
-                        })
-                        .context("tool not used")
-                }
-                .boxed()
+                            })
+                            .context("tool not used")
+                    })
+                    .boxed()
             }
             CloudModel::OpenAi(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for OpenAI"))).boxed()

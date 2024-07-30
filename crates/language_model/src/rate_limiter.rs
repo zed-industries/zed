@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
+#[derive(Clone)]
 pub struct RateLimiter {
     semaphore: Arc<Semaphore>,
 }
@@ -35,17 +36,14 @@ impl RateLimiter {
         }
     }
 
-    pub fn run<'a, Fut, T>(
-        &self,
-        f: impl 'a + FnOnce() -> Fut,
-    ) -> impl 'a + Future<Output = Result<T>>
+    pub fn run<'a, Fut, T>(&self, future: Fut) -> impl 'a + Future<Output = Result<T>>
     where
-        Fut: Future<Output = Result<T>>,
+        Fut: 'a + Future<Output = Result<T>>,
     {
         let guard = self.semaphore.acquire_arc();
         async move {
             let guard = guard.await;
-            let result = f().await?;
+            let result = future.await?;
             drop(guard);
             Ok(result)
         }
@@ -53,16 +51,16 @@ impl RateLimiter {
 
     pub fn stream<'a, Fut, T>(
         &self,
-        f: impl 'a + FnOnce() -> Fut,
+        future: Fut,
     ) -> impl 'a + Future<Output = Result<impl Stream<Item = T::Item>>>
     where
-        Fut: Future<Output = Result<T>>,
+        Fut: 'a + Future<Output = Result<T>>,
         T: Stream,
     {
         let guard = self.semaphore.acquire_arc();
         async move {
             let guard = guard.await;
-            let inner = f().await?;
+            let inner = future.await?;
             Ok(RateLimitGuard {
                 inner,
                 _guard: guard,
