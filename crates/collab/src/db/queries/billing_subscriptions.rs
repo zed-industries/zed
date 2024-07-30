@@ -1,3 +1,5 @@
+use sea_orm::IntoActiveValue;
+
 use crate::db::billing_subscription::StripeSubscriptionStatus;
 
 use super::*;
@@ -7,6 +9,15 @@ pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
+    pub last_stripe_event_id: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct UpdateBillingSubscriptionParams {
+    pub billing_customer_id: ActiveValue<BillingCustomerId>,
+    pub stripe_subscription_id: ActiveValue<String>,
+    pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
+    pub last_stripe_event_id: ActiveValue<Option<String>>,
 }
 
 impl Database {
@@ -20,6 +31,7 @@ impl Database {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+                last_stripe_event_id: params.last_stripe_event_id.clone().into_active_value(),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)
@@ -30,24 +42,22 @@ impl Database {
         .await
     }
 
-    /// Upserts the billing subscription by its Stripe subscription ID.
-    pub async fn upsert_billing_subscription_by_stripe_subscription_id(
+    /// Updates the specified billing subscription.
+    pub async fn update_billing_subscription(
         &self,
-        params: &CreateBillingSubscriptionParams,
+        id: BillingSubscriptionId,
+        params: &UpdateBillingSubscriptionParams,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            billing_subscription::Entity::insert(billing_subscription::ActiveModel {
-                billing_customer_id: ActiveValue::set(params.billing_customer_id),
-                stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
-                stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+            billing_subscription::Entity::update(billing_subscription::ActiveModel {
+                id: ActiveValue::set(id),
+                billing_customer_id: params.billing_customer_id.clone(),
+                stripe_subscription_id: params.stripe_subscription_id.clone(),
+                stripe_subscription_status: params.stripe_subscription_status.clone(),
+                last_stripe_event_id: params.last_stripe_event_id.clone(),
                 ..Default::default()
             })
-            .on_conflict(
-                OnConflict::columns([billing_subscription::Column::StripeSubscriptionId])
-                    .update_columns([billing_subscription::Column::StripeSubscriptionStatus])
-                    .to_owned(),
-            )
-            .exec_with_returning(&*tx)
+            .exec(&*tx)
             .await?;
 
             Ok(())
@@ -62,6 +72,22 @@ impl Database {
     ) -> Result<Option<billing_subscription::Model>> {
         self.transaction(|tx| async move {
             Ok(billing_subscription::Entity::find_by_id(id)
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
+    /// Returns the billing subscription with the specified Stripe subscription ID.
+    pub async fn get_billing_subscription_by_stripe_subscription_id(
+        &self,
+        stripe_subscription_id: &str,
+    ) -> Result<Option<billing_subscription::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_subscription::Entity::find()
+                .filter(
+                    billing_subscription::Column::StripeSubscriptionId.eq(stripe_subscription_id),
+                )
                 .one(&*tx)
                 .await?)
         })

@@ -6,23 +6,22 @@ mod request;
 mod role;
 pub mod settings;
 
-use std::{future::Future, sync::Arc};
-
 use anyhow::Result;
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
-
 pub use model::*;
+use project::Fs;
 pub(crate) use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
+use std::{future::Future, sync::Arc};
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    settings::init(cx);
+pub fn init(client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    settings::init(fs, cx);
     registry::init(client, cx);
 }
 

@@ -26,7 +26,7 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathLikeWithPosition, ResultExt};
+use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
@@ -672,7 +672,7 @@ fn subscribe_for_terminal_events(
                             .await;
                         let paths_to_open = valid_files_to_open
                             .iter()
-                            .map(|(p, _)| p.path_like.clone())
+                            .map(|(p, _)| p.path.clone())
                             .collect();
                         let opened_items = task_workspace
                             .update(&mut cx, |workspace, cx| {
@@ -746,7 +746,7 @@ fn possible_open_paths_metadata(
     column: Option<u32>,
     potential_paths: HashSet<PathBuf>,
     cx: &mut ViewContext<TerminalView>,
-) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
+) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
@@ -755,8 +755,8 @@ fn possible_open_paths_metadata(
             .map(|potential_path| async {
                 let metadata = fs.metadata(&potential_path).await.ok().flatten();
                 (
-                    PathLikeWithPosition {
-                        path_like: potential_path,
+                    PathWithPosition {
+                        path: potential_path,
                         row,
                         column,
                     },
@@ -781,14 +781,11 @@ fn possible_open_targets(
     cwd: &Option<PathBuf>,
     maybe_path: &String,
     cx: &mut ViewContext<TerminalView>,
-) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
-    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |_, path_str| {
-        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-    })
-    .expect("infallible");
-    let row = path_like.row;
-    let column = path_like.column;
-    let maybe_path = path_like.path_like;
+) -> Task<Vec<(PathWithPosition, Metadata)>> {
+    let path_position = PathWithPosition::parse_str(maybe_path.as_str());
+    let row = path_position.row;
+    let column = path_position.column;
+    let maybe_path = path_position.path;
     let potential_abs_paths = if maybe_path.is_absolute() {
         HashSet::from_iter([maybe_path])
     } else if maybe_path.starts_with("~") {
