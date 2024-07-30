@@ -3,7 +3,7 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, Entity, EntityId,
+    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
     EventEmitter, FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseUpEvent, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
