@@ -11,6 +11,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
@@ -512,19 +513,21 @@ impl TitleBar {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
                 .menu(move |cx| {
-                    ContextMenu::build(cx, |menu, _| {
-                        menu.action(
-                            format!(
-                                "Current Plan: {}",
-                                match plan {
-                                    None => "",
-                                    Some(proto::Plan::Free) => "Free",
-                                    Some(proto::Plan::ZedPro) => "Pro",
-                                }
-                            ),
-                            zed_actions::OpenAccountSettings.boxed_clone(),
-                        )
-                        .separator()
+                    ContextMenu::build(cx, |menu, cx| {
+                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                            menu.action(
+                                format!(
+                                    "Current Plan: {}",
+                                    match plan {
+                                        None => "",
+                                        Some(proto::Plan::Free) => "Free",
+                                        Some(proto::Plan::ZedPro) => "Pro",
+                                    }
+                                ),
+                                zed_actions::OpenAccountSettings.boxed_clone(),
+                            )
+                            .separator()
+                        })
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action("Themes…", theme_selector::Toggle::default().boxed_clone())
