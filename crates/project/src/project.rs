@@ -190,6 +190,7 @@ pub struct Project {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
+    next_debugger_id: AtomicUsize,
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
     diagnostic_summaries:
@@ -817,6 +818,7 @@ impl Project {
                 fs,
                 ssh_session: None,
                 next_entry_id: Default::default(),
+                next_debugger_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
@@ -981,6 +983,7 @@ impl Project {
                 fs,
                 ssh_session: None,
                 next_entry_id: Default::default(),
+                next_debugger_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostic_summaries: Default::default(),
                 diagnostics: Default::default(),
@@ -1204,7 +1207,7 @@ impl Project {
         debug_task: task::ResolvedTask,
         cx: &mut ModelContext<Self>,
     ) {
-        let id = DebugAdapterClientId(1);
+        let id = DebugAdapterClientId(self.next_debugger_id());
         let debug_template = debug_task.original_task();
         let cwd = debug_template
             .cwd
@@ -10509,6 +10512,10 @@ impl Project {
         } else {
             Vec::new()
         }
+    }
+
+    fn next_debugger_id(&mut self) -> usize {
+        self.next_debugger_id.fetch_add(1, SeqCst)
     }
 
     pub fn task_context_for_location(

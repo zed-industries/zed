@@ -412,7 +412,9 @@ impl DebugAdapterClient {
                 "127.0.0.1",
             ],
             PathBuf::from("/Users/remcosmits/Documents/code/prettier-test"),
-            |_event, _cx| {},
+            |event, _cx| {
+                dbg!(event);
+            },
             cx,
         )
         .await?;
