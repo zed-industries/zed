@@ -131,7 +131,7 @@ fn main() {
                         PathBuf::from_str("crates/gpui/examples/image/app-icon.png").unwrap(),
                     ),
                     remote_resource: "https://picsum.photos/512/512".into(),
-                    asset_resource: "image/app-icon.png".into(),
+                    asset_resource: "image/color.svg".into(),
                 })
             })
             .unwrap();
