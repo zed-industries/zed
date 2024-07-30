@@ -23,10 +23,10 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
     VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
@@ -44,9 +44,9 @@ use workspace::{
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
     ui::{
-        h_flex, v_flex, ActiveTheme, Clickable, Color, ContextMenu, FluentBuilder,
+        h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography,
+        LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography, Tooltip,
     },
     OpenInTerminal, Workspace,
 };
@@ -81,6 +81,7 @@ pub struct OutlinePanel {
     project: Model<Project>,
     workspace: View<Workspace>,
     active: bool,
+    pinned: bool,
     scroll_handle: UniformListScrollHandle,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
@@ -212,7 +213,6 @@ impl PartialEq for FsEntry {
 }
 
 struct ActiveItem {
-    item_id: EntityId,
     active_editor: WeakView<Editor>,
     _buffer_search_subscription: Subscription,
     _editor_subscrpiption: Subscription,
@@ -300,20 +300,11 @@ impl OutlinePanel {
                     .expect("have a &mut Workspace"),
                 move |outline_panel, workspace, event, cx| {
                     if let workspace::Event::ActiveItemChanged = event {
-                        if let Some(new_active_editor) = workspace
-                            .read(cx)
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx))
-                            .filter(|editor| editor.read(cx).mode() == EditorMode::Full)
+                        if let Some(new_active_editor) =
+                            workspace_active_editor(workspace.read(cx), cx)
                         {
-                            let active_editor_updated = outline_panel
-                                .active_item
-                                .as_ref()
-                                .map_or(true, |active_item| {
-                                    active_item.item_id != new_active_editor.item_id()
-                                });
-                            if active_editor_updated {
-                                outline_panel.replace_visible_entries(new_active_editor, cx);
+                            if outline_panel.should_replace_active_editor(&new_active_editor) {
+                                outline_panel.replace_active_editor(new_active_editor, cx);
                             }
                         } else {
                             outline_panel.clear_previous(cx);
@@ -339,6 +330,7 @@ impl OutlinePanel {
             let mut outline_panel = Self {
                 mode: ItemsDisplayMode::Outline,
                 active: false,
+                pinned: false,
                 workspace: workspace_handle,
                 project,
                 fs: workspace.app_state().fs.clone(),
@@ -370,11 +362,8 @@ impl OutlinePanel {
                     filter_update_subscription,
                 ],
             };
-            if let Some(editor) = workspace
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-            {
-                outline_panel.replace_visible_entries(editor, cx);
+            if let Some(editor) = workspace_active_editor(workspace, cx) {
+                outline_panel.replace_active_editor(editor, cx);
             }
             outline_panel
         });
@@ -467,11 +456,7 @@ impl OutlinePanel {
     }
 
     fn open_entry(&mut self, entry: &PanelEntry, cx: &mut ViewContext<OutlinePanel>) {
-        let Some(active_editor) = self
-            .active_item
-            .as_ref()
-            .and_then(|item| item.active_editor.upgrade())
-        else {
+        let Some(active_editor) = self.active_editor() else {
             return;
         };
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
@@ -1529,7 +1514,7 @@ impl OutlinePanel {
         )
     }
 
-    // TODO kb render it like an outline item, but for the entire line without the whitespaces.
+    // TODO kb render it like an outline item, but for the entire line without the trailing whitespaces.
     // Need to fill the `highlight_ranges` with a proper style, see `buffer.rs`
     fn render_search_match(
         &self,
@@ -1540,11 +1525,7 @@ impl OutlinePanel {
         let Some(match_text) = self.text_for_match(match_range, cx) else {
             return div().id("empty-match-range");
         };
-        let Some(active_editor) = self
-            .active_item
-            .as_ref()
-            .and_then(|active_item| active_item.active_editor.upgrade())
-        else {
+        let Some(active_editor) = self.active_editor() else {
             return div().id("empty-match-range");
         };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -2032,7 +2013,7 @@ impl OutlinePanel {
         });
     }
 
-    fn replace_visible_entries(
+    fn replace_active_editor(
         &mut self,
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
@@ -2047,7 +2028,6 @@ impl OutlinePanel {
             },
         );
         self.active_item = Some(ActiveItem {
-            item_id: new_active_editor.item_id(),
             _buffer_search_subscription: buffer_search_subscription,
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
@@ -2310,19 +2290,8 @@ impl OutlinePanel {
     }
 
     fn is_singleton_active(&self, cx: &AppContext) -> bool {
-        self.active_item
-            .as_ref()
-            .and_then(|active_item| {
-                Some(
-                    active_item
-                        .active_editor
-                        .upgrade()?
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .is_singleton(),
-                )
-            })
+        self.active_editor()
+            .and_then(|active_editor| Some(active_editor.read(cx).buffer().read(cx).is_singleton()))
             .unwrap_or(false)
     }
 
@@ -2394,7 +2363,7 @@ impl OutlinePanel {
         buffer_id: BufferId,
         cx: &AppContext,
     ) -> Option<BufferSnapshot> {
-        let editor = self.active_item.as_ref()?.active_editor.upgrade()?;
+        let editor = self.active_editor()?;
         Some(
             editor
                 .read(cx)
@@ -2849,10 +2818,7 @@ impl OutlinePanel {
         match_range: &Range<editor::Anchor>,
         cx: &mut WindowContext,
     ) -> Option<String> {
-        let active_editor = self
-            .active_item
-            .as_ref()
-            .and_then(|active_item| active_item.active_editor.upgrade())?;
+        let active_editor = self.active_editor()?;
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         active_editor.update(cx, |active_editor, cx| {
             active_editor.text_for_range(match_range.to_offset(&multi_buffer_snapshot), cx)
@@ -2909,9 +2875,7 @@ impl OutlinePanel {
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
         let buffer_search_matches = self
-            .active_item
-            .as_ref()
-            .and_then(|active_item| active_item.active_editor.upgrade())
+            .active_editor()
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
 
@@ -3050,6 +3014,23 @@ impl OutlinePanel {
             }
         }
     }
+
+    fn active_editor(&self) -> Option<View<Editor>> {
+        self.active_item.as_ref()?.active_editor.upgrade()
+    }
+
+    fn should_replace_active_editor(&self, new_active_editor: &View<Editor>) -> bool {
+        self.active_editor().map_or(true, |active_editor| {
+            !self.pinned && active_editor.item_id() != new_active_editor.item_id()
+        })
+    }
+}
+
+fn workspace_active_editor(workspace: &Workspace, cx: &AppContext) -> Option<View<Editor>> {
+    workspace
+        .active_item(cx)?
+        .act_as::<Editor>(cx)
+        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)
 }
 
 fn back_to_common_visited_parent(
@@ -3146,31 +3127,44 @@ impl Panel for OutlinePanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        let old_active = self.active;
-        self.active = active;
-        if active && old_active != active {
-            if let Some(active_editor) = self
-                .active_item
-                .as_ref()
-                .and_then(|item| item.active_editor.upgrade())
-            {
-                if self.active_item.as_ref().map(|item| item.item_id)
-                    == Some(active_editor.item_id())
-                {
-                    let new_selected_entry = self.location_for_editor_selection(&active_editor, cx);
-                    self.update_fs_entries(
-                        &active_editor,
-                        HashSet::default(),
-                        new_selected_entry,
-                        None,
-                        cx,
-                    )
-                } else {
-                    self.replace_visible_entries(active_editor, cx);
-                }
-            }
-        }
-        self.serialize(cx);
+        cx.spawn(|outline_panel, mut cx| async move {
+            outline_panel
+                .update(&mut cx, |outline_panel, cx| {
+                    let old_active = outline_panel.active;
+                    outline_panel.active = active;
+                    if active && old_active != active {
+                        let mut replaced = false;
+                        if let Some(active_editor) =
+                            workspace_active_editor(outline_panel.workspace.read(cx), cx)
+                        {
+                            if outline_panel.should_replace_active_editor(&active_editor) {
+                                outline_panel.replace_active_editor(active_editor, cx);
+                                replaced = true;
+                            }
+                        }
+                        if !replaced {
+                            if outline_panel.pinned {
+                                if let Some(active_editor) = outline_panel.active_editor() {
+                                    let new_selected_entry = outline_panel
+                                        .location_for_editor_selection(&active_editor, cx);
+                                    outline_panel.update_fs_entries(
+                                        &active_editor,
+                                        HashSet::default(),
+                                        new_selected_entry,
+                                        None,
+                                        cx,
+                                    )
+                                }
+                            } else {
+                                outline_panel.active_item = None;
+                            }
+                        }
+                    }
+                    outline_panel.serialize(cx);
+                })
+                .ok();
+        })
+        .detach()
     }
 }
 
@@ -3188,6 +3182,8 @@ impl Render for OutlinePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let query = self.query(cx);
+        let pinned = self.pinned;
+
         let outline_panel = v_flex()
             .id("outline-panel")
             .size_full()
@@ -3287,33 +3283,36 @@ impl Render for OutlinePanel {
                                         cx,
                                     ))
                                 }
-                                PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, excerpt_id, excerpt)) => {
-                                    outline_panel.render_excerpt(
-                                        buffer_id,
-                                        excerpt_id,
-                                        &excerpt,
-                                        cached_entry.depth,
-                                        cx,
-                                    )
-                                }
-                                PanelEntry::Outline(OutlineEntry::Outline(buffer_id, excerpt_id, outline)) => {
-                                    Some(outline_panel.render_outline(
-                                        buffer_id,
-                                        excerpt_id,
-                                        &outline,
-                                        cached_entry.depth,
-                                        cached_entry.string_match.as_ref(),
-                                        cx,
-                                    ))
-                                }
+                                PanelEntry::Outline(OutlineEntry::Excerpt(
+                                    buffer_id,
+                                    excerpt_id,
+                                    excerpt,
+                                )) => outline_panel.render_excerpt(
+                                    buffer_id,
+                                    excerpt_id,
+                                    &excerpt,
+                                    cached_entry.depth,
+                                    cx,
+                                ),
+                                PanelEntry::Outline(OutlineEntry::Outline(
+                                    buffer_id,
+                                    excerpt_id,
+                                    outline,
+                                )) => Some(outline_panel.render_outline(
+                                    buffer_id,
+                                    excerpt_id,
+                                    &outline,
+                                    cached_entry.depth,
+                                    cached_entry.string_match.as_ref(),
+                                    cx,
+                                )),
                                 PanelEntry::Search(match_range) => {
                                     Some(outline_panel.render_search_match(
                                         &match_range,
                                         cached_entry.depth,
                                         cx,
                                     ))
-                                },
-
+                                }
                             })
                             .collect()
                     }
@@ -3336,12 +3335,42 @@ impl Render for OutlinePanel {
                 .child(div().mx_2().border_primary(cx).border_t_1())
                 .child(
                     h_flex().p_2().child(self.filter_editor.clone()).child(
-                        div().border_1().child(IconButton::new("outline-panel-menu", IconName::Menu)
+                        div().border_1().child(
+                            IconButton::new(
+                                "outline-panel-menu",
+                                if pinned {
+                                    IconName::Unpin
+                                } else {
+                                    IconName::Pin
+                                },
+                            )
+                            .tooltip(move |cx| {
+                                Tooltip::text(
+                                    if pinned { "Unpin" } else { "Pin active editor" },
+                                    cx,
+                                )
+                            })
                             .shape(IconButtonShape::Square)
-                            .on_click(|e, cx| {
-                                dbg!("!!!!!!!! TODO kb add a pin icon here, and keep the editor until it's not upgradable");
-                            }))
-                        ,
+                            .on_click(cx.listener(
+                                |outline_panel, _, cx| {
+                                    outline_panel.pinned = !outline_panel.pinned;
+                                    if !outline_panel.pinned {
+                                        if let Some(active_editor) = workspace_active_editor(
+                                            outline_panel.workspace.read(cx),
+                                            cx,
+                                        ) {
+                                            if outline_panel
+                                                .should_replace_active_editor(&active_editor)
+                                            {
+                                                outline_panel
+                                                    .replace_active_editor(active_editor, cx);
+                                            }
+                                        }
+                                    }
+                                    cx.notify();
+                                },
+                            )),
+                        ),
                     ),
                 ),
         )
