@@ -32,6 +32,8 @@ impl SummaryBacklog {
 
     /// Remove all the entries in the backlog and return the file paths as an iterator.
     pub fn drain<'a>(&'a mut self) -> impl Iterator<Item = (Arc<Path>, Option<SystemTime>)> + 'a {
+        self.total_bytes = 0;
+
         self.files
             .drain()
             .map(|(path, (_size, mtime))| (path, mtime))

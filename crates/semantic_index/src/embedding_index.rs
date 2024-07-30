@@ -232,34 +232,31 @@ impl EmbeddingIndex {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                let Some(text) = fs
-                                    .load(&entry_abs_path)
-                                    .await
-                                    .with_context(|| {
-                                        format!("failed to read path {entry_abs_path:?}")
-                                    })
-                                    .log_err()
-                                else {
-                                    continue;
-                                };
-                                let language = language_registry
-                                    .language_for_file_path(&entry.path)
-                                    .await
-                                    .ok();
-                                let chunked_file = ChunkedFile {
-                                    chunks: chunking::chunk_text(
-                                        &text,
-                                        language.as_ref(),
-                                        &entry.path,
-                                    ),
-                                    handle,
-                                    path: entry.path,
-                                    mtime: entry.mtime,
-                                    text,
-                                };
+                                match fs.load(&entry_abs_path).await {
+                                    Ok(text) => {
+                                        let language = language_registry
+                                            .language_for_file_path(&entry.path)
+                                            .await
+                                            .ok();
+                                        let chunked_file = ChunkedFile {
+                                            chunks: chunking::chunk_text(
+                                                &text,
+                                                language.as_ref(),
+                                                &entry.path,
+                                            ),
+                                            handle,
+                                            path: entry.path,
+                                            mtime: entry.mtime,
+                                            text,
+                                        };
 
-                                if chunked_files_tx.send(chunked_file).await.is_err() {
-                                    return;
+                                        if chunked_files_tx.send(chunked_file).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                    Err(_)=> {
+                                        log::error!("Failed to read contents into a UTF-8 string: {entry_abs_path:?}");
+                                    }
                                 }
                             }
                         });

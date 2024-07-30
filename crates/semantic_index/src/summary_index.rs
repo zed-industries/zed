@@ -422,16 +422,22 @@ impl SummaryIndex {
         let task = cx.spawn(|cx| async move {
             while let Some(file) = unsummarized_files.next().await {
                 log::debug!("Summarizing {:?}", file);
-                let summary = cx.update(|cx| Self::summarize_code(&file.contents, cx))?;
+                let summary = cx
+                    .update(|cx| Self::summarize_code(&file.contents, cx))?
+                    .await?;
 
-                summarized_tx
-                    .send(SummarizedFile {
-                        path: file.path.display().to_string(),
-                        digest: file.digest,
-                        summary: summary.await?,
-                        mtime: file.mtime,
-                    })
-                    .await?
+                // Note that the summary could be empty because of an error talking to a cloud provider,
+                // e.g. because the context limit was exceeded. In that case, we return Ok(String::new()).
+                if !summary.is_empty() {
+                    summarized_tx
+                        .send(SummarizedFile {
+                            path: file.path.display().to_string(),
+                            digest: file.digest,
+                            summary,
+                            mtime: file.mtime,
+                        })
+                        .await?
+                }
             }
 
             Ok(())
@@ -477,17 +483,27 @@ impl SummaryIndex {
             LanguageModelCompletionProvider::read_global(cx).complete_bg(request, model, cx);
 
         cx.background_executor().spawn(async move {
-            let answer = stream.await?;
+            match stream.await {
+                Ok(answer) => {
+                    log::info!(
+                        "It took {:?} to summarize {:?} bytes of code.",
+                        start.elapsed(),
+                        code_len
+                    );
 
-            log::info!(
-                "It took {:?} to summarize {:?} bytes of code.",
-                start.elapsed(),
-                code_len
-            );
+                    log::debug!("Summary was: {:?}", &answer);
 
-            log::debug!("Summary was: {:?}", &answer);
+                    Ok(answer)
+                }
+                Err(e) => {
+                    // Log a warning because we'll continue anyway.
+                    // In the future, we may want to try splitting it up into multiple requests and concatenating the summaries,
+                    // but this might give bad summaries due to cutting off source code files in the middle.
+                    log::warn!("Failed to summarize {code_len} bytes of code: {:?}", e);
 
-            Ok(answer)
+                    Ok(String::new())
+                }
+            }
         })
     }
 
@@ -505,7 +521,7 @@ impl SummaryIndex {
                 let mut txn = db_connection.write_txn()?;
                 for file in &summaries {
                     log::debug!(
-                        "Saving {} bytes of summary for content hash {:?}",
+                        "Saving {} bytes of summary for content digest {:?}",
                         file.summary.len(),
                         file.digest
                     );
