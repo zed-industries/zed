@@ -56,7 +56,7 @@ struct State {
 }
 
 impl State {
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
     }
@@ -172,8 +172,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         self.state.read(cx).status.is_connected()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.state.read(cx).authenticate(cx)
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
@@ -183,7 +183,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         .into()
     }
 
-    fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 }
@@ -309,7 +309,7 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         request: LanguageModelRequest,
         tool_name: String,

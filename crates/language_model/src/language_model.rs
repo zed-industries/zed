@@ -6,7 +6,7 @@ mod request;
 mod role;
 pub mod settings;
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use anyhow::Result;
 use client::Client;
@@ -47,7 +47,7 @@ pub trait LanguageModel: Send + Sync {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         request: LanguageModelRequest,
         name: String,
@@ -55,6 +55,22 @@ pub trait LanguageModel: Send + Sync {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>>;
+}
+
+impl dyn LanguageModel {
+    pub fn use_tool<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> impl 'static + Future<Output = Result<T>> {
+        let schema = schemars::schema_for!(T);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+        let request = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
+        async move {
+            let response = request.await?;
+            Ok(serde_json::from_value(response)?)
+        }
+    }
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
@@ -68,9 +84,9 @@ pub trait LanguageModelProvider: 'static {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>>;
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 
 pub trait LanguageModelProviderState: 'static {

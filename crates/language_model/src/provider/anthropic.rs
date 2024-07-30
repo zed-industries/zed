@@ -105,7 +105,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read(cx).api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
@@ -138,7 +138,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let state = self.state.clone();
         let delete_credentials =
             cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
@@ -290,7 +290,7 @@ impl LanguageModel for AnthropicModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         request: LanguageModelRequest,
         tool_name: String,

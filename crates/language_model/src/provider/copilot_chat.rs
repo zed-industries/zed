@@ -100,7 +100,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             .unwrap_or(false)
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let result = if self.is_authenticated(cx) {
             Ok(())
         } else if let Some(copilot) = Copilot::global(cx) {
@@ -126,7 +126,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let Some(copilot) = Copilot::global(cx) else {
             return Task::ready(Err(anyhow::anyhow!(
                 "Copilot is not available. Please ensure Copilot is enabled and running and try again."
@@ -249,7 +249,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         _request: LanguageModelRequest,
         _name: String,

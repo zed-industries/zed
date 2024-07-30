@@ -32,7 +32,6 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
-completion.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -77,7 +76,6 @@ workspace.workspace = true
 picker.workspace = true
 
 [dev-dependencies]
-completion = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

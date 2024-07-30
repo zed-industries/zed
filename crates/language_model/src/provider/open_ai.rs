@@ -107,7 +107,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.read(cx).api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
@@ -139,7 +139,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
@@ -229,7 +229,7 @@ impl LanguageModel for OpenAiLanguageModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         _request: LanguageModelRequest,
         _name: String,
