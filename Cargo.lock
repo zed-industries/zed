@@ -430,6 +430,7 @@ dependencies = [
  "paths",
  "picker",
  "project",
+ "proto",
  "rand 0.8.5",
  "regex",
  "rope",

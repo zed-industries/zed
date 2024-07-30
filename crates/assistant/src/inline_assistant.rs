@@ -3,7 +3,7 @@ use crate::{
     Hunk, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::telemetry::Telemetry;
+use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -22,9 +22,9 @@ use futures::{
     SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    point, AppContext, EventEmitter, FocusHandle, FocusableView, Global, HighlightStyle, Model,
-    ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
-    WindowContext,
+    anchored, deferred, point, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
+    FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
+    UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -47,7 +47,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1214,7 +1214,10 @@ struct PromptEditor {
     token_count: Option<usize>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
+    rate_limit_notice: Option<View<RateLimitNotice>>,
 }
+
+struct RateLimitNotice {}
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
@@ -1347,10 +1350,34 @@ impl Render for PromptEditor {
                             assistant panel tab.",
                         ),
                     )
-                    .children(
-                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                            let error_message = SharedString::from(error.to_string());
-                            Some(
+                    .map(|el| {
+                        let CodegenStatus::Error(error) = &self.codegen.read(cx).status else {
+                            return el;
+                        };
+
+                        let error_message = SharedString::from(error.to_string());
+                        if error.error_code() == proto::ErrorCode::RateLimitExceeded {
+                            el.child(
+                                v_flex()
+                                    .child(
+                                        IconButton::new("rate-limit-error", IconName::XCircle)
+                                            .selected(self.rate_limit_notice.is_some())
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                    )
+                                    .children(self.rate_limit_notice.as_ref().map(|view| {
+                                        deferred(
+                                            anchored()
+                                                .position_mode(gpui::AnchoredPositionMode::Local)
+                                                .position(point(px(0.), px(24.)))
+                                                .anchor(gpui::AnchorCorner::TopLeft)
+                                                .child(view.clone()),
+                                        )
+                                    })),
+                            )
+                        } else {
+                            el.child(
                                 div()
                                     .id("error")
                                     .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
@@ -1360,10 +1387,8 @@ impl Render for PromptEditor {
                                             .color(Color::Error),
                                     ),
                             )
-                        } else {
-                            None
-                        },
-                    ),
+                        }
+                    }),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
             .child(
@@ -1373,6 +1398,32 @@ impl Render for PromptEditor {
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
+    }
+}
+
+impl Render for RateLimitNotice {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Popover::new().child(
+            v_flex()
+                .child(
+                    Label::new("Out of Tokens")
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD),
+                )
+                .child(Label::new(
+                    "Try Zed Pro for higher limits, a wider range of models, and more.",
+                ))
+                .child(
+                    h_flex().justify_between().child(div()).child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("dismiss", "Dismiss").style(ButtonStyle::Transparent),
+                            )
+                            .child(Button::new("more-info", "More Info")),
+                    ),
+                ),
+        )
     }
 }
 
@@ -1442,6 +1493,7 @@ impl PromptEditor {
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
+            rate_limit_notice: None,
         };
         this.count_lines(cx);
         this.count_tokens(cx);
@@ -1501,6 +1553,13 @@ impl PromptEditor {
             self.height_in_lines = height_in_lines;
             cx.emit(PromptEditorEvent::Resized { height_in_lines });
         }
+    }
+
+    fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        if self.rate_limit_notice.take().is_none() {
+            self.rate_limit_notice = Some(cx.new_view(|_| RateLimitNotice {}));
+        }
+        cx.notify();
     }
 
     fn handle_parent_editor_event(
@@ -1586,7 +1645,17 @@ impl PromptEditor {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Error(error) => {
+                if error.error_code() == proto::ErrorCode::RateLimitExceeded {
+                    self.rate_limit_notice = Some(cx.new_view(|_| RateLimitNotice {}));
+                    cx.notify();
+                }
+
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
