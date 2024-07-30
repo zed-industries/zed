@@ -1,7 +1,8 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use axum::{extract, routing::post, Extension, Json, Router};
 use collections::HashSet;
 use reqwest::StatusCode;
@@ -11,8 +12,9 @@ use stripe::{
     CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CustomerId,
+    CustomerId, EventObject, EventType, ListEvents,
 };
+use util::ResultExt;
 
 use crate::db::BillingSubscriptionId;
 use crate::{AppState, Error, Result};
@@ -190,4 +192,89 @@ async fn manage_billing_subscription(
     Ok(Json(ManageBillingSubscriptionResponse {
         billing_portal_session_url: session.url,
     }))
+}
+
+const POLL_EVENTS_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+pub fn poll_stripe_events_periodically(app: Arc<AppState>) {
+    let Some(stripe_client) = app.stripe_client.clone() else {
+        log::warn!("failed to retrieve Stripe client");
+        return;
+    };
+
+    let executor = app.executor.clone();
+    executor.spawn_detached({
+        let executor = executor.clone();
+        async move {
+            loop {
+                poll_stripe_events(&app, &stripe_client).await.log_err();
+
+                executor.sleep(POLL_EVENTS_INTERVAL).await;
+            }
+        }
+    });
+}
+
+async fn poll_stripe_events(
+    app: &Arc<AppState>,
+    stripe_client: &stripe::Client,
+) -> anyhow::Result<()> {
+    let event_types = [
+        EventType::CustomerSubscriptionCreated.to_string(),
+        EventType::CustomerSubscriptionUpdated.to_string(),
+        EventType::CustomerSubscriptionPaused.to_string(),
+        EventType::CustomerSubscriptionResumed.to_string(),
+        EventType::CustomerSubscriptionDeleted.to_string(),
+    ]
+    .into_iter()
+    .map(|event_type| {
+        // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
+        // so we need to unquote it.
+        event_type.trim_matches('"').to_string()
+    })
+    .collect::<Vec<_>>();
+
+    loop {
+        log::info!("retrieving events from Stripe: {}", event_types.join(", "));
+
+        let mut params = ListEvents::new();
+        params.types = Some(event_types.clone());
+        params.limit = Some(100);
+        // params.starting_after
+
+        let events = stripe::Event::list(&stripe_client, &params).await?;
+        for event in events.data {
+            match event.type_ {
+                EventType::CustomerSubscriptionCreated
+                | EventType::CustomerSubscriptionUpdated
+                | EventType::CustomerSubscriptionPaused
+                | EventType::CustomerSubscriptionResumed
+                | EventType::CustomerSubscriptionDeleted => {
+                    handle_customer_subscription_event(app, event)
+                        .await
+                        .log_err();
+                }
+                _ => {}
+            }
+        }
+
+        if !events.has_more {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_customer_subscription_event(
+    app: &Arc<AppState>,
+    event: stripe::Event,
+) -> anyhow::Result<()> {
+    let EventObject::Subscription(subscription) = event.data.object else {
+        bail!("unexpected event payload for {}", event.id);
+    };
+
+    dbg!(&subscription.status);
+
+    Ok(())
 }
