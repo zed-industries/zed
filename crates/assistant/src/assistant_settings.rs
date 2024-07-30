@@ -145,12 +145,27 @@ impl AssistantSettingsContent {
                             cx,
                             move |content, _| {
                                 if content.openai.is_none() {
+                                    let available_models = available_models.map(|models| {
+                                        models
+                                            .into_iter()
+                                            .filter_map(|model| match model {
+                                                open_ai::Model::Custom { name, max_tokens } => {
+                                                    Some(language_model::provider::open_ai::AvailableModel { name, max_tokens })
+                                                }
+                                                _ => None,
+                                            })
+                                            .collect::<Vec<_>>()
+                                    });
                                     content.openai =
-                                        Some(language_model::settings::OpenAiSettingsContent {
-                                            api_url,
-                                            low_speed_timeout_in_seconds,
-                                            available_models,
-                                        });
+                                        Some(language_model::settings::OpenAiSettingsContent::Versioned(
+                                            language_model::settings::OpenAiSettingsContentVersioned::V1(
+                                                language_model::settings::OpenAiSettingsContentV1 {
+                                                    api_url,
+                                                    low_speed_timeout_in_seconds,
+                                                    available_models
+                                                }
+                                            )
+                                        ));
                                 }
                             },
                         ),

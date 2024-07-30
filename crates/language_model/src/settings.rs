@@ -1,10 +1,11 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use gpui::AppContext;
+use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{update_settings_file, Settings, SettingsSources};
 
 use crate::provider::{
     self,
@@ -17,8 +18,22 @@ use crate::provider::{
 };
 
 /// Initializes the language model settings.
-pub fn init(cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     AllLanguageModelSettings::register(cx);
+
+    if AllLanguageModelSettings::get_global(cx)
+        .openai
+        .needs_setting_migration
+    {
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |setting, _| {
+            if let Some(settings) = setting.openai.clone() {
+                let (newest_version, _) = settings.upgrade();
+                setting.openai = Some(OpenAiSettingsContent::Versioned(
+                    OpenAiSettingsContentVersioned::V1(newest_version),
+                ));
+            }
+        });
+    }
 }
 
 #[derive(Default)]
@@ -55,11 +70,60 @@ pub struct OllamaSettingsContent {
     pub low_speed_timeout_in_seconds: Option<u64>,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenAiSettingsContent {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum OpenAiSettingsContent {
+    Legacy(OpenAiSettingsContentLegacy),
+    Versioned(OpenAiSettingsContentVersioned),
+}
+
+impl OpenAiSettingsContent {
+    pub fn upgrade(self) -> (OpenAiSettingsContentV1, bool) {
+        match self {
+            OpenAiSettingsContent::Legacy(content) => (
+                OpenAiSettingsContentV1 {
+                    api_url: content.api_url,
+                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
+                    available_models: content.available_models.map(|models| {
+                        models
+                            .into_iter()
+                            .filter_map(|model| match model {
+                                open_ai::Model::Custom { name, max_tokens } => {
+                                    Some(provider::open_ai::AvailableModel { name, max_tokens })
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    }),
+                },
+                true,
+            ),
+            OpenAiSettingsContent::Versioned(content) => match content {
+                OpenAiSettingsContentVersioned::V1(content) => (content, false),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct OpenAiSettingsContentLegacy {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<open_ai::Model>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(tag = "version")]
+pub enum OpenAiSettingsContentVersioned {
+    #[serde(rename = "1")]
+    V1(OpenAiSettingsContentV1),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct OpenAiSettingsContentV1 {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -81,6 +145,8 @@ pub struct CopilotChatSettingsContent {
 
 impl settings::Settings for AllLanguageModelSettings {
     const KEY: Option<&'static str> = Some("language_models");
+
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AllLanguageModelSettingsContent;
 
@@ -127,24 +193,28 @@ impl settings::Settings for AllLanguageModelSettings {
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
 
+            let (openai, upgraded) = match value.openai.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+
+            if upgraded {
+                settings.openai.needs_setting_migration = true;
+            }
+
             merge(
                 &mut settings.openai.api_url,
-                value.openai.as_ref().and_then(|s| s.api_url.clone()),
+                openai.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = value
-                .openai
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
+            if let Some(low_speed_timeout_in_seconds) =
+                openai.as_ref().and_then(|s| s.low_speed_timeout_in_seconds)
             {
                 settings.openai.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
             merge(
                 &mut settings.openai.available_models,
-                value
-                    .openai
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
+                openai.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             merge(

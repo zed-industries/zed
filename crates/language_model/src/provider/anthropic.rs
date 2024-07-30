@@ -33,8 +33,8 @@ pub struct AnthropicSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    name: String,
-    max_tokens: usize,
+    pub name: String,
+    pub max_tokens: usize,
 }
 
 pub struct AnthropicLanguageModelProvider {
