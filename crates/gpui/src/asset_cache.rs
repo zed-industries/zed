@@ -10,8 +10,8 @@ use std::{any::Any, path::PathBuf};
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) enum UriOrPath {
     Uri(SharedUri),
-    Asset(SharedString),
     Path(Arc<PathBuf>),
+    Asset(SharedString),
 }
 
 impl From<SharedUri> for UriOrPath {
