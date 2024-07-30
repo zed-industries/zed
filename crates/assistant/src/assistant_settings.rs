@@ -110,11 +110,15 @@ impl AssistantSettingsContent {
                             move |content, _| {
                                 if content.anthropic.is_none() {
                                     content.anthropic =
-                                        Some(language_model::settings::AnthropicSettingsContent {
-                                            api_url,
-                                            low_speed_timeout_in_seconds,
-                                            ..Default::default()
-                                        });
+                                        Some(language_model::settings::AnthropicSettingsContent::Versioned(
+                                            language_model::settings::VersionedAnthropicSettingsContent::V1(
+                                                language_model::settings::AnthropicSettingsContentV1 {
+                                                    api_url,
+                                                    low_speed_timeout_in_seconds,
+                                                    available_models: None
+                                                }
+                                            )
+                                        ));
                                 }
                             },
                         ),
@@ -158,7 +162,7 @@ impl AssistantSettingsContent {
                                     });
                                     content.openai =
                                         Some(language_model::settings::OpenAiSettingsContent::Versioned(
-                                            language_model::settings::OpenAiSettingsContentVersioned::V1(
+                                            language_model::settings::VersionedOpenAiSettingsContent::V1(
                                                 language_model::settings::OpenAiSettingsContentV1 {
                                                     api_url,
                                                     low_speed_timeout_in_seconds,

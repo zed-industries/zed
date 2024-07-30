@@ -865,6 +865,7 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
+      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
     "google": {

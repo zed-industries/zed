@@ -25,11 +25,25 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         .openai
         .needs_setting_migration
     {
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |setting, _| {
+        update_settings_file::<AllLanguageModelSettings>(fs.clone(), cx, move |setting, _| {
             if let Some(settings) = setting.openai.clone() {
                 let (newest_version, _) = settings.upgrade();
                 setting.openai = Some(OpenAiSettingsContent::Versioned(
-                    OpenAiSettingsContentVersioned::V1(newest_version),
+                    VersionedOpenAiSettingsContent::V1(newest_version),
+                ));
+            }
+        });
+    }
+
+    if AllLanguageModelSettings::get_global(cx)
+        .anthropic
+        .needs_setting_migration
+    {
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |setting, _| {
+            if let Some(settings) = setting.anthropic.clone() {
+                let (newest_version, _) = settings.upgrade();
+                setting.anthropic = Some(AnthropicSettingsContent::Versioned(
+                    VersionedAnthropicSettingsContent::V1(newest_version),
                 ));
             }
         });
@@ -57,8 +71,57 @@ pub struct AllLanguageModelSettingsContent {
     pub copilot_chat: Option<CopilotChatSettingsContent>,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct AnthropicSettingsContent {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum AnthropicSettingsContent {
+    Legacy(LegacyAnthropicSettingsContent),
+    Versioned(VersionedAnthropicSettingsContent),
+}
+
+impl AnthropicSettingsContent {
+    pub fn upgrade(self) -> (AnthropicSettingsContentV1, bool) {
+        match self {
+            AnthropicSettingsContent::Legacy(content) => (
+                AnthropicSettingsContentV1 {
+                    api_url: content.api_url,
+                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
+                    available_models: content.available_models.map(|models| {
+                        models
+                            .into_iter()
+                            .filter_map(|model| match model {
+                                anthropic::Model::Custom { name, max_tokens } => {
+                                    Some(provider::anthropic::AvailableModel { name, max_tokens })
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    }),
+                },
+                true,
+            ),
+            AnthropicSettingsContent::Versioned(content) => match content {
+                VersionedAnthropicSettingsContent::V1(content) => (content, false),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LegacyAnthropicSettingsContent {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<anthropic::Model>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(tag = "version")]
+pub enum VersionedAnthropicSettingsContent {
+    #[serde(rename = "1")]
+    V1(AnthropicSettingsContentV1),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AnthropicSettingsContentV1 {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
@@ -73,8 +136,8 @@ pub struct OllamaSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum OpenAiSettingsContent {
-    Legacy(OpenAiSettingsContentLegacy),
-    Versioned(OpenAiSettingsContentVersioned),
+    Legacy(LegacyOpenAiSettingsContent),
+    Versioned(VersionedOpenAiSettingsContent),
 }
 
 impl OpenAiSettingsContent {
@@ -99,14 +162,14 @@ impl OpenAiSettingsContent {
                 true,
             ),
             OpenAiSettingsContent::Versioned(content) => match content {
-                OpenAiSettingsContentVersioned::V1(content) => (content, false),
+                VersionedOpenAiSettingsContent::V1(content) => (content, false),
             },
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenAiSettingsContentLegacy {
+pub struct LegacyOpenAiSettingsContent {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<open_ai::Model>>,
@@ -114,7 +177,7 @@ pub struct OpenAiSettingsContentLegacy {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "version")]
-pub enum OpenAiSettingsContentVersioned {
+pub enum VersionedOpenAiSettingsContent {
     #[serde(rename = "1")]
     V1(OpenAiSettingsContentV1),
 }
@@ -160,12 +223,21 @@ impl settings::Settings for AllLanguageModelSettings {
         let mut settings = AllLanguageModelSettings::default();
 
         for value in sources.defaults_and_customizations() {
+            // Anthropic
+            let (anthropic, upgraded) = match value.anthropic.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+
+            if upgraded {
+                settings.anthropic.needs_setting_migration = true;
+            }
+
             merge(
                 &mut settings.anthropic.api_url,
-                value.anthropic.as_ref().and_then(|s| s.api_url.clone()),
+                anthropic.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = value
-                .anthropic
+            if let Some(low_speed_timeout_in_seconds) = anthropic
                 .as_ref()
                 .and_then(|s| s.low_speed_timeout_in_seconds)
             {
@@ -174,10 +246,7 @@ impl settings::Settings for AllLanguageModelSettings {
             }
             merge(
                 &mut settings.anthropic.available_models,
-                value
-                    .anthropic
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
+                anthropic.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             merge(
@@ -193,6 +262,7 @@ impl settings::Settings for AllLanguageModelSettings {
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
 
+            // OpenAI
             let (openai, upgraded) = match value.openai.clone().map(|s| s.upgrade()) {
                 Some((content, upgraded)) => (Some(content), upgraded),
                 None => (None, false),
