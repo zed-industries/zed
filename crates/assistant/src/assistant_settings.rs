@@ -456,6 +456,8 @@ pub struct LegacyAssistantSettingsContent {
 impl Settings for AssistantSettings {
     const KEY: Option<&'static str> = Some("assistant");
 
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
+
     type FileContent = AssistantSettingsContent;
 
     fn load(
@@ -497,103 +499,70 @@ fn merge<T>(target: &mut T, value: Option<T>) {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use gpui::{AppContext, UpdateGlobal};
-//     use settings::SettingsStore;
+#[cfg(test)]
+mod tests {
+    use gpui::{ReadGlobal, TestAppContext};
 
-//     use super::*;
+    use super::*;
 
-//     #[gpui::test]
-//     fn test_deserialize_assistant_settings(cx: &mut AppContext) {
-//         let store = settings::SettingsStore::test(cx);
-//         cx.set_global(store);
+    #[gpui::test]
+    async fn test_deserialize_assistant_settings_with_version(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor().clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
 
-//         // Settings default to gpt-4-turbo.
-//         AssistantSettings::register(cx);
-//         assert_eq!(
-//             AssistantSettings::get_global(cx).provider,
-//             AssistantProvider::OpenAi {
-//                 model: OpenAiModel::FourOmni,
-//                 api_url: open_ai::OPEN_AI_API_URL.into(),
-//                 low_speed_timeout_in_seconds: None,
-//                 available_models: Default::default(),
-//             }
-//         );
+        cx.update(|cx| {
+            let test_settings = settings::SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            AssistantSettings::register(cx);
+        });
 
-//         // Ensure backward-compatibility.
-//         SettingsStore::update_global(cx, |store, cx| {
-//             store
-//                 .set_user_settings(
-//                     r#"{
-//                         "assistant": {
-//                             "openai_api_url": "test-url",
-//                         }
-//                     }"#,
-//                     cx,
-//                 )
-//                 .unwrap();
-//         });
-//         assert_eq!(
-//             AssistantSettings::get_global(cx).provider,
-//             AssistantProvider::OpenAi {
-//                 model: OpenAiModel::FourOmni,
-//                 api_url: "test-url".into(),
-//                 low_speed_timeout_in_seconds: None,
-//                 available_models: Default::default(),
-//             }
-//         );
-//         SettingsStore::update_global(cx, |store, cx| {
-//             store
-//                 .set_user_settings(
-//                     r#"{
-//                         "assistant": {
-//                             "default_open_ai_model": "gpt-4-0613"
-//                         }
-//                     }"#,
-//                     cx,
-//                 )
-//                 .unwrap();
-//         });
-//         assert_eq!(
-//             AssistantSettings::get_global(cx).provider,
-//             AssistantProvider::OpenAi {
-//                 model: OpenAiModel::Four,
-//                 api_url: open_ai::OPEN_AI_API_URL.into(),
-//                 low_speed_timeout_in_seconds: None,
-//                 available_models: Default::default(),
-//             }
-//         );
+        cx.update(|cx| {
+            assert!(!AssistantSettings::get_global(cx).using_outdated_settings_version);
+            assert_eq!(
+                AssistantSettings::get_global(cx).default_model,
+                AssistantDefaultModel {
+                    provider: "openai".into(),
+                    model: "gpt-4o".into(),
+                }
+            );
+        });
 
-//         // The new version supports setting a custom model when using zed.dev.
-//         SettingsStore::update_global(cx, |store, cx| {
-//             store
-//                 .set_user_settings(
-//                     r#"{
-//                         "assistant": {
-//                             "version": "1",
-//                             "provider": {
-//                                 "name": "zed.dev",
-//                                 "default_model": {
-//                                     "custom": {
-//                                         "name": "custom-provider"
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }"#,
-//                     cx,
-//                 )
-//                 .unwrap();
-//         });
-//         assert_eq!(
-//             AssistantSettings::get_global(cx).provider,
-//             AssistantProvider::ZedDotDev {
-//                 model: CloudModel::Custom {
-//                     name: "custom-provider".into(),
-//                     max_tokens: None
-//                 }
-//             }
-//         );
-//     }
-// }
+        cx.update(|cx| {
+            settings::SettingsStore::global(cx).update_settings_file::<AssistantSettings>(
+                fs.clone(),
+                |settings, _| {
+                    *settings = AssistantSettingsContent::Versioned(
+                        VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
+                            default_model: Some(AssistantDefaultModel {
+                                provider: "test-provider".into(),
+                                model: "gpt-99".into(),
+                            }),
+                            enabled: None,
+                            button: None,
+                            dock: None,
+                            default_width: None,
+                            default_height: None,
+                        }),
+                    )
+                },
+            );
+        });
+
+        cx.run_until_parked();
+
+        let raw_settings_value = fs.load(paths::settings_file()).await.unwrap();
+        assert!(raw_settings_value.contains(r#""version": "2""#));
+
+        #[derive(Debug, Deserialize)]
+        struct AssistantSettingsTest {
+            assistant: AssistantSettingsContent,
+        }
+
+        let assistant_settings: AssistantSettingsTest =
+            serde_json_lenient::from_str(&raw_settings_value).unwrap();
+
+        assert!(!assistant_settings.assistant.is_version_outdated());
+    }
+}

@@ -439,6 +439,7 @@ dependencies = [
  "semantic_index",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "similar",
  "smol",

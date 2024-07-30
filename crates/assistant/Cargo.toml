@@ -85,5 +85,6 @@ language = { workspace = true, features = ["test-support"] }
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+serde_json_lenient.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
