@@ -20,7 +20,7 @@ use util::ResultExt;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 
 const PROVIDER_ID: &str = "openai";
@@ -112,6 +112,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -121,7 +122,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.read(cx).api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
@@ -153,7 +154,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
@@ -172,6 +173,7 @@ pub struct OpenAiLanguageModel {
     model: open_ai::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for OpenAiLanguageModel {
@@ -226,7 +228,7 @@ impl LanguageModel for OpenAiLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        async move {
+        let future = self.request_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(
                 http_client.as_ref(),
@@ -237,11 +239,12 @@ impl LanguageModel for OpenAiLanguageModel {
             );
             let response = request.await?;
             Ok(open_ai::extract_text_from_events(response).boxed())
-        }
-        .boxed()
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         _request: LanguageModelRequest,
         _name: String,

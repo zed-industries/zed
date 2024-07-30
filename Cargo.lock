@@ -406,7 +406,6 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
- "completion",
  "ctor",
  "editor",
  "env_logger",
@@ -2470,7 +2469,6 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
- "completion",
  "ctor",
  "dashmap 6.0.1",
  "dev_server_projects",
@@ -2653,30 +2651,6 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
-]
-
-[[package]]
-name = "completion"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ctor",
- "editor",
- "env_logger",
- "futures 0.3.28",
- "gpui",
- "language",
- "language_model",
- "project",
- "rand 0.8.5",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "text",
- "ui",
- "unindent",
 ]
 
 [[package]]
@@ -6048,6 +6022,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum",
  "text",
  "theme",
@@ -9506,7 +9481,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "completion",
  "env_logger",
  "fs",
  "futures 0.3.28",

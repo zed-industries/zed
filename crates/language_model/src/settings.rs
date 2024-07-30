@@ -89,9 +89,15 @@ impl AnthropicSettingsContent {
                         models
                             .into_iter()
                             .filter_map(|model| match model {
-                                anthropic::Model::Custom { name, max_tokens } => {
-                                    Some(provider::anthropic::AvailableModel { name, max_tokens })
-                                }
+                                anthropic::Model::Custom {
+                                    name,
+                                    max_tokens,
+                                    tool_override,
+                                } => Some(provider::anthropic::AvailableModel {
+                                    name,
+                                    max_tokens,
+                                    tool_override,
+                                }),
                                 _ => None,
                             })
                             .collect()

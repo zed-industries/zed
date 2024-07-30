@@ -15,7 +15,6 @@ use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-use completion::LanguageModelCompletionProvider;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
@@ -192,7 +191,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
     context_store::init(&client);
     prompt_library::init(cx);
-    init_completion_provider(cx);
+    init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
@@ -217,8 +216,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 }
 
-fn init_completion_provider(cx: &mut AppContext) {
-    completion::init(cx);
+fn init_language_model_settings(cx: &mut AppContext) {
     update_active_language_model_from_settings(cx);
 
     cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
@@ -233,20 +231,9 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
     let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
-
-    let Some(provider) = LanguageModelRegistry::global(cx)
-        .read(cx)
-        .provider(&provider_name)
-    else {
-        return;
-    };
-
-    let models = provider.provided_models(cx);
-    if let Some(model) = models.iter().find(|model| model.id() == model_id).cloned() {
-        LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
-            completion_provider.set_active_model(model, cx);
-        });
-    }
+    LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+        registry.select_active_model(&provider_name, &model_id, cx);
+    });
 }
 
 fn register_slash_commands(cx: &mut AppContext) {

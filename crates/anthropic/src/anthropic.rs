@@ -21,7 +21,12 @@ pub enum Model {
     #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
     #[serde(rename = "custom")]
-    Custom { name: String, max_tokens: usize },
+    Custom {
+        name: String,
+        max_tokens: usize,
+        /// Override this model with a different Anthropic model for tool calls.
+        tool_override: Option<String>,
+    },
 }
 
 impl Model {
@@ -66,6 +71,18 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn tool_model_id(&self) -> &str {
+        if let Self::Custom {
+            tool_override: Some(tool_override),
+            ..
+        } = self
+        {
+            tool_override
+        } else {
+            self.id()
         }
     }
 }

@@ -60,7 +60,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         true
     }
 
-    fn authenticate(&self, _: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, _: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
@@ -68,7 +68,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         unimplemented!()
     }
 
-    fn reset_credentials(&self, _: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, _: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 }
@@ -173,7 +173,7 @@ impl LanguageModel for FakeLanguageModel {
         async move { Ok(rx.map(Ok).boxed()) }.boxed()
     }
 
-    fn use_tool(
+    fn use_any_tool(
         &self,
         _request: LanguageModelRequest,
         _name: String,

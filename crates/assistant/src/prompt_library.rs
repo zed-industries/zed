@@ -1,6 +1,5 @@
 use crate::{
     slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
-    LanguageModelCompletionProvider,
 };
 use anyhow::{anyhow, Result};
 use assets::Assets;
@@ -19,7 +18,9 @@ use gpui::{
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
@@ -636,7 +637,10 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let provider = LanguageModelCompletionProvider::read_global(cx);
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
@@ -725,6 +729,9 @@ impl PromptLibrary {
     }
 
     fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
             let editor = &prompt.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
@@ -736,7 +743,7 @@ impl PromptLibrary {
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
                         .update(|cx| {
-                            LanguageModelCompletionProvider::read_global(cx).count_tokens(
+                            model.count_tokens(
                                 LanguageModelRequest {
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
@@ -804,7 +811,7 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let current_model = LanguageModelCompletionProvider::read_global(cx).active_model();
+                let model = LanguageModelRegistry::read_global(cx).active_model();
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -914,7 +921,7 @@ impl PromptLibrary {
                                                                     None,
                                                                     format!(
                                                                         "Model: {}",
-                                                                        current_model
+                                                                        model
                                                                             .as_ref()
                                                                             .map(|model| model
                                                                                 .name()

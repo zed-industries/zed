@@ -52,7 +52,7 @@ pub struct AssistantSettings {
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_model: AssistantDefaultModel,
+    pub default_model: LanguageModelSelection,
     pub using_outdated_settings_version: bool,
 }
 
@@ -198,25 +198,25 @@ impl AssistantSettingsContent {
                         .clone()
                         .and_then(|provider| match provider {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "zed.dev".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "openai".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Anthropic { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "anthropic".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
-                                default_model.map(|model| AssistantDefaultModel {
+                                default_model.map(|model| LanguageModelSelection {
                                     provider: "ollama".to_string(),
                                     model: model.id().to_string(),
                                 })
@@ -231,7 +231,7 @@ impl AssistantSettingsContent {
                 dock: settings.dock,
                 default_width: settings.default_width,
                 default_height: settings.default_height,
-                default_model: Some(AssistantDefaultModel {
+                default_model: Some(LanguageModelSelection {
                     provider: "openai".to_string(),
                     model: settings
                         .default_open_ai_model
@@ -325,7 +325,7 @@ impl AssistantSettingsContent {
                     _ => {}
                 },
                 VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_model = Some(AssistantDefaultModel { provider, model });
+                    settings.default_model = Some(LanguageModelSelection { provider, model });
                 }
             },
             AssistantSettingsContent::Legacy(settings) => {
@@ -382,11 +382,11 @@ pub struct AssistantSettingsContentV2 {
     /// Default: 320
     default_height: Option<f32>,
     /// The default model to use when creating new contexts.
-    default_model: Option<AssistantDefaultModel>,
+    default_model: Option<LanguageModelSelection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct AssistantDefaultModel {
+pub struct LanguageModelSelection {
     #[schemars(schema_with = "providers_schema")]
     pub provider: String,
     pub model: String,
@@ -407,7 +407,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
     .into()
 }
 
-impl Default for AssistantDefaultModel {
+impl Default for LanguageModelSelection {
     fn default() -> Self {
         Self {
             provider: "openai".to_string(),
@@ -542,7 +542,7 @@ mod tests {
             assert!(!AssistantSettings::get_global(cx).using_outdated_settings_version);
             assert_eq!(
                 AssistantSettings::get_global(cx).default_model,
-                AssistantDefaultModel {
+                LanguageModelSelection {
                     provider: "openai".into(),
                     model: "gpt-4o".into(),
                 }
@@ -555,7 +555,7 @@ mod tests {
                 |settings, _| {
                     *settings = AssistantSettingsContent::Versioned(
                         VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
-                            default_model: Some(AssistantDefaultModel {
+                            default_model: Some(LanguageModelSelection {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),

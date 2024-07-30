@@ -19,7 +19,6 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
-    "crates/completion",
     "crates/copilot",
     "crates/db",
     "crates/dev_server_projects",
@@ -190,7 +189,6 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
-completion = { path = "crates/completion" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }

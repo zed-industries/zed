@@ -19,7 +19,6 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::proto;
 use collections::{BTreeSet, HashMap, HashSet};
-use completion::LanguageModelCompletionProvider;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
@@ -43,7 +42,7 @@ use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
-use language_model::{LanguageModelProviderId, Role};
+use language_model::{LanguageModelProviderId, LanguageModelRegistry, Role};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -392,9 +391,9 @@ impl AssistantPanel {
             cx.subscribe(&context_editor_toolbar, Self::handle_toolbar_event),
             cx.subscribe(&model_summary_editor, Self::handle_summary_editor_event),
             cx.subscribe(&context_store, Self::handle_context_store_event),
-            cx.observe(
-                &LanguageModelCompletionProvider::global(cx),
-                |this, _, cx| {
+            cx.subscribe(
+                &LanguageModelRegistry::global(cx),
+                |this, _, _: &language_model::ActiveModelChanged, cx| {
                     this.completion_provider_changed(cx);
                 },
             ),
@@ -560,7 +559,7 @@ impl AssistantPanel {
             })
         }
 
-        let Some(new_provider_id) = LanguageModelCompletionProvider::read_global(cx)
+        let Some(new_provider_id) = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|p| p.id())
         else {
@@ -599,7 +598,7 @@ impl AssistantPanel {
     }
 
     fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
-        if let Some(provider) = LanguageModelCompletionProvider::read_global(cx).active_provider() {
+        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
             if !provider.is_authenticated(cx) {
                 return Some(provider.authentication_prompt(cx));
             }
@@ -904,9 +903,9 @@ impl AssistantPanel {
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        LanguageModelCompletionProvider::read_global(cx)
-            .reset_credentials(cx)
-            .detach_and_log_err(cx);
+        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
+            provider.reset_credentials(cx).detach_and_log_err(cx);
+        }
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
@@ -1041,11 +1040,18 @@ impl AssistantPanel {
     }
 
     fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        LanguageModelCompletionProvider::read_global(cx).is_authenticated(cx)
+        LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        LanguageModelCompletionProvider::read_global(cx).authenticate(cx)
+        LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map_or(
+                Task::ready(Err(anyhow!("no active language model provider"))),
+                |provider| provider.authenticate(cx),
+            )
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2707,7 +2713,7 @@ impl ContextEditorToolbarItem {
     }
 
     fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let context = &self
             .active_context_editor
             .as_ref()?
@@ -2779,7 +2785,7 @@ impl Render for ContextEditorToolbarItem {
                                         .whitespace_nowrap()
                                         .child(
                                             Label::new(
-                                                LanguageModelCompletionProvider::read_global(cx)
+                                                LanguageModelRegistry::read_global(cx)
                                                     .active_model()
                                                     .map(|model| model.name().0)
                                                     .unwrap_or_else(|| "No model selected".into()),

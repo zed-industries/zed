@@ -1,6 +1,6 @@
 use crate::{
     humanize_token_count, prompts::generate_content_prompt, AssistantPanel, AssistantPanelEvent,
-    Hunk, LanguageModelCompletionProvider, ModelSelector, StreamingDiff,
+    Hunk, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
@@ -27,7 +27,9 @@ use gpui::{
     WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
@@ -1328,7 +1330,7 @@ impl Render for PromptEditor {
                                     Tooltip::with_meta(
                                         format!(
                                             "Using {}",
-                                            LanguageModelCompletionProvider::read_global(cx)
+                                            LanguageModelRegistry::read_global(cx)
                                                 .active_model()
                                                 .map(|model| model.name().0)
                                                 .unwrap_or_else(|| "No model selected".into()),
@@ -1662,7 +1664,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -2013,8 +2015,12 @@ impl Codegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        let request = self.build_request(user_prompt, assistant_panel_context, edit_range, cx);
-        LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
+        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            let request = self.build_request(user_prompt, assistant_panel_context, edit_range, cx);
+            model.count_tokens(request, cx)
+        } else {
+            future::ready(Err(anyhow!("no active model"))).boxed()
+        }
     }
 
     pub fn start(
@@ -2024,6 +2030,10 @@ impl Codegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        let model = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .context("no active model")?;
+
         self.undo(cx);
 
         // Handle initial insertion
@@ -2053,10 +2063,7 @@ impl Codegen {
             None
         };
 
-        let model_telemetry_id = LanguageModelCompletionProvider::read_global(cx)
-            .active_model_telemetry_id()
-            .context("no active model")?;
-
+        let telemetry_id = model.telemetry_id();
         let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> = if user_prompt
             .trim()
             .to_lowercase()
@@ -2067,10 +2074,10 @@ impl Codegen {
             let request =
                 self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx);
             let chunks =
-                LanguageModelCompletionProvider::read_global(cx).stream_completion(request, cx);
+                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
             async move { Ok(chunks.await?.boxed()) }.boxed_local()
         };
-        self.handle_stream(model_telemetry_id, edit_range, chunks, cx);
+        self.handle_stream(telemetry_id, edit_range, chunks, cx);
         Ok(())
     }
 
@@ -2657,7 +2664,6 @@ mod tests {
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_model::LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -2789,7 +2795,6 @@ mod tests {
         mut rng: StdRng,
     ) {
         cx.update(LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2853,7 +2858,6 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
