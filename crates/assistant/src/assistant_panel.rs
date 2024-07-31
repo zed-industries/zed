@@ -138,7 +138,7 @@ pub struct AssistantPanel {
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
-    authentificate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
+    authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
 }
 
 #[derive(Clone)]
@@ -412,7 +412,7 @@ impl AssistantPanel {
             authentication_prompt: None,
             model_selector_menu_handle,
             model_summary_editor,
-            authentificate_provider_task: None,
+            authenticate_provider_task: None,
         }
     }
 
@@ -567,33 +567,13 @@ impl AssistantPanel {
         };
 
         if self
-            .authentificate_provider_task
+            .authenticate_provider_task
             .as_ref()
             .map_or(true, |(old_provider_id, _)| {
                 *old_provider_id != new_provider_id
             })
         {
-            let load_credentials = self.authenticate(cx);
-            let task = cx.spawn(|this, mut cx| async move {
-                let _ = load_credentials.await;
-                this.update(&mut cx, |this, cx| {
-                    if this.active_context_editor(cx).is_none() {
-                        this.new_context(cx);
-                    }
-
-                    let authentication_prompt = Self::authentication_prompt(cx);
-                    for context_editor in this.context_editors(cx) {
-                        context_editor.update(cx, |editor, cx| {
-                            editor.set_authentication_prompt(authentication_prompt.clone(), cx);
-                        });
-                    }
-
-                    cx.notify();
-                })
-                .log_err();
-            });
-
-            self.authentificate_provider_task = Some((new_provider_id, task));
+            self.ensure_authenticated(cx);
         }
     }
 
@@ -604,6 +584,41 @@ impl AssistantPanel {
             }
         }
         None
+    }
+
+    fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(provider_id) = LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map(|p| p.id())
+        else {
+            return;
+        };
+
+        let load_credentials = self.authenticate(cx);
+        let task = cx.spawn(|this, mut cx| async move {
+            let _ = load_credentials.await;
+            this.update(&mut cx, |this, cx| {
+                this.show_authentication_prompt(cx);
+            })
+            .log_err();
+        });
+
+        self.authenticate_provider_task = Some((provider_id, task));
+    }
+
+    fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        if self.active_context_editor(cx).is_none() {
+            self.new_context(cx);
+        }
+
+        let authentication_prompt = Self::authentication_prompt(cx);
+        for context_editor in self.context_editors(cx) {
+            context_editor.update(cx, |editor, cx| {
+                editor.set_authentication_prompt(authentication_prompt.clone(), cx);
+            });
+        }
+
+        cx.notify();
     }
 
     pub fn inline_assist(
@@ -904,7 +919,14 @@ impl AssistantPanel {
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
         if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            provider.reset_credentials(cx).detach_and_log_err(cx);
+            let reset_credentials = provider.reset_credentials(cx);
+            cx.spawn(|this, mut cx| async move {
+                reset_credentials.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.show_authentication_prompt(cx);
+                })
+            })
+            .detach_and_log_err(cx);
         }
     }
 
@@ -1153,16 +1175,7 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            let load_credentials = self.authenticate(cx);
-            cx.spawn(|this, mut cx| async move {
-                load_credentials.await?;
-                this.update(&mut cx, |this, cx| {
-                    if this.is_authenticated(cx) && this.active_context_editor(cx).is_none() {
-                        this.new_context(cx);
-                    }
-                })
-            })
-            .detach_and_log_err(cx);
+            self.ensure_authenticated(cx);
         }
     }
 
