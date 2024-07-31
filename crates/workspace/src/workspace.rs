@@ -2903,7 +2903,8 @@ impl Workspace {
                 }
                 self.update_window_edited(cx);
             }
-            pane::Event::RemoveItem { item_id } => {
+            pane::Event::RemoveItem { .. } => {}
+            pane::Event::RemovedItem { item_id } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {

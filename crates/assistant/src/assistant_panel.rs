@@ -465,7 +465,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::RemoveItem { .. } => {
+            pane::Event::RemovedItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
             }
