@@ -635,7 +635,7 @@
     //         "option_to_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
     //         "option_to_meta": true,
-    "option_as_meta": false,
+    "option_as_meta": true,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,

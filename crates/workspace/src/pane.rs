@@ -169,7 +169,8 @@ pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
-    RemoveItem { item_id: EntityId },
+    RemoveItem { idx: usize },
+    RemovedItem { item_id: EntityId },
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
@@ -189,8 +190,9 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove => f.write_str("Remove"),
-            Event::RemoveItem { item_id } => f
-                .debug_struct("RemoveItem")
+            Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
+            Event::RemovedItem { item_id } => f
+                .debug_struct("RemovedItem")
                 .field("item_id", item_id)
                 .finish(),
             Event::Split(direction) => f
@@ -1302,9 +1304,11 @@ impl Pane {
             }
         }
 
+        cx.emit(Event::RemoveItem { idx: item_index });
+
         let item = self.items.remove(item_index);
 
-        cx.emit(Event::RemoveItem {
+        cx.emit(Event::RemovedItem {
             item_id: item.item_id(),
         });
         if self.items.is_empty() {

@@ -342,7 +342,7 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
-            pane::Event::RemoveItem { .. } => self.serialize(cx),
+            pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),

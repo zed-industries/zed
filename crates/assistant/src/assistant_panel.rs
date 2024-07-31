@@ -465,7 +465,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::RemoveItem { .. } => {
+            pane::Event::RemovedItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
             }
@@ -545,7 +545,7 @@ impl AssistantPanel {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
-                workspace.clone(),
+                self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
                 assistant_panel,
@@ -789,12 +789,9 @@ impl AssistantPanel {
                 let context = task.await?;
 
                 this.update(&mut cx, |this, cx| {
-                    let Some(workspace) = this.workspace.upgrade() else {
-                        return Ok(());
-                    };
-                    let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
-                        make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-                    });
+                    let workspace = this.workspace.clone();
+                    let project = this.project.clone();
+                    let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
@@ -804,7 +801,7 @@ impl AssistantPanel {
                         let mut editor = ContextEditor::for_context(
                             context,
                             fs,
-                            workspace.clone(),
+                            workspace,
                             project,
                             lsp_adapter_delegate,
                             weak_assistant_panel,
@@ -826,17 +823,14 @@ impl AssistantPanel {
             None
         } else {
             let context = self.context_store.update(cx, |store, cx| store.create(cx));
-            let workspace = self.workspace.upgrade()?;
-            let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
-                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-            });
+            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
 
             let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
                     self.fs.clone(),
-                    workspace.clone(),
+                    self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
                     assistant_panel,
@@ -1004,9 +998,6 @@ impl AssistantPanel {
             let context = context.await?;
             let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1060,9 +1051,6 @@ impl AssistantPanel {
             let context = context.await?;
             let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1276,7 +1264,7 @@ impl ContextEditor {
     fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
-        workspace: View<Workspace>,
+        workspace: WeakView<Workspace>,
         project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         assistant_panel: WeakView<AssistantPanel>,
@@ -1284,7 +1272,7 @@ impl ContextEditor {
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
             Some(cx.view().downgrade()),
-            Some(workspace.downgrade()),
+            Some(workspace.clone()),
         );
 
         let editor = cx.new_view(|cx| {
@@ -1318,7 +1306,7 @@ impl ContextEditor {
             scroll_position: None,
             remote_id: None,
             fs,
-            workspace: workspace.downgrade(),
+            workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
@@ -1929,18 +1917,20 @@ impl ContextEditor {
                 cx.update(|cx| {
                     for suggestion in suggestion_group.suggestions {
                         let description = suggestion.description.unwrap_or_else(|| "Delete".into());
+
                         let range = {
-                            let buffer = editor.read(cx).buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                            let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion.range.start)
                                 .unwrap()
-                                ..buffer
+                                ..multibuffer
                                     .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
                         };
+
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assist_ids.push(assistant.suggest_assist(
+                            let suggestion_id = assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
@@ -1948,16 +1938,20 @@ impl ContextEditor {
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
-                            ));
+                            );
+                            assist_ids.push(suggestion_id);
                         });
                     }
 
                     // Scroll the editor to the suggested assist
                     editor.update(cx, |editor, cx| {
-                        let anchor = {
-                            let buffer = editor.buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                        let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0
+                        {
+                            Anchor::min()
+                        } else {
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
                                 .unwrap()
                         };
