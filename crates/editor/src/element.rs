@@ -1929,7 +1929,7 @@ impl EditorElement {
     fn render_block(
         &self,
         block: &Block,
-        available_space: Size<AvailableSpace>,
+        available_width: AvailableSpace,
         block_id: BlockId,
         block_row_start: DisplayRow,
         snapshot: &EditorSnapshot,
@@ -2361,16 +2361,24 @@ impl EditorElement {
             }
         };
 
-        let size = element.layout_as_root(available_space, cx);
+        // Discover the element's content height, then round up to the nearest multiple of line height.
+        let preliminary_size =
+            element.layout_as_root(size(available_width, AvailableSpace::MinContent), cx);
+        let quantized_height = (preliminary_size.height / line_height).ceil() * line_height;
+        let final_size = if preliminary_size.height == quantized_height {
+            preliminary_size
+        } else {
+            element.layout_as_root(size(available_width, quantized_height.into()), cx)
+        };
 
         if let BlockId::Custom(custom_block_id) = block_id {
-            let element_height_in_lines = (size.height / line_height).ceil() as u32;
+            let element_height_in_lines = (final_size.height / line_height).ceil() as u32;
             if element_height_in_lines != block.height() {
                 resized_blocks.insert(custom_block_id, element_height_in_lines);
             }
         }
 
-        (element, size)
+        (element, final_size)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2400,7 +2408,6 @@ impl EditorElement {
         let mut resized_blocks = HashMap::default();
 
         for (row, block) in fixed_blocks {
-            let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
@@ -2409,7 +2416,7 @@ impl EditorElement {
 
             let (element, element_size) = self.render_block(
                 block,
-                available_space,
+                AvailableSpace::MinContent,
                 block_id,
                 row,
                 snapshot,
@@ -2429,7 +2436,7 @@ impl EditorElement {
                 id: block_id,
                 row: Some(row),
                 element,
-                available_space,
+                available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
             });
         }
@@ -2444,16 +2451,15 @@ impl EditorElement {
                     .max(gutter_dimensions.width + *scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let available_space = size(AvailableSpace::Definite(width), AvailableSpace::MinContent);
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
                 focused_block = None;
             }
 
-            let (element, _) = self.render_block(
+            let (element, element_size) = self.render_block(
                 block,
-                available_space,
+                width.into(),
                 block_id,
                 row,
                 snapshot,
@@ -2473,7 +2479,7 @@ impl EditorElement {
                 id: block_id,
                 row: Some(row),
                 element,
-                available_space,
+                available_space: size(width.into(), element_size.height.into()),
                 style,
             });
         }
@@ -2494,14 +2500,10 @@ impl EditorElement {
                             ),
                             BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
                         };
-                        let available_space = size(
-                            width,
-                            AvailableSpace::Definite(block.height() as f32 * line_height),
-                        );
 
-                        let (element, _) = self.render_block(
+                        let (element, element_size) = self.render_block(
                             &block,
-                            available_space,
+                            width,
                             focused_block.id,
                             rows.end,
                             snapshot,
@@ -2521,7 +2523,7 @@ impl EditorElement {
                             id: block.id(),
                             row: None,
                             element,
-                            available_space,
+                            available_space: size(width, element_size.height.into()),
                             style,
                         });
                     }
@@ -4956,21 +4958,27 @@ impl Element for EditorElement {
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
-                        let editor_width =
-                            text_width - gutter_dimensions.margin - overscroll.width - em_width;
-                        let wrap_width = match editor.soft_wrap_mode(cx) {
-                            SoftWrap::None => None,
-                            SoftWrap::PreferLine => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
-                            SoftWrap::EditorWidth => Some(editor_width),
-                            SoftWrap::Column(column) => {
-                                Some(editor_width.min(column as f32 * em_advance))
-                            }
-                        };
-
-                        if editor.set_wrap_width(wrap_width, cx) {
-                            editor.snapshot(cx)
-                        } else {
+                        if matches!(editor.mode, EditorMode::AutoHeight { .. }) {
                             snapshot
+                        } else {
+                            let editor_width =
+                                text_width - gutter_dimensions.margin - overscroll.width - em_width;
+                            let wrap_width = match editor.soft_wrap_mode(cx) {
+                                SoftWrap::None => None,
+                                SoftWrap::PreferLine => {
+                                    Some((MAX_LINE_LEN / 2) as f32 * em_advance)
+                                }
+                                SoftWrap::EditorWidth => Some(editor_width),
+                                SoftWrap::Column(column) => {
+                                    Some(editor_width.min(column as f32 * em_advance))
+                                }
+                            };
+
+                            if editor.set_wrap_width(wrap_width, cx) {
+                                editor.snapshot(cx)
+                            } else {
+                                snapshot
+                            }
                         }
                     });
 
