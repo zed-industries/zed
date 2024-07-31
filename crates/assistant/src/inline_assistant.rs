@@ -14,6 +14,7 @@ use editor::{
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use futures::{
     channel::mpsc,
@@ -1214,10 +1215,8 @@ struct PromptEditor {
     token_count: Option<usize>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
-    rate_limit_notice: Option<View<RateLimitNotice>>,
+    show_rate_limit_notice: bool,
 }
-
-struct RateLimitNotice {}
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
@@ -1361,18 +1360,18 @@ impl Render for PromptEditor {
                                 v_flex()
                                     .child(
                                         IconButton::new("rate-limit-error", IconName::XCircle)
-                                            .selected(self.rate_limit_notice.is_some())
+                                            .selected(self.show_rate_limit_notice)
                                             .shape(IconButtonShape::Square)
                                             .icon_size(IconSize::Small)
                                             .on_click(cx.listener(Self::toggle_rate_limit_notice)),
                                     )
-                                    .children(self.rate_limit_notice.as_ref().map(|view| {
+                                    .children(self.show_rate_limit_notice.then(|| {
                                         deferred(
                                             anchored()
                                                 .position_mode(gpui::AnchoredPositionMode::Local)
                                                 .position(point(px(0.), px(24.)))
                                                 .anchor(gpui::AnchorCorner::TopLeft)
-                                                .child(view.clone()),
+                                                .child(self.render_rate_limit_notice(cx)),
                                         )
                                     })),
                             )
@@ -1398,32 +1397,6 @@ impl Render for PromptEditor {
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
-    }
-}
-
-impl Render for RateLimitNotice {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Popover::new().child(
-            v_flex()
-                .child(
-                    Label::new("Out of Tokens")
-                        .size(LabelSize::Small)
-                        .weight(FontWeight::BOLD),
-                )
-                .child(Label::new(
-                    "Try Zed Pro for higher limits, a wider range of models, and more.",
-                ))
-                .child(
-                    h_flex().justify_between().child(div()).child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("dismiss", "Dismiss").style(ButtonStyle::Transparent),
-                            )
-                            .child(Button::new("more-info", "More Info")),
-                    ),
-                ),
-        )
     }
 }
 
@@ -1493,7 +1466,7 @@ impl PromptEditor {
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
-            rate_limit_notice: None,
+            show_rate_limit_notice: false,
         };
         this.count_lines(cx);
         this.count_tokens(cx);
@@ -1556,9 +1529,7 @@ impl PromptEditor {
     }
 
     fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
-        if self.rate_limit_notice.take().is_none() {
-            self.rate_limit_notice = Some(cx.new_view(|_| RateLimitNotice {}));
-        }
+        self.show_rate_limit_notice = !self.show_rate_limit_notice;
         cx.notify();
     }
 
@@ -1651,8 +1622,10 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if error.error_code() == proto::ErrorCode::RateLimitExceeded {
-                    self.rate_limit_notice = Some(cx.new_view(|_| RateLimitNotice {}));
+                if cx.has_flag::<ZedPro>()
+                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
+                {
+                    self.show_rate_limit_notice = true;
                     cx.notify();
                 }
 
@@ -1813,6 +1786,30 @@ impl PromptEditor {
                 text: text_style,
                 ..Default::default()
             },
+        )
+    }
+
+    fn render_rate_limit_notice(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Popover::new().child(
+            v_flex()
+                .child(
+                    Label::new("Out of Tokens")
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD),
+                )
+                .child(Label::new(
+                    "Try Zed Pro for higher limits, a wider range of models, and more.",
+                ))
+                .child(
+                    h_flex().justify_between().child(div()).child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("dismiss", "Dismiss").style(ButtonStyle::Transparent),
+                            )
+                            .child(Button::new("more-info", "More Info")),
+                    ),
+                ),
         )
     }
 }
