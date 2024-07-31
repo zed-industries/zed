@@ -7,9 +7,11 @@ use gpui::{
     WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::{stream_completion, Request, RequestMessage};
+use open_ai::stream_completion;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -18,7 +20,7 @@ use util::ResultExt;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, Role,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 
 const PROVIDER_ID: &str = "openai";
@@ -28,7 +30,14 @@ const PROVIDER_NAME: &str = "OpenAI";
 pub struct OpenAiSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<open_ai::Model>,
+    pub available_models: Vec<AvailableModel>,
+    pub needs_setting_migration: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    pub name: String,
+    pub max_tokens: usize,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -36,7 +45,7 @@ pub struct OpenAiLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-struct State {
+pub struct State {
     api_key: Option<String>,
     _subscription: Subscription,
 }
@@ -55,10 +64,10 @@ impl OpenAiLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
-        Some(cx.observe(&self.state, |_, _, cx| {
-            cx.notify();
-        }))
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
 }
 
@@ -86,7 +95,13 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .openai
             .available_models
         {
-            models.insert(model.id().to_string(), model.clone());
+            models.insert(
+                model.name.clone(),
+                open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                },
+            );
         }
 
         models
@@ -97,6 +112,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -106,7 +122,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.read(cx).api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
@@ -138,7 +154,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let delete_credentials = cx.delete_credentials(&settings.api_url);
         let state = self.state.clone();
@@ -157,35 +173,7 @@ pub struct OpenAiLanguageModel {
     model: open_ai::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
-}
-
-impl OpenAiLanguageModel {
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
-        Request {
-            model: self.model.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => RequestMessage::User {
-                        content: msg.content,
-                    },
-                    Role::Assistant => RequestMessage::Assistant {
-                        content: Some(msg.content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => RequestMessage::System {
-                        content: msg.content,
-                    },
-                })
-                .collect(),
-            stream: true,
-            stop: request.stop,
-            temperature: request.temperature,
-            tools: Vec::new(),
-            tool_choice: None,
-        }
-    }
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for OpenAiLanguageModel {
@@ -226,7 +214,7 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = self.to_open_ai_request(request);
+        let request = request.into_open_ai(self.model.id().into());
 
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
@@ -240,7 +228,7 @@ impl LanguageModel for OpenAiLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        async move {
+        let future = self.request_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(
                 http_client.as_ref(),
@@ -250,17 +238,21 @@ impl LanguageModel for OpenAiLanguageModel {
                 low_speed_timeout,
             );
             let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        }
-        .boxed()
+            Ok(open_ai::extract_text_from_events(response).boxed())
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn use_any_tool(
+        &self,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 
@@ -341,6 +333,7 @@ impl AuthenticationPrompt {
             color: cx.theme().colors().text,
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,

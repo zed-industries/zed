@@ -17,6 +17,7 @@ alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
 base64.workspace = true
+client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true

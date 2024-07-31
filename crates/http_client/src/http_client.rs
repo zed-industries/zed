@@ -73,7 +73,7 @@ pub struct HttpClientWithProxy {
 
 impl HttpClientWithProxy {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
-    pub fn new(proxy_url: Option<String>) -> Self {
+    pub fn new(user_agent: Option<String>, proxy_url: Option<String>) -> Self {
         let proxy_url = proxy_url
             .and_then(|input| {
                 input
@@ -84,7 +84,7 @@ impl HttpClientWithProxy {
             .or_else(read_proxy_from_env);
 
         Self {
-            client: client(proxy_url.clone()),
+            client: client(user_agent, proxy_url.clone()),
             proxy: proxy_url,
         }
     }
@@ -124,8 +124,12 @@ pub struct HttpClientWithUrl {
 
 impl HttpClientWithUrl {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
-    pub fn new(base_url: impl Into<String>, proxy_url: Option<String>) -> Self {
-        let client = HttpClientWithProxy::new(proxy_url);
+    pub fn new(
+        base_url: impl Into<String>,
+        user_agent: Option<String>,
+        proxy_url: Option<String>,
+    ) -> Self {
+        let client = HttpClientWithProxy::new(user_agent, proxy_url);
 
         Self {
             base_url: Mutex::new(base_url.into()),
@@ -199,16 +203,17 @@ impl HttpClient for HttpClientWithUrl {
     }
 }
 
-pub fn client(proxy: Option<Uri>) -> Arc<dyn HttpClient> {
+pub fn client(user_agent: Option<String>, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
+    let mut builder = isahc::HttpClient::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .low_speed_timeout(100, Duration::from_secs(5))
+        .proxy(proxy.clone());
+    if let Some(user_agent) = user_agent {
+        builder = builder.default_header("User-Agent", user_agent);
+    }
+
     Arc::new(HttpClientWithProxy {
-        client: Arc::new(
-            isahc::HttpClient::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .low_speed_timeout(100, Duration::from_secs(5))
-                .proxy(proxy.clone())
-                .build()
-                .unwrap(),
-        ),
+        client: Arc::new(builder.build().unwrap()),
         proxy,
     })
 }

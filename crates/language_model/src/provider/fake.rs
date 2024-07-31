@@ -1,15 +1,17 @@
-use std::sync::{Arc, Mutex};
-
-use collections::HashMap;
-use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest,
 };
+use anyhow::anyhow;
+use collections::HashMap;
+use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Task};
 use http_client::Result;
+use std::{
+    future,
+    sync::{Arc, Mutex},
+};
 use ui::WindowContext;
 
 pub fn language_model_id() -> LanguageModelId {
@@ -34,7 +36,9 @@ pub struct FakeLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for FakeLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, _: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+    type ObservableEntity = ();
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
         None
     }
 }
@@ -58,7 +62,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         true
     }
 
-    fn authenticate(&self, _: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, _: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
@@ -66,7 +70,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         unimplemented!()
     }
 
-    fn reset_credentials(&self, _: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, _: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 }
@@ -169,5 +173,16 @@ impl LanguageModel for FakeLanguageModel {
             .unwrap()
             .insert(serde_json::to_string(&request).unwrap(), tx);
         async move { Ok(rx.map(Ok).boxed()) }.boxed()
+    }
+
+    fn use_any_tool(
+        &self,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }

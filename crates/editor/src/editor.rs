@@ -409,6 +409,7 @@ impl EditorActionId {
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
+#[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
     dirty: bool,
@@ -419,17 +420,6 @@ struct ScrollbarMarkerState {
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
         self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
-    }
-}
-
-impl Default for ScrollbarMarkerState {
-    fn default() -> Self {
-        Self {
-            scrollbar_size: Size::default(),
-            dirty: false,
-            markers: Arc::from([]),
-            pending_refresh: None,
-        }
     }
 }
 
@@ -492,7 +482,6 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    redact_all: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -1828,7 +1817,6 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_wrap_guides: None,
-            redact_all: false,
             show_indent_guides,
             placeholder_text: None,
             highlight_order: 0,
@@ -1913,7 +1901,6 @@ impl Editor {
                         if active {
                             blink_manager.enable(cx);
                         } else {
-                            blink_manager.show_cursor(cx);
                             blink_manager.disable(cx);
                         }
                     });
@@ -5763,7 +5750,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     deletion_ranges
                         .into_iter()
@@ -5829,7 +5816,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = "".into();
+                let empty_str: Arc<str> = Arc::default();
                 buffer.edit(
                     edit_ranges
                         .into_iter()
@@ -8187,7 +8174,7 @@ impl Editor {
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             let snapshot = this.buffer.read(cx).read(cx);
-            let empty_str: Arc<str> = "".into();
+            let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
 
             fn comment_prefix_range(
@@ -10545,9 +10532,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_redact_all(&mut self, redact_all: bool, cx: &mut ViewContext<Self>) {
-        self.redact_all = redact_all;
-        cx.notify();
+    pub fn set_masked(&mut self, masked: bool, cx: &mut ViewContext<Self>) {
+        if self.display_map.read(cx).masked != masked {
+            self.display_map.update(cx, |map, _| map.masked = masked);
+        }
+        cx.notify()
     }
 
     pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ViewContext<Self>) {
@@ -11233,10 +11222,6 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         cx: &WindowContext,
     ) -> Vec<Range<DisplayPoint>> {
-        if self.redact_all {
-            return vec![DisplayPoint::zero()..display_snapshot.max_point()];
-        }
-
         display_snapshot
             .buffer_snapshot
             .redacted_ranges(search_range, |file| {
@@ -12559,6 +12544,7 @@ impl Render for Editor {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features.clone(),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: settings.ui_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),
@@ -12568,6 +12554,7 @@ impl Render for Editor {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
+                font_fallbacks: settings.buffer_font.fallbacks.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),

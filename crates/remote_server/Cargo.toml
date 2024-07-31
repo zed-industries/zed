@@ -33,6 +33,7 @@ rpc.workspace = true
 settings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shellexpand.workspace = true
 smol.workspace = true
 util.workspace = true
 worktree.workspace = true

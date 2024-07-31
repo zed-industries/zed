@@ -27,6 +27,7 @@ pub fn marked_display_snapshot(
     let font = Font {
         family: "Zed Plex Mono".into(),
         features: FontFeatures::default(),
+        fallbacks: None,
         weight: FontWeight::default(),
         style: FontStyle::default(),
     };

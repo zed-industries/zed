@@ -682,7 +682,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: "".into(),
+            name: Arc::default(),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),

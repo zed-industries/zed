@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use crate::{assistant_settings::AssistantSettings, LanguageModelCompletionProvider};
+use crate::assistant_settings::AssistantSettings;
 use fs::Fs;
+use gpui::SharedString;
 use language_model::LanguageModelRegistry;
 use settings::update_settings_file;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
@@ -11,6 +12,7 @@ pub struct ModelSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<ContextMenu>>,
     fs: Arc<dyn Fs>,
     trigger: T,
+    info_text: Option<SharedString>,
 }
 
 impl<T: PopoverTrigger> ModelSelector<T> {
@@ -19,11 +21,17 @@ impl<T: PopoverTrigger> ModelSelector<T> {
             handle: None,
             fs,
             trigger,
+            info_text: None,
         }
     }
 
     pub fn with_handle(mut self, handle: PopoverMenuHandle<ContextMenu>) -> Self {
         self.handle = Some(handle);
+        self
+    }
+
+    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
+        self.info_text = Some(text.into());
         self
     }
 }
@@ -35,11 +43,24 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             menu = menu.with_handle(handle);
         }
 
+        let info_text = self.info_text.clone();
+
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
+                if let Some(info_text) = info_text.clone() {
+                    menu = menu
+                        .custom_row(move |_cx| {
+                            Label::new(info_text.clone())
+                                .color(Color::Muted)
+                                .into_any_element()
+                        })
+                        .separator();
+                }
+
                 for (index, provider) in LanguageModelRegistry::global(cx)
                     .read(cx)
                     .providers()
+                    .into_iter()
                     .enumerate()
                 {
                     if index > 0 {
@@ -61,13 +82,13 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 }
                             },
                             {
-                                let provider = provider.id();
+                                let provider = provider.clone();
                                 move |cx| {
-                                    LanguageModelCompletionProvider::global(cx).update(
+                                    LanguageModelRegistry::global(cx).update(
                                         cx,
                                         |completion_provider, cx| {
                                             completion_provider
-                                                .set_active_provider(provider.clone(), cx)
+                                                .set_active_provider(Some(provider.clone()), cx);
                                         },
                                     );
                                 }
@@ -75,11 +96,11 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                         );
                     }
 
-                    let selected_model = LanguageModelCompletionProvider::read_global(cx)
-                        .active_model()
-                        .map(|m| m.id());
-                    let selected_provider = LanguageModelCompletionProvider::read_global(cx)
+                    let selected_provider = LanguageModelRegistry::read_global(cx)
                         .active_provider()
+                        .map(|m| m.id());
+                    let selected_model = LanguageModelRegistry::read_global(cx)
+                        .active_model()
                         .map(|m| m.id());
 
                     for available_model in available_models {

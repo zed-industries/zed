@@ -748,11 +748,15 @@ impl<'a> Iterator for Chunks<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let chunk = self.peek()?;
         if self.reversed {
-            self.chunks.prev(&());
             self.offset -= chunk.len();
+            if self.offset <= *self.chunks.start() {
+                self.chunks.prev(&());
+            }
         } else {
-            self.chunks.next(&());
             self.offset += chunk.len();
+            if self.offset >= self.chunks.end(&()) {
+                self.chunks.next(&());
+            }
         }
 
         Some(chunk)
@@ -1647,97 +1651,112 @@ mod tests {
                 );
 
                 // Check that next_line/prev_line work correctly from random positions
-                let mut random_offset = rng.gen_range(start_ix..=end_ix);
-                while !expected.is_char_boundary(random_offset) {
-                    random_offset -= 1;
+                let mut offset = rng.gen_range(start_ix..=end_ix);
+                while !expected.is_char_boundary(offset) {
+                    offset -= 1;
                 }
-                chunks.seek(random_offset);
-                if rng.gen() {
-                    let expected_next_line_start = expected[random_offset..end_ix]
-                        .find('\n')
-                        .map(|newline_ix| random_offset + newline_ix + 1);
+                chunks.seek(offset);
 
-                    let moved = chunks.next_line();
-                    assert_eq!(
-                        moved,
-                        expected_next_line_start.is_some(),
-                        "unexpected result from next_line after seeking to {} in range {:?} ({:?})",
-                        random_offset,
-                        start_ix..end_ix,
-                        &expected[start_ix..end_ix]
-                    );
-                    if let Some(expected_next_line_start) = expected_next_line_start {
+                for _ in 0..5 {
+                    if rng.gen() {
+                        let expected_next_line_start = expected[offset..end_ix]
+                            .find('\n')
+                            .map(|newline_ix| offset + newline_ix + 1);
+
+                        let moved = chunks.next_line();
                         assert_eq!(
-                            chunks.offset(),
-                            expected_next_line_start,
-                            "invalid position after seeking to {} in range {:?} ({:?})",
-                            random_offset,
+                            moved,
+                            expected_next_line_start.is_some(),
+                            "unexpected result from next_line after seeking to {} in range {:?} ({:?})",
+                            offset,
                             start_ix..end_ix,
                             &expected[start_ix..end_ix]
                         );
-                    } else {
-                        assert_eq!(
-                            chunks.offset(),
-                            end_ix,
-                            "invalid position after seeking to {} in range {:?} ({:?})",
-                            random_offset,
-                            start_ix..end_ix,
-                            &expected[start_ix..end_ix]
-                        );
-                    }
-                } else {
-                    let search_end =
-                        if random_offset > 0 && expected.as_bytes()[random_offset - 1] == b'\n' {
-                            random_offset - 1
+                        if let Some(expected_next_line_start) = expected_next_line_start {
+                            assert_eq!(
+                                chunks.offset(),
+                                expected_next_line_start,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
                         } else {
-                            random_offset
+                            assert_eq!(
+                                chunks.offset(),
+                                end_ix,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        }
+                    } else {
+                        let search_end = if offset > 0 && expected.as_bytes()[offset - 1] == b'\n' {
+                            offset - 1
+                        } else {
+                            offset
                         };
 
-                    let expected_prev_line_start = expected[..search_end]
-                        .rfind('\n')
-                        .and_then(|newline_ix| {
-                            let line_start_ix = newline_ix + 1;
-                            if line_start_ix >= start_ix {
-                                Some(line_start_ix)
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| {
-                            if random_offset > 0 && start_ix == 0 {
-                                Some(0)
-                            } else {
-                                None
-                            }
-                        });
+                        let expected_prev_line_start = expected[..search_end]
+                            .rfind('\n')
+                            .and_then(|newline_ix| {
+                                let line_start_ix = newline_ix + 1;
+                                if line_start_ix >= start_ix {
+                                    Some(line_start_ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                if offset > 0 && start_ix == 0 {
+                                    Some(0)
+                                } else {
+                                    None
+                                }
+                            });
 
-                    let moved = chunks.prev_line();
-                    assert_eq!(
-                        moved,
-                        expected_prev_line_start.is_some(),
-                        "unexpected result from prev_line after seeking to {} in range {:?} ({:?})",
-                        random_offset,
-                        start_ix..end_ix,
-                        &expected[start_ix..end_ix]
-                    );
-                    if let Some(expected_prev_line_start) = expected_prev_line_start {
+                        let moved = chunks.prev_line();
                         assert_eq!(
-                            chunks.offset(),
-                            expected_prev_line_start,
-                            "invalid position after seeking to {} in range {:?} ({:?})",
-                            random_offset,
+                            moved,
+                            expected_prev_line_start.is_some(),
+                            "unexpected result from prev_line after seeking to {} in range {:?} ({:?})",
+                            offset,
                             start_ix..end_ix,
                             &expected[start_ix..end_ix]
                         );
+                        if let Some(expected_prev_line_start) = expected_prev_line_start {
+                            assert_eq!(
+                                chunks.offset(),
+                                expected_prev_line_start,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        } else {
+                            assert_eq!(
+                                chunks.offset(),
+                                start_ix,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        }
+                    }
+
+                    assert!((start_ix..=end_ix).contains(&chunks.offset()));
+                    if rng.gen() {
+                        offset = rng.gen_range(start_ix..=end_ix);
+                        while !expected.is_char_boundary(offset) {
+                            offset -= 1;
+                        }
+                        chunks.seek(offset);
                     } else {
-                        assert_eq!(
-                            chunks.offset(),
-                            start_ix,
-                            "invalid position after seeking to {} in range {:?} ({:?})",
-                            random_offset,
-                            start_ix..end_ix,
-                            &expected[start_ix..end_ix]
-                        );
+                        chunks.next();
+                        offset = chunks.offset();
+                        assert!((start_ix..=end_ix).contains(&chunks.offset()));
                     }
                 }
             }

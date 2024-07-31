@@ -27,8 +27,9 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
-use session::Session;
+use session::{AppSession, Session};
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -47,7 +48,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, open_ssh_paths, OpenListener, OpenRequest,
+    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -164,12 +165,24 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
-    language_model::init(app_state.client.clone(), cx);
-    snippet_provider::init(cx);
+    let copilot_language_server_id = app_state.languages.next_language_server_id();
+    copilot::init(
+        copilot_language_server_id,
+        app_state.fs.clone(),
+        app_state.client.http_client(),
+        app_state.node_runtime.clone(),
+        cx,
+    );
     supermaven::init(app_state.client.clone(), cx);
+    language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+    snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-    repl::init(app_state.fs.clone(), cx);
+    repl::init(
+        app_state.fs.clone(),
+        app_state.client.telemetry().clone(),
+        cx,
+    );
     extension::init(
         app_state.fs.clone(),
         app_state.client.clone(),
@@ -233,15 +246,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
-
-    // Initialize each completion provider. Settings are used for toggling between them.
-    let copilot_language_server_id = app_state.languages.next_language_server_id();
-    copilot::init(
-        copilot_language_server_id,
-        app_state.client.http_client(),
-        app_state.node_runtime.clone(),
-        cx,
-    );
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -412,7 +416,7 @@ fn main() {
 
         client::init_settings(cx);
         let client = Client::production(cx);
-        cx.update_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -440,6 +444,8 @@ fn main() {
             }
             .to_string(),
         );
+        let app_session = cx.new_model(|cx| AppSession::new(session, cx));
+
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -448,7 +454,7 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
-            session,
+            session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -534,7 +540,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
-            open_ssh_paths(
+            open_ssh_project(
                 connection_info,
                 request.open_paths,
                 app_state,
@@ -702,7 +708,18 @@ pub(crate) async fn restorable_workspace_locations(
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;
 
-    let last_session_id = app_state.session.last_session_id();
+    let session_handle = app_state.session.clone();
+    let (last_session_id, last_session_window_stack) = cx
+        .update(|cx| {
+            let session = session_handle.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_window_stack(),
+            )
+        })
+        .ok()?;
+
     if last_session_id.is_none()
         && matches!(
             restore_behavior,
@@ -720,8 +737,23 @@ pub(crate) async fn restorable_workspace_locations(
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
-                workspace::last_session_workspace_locations(last_session_id)
-                    .filter(|locations| !locations.is_empty())
+                let ordered = last_session_window_stack.is_some();
+
+                let mut locations = workspace::last_session_workspace_locations(
+                    &last_session_id,
+                    last_session_window_stack,
+                )
+                .filter(|locations| !locations.is_empty());
+
+                // Since last_session_window_order returns the windows ordered front-to-back
+                // we need to open the window that was frontmost last.
+                if ordered {
+                    if let Some(locations) = locations.as_mut() {
+                        locations.reverse();
+                    }
+                }
+
+                locations
             } else {
                 None
             }
@@ -800,24 +832,21 @@ fn init_stdout_logger() {
     Builder::new()
         .parse_default_env()
         .format(|buf, record| {
-            use env_logger::fmt::Color;
+            use env_logger::fmt::style::{AnsiColor, Style};
 
-            let subtle = buf
-                .style()
-                .set_color(Color::Black)
-                .set_intense(true)
-                .clone();
-            write!(buf, "{}", subtle.value("["))?;
+            let subtle = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
+            write!(buf, "{subtle}[{subtle:#}")?;
             write!(
                 buf,
                 "{} ",
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
             )?;
-            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            let level_style = buf.default_level_style(record.level());
+            write!(buf, "{level_style}{:<5}{level_style:#}", record.level())?;
             if let Some(path) = record.module_path() {
                 write!(buf, " {path}")?;
             }
-            write!(buf, "{}", subtle.value("]"))?;
+            write!(buf, "{subtle}]{subtle:#}")?;
             writeln!(buf, " {}", record.args())
         })
         .init();

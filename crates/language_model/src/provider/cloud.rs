@@ -2,28 +2,46 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::BTreeMap;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use crate::LanguageModelProvider;
 
-use super::anthropic::{count_anthropic_tokens, preprocess_anthropic_request};
+use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "zed.dev";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
-    pub available_models: Vec<CloudModel>,
+    pub available_models: Vec<AvailableModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AvailableProvider {
+    Anthropic,
+    OpenAi,
+    Google,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    provider: AvailableProvider,
+    name: String,
+    max_tokens: usize,
+    tool_override: Option<String>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -32,16 +50,19 @@ pub struct CloudLanguageModelProvider {
     _maintain_client_status: Task<()>,
 }
 
-struct State {
+pub struct State {
     client: Arc<Client>,
     status: client::Status,
     _subscription: Subscription,
 }
 
 impl State {
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+        cx.spawn(move |this, mut cx| async move {
+            client.authenticate_and_connect(true, &cx).await?;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
     }
 }
 
@@ -81,10 +102,10 @@ impl CloudLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
-        Some(cx.observe(&self.state, |_, _, cx| {
-            cx.notify();
-        }))
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
 }
 
@@ -100,10 +121,19 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Add base models from CloudModel::iter()
-        for model in CloudModel::iter() {
-            if !matches!(model, CloudModel::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
+        for model in anthropic::Model::iter() {
+            if !matches!(model, anthropic::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), CloudModel::Anthropic(model));
+            }
+        }
+        for model in open_ai::Model::iter() {
+            if !matches!(model, open_ai::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), CloudModel::OpenAi(model));
+            }
+        }
+        for model in google_ai::Model::iter() {
+            if !matches!(model, google_ai::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), CloudModel::Google(model));
             }
         }
 
@@ -112,6 +142,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .zed_dot_dev
             .available_models
         {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
             models.insert(model.id().to_string(), model.clone());
         }
 
@@ -122,6 +167,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     client: self.client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -131,8 +177,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         self.state.read(cx).status.is_connected()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.state.read(cx).authenticate(cx)
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
@@ -142,7 +188,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         .into()
     }
 
-    fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 }
@@ -151,6 +197,7 @@ pub struct CloudLanguageModel {
     id: LanguageModelId,
     model: CloudModel,
     client: Arc<Client>,
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for CloudLanguageModel {
@@ -183,34 +230,23 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        match &self.model {
-            CloudModel::Gpt3Point5Turbo => {
-                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
-            }
-            CloudModel::Gpt4 => count_open_ai_tokens(request, open_ai::Model::Four, cx),
-            CloudModel::Gpt4Turbo => count_open_ai_tokens(request, open_ai::Model::FourTurbo, cx),
-            CloudModel::Gpt4Omni => count_open_ai_tokens(request, open_ai::Model::FourOmni, cx),
-            CloudModel::Gpt4OmniMini => {
-                count_open_ai_tokens(request, open_ai::Model::FourOmniMini, cx)
-            }
-            CloudModel::Claude3_5Sonnet
-            | CloudModel::Claude3Opus
-            | CloudModel::Claude3Sonnet
-            | CloudModel::Claude3Haiku => count_anthropic_tokens(request, cx),
-            CloudModel::Custom { name, .. } if name.starts_with("anthropic/") => {
-                count_anthropic_tokens(request, cx)
-            }
-            _ => {
-                let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model: self.model.id().to_string(),
-                    messages: request
-                        .messages
-                        .iter()
-                        .map(|message| message.to_proto())
-                        .collect(),
-                });
+        match self.model.clone() {
+            CloudModel::Anthropic(_) => count_anthropic_tokens(request, cx),
+            CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
+            CloudModel::Google(model) => {
+                let client = self.client.clone();
+                let request = request.into_google(model.id().into());
+                let request = google_ai::CountTokensRequest {
+                    contents: request.contents,
+                };
                 async move {
-                    let response = request.await?;
+                    let request = serde_json::to_string(&request)?;
+                    let response = client
+                        .request(proto::CountLanguageModelTokens {
+                            provider: proto::LanguageModelProvider::Google as i32,
+                            request,
+                        })
+                        .await?;
                     Ok(response.token_count as usize)
                 }
                 .boxed()
@@ -220,46 +256,121 @@ impl LanguageModel for CloudLanguageModel {
 
     fn stream_completion(
         &self,
-        mut request: LanguageModelRequest,
+        request: LanguageModelRequest,
         _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match &self.model {
-            CloudModel::Claude3Opus
-            | CloudModel::Claude3Sonnet
-            | CloudModel::Claude3Haiku
-            | CloudModel::Claude3_5Sonnet => preprocess_anthropic_request(&mut request),
-            CloudModel::Custom { name, .. } if name.starts_with("anthropic/") => {
-                preprocess_anthropic_request(&mut request)
+            CloudModel::Anthropic(model) => {
+                let client = self.client.clone();
+                let request = request.into_anthropic(model.id().into());
+                let future = self.request_limiter.stream(async move {
+                    let request = serde_json::to_string(&request)?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Anthropic as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(anthropic::extract_text_from_events(
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
-            _ => {}
+            CloudModel::OpenAi(model) => {
+                let client = self.client.clone();
+                let request = request.into_open_ai(model.id().into());
+                let future = self.request_limiter.stream(async move {
+                    let request = serde_json::to_string(&request)?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::OpenAi as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(open_ai::extract_text_from_events(
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
+            CloudModel::Google(model) => {
+                let client = self.client.clone();
+                let request = request.into_google(model.id().into());
+                let future = self.request_limiter.stream(async move {
+                    let request = serde_json::to_string(&request)?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Google as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(google_ai::extract_text_from_events(
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
         }
+    }
 
-        let request = proto::CompleteWithLanguageModel {
-            model: self.id.0.to_string(),
-            messages: request
-                .messages
-                .iter()
-                .map(|message| message.to_proto())
-                .collect(),
-            stop: request.stop,
-            temperature: request.temperature,
-            tools: Vec::new(),
-            tool_choice: None,
-        };
+    fn use_any_tool(
+        &self,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        input_schema: serde_json::Value,
+        _cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                let client = self.client.clone();
+                let mut request = request.into_anthropic(model.tool_model_id().into());
+                request.tool_choice = Some(anthropic::ToolChoice::Tool {
+                    name: tool_name.clone(),
+                });
+                request.tools = vec![anthropic::Tool {
+                    name: tool_name.clone(),
+                    description: tool_description,
+                    input_schema,
+                }];
 
-        self.client
-            .request_stream(request)
-            .map_ok(|stream| {
-                stream
-                    .filter_map(|response| async move {
-                        match response {
-                            Ok(mut response) => Some(Ok(response.choices.pop()?.delta?.content?)),
-                            Err(error) => Some(Err(error)),
-                        }
+                self.request_limiter
+                    .run(async move {
+                        let request = serde_json::to_string(&request)?;
+                        let response = client
+                            .request(proto::CompleteWithLanguageModel {
+                                provider: proto::LanguageModelProvider::Anthropic as i32,
+                                request,
+                            })
+                            .await?;
+                        let response: anthropic::Response =
+                            serde_json::from_str(&response.completion)?;
+                        response
+                            .content
+                            .into_iter()
+                            .find_map(|content| {
+                                if let anthropic::Content::ToolUse { name, input, .. } = content {
+                                    if name == tool_name {
+                                        Some(input)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .context("tool not used")
                     })
                     .boxed()
-            })
-            .boxed()
+            }
+            CloudModel::OpenAi(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for OpenAI"))).boxed()
+            }
+            CloudModel::Google(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
+            }
+        }
     }
 }
 

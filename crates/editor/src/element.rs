@@ -59,6 +59,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    rc::Rc,
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -2074,6 +2075,7 @@ impl EditorElement {
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                     .into_any_element()
             }
@@ -2518,7 +2520,7 @@ impl EditorElement {
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
                 available_space,
                 style: BlockStyle::Fixed,
@@ -2563,7 +2565,7 @@ impl EditorElement {
             );
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
                 available_space,
                 style,
@@ -2610,7 +2612,7 @@ impl EditorElement {
 
                         blocks.push(BlockLayout {
                             id: block.id(),
-                            row: rows.end,
+                            row: None,
                             element,
                             available_space,
                             style,
@@ -2633,11 +2635,17 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) {
         for block in blocks {
-            let mut origin = hitbox.origin
-                + point(
-                    Pixels::ZERO,
-                    block.row.as_f32() * line_height - scroll_pixel_position.y,
-                );
+            let mut origin = if let Some(row) = block.row {
+                hitbox.origin
+                    + point(
+                        Pixels::ZERO,
+                        row.as_f32() * line_height - scroll_pixel_position.y,
+                    )
+            } else {
+                // Position the block outside the visible area
+                hitbox.origin + point(Pixels::ZERO, hitbox.size.height)
+            };
+
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
             }
@@ -2821,14 +2829,9 @@ impl EditorElement {
         );
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor.hover_state.render(
-                &snapshot,
-                &self.style,
-                visible_display_row_range.clone(),
-                max_size,
-                editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                cx,
-            )
+            editor
+                .hover_state
+                .render(&snapshot, visible_display_row_range.clone(), max_size, cx)
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -4213,11 +4216,11 @@ fn prepaint_gutter_button(
     );
     let indicator_size = button.layout_as_root(available_space, cx);
 
-    let blame_offset = gutter_dimensions.git_blame_entries_width;
-    let gutter_offset = rows_with_hunk_bounds
+    let blame_width = gutter_dimensions.git_blame_entries_width;
+    let gutter_width = rows_with_hunk_bounds
         .get(&row)
-        .map(|bounds| bounds.origin.x + bounds.size.width);
-    let left_offset = blame_offset.max(gutter_offset).unwrap_or(Pixels::ZERO);
+        .map(|bounds| bounds.size.width);
+    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
     let mut x = left_offset;
     let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
@@ -5610,7 +5613,7 @@ impl Element for EditorElement {
 
                     EditorLayout {
                         mode: snapshot.mode,
-                        position_map: Arc::new(PositionMap {
+                        position_map: Rc::new(PositionMap {
                             size: bounds.size,
                             scroll_pixel_position,
                             scroll_max,
@@ -5761,7 +5764,7 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    position_map: Arc<PositionMap>,
+    position_map: Rc<PositionMap>,
     hitbox: Hitbox,
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
@@ -5991,7 +5994,7 @@ impl PositionMap {
 
 struct BlockLayout {
     id: BlockId,
-    row: DisplayRow,
+    row: Option<DisplayRow>,
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,

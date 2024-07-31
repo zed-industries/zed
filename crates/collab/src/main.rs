@@ -5,6 +5,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use collab::api::billing::poll_stripe_events_periodically;
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
     rpc::ResultExt, AppState, Config, RateLimiter, Result,
@@ -95,6 +96,7 @@ async fn main() -> Result<()> {
             }
 
             if is_api {
+                poll_stripe_events_periodically(state.clone());
                 fetch_extensions_from_blob_store_periodically(state.clone());
             }
 
@@ -153,7 +155,7 @@ async fn main() -> Result<()> {
             let signal = async move {
                 // todo(windows):
                 // `ctrl_close` does not work well, because tokio's signal handler always returns soon,
-                // but system termiates the application soon after returning CTRL+CLOSE handler.
+                // but system terminates the application soon after returning CTRL+CLOSE handler.
                 // So we should implement blocking handler to treat CTRL+CLOSE signal.
                 let mut ctrl_break = tokio::signal::windows::ctrl_break()
                     .expect("failed to listen for interrupt signal");

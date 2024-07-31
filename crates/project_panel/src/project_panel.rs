@@ -94,7 +94,7 @@ enum ClipboardEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EntryDetails {
     filename: String,
-    icon: Option<Arc<str>>,
+    icon: Option<SharedString>,
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
@@ -108,7 +108,7 @@ pub struct EntryDetails {
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<PathBuf>,
+    canonical_path: Option<Box<Path>>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -2144,6 +2144,8 @@ impl ProjectPanel {
                             return;
                         }
                         if !show_editor {
+                            cx.stop_propagation();
+
                             if let Some(selection) =
                                 this.selection.filter(|_| event.down.modifiers.shift)
                             {
@@ -2437,6 +2439,28 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
+                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, cx| {
+                            if event.up.click_count > 1 {
+                                if let Some(entry_id) = this.last_worktree_root_id {
+                                    let project = this.project.read(cx);
+
+                                    let worktree_id = if let Some(worktree) =
+                                        project.worktree_for_entry(entry_id, cx)
+                                    {
+                                        worktree.read(cx).id()
+                                    } else {
+                                        return;
+                                    };
+
+                                    this.selection = Some(SelectedEntry {
+                                        worktree_id,
+                                        entry_id,
+                                    });
+
+                                    this.new_file(&NewFile, cx);
+                                }
+                            }
+                        }))
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -2538,7 +2562,7 @@ impl Render for DraggedProjectEntryView {
                         .indent_level(self.details.depth)
                         .indent_step_size(px(settings.indent_size))
                         .child(if let Some(icon) = &self.details.icon {
-                            div().child(Icon::from_path(icon.to_string()))
+                            div().child(Icon::from_path(icon.clone()))
                         } else {
                             div()
                         })
@@ -5085,6 +5109,9 @@ mod tests {
             Project::init_settings(cx);
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
@@ -5102,6 +5129,15 @@ mod tests {
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_fold_dirs = Some(false);
+                });
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

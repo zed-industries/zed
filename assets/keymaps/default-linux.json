@@ -40,7 +40,6 @@
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
       "delete": "editor::Delete",
-      "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
@@ -122,7 +121,7 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -150,7 +149,9 @@
     "bindings": {
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "ctrl-k h": "assistant::DeployHistory",
+      "ctrl-k l": "assistant::DeployPromptLibrary"
     }
   },
   {
@@ -245,13 +246,6 @@
       "ctrl-alt-shift-x": "search::ToggleRegex"
     }
   },
-  {
-    "context": "Terminal",
-    "bindings": {
-      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
-      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
-    }
-  },
   // Bindings from VS Code
   {
     "context": "Editor",
@@ -269,6 +263,7 @@
       "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
+      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
       "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],
@@ -460,10 +455,14 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
-      // TODO: Move this to a dock open action
-      "ctrl-shift-c": "collab_panel::ToggleFocus",
       "ctrl-alt-i": "zed::DebugElements",
       "ctrl-:": "editor::ToggleInlayHints"
+    }
+  },
+  {
+    "context": "!Terminal",
+    "bindings": {
+      "ctrl-shift-c": "collab_panel::ToggleFocus"
     }
   },
   {
@@ -599,12 +598,14 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "shift-ctrl-c": "terminal::Copy",
+      "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      "ctrl-a": "editor::SelectAll",
-      "shift-ctrl-v": "terminal::Paste",
+      // "ctrl-a": "editor::SelectAll", // conflicts with readline
+      "ctrl-shift-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],

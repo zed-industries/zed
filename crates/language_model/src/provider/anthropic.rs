@@ -1,5 +1,9 @@
-use anthropic::{stream_completion, Request, RequestMessage};
-use anyhow::{anyhow, Result};
+use crate::{
+    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -8,18 +12,14 @@ use gpui::{
     WhiteSpace,
 };
 use http_client::HttpClient;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
-
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
 
 const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
@@ -28,7 +28,15 @@ const PROVIDER_NAME: &str = "Anthropic";
 pub struct AnthropicSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<anthropic::Model>,
+    pub available_models: Vec<AvailableModel>,
+    pub needs_setting_migration: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    pub name: String,
+    pub max_tokens: usize,
+    pub tool_override: Option<String>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -36,7 +44,7 @@ pub struct AnthropicLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-struct State {
+pub struct State {
     api_key: Option<String>,
     _subscription: Subscription,
 }
@@ -53,11 +61,12 @@ impl AnthropicLanguageModelProvider {
         Self { http_client, state }
     }
 }
+
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
-        Some(cx.observe(&self.state, |_, _, cx| {
-            cx.notify();
-        }))
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
 }
 
@@ -86,7 +95,14 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .available_models
             .iter()
         {
-            models.insert(model.id().to_string(), model.clone());
+            models.insert(
+                model.name.clone(),
+                anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                },
+            );
         }
 
         models
@@ -97,6 +113,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -106,7 +123,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read(cx).api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated(cx) {
             Task::ready(Ok(()))
         } else {
@@ -139,7 +156,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .into()
     }
 
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let state = self.state.clone();
         let delete_credentials =
             cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
@@ -158,40 +175,7 @@ pub struct AnthropicModel {
     model: anthropic::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
-}
-
-impl AnthropicModel {
-    fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
-        preprocess_anthropic_request(&mut request);
-
-        let mut system_message = String::new();
-        if request
-            .messages
-            .first()
-            .map_or(false, |message| message.role == Role::System)
-        {
-            system_message = request.messages.remove(0).content;
-        }
-
-        Request {
-            model: self.model.clone(),
-            messages: request
-                .messages
-                .iter()
-                .map(|msg| RequestMessage {
-                    role: match msg.role {
-                        Role::User => anthropic::Role::User,
-                        Role::Assistant => anthropic::Role::Assistant,
-                        Role::System => unreachable!("filtered out by preprocess_request"),
-                    },
-                    content: msg.content.clone(),
-                })
-                .collect(),
-            stream: true,
-            system: system_message,
-            max_tokens: 4092,
-        }
-    }
+    request_limiter: RateLimiter,
 }
 
 pub fn count_anthropic_tokens(
@@ -220,6 +204,61 @@ pub fn count_anthropic_tokens(
             tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
         })
         .boxed()
+}
+
+impl AnthropicModel {
+    fn request_completion(
+        &self,
+        request: anthropic::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<anthropic::Response>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request).await
+        }
+        .boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        request: anthropic::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event>>>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
+            request.await
+        }
+        .boxed()
+    }
 }
 
 impl LanguageModel for AnthropicModel {
@@ -260,98 +299,55 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_anthropic_request(request);
-
-        let http_client = self.http_client.clone();
-
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
+        let request = request.into_anthropic(self.model.id().into());
+        let request = self.stream_completion(request, cx);
+        let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(response) => match response {
-                            anthropic::ResponseEvent::ContentBlockStart {
-                                content_block, ..
-                            } => match content_block {
-                                anthropic::ContentBlock::Text { text } => Some(Ok(text)),
-                            },
-                            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => {
-                                match delta {
-                                    anthropic::TextDelta::TextDelta { text } => Some(Ok(text)),
-                                }
+            Ok(anthropic::extract_text_from_events(response))
+        });
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn use_any_tool(
+        &self,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        input_schema: serde_json::Value,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+        let mut request = request.into_anthropic(self.model.tool_model_id().into());
+        request.tool_choice = Some(anthropic::ToolChoice::Tool {
+            name: tool_name.clone(),
+        });
+        request.tools = vec![anthropic::Tool {
+            name: tool_name.clone(),
+            description: tool_description,
+            input_schema,
+        }];
+
+        let response = self.request_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let response = response.await?;
+                response
+                    .content
+                    .into_iter()
+                    .find_map(|content| {
+                        if let anthropic::Content::ToolUse { name, input, .. } = content {
+                            if name == tool_name {
+                                Some(input)
+                            } else {
+                                None
                             }
-                            _ => None,
-                        },
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        }
-        .boxed()
+                        } else {
+                            None
+                        }
+                    })
+                    .context("tool not used")
+            })
+            .boxed()
     }
-}
-
-pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
-    let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages.drain(..) {
-        if message.content.is_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == message.role {
-                        last_message.content.push_str("\n\n");
-                        last_message.content.push_str(&message.content);
-                        continue;
-                    }
-                }
-
-                new_messages.push(message);
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
-            }
-        }
-    }
-
-    if !system_message.is_empty() {
-        new_messages.insert(
-            0,
-            LanguageModelRequestMessage {
-                role: Role::System,
-                content: system_message,
-            },
-        );
-    }
-
-    request.messages = new_messages;
 }
 
 struct AuthenticationPrompt {
@@ -406,6 +402,7 @@ impl AuthenticationPrompt {
             color: cx.theme().colors().text,
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,

@@ -152,7 +152,7 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -186,7 +186,9 @@
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "cmd-k h": "assistant::DeployHistory",
+      "cmd-k l": "assistant::DeployPromptLibrary"
     }
   },
   {
