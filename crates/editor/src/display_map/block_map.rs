@@ -1177,7 +1177,7 @@ impl Transform {
         Self {
             summary: TransformSummary {
                 input_rows: 0,
-                output_rows: block.height() as u32,
+                output_rows: block.height(),
             },
             block: Some(block),
         }
@@ -1448,7 +1448,7 @@ mod tests {
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
                 let block = block.as_custom().unwrap();
-                (start_row..start_row + block.height as u32, block.id)
+                (start_row..start_row + block.height, block.id)
             })
             .collect::<Vec<_>>();
 

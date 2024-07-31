@@ -2022,7 +2022,7 @@ impl EditorElement {
                     };
 
                     let line_offset_from_top =
-                        block_row_start.0 + *height as u32 + offset_from_excerpt_start
+                        block_row_start.0 + *height + offset_from_excerpt_start
                             - snapshot
                                 .scroll_anchor
                                 .scroll_position(&snapshot.display_snapshot)
