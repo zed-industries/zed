@@ -91,6 +91,7 @@ impl DebugAdapterClient {
     /// - `args`: Arguments of the command that starts the debugger
     /// - `cwd`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
+    #[allow(clippy::too_many_arguments)]
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -150,9 +151,11 @@ impl DebugAdapterClient {
         cwd: &PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
+        let host_address = host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
+
         let mut port = host.port;
         if port.is_none() {
-            port = Self::get_port().await;
+            port = Self::get_port(host_address).await;
         }
 
         let mut command = process::Command::new(command);
@@ -177,8 +180,8 @@ impl DebugAdapterClient {
         }
 
         let address = SocketAddrV4::new(
-            host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1)),
-            port.unwrap(),
+            host_address,
+            port.ok_or(anyhow!("Port is required to connect to TCP server"))?,
         );
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
@@ -192,9 +195,9 @@ impl DebugAdapterClient {
     }
 
     /// Get an open port to use with the tcp client when not supplied by debug config
-    async fn get_port() -> Option<u16> {
+    async fn get_port(host: Ipv4Addr) -> Option<u16> {
         Some(
-            TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
+            TcpListener::bind(SocketAddrV4::new(host, 0))
                 .await
                 .ok()?
                 .local_addr()

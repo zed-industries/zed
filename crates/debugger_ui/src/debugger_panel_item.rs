@@ -437,7 +437,7 @@ impl Render for DebugPanelItem {
                 h_flex()
                     .gap_2()
                     .map(|this| {
-                        if self.current_thread_state().status == ThreadStatus::Running {
+                        if thread_status == ThreadStatus::Running {
                             this.child(
                                 IconButton::new("debug-pause", IconName::DebugPause)
                                     .on_click(
