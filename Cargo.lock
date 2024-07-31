@@ -11186,6 +11186,7 @@ dependencies = [
  "dev_server_projects",
  "editor",
  "extensions_ui",
+ "feature_flags",
  "feedback",
  "gpui",
  "http_client",

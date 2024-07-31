@@ -11,6 +11,8 @@ use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
 use workspace::{dock::Panel, Workspace};
 
+use crate::DEFAULT_CONTEXT_LINES;
+
 use super::create_label_for_command;
 
 pub(crate) struct TermSlashCommand;
@@ -73,7 +75,9 @@ impl SlashCommand for TermSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = argument.and_then(|a| parse_argument(a)).unwrap_or(20);
+        let line_count = argument
+            .and_then(|a| parse_argument(a))
+            .unwrap_or(DEFAULT_CONTEXT_LINES);
 
         let lines = active_terminal
             .read(cx)

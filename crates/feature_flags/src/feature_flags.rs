@@ -43,6 +43,11 @@ impl FeatureFlag for LanguageModels {
     const NAME: &'static str = "language-models";
 }
 
+pub struct ZedPro {}
+impl FeatureFlag for ZedPro {
+    const NAME: &'static str = "zed-pro";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

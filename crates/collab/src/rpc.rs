@@ -1137,6 +1137,8 @@ impl Server {
                         .await?;
                 }
 
+                update_user_plan(user.id, session).await?;
+
                 let (contacts, dev_server_projects) = future::try_join(
                     self.app_state.db.get_contacts(user.id),
                     self.app_state.db.dev_server_projects_update(user.id),
@@ -3533,6 +3535,27 @@ async fn remove_contact(
 
 fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
+}
+
+async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
+    let db = session.db().await;
+    let active_subscriptions = db.get_active_billing_subscriptions(user_id).await?;
+
+    let plan = if session.is_staff() || !active_subscriptions.is_empty() {
+        proto::Plan::ZedPro
+    } else {
+        proto::Plan::Free
+    };
+
+    session
+        .peer
+        .send(
+            session.connection_id,
+            proto::UpdateUserPlan { plan: plan.into() },
+        )
+        .trace_err();
+
+    Ok(())
 }
 
 async fn subscribe_to_channels(_: proto::SubscribeToChannels, session: Session) -> Result<()> {

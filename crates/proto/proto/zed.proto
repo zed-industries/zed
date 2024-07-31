@@ -126,6 +126,7 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
+        UpdateUserPlan update_user_plan = 234; // current max
         UpdateDiffBase update_diff_base = 104;
 
         OnTypeFormatting on_type_formatting = 105;
@@ -256,7 +257,7 @@ message Envelope {
         OpenContext open_context = 212;
         OpenContextResponse open_context_response = 213;
         CreateContext create_context = 232;
-        CreateContextResponse create_context_response = 233; // current max
+        CreateContextResponse create_context_response = 233;
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
         SynchronizeContextsResponse synchronize_contexts_response = 216;
@@ -1678,6 +1679,15 @@ message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
     repeated string flags = 3;
+}
+
+enum Plan {
+    Free = 0;
+    ZedPro = 1;
+}
+
+message UpdateUserPlan {
+    Plan plan = 1;
 }
 
 // Entities
