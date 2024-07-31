@@ -1252,7 +1252,7 @@ List of `integer` column numbers
   "font_family": null,
   "font_features": null,
   "font_size": null,
-  "option_as_meta": false,
+  "option_as_meta": true,
   "button": false,
   "shell": {},
   "toolbar": {
