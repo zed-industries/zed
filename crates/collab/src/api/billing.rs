@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
     Extension, Json, Router,
 };
+use chrono::{DateTime, SecondsFormat};
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use stripe::{
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
     CreateCustomer, Customer, CustomerId, EventObject, EventType, Expandable, ListEvents,
-    SubscriptionStatus,
+    Subscription, SubscriptionId, SubscriptionStatus,
 };
 use util::ResultExt;
 
@@ -51,6 +52,7 @@ struct BillingSubscriptionJson {
     id: BillingSubscriptionId,
     name: String,
     status: StripeSubscriptionStatus,
+    cancel_at: Option<String>,
     /// Whether this subscription can be canceled.
     is_cancelable: bool,
 }
@@ -79,7 +81,13 @@ async fn list_billing_subscriptions(
                 id: subscription.id,
                 name: "Zed Pro".to_string(),
                 status: subscription.stripe_subscription_status,
-                is_cancelable: subscription.stripe_subscription_status.is_cancelable(),
+                cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
+                    cancel_at
+                        .and_utc()
+                        .to_rfc3339_opts(SecondsFormat::Millis, true)
+                }),
+                is_cancelable: subscription.stripe_subscription_status.is_cancelable()
+                    && subscription.stripe_cancel_at.is_none(),
             })
             .collect(),
     }))
@@ -157,11 +165,13 @@ async fn create_billing_subscription(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ManageSubscriptionIntent {
     /// The user intends to cancel their subscription.
     Cancel,
+    /// The user intends to stop the cancelation of their subscription.
+    StopCancelation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,7 +184,7 @@ struct ManageBillingSubscriptionBody {
 
 #[derive(Debug, Serialize)]
 struct ManageBillingSubscriptionResponse {
-    billing_portal_session_url: String,
+    billing_portal_session_url: Option<String>,
 }
 
 /// Initiates a Stripe customer portal session for managing a billing subscription.
@@ -210,6 +220,40 @@ async fn manage_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("subscription not found"))?;
 
+    if body.intent == ManageSubscriptionIntent::StopCancelation {
+        let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
+            .context("failed to parse subscription ID")?;
+
+        let updated_stripe_subscription = Subscription::update(
+            &stripe_client,
+            &subscription_id,
+            stripe::UpdateSubscription {
+                cancel_at_period_end: Some(false),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        app.db
+            .update_billing_subscription(
+                subscription.id,
+                &UpdateBillingSubscriptionParams {
+                    stripe_cancel_at: ActiveValue::set(
+                        updated_stripe_subscription
+                            .cancel_at
+                            .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
+                            .map(|time| time.naive_utc()),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        return Ok(Json(ManageBillingSubscriptionResponse {
+            billing_portal_session_url: None,
+        }));
+    }
+
     let flow = match body.intent {
         ManageSubscriptionIntent::Cancel => CreateBillingPortalSessionFlowData {
             type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
@@ -228,6 +272,7 @@ async fn manage_billing_subscription(
             ),
             ..Default::default()
         },
+        ManageSubscriptionIntent::StopCancelation => unreachable!(),
     };
 
     let mut params = CreateBillingPortalSession::new(customer_id);
@@ -237,7 +282,7 @@ async fn manage_billing_subscription(
     let session = BillingPortalSession::create(&stripe_client, params).await?;
 
     Ok(Json(ManageBillingSubscriptionResponse {
-        billing_portal_session_url: session.url,
+        billing_portal_session_url: Some(session.url),
     }))
 }
 
@@ -443,6 +488,12 @@ async fn handle_customer_subscription_event(
                     billing_customer_id: ActiveValue::set(billing_customer.id),
                     stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
                     stripe_subscription_status: ActiveValue::set(subscription.status.into()),
+                    stripe_cancel_at: ActiveValue::set(
+                        subscription
+                            .cancel_at
+                            .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
+                            .map(|time| time.naive_utc()),
+                    ),
                 },
             )
             .await?;

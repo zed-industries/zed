@@ -14,6 +14,7 @@ pub struct UpdateBillingSubscriptionParams {
     pub billing_customer_id: ActiveValue<BillingCustomerId>,
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
+    pub stripe_cancel_at: ActiveValue<Option<DateTime>>,
 }
 
 impl Database {
@@ -49,6 +50,7 @@ impl Database {
                 billing_customer_id: params.billing_customer_id.clone(),
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
+                stripe_cancel_at: params.stripe_cancel_at.clone(),
                 ..Default::default()
             })
             .exec(&*tx)
