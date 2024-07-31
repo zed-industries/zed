@@ -84,8 +84,10 @@ impl CloudLanguageModelProvider {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
                     _ = this.update(&mut cx, |this, cx| {
-                        this.status = status;
-                        cx.notify();
+                        if this.status != status {
+                            this.status = status;
+                            cx.notify();
+                        }
                     });
                 } else {
                     break;
