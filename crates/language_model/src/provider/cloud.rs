@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
-use ui::prelude::*;
+use ui::{prelude::*, Indicator};
 
 use crate::LanguageModelProvider;
 
@@ -57,6 +57,10 @@ pub struct State {
 }
 
 impl State {
+    fn is_connected(&self) -> bool {
+        self.status.is_connected()
+    }
+
     fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |this, mut cx| async move {
@@ -185,7 +189,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         let view = cx
-            .new_view(|_cx| AuthenticationPrompt {
+            .new_view(|_cx| ConfigurationView {
                 state: self.state.clone(),
             })
             .into();
@@ -378,38 +382,57 @@ impl LanguageModel for CloudLanguageModel {
     }
 }
 
-struct AuthenticationPrompt {
+struct ConfigurationView {
     state: gpui::Model<State>,
 }
 
-impl Render for AuthenticationPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
+impl ConfigurationView {
+    fn authenticate(&mut self, cx: &mut ViewContext<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.authenticate(cx).detach_and_log_err(cx);
+        });
+        cx.notify();
+    }
+}
 
-        v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
-            v_flex()
-                .gap_2()
+impl Render for ConfigurationView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let is_connected = self.state.read(cx).is_connected();
+        if is_connected {
+            div()
                 .child(
-                    Button::new("sign_in", "Sign in")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_position(IconPosition::Start)
-                        .style(ButtonStyle::Filled)
-                        .full_width()
-                        .on_click(cx.listener(move |this, _, cx| {
-                            this.state.update(cx, |provider, cx| {
-                                provider.authenticate(cx).detach_and_log_err(cx);
-                                cx.notify();
-                            });
-                        })),
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("API Key configured").size(LabelSize::Small)),
                 )
+                .child(Label::new("Connected!"))
+                .child(Label::new("Use the user menu to sign out."))
+        } else {
+            v_flex()
+                .gap_6()
+                .p_4()
+                .child(Label::new("Use the zed.dev to access language models."))
                 .child(
-                    div().flex().w_full().items_center().child(
-                        Label::new("Sign in to enable collaboration.")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
-                ),
-        )
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("sign_in", "Sign in")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .style(ButtonStyle::Filled)
+                                .full_width()
+                                .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
+                        )
+                        .child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("Sign in to enable collaboration.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                        ),
+                )
+        }
     }
 }
