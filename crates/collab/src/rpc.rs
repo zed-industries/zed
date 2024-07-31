@@ -4837,8 +4837,6 @@ async fn authorize_access_to_language_models(session: &UserSession) -> Result<()
         return Ok(());
     }
 
-    // db.get_billing
-
     Err(anyhow!("permission denied"))?
 }
 
