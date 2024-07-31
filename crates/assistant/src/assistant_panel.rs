@@ -2787,7 +2787,13 @@ impl Render for ContextEditorToolbarItem {
                                             Label::new(
                                                 LanguageModelRegistry::read_global(cx)
                                                     .active_model()
-                                                    .map(|model| model.name().0)
+                                                    .map(|model| {
+                                                        format!(
+                                                            "{}: {}",
+                                                            model.provider_name().0,
+                                                            model.name().0
+                                                        )
+                                                    })
                                                     .unwrap_or_else(|| "No model selected".into()),
                                             )
                                             .size(LabelSize::Small)
