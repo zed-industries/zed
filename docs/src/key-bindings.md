@@ -370,6 +370,8 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Activate next item            | Pane           | `⌘ + }`                 |
 | Activate prev item            | Pane           | `Alt + ⌘ + Left`        |
 | Activate prev item            | Pane           | `⌘ + {`                 |
+| Swap item to left             | Pane           | `⌘ + Shift + Page Up`   |
+| Swap item to right            | Pane           | `⌘ + Shift + Page Down` |
 | Close active item             | Pane           | `⌘ + W`                 |
 | Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
 | Close clean items             | Pane           | `⌘ + K, U`              |
