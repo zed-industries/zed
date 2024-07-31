@@ -18,6 +18,7 @@ env:
 jobs:
   tests:
     name: Run randomized tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - randomized-tests

@@ -13,6 +13,7 @@ env:
 jobs:
   style:
     name: Check formatting and Clippy lints
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
@@ -31,6 +32,7 @@ jobs:
 
   tests:
     name: Run tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
@@ -57,6 +59,7 @@ jobs:
 
   publish:
     name: Publish collab server image
+    if: github.repository_owner == 'zed-industries'
     needs:
       - style
       - tests
@@ -89,6 +92,7 @@ jobs:
 
   deploy:
     name: Deploy new server image
+    if: github.repository_owner == 'zed-industries'
     needs:
       - publish
     runs-on:

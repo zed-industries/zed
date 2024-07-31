@@ -121,7 +121,7 @@ impl RealNodeRuntime {
         })
     }
 
-    async fn install_if_needed(&self) -> Result<PathBuf> {
+    async fn install_if_needed(&self) -> Result<NodePaths> {
         let _lock = self.installation_lock.lock().await;
         log::info!("Node runtime install_if_needed");
 
@@ -141,21 +141,19 @@ impl RealNodeRuntime {
         let folder_name = format!("node-{VERSION}-{os}-{arch}");
         let node_containing_dir = paths::support_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
-        let node_binary = node_dir.join(NODE_PATH);
-        let npm_file = node_dir.join(NPM_PATH);
+        let paths = NodePaths {
+            node: node_dir.join(NODE_PATH),
+            npm: node_dir.join(NPM_PATH),
+            cache: node_dir.join("cache"),
+        };
 
-        let mut command = Command::new(&node_binary);
+        let mut command = paths.create_npm_command();
 
         command
-            .env_clear()
-            .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
+            .stderr(Stdio::null());
 
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
@@ -201,19 +199,19 @@ impl RealNodeRuntime {
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
-        _ = fs::create_dir(node_dir.join("cache")).await;
-        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
-        _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
+        _ = fs::create_dir_all(&paths.cache).await;
+        _ = fs::write(paths.user_rc(), []).await;
+        _ = fs::write(paths.global_rc(), []).await;
 
-        anyhow::Ok(node_dir)
+        anyhow::Ok(paths)
     }
 }
 
 #[async_trait::async_trait]
 impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
-        let installation_path = self.install_if_needed().await?;
-        Ok(installation_path.join(NODE_PATH))
+        let paths = self.install_if_needed().await?;
+        Ok(paths.node)
     }
 
     async fn run_npm_subcommand(
@@ -223,14 +221,20 @@ impl NodeRuntime for RealNodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
-            let installation_path = self.install_if_needed().await?;
+            let paths = self.install_if_needed().await?;
 
-            let node_binary = installation_path.join(NODE_PATH);
-            let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = vec![node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
+            let mut env_path = vec![
+                paths
+                    .node
+                    .parent()
+                    .expect("invalid node binary path")
+                    .to_path_buf(),
+                paths
+                    .npm
+                    .parent()
+                    .expect("invalid node binary path")
+                    .to_path_buf(),
+            ];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
@@ -240,27 +244,17 @@ impl NodeRuntime for RealNodeRuntime {
             let env_path =
                 std::env::join_paths(env_path).context("failed to create PATH env variable")?;
 
-            if smol::fs::metadata(&node_binary).await.is_err() {
+            if smol::fs::metadata(&paths.node).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
             }
 
-            if smol::fs::metadata(&npm_file).await.is_err() {
+            if smol::fs::metadata(&paths.npm).await.is_err() {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new(node_binary);
-            command.env_clear();
+            let mut command = paths.create_npm_command();
             command.env("PATH", env_path);
-            command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), installation_path.join("cache")]);
-            command.args([
-                "--userconfig".into(),
-                installation_path.join("blank_user_npmrc"),
-            ]);
-            command.args([
-                "--globalconfig".into(),
-                installation_path.join("blank_global_npmrc"),
-            ]);
+            command.arg(subcommand);
             command.args(args);
 
             if let Some(directory) = directory {
@@ -450,5 +444,39 @@ impl NodeRuntime for FakeNodeRuntime {
         packages: &[(&str, &str)],
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
+    }
+}
+
+struct NodePaths {
+    pub node: PathBuf,
+    pub npm: PathBuf,
+    pub cache: PathBuf,
+}
+
+impl NodePaths {
+    fn user_rc(&self) -> PathBuf {
+        self.cache.join("blank_user_npmrc")
+    }
+
+    fn global_rc(&self) -> PathBuf {
+        self.cache.join("blank_global_npmrc")
+    }
+
+    fn create_node_command(&self) -> Command {
+        let mut command = Command::new(&self.node);
+        command.env_clear();
+        command
+    }
+
+    fn create_npm_command(&self) -> Command {
+        let mut command = self.create_node_command();
+
+        command
+            .arg(&self.npm)
+            .args(["--cache".into(), self.cache.clone()])
+            .args(["--userconfig".into(), self.user_rc()])
+            .args(["--globalconfig".into(), self.global_rc()]);
+
+        command
     }
 }

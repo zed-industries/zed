@@ -1,0 +1,115 @@
+diff --git a/crates/node_runtime/src/node_runtime.rs b/crates/node_runtime/src/node_runtime.rs
+index 5e199e65b..2f97eb7b2 100644
+--- a/crates/node_runtime/src/node_runtime.rs
++++ b/crates/node_runtime/src/node_runtime.rs
+@@ -2,18 +2,14 @@ mod archive;
+ 
+ use anyhow::{anyhow, bail, Context, Result};
+ pub use archive::extract_zip;
+-use async_compression::futures::bufread::GzipDecoder;
+-use async_tar::Archive;
+ use futures::AsyncReadExt;
+ use http_client::HttpClient;
+ use semver::Version;
+ use serde::Deserialize;
+-use smol::io::BufReader;
+ use smol::{fs, lock::Mutex, process::Command};
+ use std::io;
+ use std::process::{Output, Stdio};
+ use std::{
+-    env::consts,
+     path::{Path, PathBuf},
+     sync::Arc,
+ };
+@@ -22,8 +18,6 @@ use util::ResultExt;
+ #[cfg(windows)]
+ use smol::process::windows::CommandExt;
+ 
+-const VERSION: &str = "v22.5.1";
+-
+ #[cfg(not(windows))]
+ const NODE_PATH: &str = "bin/node";
+ #[cfg(windows)]
+@@ -34,11 +28,6 @@ const NPM_PATH: &str = "bin/npm";
+ #[cfg(windows)]
+ const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
+ 
+-enum ArchiveType {
+-    TarGz,
+-    Zip,
+-}
+-
+ #[derive(Debug, Deserialize)]
+ #[serde(rename_all = "kebab-case")]
+ pub struct NpmInfo {
+@@ -125,26 +114,11 @@ impl RealNodeRuntime {
+         let _lock = self.installation_lock.lock().await;
+         log::info!("Node runtime install_if_needed");
+ 
+-        let os = match consts::OS {
+-            "macos" => "darwin",
+-            "linux" => "linux",
+-            "windows" => "win",
+-            other => bail!("Running on unsupported os: {other}"),
+-        };
+-
+-        let arch = match consts::ARCH {
+-            "x86_64" => "x64",
+-            "aarch64" => "arm64",
+-            other => bail!("Running on unsupported architecture: {other}"),
+-        };
+-
+-        let folder_name = format!("node-{VERSION}-{os}-{arch}");
+-        let node_containing_dir = paths::support_dir().join("node");
+-        let node_dir = node_containing_dir.join(folder_name);
++        let node_dir = PathBuf::from(env!("NODE_PATH", "NODE_PATH is required for a Nix build"));
+         let paths = NodePaths {
+             node: node_dir.join(NODE_PATH),
+             npm: node_dir.join(NPM_PATH),
+-            cache: node_dir.join("cache"),
++            cache: paths::temp_dir().join("node"),
+         };
+ 
+         let mut command = paths.create_npm_command();
+@@ -162,40 +136,7 @@ impl RealNodeRuntime {
+         let valid = matches!(result, Ok(status) if status.success());
+ 
+         if !valid {
+-            _ = fs::remove_dir_all(&node_containing_dir).await;
+-            fs::create_dir(&node_containing_dir)
+-                .await
+-                .context("error creating node containing dir")?;
+-
+-            let archive_type = match consts::OS {
+-                "macos" | "linux" => ArchiveType::TarGz,
+-                "windows" => ArchiveType::Zip,
+-                other => bail!("Running on unsupported os: {other}"),
+-            };
+-
+-            let file_name = format!(
+-                "node-{VERSION}-{os}-{arch}.{extension}",
+-                extension = match archive_type {
+-                    ArchiveType::TarGz => "tar.gz",
+-                    ArchiveType::Zip => "zip",
+-                }
+-            );
+-            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
+-            let mut response = self
+-                .http
+-                .get(&url, Default::default(), true)
+-                .await
+-                .context("error downloading Node binary tarball")?;
+-
+-            let body = response.body_mut();
+-            match archive_type {
+-                ArchiveType::TarGz => {
+-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+-                    let archive = Archive::new(decompressed_bytes);
+-                    archive.unpack(&node_containing_dir).await?;
+-                }
+-                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
+-            }
++            bail!("failed to invoke npm at {:?} {:?}", paths.node, paths.npm);
+         }
+ 
+         // Note: Not in the `if !valid {}` so we can populate these for existing installations

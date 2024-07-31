@@ -1,0 +1,16 @@
+{
+  "alacritty_terminal-0.24.1-dev": "sha256-aVB1CNOLjNh6AtvdbomODNrk00Md8yz8QzldzvDo1LI=",
+  "async-pipe-0.1.3": "sha256-g120X88HGT8P6GNCrzpS5SutALx5H+45Sf4iSSxzctE=",
+  "blade-graphics-0.4.0": "sha256-o3iYBrHcLXSrdvd0J/LXJb7VkTcFyB/S2Nk9WrmZupI=",
+  "cosmic-text-0.11.2": "sha256-TLPDnqixuW+aPAhiBhSvuZIa69vgV3xLcw32OlkdCcM=",
+  "font-kit-0.14.1": "sha256-qUKvmi+RDoyhMrZ7T6SoVAyMc/aasQ9Y/okzre4SzXo=",
+  "lsp-types-0.95.1": "sha256-N4MKoU9j1p/Xeowki/+XiNQPwIcTm9DgmfM/Eieq4js=",
+  "nvim-rs-0.6.0-pre": "sha256-bdWWuCsBv01mnPA5e5zRpq48BgOqaqIcAu+b7y1NnM8=",
+  "tree-sitter-0.22.6": "sha256-P9pQcofDCIhOYWA1OC8TzB5UgWpD5GlDzX2DOS8SsH0=",
+  "tree-sitter-gomod-1.0.2": "sha256-/sjC117YAFniFws4F/8+Q5Wrd4l4v4nBUaO9IdkixSE=",
+  "tree-sitter-gowork-0.0.1": "sha256-803ujH5qwejQ2vQDDpma4JDC9a+vFX8ZQmr+77VyL2M=",
+  "tree-sitter-heex-0.0.1": "sha256-VakMZtWQ/h7dNy5ehk2Bh14a5s878AUgwY3Ipq8tPec=",
+  "tree-sitter-md-0.2.3": "sha256-Fa73P1h5GvKV3SxXr0KzHuNp4xa5wxUzI8ecXbGdrYE=",
+  "xim-0.4.0": "sha256-vxu3tjkzGeoRUj7vyP0vDGI7fweX8Drgy9hwOUOEQIA=",
+  "xkbcommon-0.7.0": "sha256-2RjZWiAaz8apYTrZ82qqH4Gv20WyCtPT+ldOzm0GWMo="
+}
