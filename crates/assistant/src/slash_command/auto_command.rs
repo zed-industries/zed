@@ -34,11 +34,33 @@ impl SlashCommand for AutoCommand {
         self: Arc<Self>,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
-        Task::ready(Ok(Vec::new()))
+        // However, we can use this opportunity to kick off a drain of the backlog.
+        // That way, it can hopefully be done resummarizing by the time we've actually
+        // typed out our prompt. This re-runs on every keystroke during autocomplete,
+        // but in the future, we could instead do it only once, when /auto is first entered.
+        let Some(workspace) = workspace.and_then(|ws| ws.upgrade()) else {
+            log::warn!("workspace was dropped or unavailable during /auto autocomplete");
+
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        let project = workspace.read(cx).project().clone();
+        let project_index =
+            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
+
+        cx.spawn(|cx: gpui::AsyncAppContext| async move {
+            let task = project_index.read_with(&cx, |project_index, cx| {
+                project_index.flush_summary_backlogs(cx)
+            })?;
+
+            cx.background_executor().spawn(task).await;
+
+            anyhow::Ok(Vec::new())
+        })
     }
 
     fn requires_argument(&self) -> bool {

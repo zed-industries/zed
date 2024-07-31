@@ -15,7 +15,7 @@ use log;
 use project::{Project, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use std::{cmp::Ordering, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Ordering, future::Future, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 pub struct SearchResult {
@@ -472,6 +472,44 @@ impl ProjectIndex {
             project.read_with(&cx, |_project, _cx| {
                 results_by_worker.into_iter().flatten().collect()
             })
+        })
+    }
+
+    /// Empty out the backlogs of all the worktrees in the project
+    pub fn flush_summary_backlogs(&self, cx: &AppContext) -> impl Future<Output = ()> {
+        let flush_start = std::time::Instant::now();
+
+        futures::future::join_all(self.worktree_indices.values().map(|worktree_index| {
+            let worktree_index = worktree_index.clone();
+
+            cx.spawn(|cx| async move {
+                let index = match worktree_index {
+                    WorktreeIndexHandle::Loading { index } => {
+                        index.clone().await.map_err(|error| anyhow!(error))?
+                    }
+                    WorktreeIndexHandle::Loaded { index } => index.clone(),
+                };
+                let worktree_abs_path =
+                    cx.update(|cx| index.read(cx).worktree().read(cx).abs_path())?;
+
+                index
+                    .read_with(&cx, |index, cx| {
+                        cx.background_executor()
+                            .spawn(index.summary_index().flush_backlog(worktree_abs_path, cx))
+                    })?
+                    .await
+            })
+        }))
+        .map(move |results| {
+            // Log any errors, but don't block the user. These summaries are supposed to
+            // improve quality by providing extra context, but they aren't hard requirements!
+            for result in results {
+                if let Err(err) = result {
+                    log::error!("Error flushing summary backlog: {:?}", err);
+                }
+            }
+
+            log::info!("Summary backlog flushed in {:?}", flush_start.elapsed());
         })
     }
 }

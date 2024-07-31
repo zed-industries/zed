@@ -1,7 +1,8 @@
 use collections::HashMap;
 use std::{path::Path, sync::Arc, time::SystemTime};
 
-const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 2; // 2 MB
+const MAX_FILES_BEFORE_RESUMMARIZE: usize = 4;
+const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1 MB
 
 #[derive(Default, Debug)]
 pub struct SummaryBacklog {
@@ -25,6 +26,7 @@ impl SummaryBacklog {
 
     /// Returns true if the total number of bytes in the backlog exceeds a predefined threshold.
     pub fn needs_drain(&self) -> bool {
+        self.files.len() > MAX_FILES_BEFORE_RESUMMARIZE ||
         // The whole purpose of the cached total_bytes is to make this comparision cheap.
         // Otherwise we'd have to traverse the entire dictionary every time we wanted this answer.
         self.total_bytes > MAX_BYTES_BEFORE_RESUMMARIZE

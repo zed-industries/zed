@@ -560,6 +560,52 @@ impl SummaryIndex {
             Ok(())
         })
     }
+
+    /// Empty out the backlog of files that haven't been resummarized, and resummarize them immediately.
+    pub(crate) fn flush_backlog(
+        &self,
+        worktree_abs_path: Arc<Path>,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<()>> {
+        let start = Instant::now();
+        let backlogged = {
+            let (tx, rx) = channel::bounded(512);
+            let needs_summary: Vec<(Arc<Path>, Option<SystemTime>)> = {
+                let mut backlog = self.backlog.lock();
+
+                backlog.drain().collect()
+            };
+
+            let task = cx.background_executor().spawn(async move {
+                tx.send(needs_summary).await?;
+                Ok(())
+            });
+
+            Backlogged {
+                paths_to_digest: rx,
+                task,
+            }
+        };
+
+        let digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
+        let needs_summary = self.check_summary_cache(digest.files, cx);
+        let summaries = self.summarize_files(needs_summary.files, cx);
+        let persist = self.persist_summaries(summaries.files, cx);
+
+        async move {
+            futures::try_join!(
+                backlogged.task,
+                digest.task,
+                needs_summary.task,
+                summaries.task,
+                persist
+            )?;
+
+            log::info!("Summarizing backlogged entries took {:?}", start.elapsed());
+
+            Ok(())
+        }
+    }
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
