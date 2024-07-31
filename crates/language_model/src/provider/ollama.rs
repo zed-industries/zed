@@ -32,7 +32,7 @@ pub struct OllamaLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-pub struct State {
+struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<ollama::Model>,
     _subscription: Subscription,
@@ -87,10 +87,10 @@ impl OllamaLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
-    type ObservableEntity = State;
-
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
-        Some(self.state.clone())
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+        Some(cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        }))
     }
 }
 

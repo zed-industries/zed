@@ -44,7 +44,7 @@ pub struct GoogleLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-pub struct State {
+struct State {
     api_key: Option<String>,
     _subscription: Subscription,
 }
@@ -63,10 +63,10 @@ impl GoogleLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for GoogleLanguageModelProvider {
-    type ObservableEntity = State;
-
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
-        Some(self.state.clone())
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
+        Some(cx.observe(&self.state, |_, _, cx| {
+            cx.notify();
+        }))
     }
 }
 
