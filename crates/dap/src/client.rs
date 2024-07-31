@@ -461,51 +461,128 @@ impl DebugAdapterClient {
     }
 
     pub async fn resume(&self, thread_id: u64) -> Result<ContinueResponse> {
+        let supports_single_thread_execution_requests = self
+            .capabilities()
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+
         self.request::<Continue>(ContinueArguments {
             thread_id,
-            single_thread: Some(true),
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_over(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<Next>(NextArguments {
             thread_id,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_in(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepIn>(StepInArguments {
             thread_id,
             target_id: None,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_out(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepOut>(StepOutArguments {
             thread_id,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_back(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepBack>(StepBackArguments {
             thread_id,
-            single_thread: Some(true),
-            granularity: Some(SteppingGranularity::Statement),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
-    pub async fn restart(&self) {
+    pub async fn restart(&self) -> Result<()> {
         self.request::<Restart>(RestartArguments {
             raw: self
                 .config
@@ -515,20 +592,40 @@ impl DebugAdapterClient {
                 .unwrap_or(Value::Null),
         })
         .await
-        .log_err();
     }
 
-    pub async fn pause(&self, thread_id: u64) {
-        self.request::<Pause>(PauseArguments { thread_id })
-            .await
-            .log_err();
+    pub async fn pause(&self, thread_id: u64) -> Result<()> {
+        self.request::<Pause>(PauseArguments { thread_id }).await
     }
 
-    pub async fn stop(&self) -> Result<()> {
+    pub async fn disconnect(
+        &self,
+        restart: Option<bool>,
+        terminate: Option<bool>,
+        suspend: Option<bool>,
+    ) -> Result<()> {
+        let supports_terminate_debuggee = self
+            .capabilities()
+            .support_terminate_debuggee
+            .unwrap_or_default();
+
+        let supports_suspend_debuggee = self
+            .capabilities()
+            .support_terminate_debuggee
+            .unwrap_or_default();
+
         self.request::<Disconnect>(DisconnectArguments {
-            restart: Some(false),
-            terminate_debuggee: Some(false),
-            suspend_debuggee: Some(false),
+            restart,
+            terminate_debuggee: if supports_terminate_debuggee {
+                terminate
+            } else {
+                None
+            },
+            suspend_debuggee: if supports_suspend_debuggee {
+                suspend
+            } else {
+                None
+            },
         })
         .await
     }
@@ -538,7 +635,7 @@ impl DebugAdapterClient {
         path: PathBuf,
         breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
-        let adapter_data = self.config.request_args.clone().map(|c| c.args);
+        let adapter_data = self.request_args.clone();
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
@@ -559,13 +656,33 @@ impl DebugAdapterClient {
     }
 
     pub async fn configuration_done(&self) -> Result<()> {
-        self.request::<ConfigurationDone>(ConfigurationDoneArguments)
+        let support_configuration_done_request = self
+            .capabilities()
+            .supports_configuration_done_request
+            .unwrap_or_default();
+
+        if support_configuration_done_request {
+            self.request::<ConfigurationDone>(ConfigurationDoneArguments)
+                .await
+        } else {
+            Ok(())
+        }
+    }
             .await
     }
 
     pub async fn terminate_threads(&self, thread_ids: Option<Vec<u64>>) -> Result<()> {
-        self.request::<TerminateThreads>(TerminateThreadsArguments { thread_ids })
-            .await
+        let support_terminate_threads = self
+            .capabilities()
+            .supports_terminate_threads_request
+            .unwrap_or_default();
+
+        if support_terminate_threads {
+            self.request::<TerminateThreads>(TerminateThreadsArguments { thread_ids })
+                .await
+        } else {
+            self.disconnect(None, Some(true), None).await
+        }
     }
 }
 

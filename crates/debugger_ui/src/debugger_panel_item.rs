@@ -22,7 +22,7 @@ pub struct DebugPanelItem {
 
 actions!(
     debug_panel_item,
-    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop]
+    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop, Disconnect]
 );
 
 impl DebugPanelItem {
@@ -397,7 +397,7 @@ impl DebugPanelItem {
 
         cx.background_executor()
             .spawn(async move { client.restart().await })
-            .detach();
+            .detach_and_log_err(cx);
     }
 
     fn handle_pause_action(&mut self, _: &Pause, cx: &mut ViewContext<Self>) {
@@ -405,27 +405,23 @@ impl DebugPanelItem {
         let thread_id = self.thread_id;
         cx.background_executor()
             .spawn(async move { client.pause(thread_id).await })
-            .detach();
+            .detach_and_log_err(cx);
     }
 
     fn handle_stop_action(&mut self, _: &Stop, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_ids = vec![self.thread_id; 1];
 
-        let support_terminate_threads = client
-            .capabilities()
-            .supports_terminate_threads_request
-            .unwrap_or_default();
-
         cx.background_executor()
-            .spawn(async move {
-                if support_terminate_threads {
-                    client.terminate_threads(Some(thread_ids)).await
-                } else {
-                    client.stop().await
-                }
-            })
-            .detach();
+            .spawn(async move { client.terminate_threads(Some(thread_ids)).await })
+            .detach_and_log_err(cx);
+    }
+
+    fn handle_disconnect_action(&mut self, _: &Disconnect, cx: &mut ViewContext<Self>) {
+        let client = self.client.clone();
+        cx.background_executor()
+            .spawn(async move { client.disconnect(None, Some(true), None).await })
+            .detach_and_log_err(cx);
     }
 }
 
@@ -443,6 +439,7 @@ impl Render for DebugPanelItem {
             .capture_action(cx.listener(Self::handle_restart_action))
             .capture_action(cx.listener(Self::handle_pause_action))
             .capture_action(cx.listener(Self::handle_stop_action))
+            .capture_action(cx.listener(Self::handle_disconnect_action))
             .p_2()
             .size_full()
             .items_start()
@@ -511,6 +508,17 @@ impl Render for DebugPanelItem {
                                     && thread_status != ThreadStatus::Running,
                             )
                             .tooltip(move |cx| Tooltip::text("Stop", cx)),
+                    )
+                    .child(
+                        IconButton::new("debug-disconnect", IconName::DebugDisconnect)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Disconnect))),
+                            )
+                            .disabled(
+                                thread_status == ThreadStatus::Exited
+                                    || thread_status == ThreadStatus::Ended,
+                            )
+                            .tooltip(move |cx| Tooltip::text("Disconnect", cx)),
                     ),
             )
             .child(
