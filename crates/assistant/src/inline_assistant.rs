@@ -1530,6 +1530,9 @@ impl PromptEditor {
 
     fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
+        if self.show_rate_limit_notice {
+            cx.focus_view(&self.editor);
+        }
         cx.notify();
     }
 
@@ -1601,6 +1604,12 @@ impl PromptEditor {
             }
             EditorEvent::BufferEdited => {
                 self.count_tokens(cx);
+            }
+            EditorEvent::Blurred => {
+                if self.show_rate_limit_notice {
+                    self.show_rate_limit_notice = false;
+                    cx.notify();
+                }
             }
             _ => {}
         }
