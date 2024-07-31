@@ -4570,7 +4570,7 @@ impl RateLimit for FreeCompleteWithLanguageModelRateLimit {
         std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR_FREE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(12) // Picked arbitrarily
+            .unwrap_or(120 / 10) // Picked arbitrarily
     }
 
     fn refill_duration(&self) -> chrono::Duration {
@@ -4638,9 +4638,14 @@ async fn stream_complete_with_language_model(
     };
     authorize_access_to_language_models(&session).await?;
 
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+        proto::Plan::ZedPro => Box::new(ZedProCompleteWithLanguageModelRateLimit),
+        proto::Plan::Free => Box::new(FreeCompleteWithLanguageModelRateLimit),
+    };
+
     session
         .rate_limiter
-        .check(&ZedProCompleteWithLanguageModelRateLimit, session.user_id())
+        .check(&*rate_limit, session.user_id())
         .await?;
 
     match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4720,9 +4725,14 @@ async fn count_language_model_tokens(
     };
     authorize_access_to_language_models(&session).await?;
 
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+        proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
+        proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
+    };
+
     session
         .rate_limiter
-        .check(&ZedProCountLanguageModelTokensRateLimit, session.user_id())
+        .check(&*rate_limit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4768,6 +4778,25 @@ impl RateLimit for ZedProCountLanguageModelTokensRateLimit {
     }
 }
 
+struct FreeCountLanguageModelTokensRateLimit;
+
+impl RateLimit for FreeCountLanguageModelTokensRateLimit {
+    fn capacity(&self) -> usize {
+        std::env::var("COUNT_LANGUAGE_MODEL_TOKENS_RATE_LIMIT_PER_HOUR_FREE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600 / 10) // Picked arbitrarily
+    }
+
+    fn refill_duration(&self) -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name(&self) -> &'static str {
+        "free:count-language-model-tokens"
+    }
+}
+
 struct ZedProComputeEmbeddingsRateLimit;
 
 impl RateLimit for ZedProComputeEmbeddingsRateLimit {
@@ -4787,6 +4816,25 @@ impl RateLimit for ZedProComputeEmbeddingsRateLimit {
     }
 }
 
+struct FreeComputeEmbeddingsRateLimit;
+
+impl RateLimit for FreeComputeEmbeddingsRateLimit {
+    fn capacity(&self) -> usize {
+        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR_FREE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5000 / 10) // Picked arbitrarily
+    }
+
+    fn refill_duration(&self) -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name(&self) -> &'static str {
+        "free:compute-embeddings"
+    }
+}
+
 async fn compute_embeddings(
     request: proto::ComputeEmbeddings,
     response: Response<proto::ComputeEmbeddings>,
@@ -4796,9 +4844,14 @@ async fn compute_embeddings(
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_language_models(&session).await?;
 
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+        proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
+        proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
+    };
+
     session
         .rate_limiter
-        .check(&ZedProComputeEmbeddingsRateLimit, session.user_id())
+        .check(&*rate_limit, session.user_id())
         .await?;
 
     let embeddings = match request.model.as_str() {
