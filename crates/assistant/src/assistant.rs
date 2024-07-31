@@ -223,9 +223,17 @@ fn init_language_model_settings(cx: &mut AppContext) {
 
     cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
         .detach();
-    cx.observe(&LanguageModelRegistry::global(cx), |_, cx| {
-        update_active_language_model_from_settings(cx)
-    })
+    cx.subscribe(
+        &LanguageModelRegistry::global(cx),
+        |_, event: &language_model::Event, cx| match event {
+            language_model::Event::ProviderStateChanged
+            | language_model::Event::AddedProvider(_)
+            | language_model::Event::RemovedProvider(_) => {
+                update_active_language_model_from_settings(cx);
+            }
+            _ => {}
+        },
+    )
     .detach();
 }
 

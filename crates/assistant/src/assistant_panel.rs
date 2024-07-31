@@ -394,8 +394,15 @@ impl AssistantPanel {
             cx.subscribe(&context_store, Self::handle_context_store_event),
             cx.subscribe(
                 &LanguageModelRegistry::global(cx),
-                |this, _, _: &language_model::ActiveModelChanged, cx| {
-                    this.completion_provider_changed(cx);
+                |this, _, event: &language_model::Event, cx| match event {
+                    language_model::Event::ActiveModelChanged => {
+                        this.completion_provider_changed(cx);
+                    }
+                    language_model::Event::ProviderStateChanged
+                    | language_model::Event::AddedProvider(_)
+                    | language_model::Event::RemovedProvider(_) => {
+                        this.ensure_authenticated(cx);
+                    }
                 },
             ),
         ];
@@ -588,6 +595,11 @@ impl AssistantPanel {
     }
 
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
+        if self.is_authenticated(cx) {
+            self.set_authentication_prompt(None, cx);
+            return;
+        }
+
         let Some(provider_id) = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|p| p.id())
@@ -608,17 +620,20 @@ impl AssistantPanel {
     }
 
     fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        let prompt = Self::authentication_prompt(cx);
+        self.set_authentication_prompt(prompt, cx);
+    }
+
+    fn set_authentication_prompt(&mut self, prompt: Option<AnyView>, cx: &mut ViewContext<Self>) {
         if self.active_context_editor(cx).is_none() {
             self.new_context(cx);
         }
 
-        let authentication_prompt = Self::authentication_prompt(cx);
         for context_editor in self.context_editors(cx) {
             context_editor.update(cx, |editor, cx| {
-                editor.set_authentication_prompt(authentication_prompt.clone(), cx);
+                editor.set_authentication_prompt(prompt.clone(), cx);
             });
         }
-
         cx.notify();
     }
 

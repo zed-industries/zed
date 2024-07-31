@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -57,9 +57,12 @@ struct State {
 }
 
 impl State {
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+        cx.spawn(move |this, mut cx| async move {
+            client.authenticate_and_connect(true, &cx).await?;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
     }
 }
 
