@@ -4567,7 +4567,7 @@ struct FreeCompleteWithLanguageModelRateLimit;
 
 impl RateLimit for FreeCompleteWithLanguageModelRateLimit {
     fn capacity(&self) -> usize {
-        std::env::var("FREE_COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+        std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR_FREE")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(12) // Picked arbitrarily
