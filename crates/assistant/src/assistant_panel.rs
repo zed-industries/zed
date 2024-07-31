@@ -42,7 +42,7 @@ use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
-use language_model::{LanguageModelProviderId, LanguageModelRegistry, Role};
+use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -914,7 +914,6 @@ impl AssistantPanel {
         } else {
             let configuration = cx.new_view(|cx| ConfigurationView {
                 fallback_handle: cx.focus_handle(),
-                focus_handles: Vec::new(),
                 active_tab: None,
             });
             self.pane.update(cx, |pane, cx| {
@@ -3018,61 +3017,64 @@ impl Item for ContextHistory {
 
 pub struct ConfigurationView {
     fallback_handle: FocusHandle,
-    focus_handles: Vec<FocusHandle>,
-    active_tab: Option<LanguageModelProviderId>,
+    active_tab: Option<ActiveTab>,
+}
+
+struct ActiveTab {
+    provider: Arc<dyn LanguageModelProvider>,
+    auth_prompt: AnyView,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl ConfigurationView {
-    fn set_active_tab(&mut self, tab: LanguageModelProviderId, cx: &mut ViewContext<Self>) {
-        self.active_tab = Some(tab);
+    fn set_active_tab(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let (view, focus_handle) = provider.authentication_prompt(cx);
+
+        if let Some(focus_handle) = &focus_handle {
+            focus_handle.focus(cx);
+        }
+
+        self.active_tab = Some(ActiveTab {
+            provider,
+            auth_prompt: view,
+            focus_handle,
+        });
         cx.notify();
     }
 
-    fn render_active_tab(&self, cx: &mut ViewContext<Self>) -> Option<Div> {
-        let mut focus_handles = self.focus_handles.clone();
+    fn render_active_tab(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
+        let Some(active_tab) = &self.active_tab else {
+            return None;
+        };
 
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-
-        let active_provider = providers
-            .into_iter()
-            .find(|provider| Some(provider.id()) == self.active_tab)
-            .clone();
-
-        if let Some(active_provider) = active_provider {
-            let provider_content = if active_provider.is_authenticated(cx) {
-                let button_id = SharedString::from(format!("reset-key-{}", active_provider.id().0));
-                div()
-                    .child("authenticated")
-                    .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
-                        let provider = active_provider.clone();
-                        move |_, _, cx| {
-                            provider.reset_credentials(cx).detach_and_log_err(cx);
-                            cx.notify();
-                        }
-                    })))
-            } else {
-                let (view, focus_handle) = active_provider.authentication_prompt(cx);
-                if let Some(focus_handle) = focus_handle {
-                    focus_handles.push(focus_handle)
-                }
-                div().child(view)
-            };
-
-            return Some(div().child(provider_content));
-        }
-
-        None
+        let provider_content = if active_tab.provider.is_authenticated(cx) {
+            let button_id = SharedString::from(format!("reset-key-{}", active_tab.provider.id().0));
+            div()
+                .child("authenticated")
+                .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
+                    let provider = active_tab.provider.clone();
+                    move |_, _, cx| {
+                        provider.reset_credentials(cx).detach_and_log_err(cx);
+                        cx.notify();
+                    }
+                })))
+        } else {
+            div().child(active_tab.auth_prompt.clone())
+        };
+        Some(div().child(provider_content))
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.focus_handles.clear();
-
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         if self.active_tab.is_none() && !providers.is_empty() {
-            self.set_active_tab(providers[0].id(), cx);
+            self.set_active_tab(providers[0].clone(), cx);
         }
 
         let header = Headline::new("Configure Zed's AI Assistant")
@@ -3084,9 +3086,9 @@ impl Render for ConfigurationView {
             .p(Spacing::XLarge.rems(cx))
             .child(header)
             .child(h_flex().children(providers.iter().map(|provider| {
-                let id = provider.id();
-                let button_id = SharedString::from(format!("tab-{}", id.0));
-                let is_active = self.active_tab == Some(id.clone());
+                let button_id = SharedString::from(format!("tab-{}", provider.id().0));
+                let is_active =
+                    self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
                 ButtonLike::new(button_id)
                     .child(
                         div()
@@ -3102,9 +3104,9 @@ impl Render for ConfigurationView {
                             .child(provider.name().0),
                     )
                     .on_click(cx.listener({
-                        let id = id.clone();
+                        let provider = provider.clone();
                         move |this, _, cx| {
-                            this.set_active_tab(id.clone(), cx);
+                            this.set_active_tab(provider.clone(), cx);
                         }
                     }))
             })))
@@ -3116,9 +3118,9 @@ impl EventEmitter<()> for ConfigurationView {}
 
 impl FocusableView for ConfigurationView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.focus_handles
-            .first()
-            .cloned()
+        self.active_tab
+            .as_ref()
+            .and_then(|tab| tab.focus_handle.clone())
             .unwrap_or(self.fallback_handle.clone())
     }
 }
