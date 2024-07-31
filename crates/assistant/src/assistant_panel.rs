@@ -902,7 +902,7 @@ impl AssistantPanel {
         } else {
             let configuration = cx.new_view(|cx| {
                 let mut view = ConfigurationView {
-                    fallback_handle: cx.focus_handle(),
+                    fallback_handle: self.focus_handle(cx),
                     active_tab: None,
                 };
                 if let Some(provider) = provider {
@@ -2987,6 +2987,8 @@ impl ConfigurationView {
 
         if let Some(focus_handle) = &focus_handle {
             focus_handle.focus(cx);
+        } else {
+            self.fallback_handle.focus(cx);
         }
 
         self.active_tab = Some(ActiveTab {
