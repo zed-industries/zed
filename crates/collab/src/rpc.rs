@@ -4532,9 +4532,9 @@ async fn acknowledge_buffer_version(
     Ok(())
 }
 
-struct CompleteWithLanguageModelRateLimit;
+struct ZedProCompleteWithLanguageModelRateLimit;
 
-impl RateLimit for CompleteWithLanguageModelRateLimit {
+impl RateLimit for ZedProCompleteWithLanguageModelRateLimit {
     fn capacity(&self) -> usize {
         std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
             .ok()
@@ -4547,7 +4547,7 @@ impl RateLimit for CompleteWithLanguageModelRateLimit {
     }
 
     fn db_name(&self) -> &'static str {
-        "complete-with-language-model"
+        "zed-pro:complete-with-language-model"
     }
 }
 
@@ -4564,7 +4564,7 @@ async fn complete_with_language_model(
 
     session
         .rate_limiter
-        .check(&CompleteWithLanguageModelRateLimit, session.user_id())
+        .check(&ZedProCompleteWithLanguageModelRateLimit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4604,7 +4604,7 @@ async fn stream_complete_with_language_model(
 
     session
         .rate_limiter
-        .check(&CompleteWithLanguageModelRateLimit, session.user_id())
+        .check(&ZedProCompleteWithLanguageModelRateLimit, session.user_id())
         .await?;
 
     match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4686,7 +4686,7 @@ async fn count_language_model_tokens(
 
     session
         .rate_limiter
-        .check(&CountLanguageModelTokensRateLimit, session.user_id())
+        .check(&ZedProCountLanguageModelTokensRateLimit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4713,9 +4713,9 @@ async fn count_language_model_tokens(
     Ok(())
 }
 
-struct CountLanguageModelTokensRateLimit;
+struct ZedProCountLanguageModelTokensRateLimit;
 
-impl RateLimit for CountLanguageModelTokensRateLimit {
+impl RateLimit for ZedProCountLanguageModelTokensRateLimit {
     fn capacity(&self) -> usize {
         std::env::var("COUNT_LANGUAGE_MODEL_TOKENS_RATE_LIMIT_PER_HOUR")
             .ok()
@@ -4728,13 +4728,13 @@ impl RateLimit for CountLanguageModelTokensRateLimit {
     }
 
     fn db_name(&self) -> &'static str {
-        "count-language-model-tokens"
+        "zed-pro:count-language-model-tokens"
     }
 }
 
-struct ComputeEmbeddingsRateLimit;
+struct ZedProComputeEmbeddingsRateLimit;
 
-impl RateLimit for ComputeEmbeddingsRateLimit {
+impl RateLimit for ZedProComputeEmbeddingsRateLimit {
     fn capacity(&self) -> usize {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
@@ -4747,7 +4747,7 @@ impl RateLimit for ComputeEmbeddingsRateLimit {
     }
 
     fn db_name(&self) -> &'static str {
-        "compute-embeddings"
+        "zed-pro:compute-embeddings"
     }
 }
 
@@ -4762,7 +4762,7 @@ async fn compute_embeddings(
 
     session
         .rate_limiter
-        .check(&ComputeEmbeddingsRateLimit, session.user_id())
+        .check(&ZedProComputeEmbeddingsRateLimit, session.user_id())
         .await?;
 
     let embeddings = match request.model.as_str() {
