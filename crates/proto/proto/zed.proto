@@ -126,6 +126,7 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
+        UpdateUserPlan update_user_plan = 234; // current max
         UpdateDiffBase update_diff_base = 104;
 
         OnTypeFormatting on_type_formatting = 105;
@@ -194,8 +195,12 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        QueryLanguageModel query_language_model = 224;
-        QueryLanguageModelResponse query_language_model_response = 225; // current max
+        CompleteWithLanguageModel complete_with_language_model = 226;
+        CompleteWithLanguageModelResponse complete_with_language_model_response = 227;
+        StreamCompleteWithLanguageModel stream_complete_with_language_model = 228;
+        StreamCompleteWithLanguageModelResponse stream_complete_with_language_model_response = 229;
+        CountLanguageModelTokens count_language_model_tokens = 230;
+        CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -251,6 +256,8 @@ message Envelope {
         AdvertiseContexts advertise_contexts = 211;
         OpenContext open_context = 212;
         OpenContextResponse open_context_response = 213;
+        CreateContext create_context = 232;
+        CreateContextResponse create_context_response = 233;
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
         SynchronizeContextsResponse synchronize_contexts_response = 216;
@@ -267,6 +274,7 @@ message Envelope {
 
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 224 to 225;
 }
 
 // Messages
@@ -1673,6 +1681,15 @@ message GetPrivateUserInfoResponse {
     repeated string flags = 3;
 }
 
+enum Plan {
+    Free = 0;
+    ZedPro = 1;
+}
+
+message UpdateUserPlan {
+    Plan plan = 1;
+}
+
 // Entities
 
 message ViewId {
@@ -2050,25 +2067,37 @@ enum LanguageModelRole {
     reserved 3;
 }
 
-message QueryLanguageModel {
+message CompleteWithLanguageModel {
     LanguageModelProvider provider = 1;
-    LanguageModelRequestKind kind = 2;
-    string request = 3;
+    string request = 2;
+}
+
+message CompleteWithLanguageModelResponse {
+    string completion = 1;
+}
+
+message StreamCompleteWithLanguageModel {
+    LanguageModelProvider provider = 1;
+    string request = 2;
+}
+
+message StreamCompleteWithLanguageModelResponse {
+    string event = 1;
+}
+
+message CountLanguageModelTokens {
+    LanguageModelProvider provider = 1;
+    string request = 2;
+}
+
+message CountLanguageModelTokensResponse {
+    uint32 token_count = 1;
 }
 
 enum LanguageModelProvider {
     Anthropic = 0;
     OpenAI = 1;
     Google = 2;
-}
-
-enum LanguageModelRequestKind {
-    Complete = 0;
-    CountTokens = 1;
-}
-
-message QueryLanguageModelResponse {
-    string response = 1;
 }
 
 message GetCachedEmbeddings {
@@ -2362,6 +2391,15 @@ message OpenContext {
 
 message OpenContextResponse {
     Context context = 1;
+}
+
+message CreateContext {
+    uint64 project_id = 1;
+}
+
+message CreateContextResponse {
+    string context_id = 1;
+    Context context = 2;
 }
 
 message UpdateContext {

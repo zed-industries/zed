@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,6 +19,8 @@ use gpui::{
 };
 use markdown::Markdown;
 use markdown::MarkdownStyle;
+use project::terminals::wrap_for_ssh;
+use project::terminals::SshCommand;
 use rpc::proto::RegenerateDevServerTokenResponse;
 use rpc::{
     proto::{CreateDevServerResponse, DevServerStatus},
@@ -28,7 +31,6 @@ use settings::Settings;
 use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
-use task::TerminalWorkDir;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
@@ -37,7 +39,7 @@ use ui::{
     RadioWithLabel, Tooltip,
 };
 use ui_input::{FieldLabelLayout, TextField};
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 use util::ResultExt;
 use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
@@ -989,7 +991,7 @@ impl DevServerProjects {
                         project
                             .paths
                             .into_iter()
-                            .map(|path| PathLikeWithPosition::from_path(PathBuf::from(path)))
+                            .map(|path| PathWithPosition::from_path(PathBuf::from(path)))
                             .collect(),
                         app_state,
                         OpenOptions::default(),
@@ -1638,6 +1640,13 @@ pub async fn spawn_ssh_task(
     ];
 
     let ssh_connection_string = ssh_connection_string.to_string();
+    let (command, args) = wrap_for_ssh(
+        &SshCommand::DevServer(ssh_connection_string.clone()),
+        Some((&command, &args)),
+        None,
+        HashMap::default(),
+        None,
+    );
 
     let terminal = terminal_panel
         .update(cx, |terminal_panel, cx| {
@@ -1649,10 +1658,7 @@ pub async fn spawn_ssh_task(
                     command,
                     args,
                     command_label: ssh_connection_string.clone(),
-                    cwd: Some(TerminalWorkDir::Ssh {
-                        ssh_command: ssh_connection_string,
-                        path: None,
-                    }),
+                    cwd: None,
                     use_new_terminal: true,
                     allow_concurrent_runs: false,
                     reveal: RevealStrategy::Always,

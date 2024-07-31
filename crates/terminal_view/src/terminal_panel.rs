@@ -1,20 +1,20 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::TerminalView;
+use crate::{default_working_directory, TerminalView};
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    actions, Action, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use project::{Fs, ProjectEntryId};
+use project::{terminals::TerminalKind, Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId, TerminalWorkDir};
+use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
@@ -68,6 +68,7 @@ pub struct TerminalPanel {
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
+    additional_tab_bar_buttons: Vec<AnyView>,
 }
 
 impl TerminalPanel {
@@ -85,63 +86,6 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let focus_handle = pane.focus_handle(cx);
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
-                    )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Pane::render_menu_overlay(new_item_menu))
-                    })
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    cx,
-                                )
-                            })
-                    })
-                    .into_any_element()
-            });
 
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
@@ -210,8 +154,83 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
+            additional_tab_bar_buttons: Vec::new(),
         };
+        this.apply_tab_bar_buttons(cx);
         this
+    }
+
+    pub fn register_tab_bar_button(
+        &mut self,
+        button: impl Into<AnyView>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.additional_tab_bar_buttons.push(button.into());
+        self.apply_tab_bar_buttons(cx);
+    }
+
+    fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
+        let additional_buttons = self.additional_tab_bar_buttons.clone();
+        self.pane.update(cx, |pane, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                h_flex()
+                    .gap_2()
+                    .children(additional_buttons.clone())
+                    .child(
+                        IconButton::new("plus", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let focus_handle = pane.focus_handle(cx);
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    )
+                                    .entry(
+                                        "Spawn task",
+                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                        move |cx| {
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            cx.focus(&focus_handle);
+                                            cx.dispatch_action(
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            );
+                                        },
+                                    )
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
+                                    pane.new_item_menu = None;
+                                })
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                    )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Pane::render_menu_overlay(new_item_menu))
+                    })
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", IconName::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(IconName::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
+                            })
+                    })
+                    .into_any_element()
+            });
+        });
     }
 
     pub async fn load(
@@ -348,14 +367,13 @@ impl TerminalPanel {
             return;
         };
 
-        let terminal_work_dir = workspace
-            .project()
-            .read(cx)
-            .terminal_work_dir_for(Some(&action.working_directory), cx);
-
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal(terminal_work_dir, None, RevealStrategy::Always, cx)
+                panel.add_terminal(
+                    TerminalKind::Shell(Some(action.working_directory.clone())),
+                    RevealStrategy::Always,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -484,7 +502,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(spawn_task.cwd.clone(), Some(spawn_task), reveal, cx)
+        self.add_terminal(TerminalKind::Task(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -497,9 +515,11 @@ impl TerminalPanel {
             return;
         };
 
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal(None, None, RevealStrategy::Always, cx)
+                this.add_terminal(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -533,22 +553,14 @@ impl TerminalPanel {
 
     fn add_terminal(
         &mut self,
-        working_directory: Option<TerminalWorkDir>,
-        spawn_task: Option<SpawnInTerminal>,
+        kind: TerminalKind,
         reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         if !self.enabled {
-            if spawn_task.is_none()
-                || !matches!(
-                    spawn_task.as_ref().unwrap().cwd,
-                    Some(TerminalWorkDir::Ssh { .. })
-                )
-            {
-                return Task::ready(Err(anyhow::anyhow!(
-                    "terminal not yet supported for remote projects"
-                )));
-            }
+            return Task::ready(Err(anyhow::anyhow!(
+                "terminal not yet supported for remote projects"
+            )));
         }
 
         let workspace = self.workspace.clone();
@@ -557,18 +569,10 @@ impl TerminalPanel {
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             let result = workspace.update(&mut cx, |workspace, cx| {
-                let working_directory = if let Some(working_directory) = working_directory {
-                    Some(working_directory)
-                } else {
-                    let working_directory_strategy =
-                        TerminalSettings::get_global(cx).working_directory.clone();
-                    crate::get_working_directory(workspace, cx, working_directory_strategy)
-                };
-
                 let window = cx.window_handle();
-                let terminal = workspace.project().update(cx, |project, cx| {
-                    project.create_terminal(working_directory, spawn_task, window, cx)
-                })?;
+                let terminal = workspace
+                    .project()
+                    .update(cx, |project, cx| project.create_terminal(kind, window, cx))?;
                 let terminal_view = Box::new(cx.new_view(|cx| {
                     TerminalView::new(
                         terminal.clone(),
@@ -655,7 +659,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(spawn_task.cwd.clone(), Some(spawn_task), window, cx)
+                .create_terminal(TerminalKind::Task(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
@@ -677,10 +681,6 @@ impl TerminalPanel {
         }
 
         Some(())
-    }
-
-    pub fn pane(&self) -> &View<Pane> {
-        &self.pane
     }
 
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
@@ -802,10 +802,19 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.has_no_terminals(cx) {
-            self.add_terminal(None, None, RevealStrategy::Never, cx)
-                .detach_and_log_err(cx)
+        if !active || !self.has_no_terminals(cx) {
+            return;
         }
+        cx.defer(|this, cx| {
+            let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
+                TerminalKind::Shell(default_working_directory(workspace, cx))
+            }) else {
+                return;
+            };
+
+            this.add_terminal(kind, RevealStrategy::Never, cx)
+                .detach_and_log_err(cx)
+        })
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
@@ -835,6 +844,10 @@ impl Panel for TerminalPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
     }
 }
 

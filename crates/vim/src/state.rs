@@ -68,6 +68,7 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
+    Digraph { first_char: Option<char> },
     Register,
     RecordRegister,
     ReplayRegister,
@@ -309,6 +310,7 @@ impl Operator {
             Operator::Delete => "d",
             Operator::Yank => "y",
             Operator::Replace => "r",
+            Operator::Digraph { .. } => "^K",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
@@ -342,6 +344,7 @@ impl Operator {
             | Operator::RecordRegister
             | Operator::ReplayRegister
             | Operator::Replace
+            | Operator::Digraph { .. }
             | Operator::ChangeSurrounds { target: Some(_) }
             | Operator::DeleteSurrounds => true,
             Operator::Change

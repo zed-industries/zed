@@ -1,7 +1,9 @@
+pub mod copilot_chat;
 mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
 
+use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -27,6 +29,7 @@ use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::TypeId,
+    env,
     ffi::OsString,
     mem,
     ops::Range,
@@ -52,10 +55,13 @@ actions!(
 
 pub fn init(
     new_server_id: LanguageServerId,
+    fs: Arc<dyn Fs>,
     http: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
+    copilot_chat::init(fs, http.clone(), cx);
+
     let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
@@ -185,6 +191,10 @@ impl Status {
     pub fn is_authorized(&self) -> bool {
         matches!(self, Status::Authorized)
     }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Status::Disabled)
+    }
 }
 
 struct RegisteredBuffer {
@@ -301,6 +311,8 @@ pub struct Copilot {
 
 pub enum Event {
     CopilotLanguageServerStarted,
+    CopilotAuthSignedIn,
+    CopilotAuthSignedOut,
 }
 
 impl EventEmitter<Event> for Copilot {}
@@ -581,7 +593,7 @@ impl Copilot {
         }
     }
 
-    fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
@@ -928,6 +940,7 @@ impl Copilot {
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
+                    cx.emit(Event::CopilotAuthSignedIn);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -942,6 +955,7 @@ impl Copilot {
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
+                    cx.emit(Event::CopilotAuthSignedOut);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }

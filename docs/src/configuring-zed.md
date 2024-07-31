@@ -1733,6 +1733,44 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "button": true,
+  "default_width": 240,
+  "dock": "left",
+  "file_icons": true,
+  "folder_icons": true,
+  "git_status": true,
+  "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
+}
+```
+
 ## Calls
 
 - Description: Customize behavior when participating in a call

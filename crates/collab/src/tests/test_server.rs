@@ -32,7 +32,7 @@ use rpc::{
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
-use session::Session;
+use session::{AppSession, Session};
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -270,6 +270,7 @@ impl TestServer {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -278,7 +279,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -299,7 +300,6 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            completion::init(cx);
             assistant::context_store::init(&client);
         });
 
@@ -399,6 +399,7 @@ impl TestServer {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -407,7 +408,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
 
         cx.update(|cx| {
@@ -635,6 +636,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
+            stripe_client: None,
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
@@ -667,6 +669,8 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
+                stripe_api_key: None,
+                stripe_price_id: None,
                 supermaven_admin_api_key: None,
             },
         })

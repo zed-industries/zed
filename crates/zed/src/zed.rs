@@ -5,7 +5,6 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
-pub(crate) mod session;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
@@ -48,7 +47,7 @@ use workspace::{
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
-use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
+use zed_actions::{OpenAccountSettings, OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
     zed,
@@ -421,6 +420,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         || settings::initial_user_settings_content().as_ref().into(),
                         cx,
                     );
+                },
+            )
+            .register_action(
+                |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
+                    let server_url = &client::ClientSettings::get_global(cx).server_url;
+                    cx.open_url(&format!("{server_url}/settings"));
                 },
             )
             .register_action(
@@ -3457,7 +3462,12 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
-            language_model::init(app_state.client.clone(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client().clone(),
+                cx,
+            );
+            language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(
                 app_state.fs.clone(),

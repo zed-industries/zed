@@ -57,16 +57,25 @@ impl TabSwitcher {
     }
 
     fn open(action: &Toggle, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        let terminal = workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx);
-        let terminal_pane = terminal.and_then(|terminal| {
-            terminal
-                .focus_handle(cx)
-                .contains_focused(cx)
-                .then(|| terminal.read(cx).pane())
-        });
-        let weak_pane = terminal_pane
-            .unwrap_or_else(|| workspace.active_pane())
-            .downgrade();
+        let mut weak_pane = workspace.active_pane().downgrade();
+        for dock in [
+            workspace.left_dock(),
+            workspace.bottom_dock(),
+            workspace.right_dock(),
+        ] {
+            dock.update(cx, |this, cx| {
+                let Some(panel) = this
+                    .active_panel()
+                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx))
+                else {
+                    return;
+                };
+                if let Some(pane) = panel.pane(cx) {
+                    weak_pane = pane.downgrade();
+                }
+            })
+        }
+
         workspace.toggle_modal(cx, |cx| {
             let delegate = TabSwitcherDelegate::new(action, cx.view().downgrade(), weak_pane, cx);
             TabSwitcher::new(delegate, cx)

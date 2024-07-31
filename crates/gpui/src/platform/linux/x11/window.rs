@@ -56,6 +56,7 @@ x11rb::atom_manager! {
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
+        _NET_CLIENT_LIST_STACKING,
     }
 }
 

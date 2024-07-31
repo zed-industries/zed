@@ -13,8 +13,7 @@ use gpui::{
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
-use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
-use task::TerminalWorkDir;
+use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -27,7 +26,7 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathLikeWithPosition, ResultExt};
+use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
@@ -38,7 +37,6 @@ use workspace::{
 };
 
 use anyhow::Context;
-use dirs::home_dir;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
@@ -130,15 +128,13 @@ impl TerminalView {
         _: &NewCenterTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let strategy = TerminalSettings::get_global(cx);
-        let working_directory =
-            get_working_directory(workspace, cx, strategy.working_directory.clone());
+        let working_directory = default_working_directory(workspace, cx);
 
         let window = cx.window_handle();
         let terminal = workspace
             .project()
             .update(cx, |project, cx| {
-                project.create_terminal(working_directory, None, window, cx)
+                project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
             })
             .notify_err(workspace, cx);
 
@@ -676,7 +672,7 @@ fn subscribe_for_terminal_events(
                             .await;
                         let paths_to_open = valid_files_to_open
                             .iter()
-                            .map(|(p, _)| p.path_like.clone())
+                            .map(|(p, _)| p.path.clone())
                             .collect();
                         let opened_items = task_workspace
                             .update(&mut cx, |workspace, cx| {
@@ -750,7 +746,7 @@ fn possible_open_paths_metadata(
     column: Option<u32>,
     potential_paths: HashSet<PathBuf>,
     cx: &mut ViewContext<TerminalView>,
-) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
+) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
@@ -759,8 +755,8 @@ fn possible_open_paths_metadata(
             .map(|potential_path| async {
                 let metadata = fs.metadata(&potential_path).await.ok().flatten();
                 (
-                    PathLikeWithPosition {
-                        path_like: potential_path,
+                    PathWithPosition {
+                        path: potential_path,
                         row,
                         column,
                     },
@@ -785,14 +781,11 @@ fn possible_open_targets(
     cwd: &Option<PathBuf>,
     maybe_path: &String,
     cx: &mut ViewContext<TerminalView>,
-) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
-    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |_, path_str| {
-        Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-    })
-    .expect("infallible");
-    let row = path_like.row;
-    let column = path_like.column;
-    let maybe_path = path_like.path_like;
+) -> Task<Vec<(PathWithPosition, Metadata)>> {
+    let path_position = PathWithPosition::parse_str(maybe_path.as_str());
+    let row = path_position.row;
+    let column = path_position.column;
+    let maybe_path = path_position.path;
     let potential_abs_paths = if maybe_path.is_absolute() {
         HashSet::from_iter([maybe_path])
     } else if maybe_path.starts_with("~") {
@@ -1134,21 +1127,18 @@ impl SerializableItem for TerminalView {
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
-                        project
-                            .read(cx)
-                            .terminal_work_dir_for(from_db.as_deref(), cx)
+                        from_db
                     } else {
-                        let strategy = TerminalSettings::get_global(cx).working_directory.clone();
-                        workspace.upgrade().and_then(|workspace| {
-                            get_working_directory(workspace.read(cx), cx, strategy)
-                        })
+                        workspace
+                            .upgrade()
+                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
                     }
                 })
                 .ok()
                 .flatten();
 
             let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, None, window, cx)
+                project.create_terminal(TerminalKind::Shell(cwd), window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
@@ -1276,59 +1266,29 @@ impl SearchableItem for TerminalView {
 }
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
-pub fn get_working_directory(
-    workspace: &Workspace,
-    cx: &AppContext,
-    strategy: WorkingDirectory,
-) -> Option<TerminalWorkDir> {
-    if workspace.project().read(cx).is_local() {
-        let res = match strategy {
-            WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
-                .or_else(|| first_project_directory(workspace, cx)),
-            WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
-            WorkingDirectory::AlwaysHome => None,
-            WorkingDirectory::Always { directory } => {
-                shellexpand::full(&directory) //TODO handle this better
-                    .ok()
-                    .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                    .filter(|dir| dir.is_dir())
-            }
-        };
-        res.or_else(home_dir).map(|cwd| TerminalWorkDir::Local(cwd))
-    } else {
-        workspace.project().read(cx).terminal_work_dir_for(None, cx)
+/// None implies "~" on whichever machine we end up on.
+pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    match &TerminalSettings::get_global(cx).working_directory {
+        WorkingDirectory::CurrentProjectDirectory => {
+            workspace.project().read(cx).active_project_directory(cx)
+        }
+        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+        WorkingDirectory::AlwaysHome => None,
+        WorkingDirectory::Always { directory } => {
+            shellexpand::full(&directory) //TODO handle this better
+                .ok()
+                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                .filter(|dir| dir.is_dir())
+        }
     }
 }
-
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    workspace
-        .worktrees(cx)
-        .next()
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
-}
-
-///Gets the intuitively correct working directory from the given workspace
-///If there is an active entry for this project, returns that entry's worktree root.
-///If there's no active entry but there is a worktree, returns that worktrees root.
-///If either of these roots are files, or if there are any other query failures,
-///  returns the user's home directory
-fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    let project = workspace.project().read(cx);
-
-    project
-        .active_entry()
-        .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-        .or_else(|| workspace.worktrees(cx).next())
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
-}
-
-fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
-    wt.root_entry()
-        .filter(|re| re.is_dir())
-        .map(|_| wt.abs_path().to_path_buf())
+    let worktree = workspace.worktrees(cx).next()?.read(cx);
+    if !worktree.root_entry()?.is_dir() {
+        return None;
+    }
+    Some(worktree.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
@@ -1353,7 +1313,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
@@ -1374,7 +1334,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
@@ -1394,7 +1354,7 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
@@ -1416,7 +1376,7 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
@@ -1438,7 +1398,7 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = current_project_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
@@ -1449,6 +1409,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
+            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);

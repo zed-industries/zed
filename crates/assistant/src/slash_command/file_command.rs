@@ -273,20 +273,25 @@ fn collect_files(
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
-                        let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
+                        let buffer_snapshot =
+                            cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
                         let prev_len = text.len();
-                        collect_file_content(&mut text, &snapshot, filename.clone());
+                        collect_file_content(
+                            &mut text,
+                            &buffer_snapshot,
+                            path_including_worktree_name.to_string_lossy().to_string(),
+                        );
                         text.push('\n');
                         if !write_single_file_diagnostics(
                             &mut text,
                             Some(&path_including_worktree_name),
-                            &snapshot,
+                            &buffer_snapshot,
                         ) {
                             text.pop();
                         }
                         ranges.push((
                             prev_len..text.len(),
-                            PathBuf::from(filename),
+                            path_including_worktree_name,
                             EntryType::File,
                         ));
                         text.push('\n');

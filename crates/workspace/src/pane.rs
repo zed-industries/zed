@@ -227,7 +227,6 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     pub new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
-    //     tab_context_menu: View<ContextMenu>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
