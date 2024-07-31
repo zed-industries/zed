@@ -117,7 +117,10 @@ impl LanguageModelRegistry {
     ) {
         let id = provider.id();
 
-        if let Some(subscription) = provider.subscribe(cx) {
+        let subscription = provider.subscribe(cx, |_, cx| {
+            cx.emit(Event::ProviderStateChanged);
+        });
+        if let Some(subscription) = subscription {
             subscription.detach();
         }
 

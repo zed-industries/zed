@@ -608,15 +608,18 @@ impl AssistantPanel {
         };
 
         let load_credentials = self.authenticate(cx);
-        let task = cx.spawn(|this, mut cx| async move {
-            let _ = load_credentials.await;
-            this.update(&mut cx, |this, cx| {
-                this.show_authentication_prompt(cx);
-            })
-            .log_err();
-        });
 
-        self.authenticate_provider_task = Some((provider_id, task));
+        self.authenticate_provider_task = Some((
+            provider_id,
+            cx.spawn(|this, mut cx| async move {
+                let _ = load_credentials.await;
+                this.update(&mut cx, |this, cx| {
+                    this.show_authentication_prompt(cx);
+                    this.authenticate_provider_task = None;
+                })
+                .log_err();
+            }),
+        ));
     }
 
     fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
