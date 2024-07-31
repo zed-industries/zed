@@ -106,7 +106,6 @@ impl Render for Toolbar {
             .child(
                 h_flex()
                     .min_h(rems_from_px(24.))
-                    .items_center()
                     .justify_between()
                     .gap(Spacing::Large.rems(cx))
                     .when(has_left_items, |this| {
