@@ -4563,6 +4563,25 @@ impl RateLimit for ZedProCompleteWithLanguageModelRateLimit {
     }
 }
 
+struct FreeCompleteWithLanguageModelRateLimit;
+
+impl RateLimit for FreeCompleteWithLanguageModelRateLimit {
+    fn capacity(&self) -> usize {
+        std::env::var("FREE_COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12) // Picked arbitrarily
+    }
+
+    fn refill_duration(&self) -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name(&self) -> &'static str {
+        "free:complete-with-language-model"
+    }
+}
+
 async fn complete_with_language_model(
     request: proto::CompleteWithLanguageModel,
     response: Response<proto::CompleteWithLanguageModel>,
@@ -4574,9 +4593,14 @@ async fn complete_with_language_model(
     };
     authorize_access_to_language_models(&session).await?;
 
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+        proto::Plan::ZedPro => Box::new(ZedProCompleteWithLanguageModelRateLimit),
+        proto::Plan::Free => Box::new(FreeCompleteWithLanguageModelRateLimit),
+    };
+
     session
         .rate_limiter
-        .check(&ZedProCompleteWithLanguageModelRateLimit, session.user_id())
+        .check(&*rate_limit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
