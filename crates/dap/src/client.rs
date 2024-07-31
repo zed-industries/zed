@@ -4,13 +4,14 @@ use anyhow::{anyhow, Context, Result};
 use dap_types::{
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
-        Restart, SetBreakpoints, StepBack, StepIn, StepOut, TerminateThreads,
+        Restart, SetBreakpoints, StepBack, StepIn, StepOut, Terminate, TerminateThreads,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
     NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
     SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
-    StepInArguments, StepOutArguments, SteppingGranularity, TerminateThreadsArguments, Variable,
+    StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
+    TerminateThreadsArguments, Variable,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
@@ -668,7 +669,21 @@ impl DebugAdapterClient {
             Ok(())
         }
     }
+
+    pub async fn terminate(&self) -> Result<()> {
+        let support_terminate_request = self
+            .capabilities()
+            .supports_terminate_request
+            .unwrap_or_default();
+
+        if support_terminate_request {
+            self.request::<Terminate>(TerminateArguments {
+                restart: Some(false),
+            })
             .await
+        } else {
+            self.disconnect(None, Some(true), None).await
+        }
     }
 
     pub async fn terminate_threads(&self, thread_ids: Option<Vec<u64>>) -> Result<()> {
