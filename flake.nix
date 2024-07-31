@@ -25,6 +25,17 @@
   in {
     formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
 
+    packages = forAllSystems (
+      system: let
+        pkgs = import nixpkgs {inherit system;};
+        fenix = nixfenix.packages.${system};
+      in rec
+      {
+        zed-editor = import ./tooling/nix/package.nix {inherit pkgs fenix;};
+        default = zed-editor;
+      }
+    );
+
     devShells = forAllSystems (
       system: let
         pkgs = import nixpkgs {inherit system;};
