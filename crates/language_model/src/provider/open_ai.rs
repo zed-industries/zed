@@ -392,7 +392,6 @@ impl Render for ConfigurationView {
 
         if self.state.read(cx).is_authenticated() {
             v_flex()
-                .p_4()
                 .size_full()
                 .child(
                     h_flex()
@@ -408,7 +407,6 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             v_flex()
-                .p_4()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(

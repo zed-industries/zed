@@ -350,7 +350,6 @@ impl Render for ConfigurationView {
 
         if is_authenticated {
             v_flex()
-                .p_4()
                 .size_full()
                 .child(
                     h_flex()
@@ -361,7 +360,6 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             v_flex()
-            .p_4()
             .size_full()
             .gap_2()
             .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.").size(LabelSize::Large))

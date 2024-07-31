@@ -411,7 +411,6 @@ impl Render for ConfigurationView {
         } else {
             v_flex()
                 .gap_6()
-                .p_4()
                 .child(Label::new("Use the zed.dev to access language models."))
                 .child(
                     v_flex()

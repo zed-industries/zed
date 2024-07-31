@@ -325,7 +325,6 @@ impl Render for ConfigurationView {
                         const LABEL: &str = "Starting Copilot...";
                         v_flex()
                             .gap_6()
-                            .p_4()
                             .justify_center()
                             .items_center()
                             .child(Label::new(LABEL))
@@ -335,7 +334,6 @@ impl Render for ConfigurationView {
                         const LABEL: &str = "Signing in to Copilot...";
                         v_flex()
                             .gap_6()
-                            .p_4()
                             .justify_center()
                             .items_center()
                             .child(Label::new(LABEL))
@@ -345,14 +343,13 @@ impl Render for ConfigurationView {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
                             .gap_6()
-                            .p_4()
                             .child(Label::new(LABEL))
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
                         const LABEL: &str =
                     "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
-                        v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
+                        v_flex().gap_6().child(Label::new(LABEL)).child(
                             v_flex()
                                 .gap_2()
                                 .child(
@@ -377,7 +374,7 @@ impl Render for ConfigurationView {
                         )
                     }
                 },
-                None => v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL)),
+                None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
             }
         }
     }
