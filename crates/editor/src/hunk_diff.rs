@@ -364,7 +364,7 @@ impl Editor {
                         .row;
                     let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
                     let line_count = diff_end_row - diff_start_row;
-                    line_count as u8
+                    line_count
                 })?;
                 Some((diff_base_buffer, deleted_text_lines))
             } else {
@@ -422,7 +422,7 @@ impl Editor {
     fn insert_deleted_text_block(
         &mut self,
         diff_base_buffer: Model<Buffer>,
-        deleted_text_height: u8,
+        deleted_text_height: u32,
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<CustomBlockId> {
@@ -783,7 +783,7 @@ fn editor_with_deleted_text(
     deleted_color: Hsla,
     hunk: &HoveredHunk,
     cx: &mut ViewContext<'_, Editor>,
-) -> (u8, View<Editor>) {
+) -> (u32, View<Editor>) {
     let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
@@ -885,7 +885,7 @@ fn editor_with_deleted_text(
         editor
     });
 
-    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0 as u8);
+    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0);
     (editor_height, editor)
 }
 

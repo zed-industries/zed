@@ -19,7 +19,7 @@ use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 /// Given these outputs are destined for the editor with the block decorations API, all of them must report
 /// how many lines they will take up in the editor.
 pub trait LineHeight: Sized {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8;
+    fn num_lines(&self, cx: &mut WindowContext) -> usize;
 }
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
@@ -88,15 +88,9 @@ impl ImageView {
 }
 
 impl LineHeight for ImageView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+    fn num_lines(&self, cx: &mut WindowContext) -> usize {
         let line_height = cx.line_height();
-
-        let lines = self.height as f32 / line_height.0;
-
-        if lines > u8::MAX as f32 {
-            return u8::MAX;
-        }
-        lines as u8
+        (self.height as f32 / line_height.0) as usize
     }
 }
 
@@ -257,7 +251,7 @@ impl TableView {
 }
 
 impl LineHeight for TableView {
-    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
+    fn num_lines(&self, _cx: &mut WindowContext) -> usize {
         let num_rows = match &self.table.data {
             // Rows + header
             Some(data) => data.len() + 1,
@@ -267,7 +261,7 @@ impl LineHeight for TableView {
         };
 
         let num_lines = num_rows as f32 * (1.0 + TABLE_Y_PADDING_MULTIPLE) + 1.0;
-        num_lines.ceil() as u8
+        num_lines.ceil() as usize
     }
 }
 
@@ -303,12 +297,9 @@ impl ErrorView {
 }
 
 impl LineHeight for ErrorView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 1; // Start at 1 to account for the y padding
-        height = height.saturating_add(self.ename.lines().count() as u8);
-        height = height.saturating_add(self.evalue.lines().count() as u8);
-        height = height.saturating_add(self.traceback.num_lines(cx));
-        height
+    fn num_lines(&self, cx: &mut WindowContext) -> usize {
+        // Start at 1 to account for the y padding
+        1 + self.ename.lines().count() + self.evalue.lines().count() + self.traceback.num_lines(cx)
     }
 }
 
@@ -357,12 +348,12 @@ impl OutputType {
 
 impl LineHeight for OutputType {
     /// Calculates the expected number of lines
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+    fn num_lines(&self, cx: &mut WindowContext) -> usize {
         match self {
             Self::Plain(stdio) => stdio.num_lines(cx),
             Self::Stream(stdio) => stdio.num_lines(cx),
             Self::Image(image) => image.num_lines(cx),
-            Self::Message(message) => message.lines().count() as u8,
+            Self::Message(message) => message.lines().count(),
             Self::Table(table) => table.num_lines(cx),
             Self::ErrorOutput(error_view) => error_view.num_lines(cx),
             Self::ClearOutputWaitMarker => 0,
@@ -572,7 +563,7 @@ impl Render for ExecutionView {
 }
 
 impl LineHeight for ExecutionView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+    fn num_lines(&self, cx: &mut WindowContext) -> usize {
         if self.outputs.is_empty() {
             return 1; // For the status message if outputs are not there
         }
@@ -581,9 +572,7 @@ impl LineHeight for ExecutionView {
             .outputs
             .iter()
             .map(|output| output.num_lines(cx))
-            .fold(0_u8, |acc, additional_height| {
-                acc.saturating_add(additional_height)
-            })
+            .sum::<usize>()
             .max(1);
 
         let num_lines = match self.status {
@@ -597,7 +586,7 @@ impl LineHeight for ExecutionView {
 }
 
 impl LineHeight for View<ExecutionView> {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
+    fn num_lines(&self, cx: &mut WindowContext) -> usize {
         self.update(cx, |execution_view, cx| execution_view.num_lines(cx))
     }
 }

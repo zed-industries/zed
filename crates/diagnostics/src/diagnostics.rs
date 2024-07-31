@@ -4,7 +4,6 @@ mod toolbar_controls;
 
 #[cfg(test)]
 mod diagnostics_tests;
-pub(crate) mod grouped_diagnostics;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
@@ -15,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     StreamExt as _,
@@ -54,9 +52,6 @@ pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
     cx.observe_new_views(ProjectDiagnosticsEditor::register)
         .detach();
-    if !cx.has_flag::<feature_flags::GroupedDiagnostics>() {
-        grouped_diagnostics::init(cx);
-    }
 }
 
 struct ProjectDiagnosticsEditor {
@@ -469,7 +464,7 @@ impl ProjectDiagnosticsEditor {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id, entry.range.start),
-                                        height: diagnostic.message.matches('\n').count() as u8 + 1,
+                                        height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(
                                             diagnostic, None, true, true,

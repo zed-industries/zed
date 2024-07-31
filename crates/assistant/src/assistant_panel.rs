@@ -1894,19 +1894,21 @@ impl ContextEditor {
                     workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
                 })?;
 
-                let mut scroll_offset = gpui::Point::<f32>::default();
                 cx.update(|cx| {
                     for suggestion in suggestion_group.suggestions {
                         let description = suggestion.description.unwrap_or_else(|| "Delete".into());
 
-                        let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                        let range = multibuffer
-                            .anchor_in_excerpt(excerpt_id, suggestion.range.start)
-                            .unwrap()
-                            ..multibuffer
-                                .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-                                .unwrap();
+                        let range = {
+                            let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
+                            multibuffer
+                                .anchor_in_excerpt(excerpt_id, suggestion.range.start)
+                                .unwrap()
+                                ..multibuffer
+                                    .anchor_in_excerpt(excerpt_id, suggestion.range.end)
+                                    .unwrap()
+                        };
+
                         InlineAssistant::update_global(cx, |assistant, cx| {
                             let suggestion_id = assistant.suggest_assist(
                                 &editor,
@@ -1918,29 +1920,25 @@ impl ContextEditor {
                                 cx,
                             );
                             assist_ids.push(suggestion_id);
-                            if suggestion_group.context_range.start.to_offset(buffer)
-                                == suggestion.range.start.to_offset(buffer)
-                            {
-                                scroll_offset.y =
-                                    -(assistant.prompt_editor_height(suggestion_id, cx).unwrap()
-                                        as f32);
-                            }
                         });
                     }
 
                     // Scroll the editor to the suggested assist
                     editor.update(cx, |editor, cx| {
-                        let anchor = {
-                            let buffer = editor.buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                        let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0
+                        {
+                            Anchor::min()
+                        } else {
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
                                 .unwrap()
                         };
 
                         editor.set_scroll_anchor(
                             ScrollAnchor {
-                                offset: scroll_offset,
+                                offset: gpui::Point::default(),
                                 anchor,
                             },
                             cx,

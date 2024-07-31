@@ -17,14 +17,14 @@ use crate::{
     hunk_diff::ExpandedHunk,
     hunk_status,
     items::BufferSearchHighlights,
-    mouse_context_menu::MenuPosition,
-    mouse_context_menu::{self, MouseContextMenu},
+    mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, CodeActionsMenu, CursorShape, DisplayPoint, DisplayRow, DocumentHighlightRead,
-    DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor,
-    HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RangeToAnchorExt, RowExt,
-    RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -1941,6 +1941,7 @@ impl EditorElement {
         em_width: Pixels,
         text_hitbox: &Hitbox,
         scroll_width: &mut Pixels,
+        resized_blocks: &mut HashMap<CustomBlockId, u32>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2054,7 +2055,8 @@ impl EditorElement {
 
                     v_flex()
                         .id(("path excerpt header", EntityId::from(block_id)))
-                        .size_full()
+                        .w_full()
+                        .h(snapshot.buffer_header_height() as f32 * cx.line_height())
                         .p(header_padding)
                         .child(
                             h_flex()
@@ -2157,7 +2159,8 @@ impl EditorElement {
                 } else {
                     v_flex()
                         .id(("excerpt header", EntityId::from(block_id)))
-                        .size_full()
+                        .w_full()
+                        .h(snapshot.excerpt_header_height() as f32 * cx.line_height())
                         .child(
                             div()
                                 .flex()
@@ -2309,7 +2312,8 @@ impl EditorElement {
             Block::ExcerptFooter { id, .. } => {
                 let element = v_flex()
                     .id(("excerpt footer", EntityId::from(block_id)))
-                    .size_full()
+                    .w_full()
+                    .h(snapshot.excerpt_footer_height() as f32 * cx.line_height())
                     .child(
                         h_flex()
                             .justify_end()
@@ -2358,6 +2362,14 @@ impl EditorElement {
         };
 
         let size = element.layout_as_root(available_space, cx);
+
+        if let BlockId::Custom(custom_block_id) = block_id {
+            let element_height_in_lines = (size.height / line_height).ceil() as u32;
+            if element_height_in_lines != block.height() {
+                resized_blocks.insert(custom_block_id, element_height_in_lines);
+            }
+        }
+
         (element, size)
     }
 
@@ -2375,7 +2387,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         cx: &mut WindowContext,
-    ) -> Vec<BlockLayout> {
+    ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
@@ -2385,11 +2397,10 @@ impl EditorElement {
             .update(cx, |editor, _| editor.take_focused_block());
         let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
+        let mut resized_blocks = HashMap::default();
+
         for (row, block) in fixed_blocks {
-            let available_space = size(
-                AvailableSpace::MinContent,
-                AvailableSpace::Definite(block.height() as f32 * line_height),
-            );
+            let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
@@ -2410,6 +2421,7 @@ impl EditorElement {
                 em_width,
                 text_hitbox,
                 scroll_width,
+                &mut resized_blocks,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2432,10 +2444,7 @@ impl EditorElement {
                     .max(gutter_dimensions.width + *scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let available_space = size(
-                AvailableSpace::Definite(width),
-                AvailableSpace::Definite(block.height() as f32 * line_height),
-            );
+            let available_space = size(AvailableSpace::Definite(width), AvailableSpace::MinContent);
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
@@ -2456,8 +2465,10 @@ impl EditorElement {
                 em_width,
                 text_hitbox,
                 scroll_width,
+                &mut resized_blocks,
                 cx,
             );
+
             blocks.push(BlockLayout {
                 id: block_id,
                 row: Some(row),
@@ -2502,6 +2513,7 @@ impl EditorElement {
                             em_width,
                             text_hitbox,
                             scroll_width,
+                            &mut resized_blocks,
                             cx,
                         );
 
@@ -2517,10 +2529,16 @@ impl EditorElement {
             }
         }
 
-        *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
-        blocks
+        if resized_blocks.is_empty() {
+            *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
+            Ok(blocks)
+        } else {
+            Err(resized_blocks)
+        }
     }
 
+    /// Returns true if any of the blocks changed size since the previous frame. This will trigger
+    /// a restart of rendering for the editor based on the new sizes.
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
@@ -4995,11 +5013,13 @@ impl Element for EditorElement {
                         }
                     };
 
+                    let mut autoscroll_request = None;
                     let mut autoscroll_containing_element = false;
                     let mut autoscroll_horizontally = false;
                     self.editor.update(cx, |editor, cx| {
+                        autoscroll_request = editor.autoscroll_request();
                         autoscroll_containing_element =
-                            editor.autoscroll_requested() || editor.has_pending_selection();
+                            autoscroll_request.is_some() || editor.has_pending_selection();
                         autoscroll_horizontally =
                             editor.autoscroll_vertically(bounds, line_height, max_scroll_top, cx);
                         snapshot = editor.snapshot(cx);
@@ -5116,7 +5136,7 @@ impl Element for EditorElement {
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-                    let mut blocks = cx.with_element_namespace("blocks", |cx| {
+                    let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
                             start_row..end_row,
                             &snapshot,
@@ -5131,6 +5151,15 @@ impl Element for EditorElement {
                             cx,
                         )
                     });
+                    let mut blocks = match blocks {
+                        Ok(blocks) => blocks,
+                        Err(resized_blocks) => {
+                            self.editor.update(cx, |editor, cx| {
+                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
+                            });
+                            return self.prepaint(None, bounds, &mut (), cx);
+                        }
+                    };
 
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);

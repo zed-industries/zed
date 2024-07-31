@@ -43,11 +43,6 @@ impl FeatureFlag for LanguageModels {
     const NAME: &'static str = "language-models";
 }
 
-pub struct GroupedDiagnostics {}
-impl FeatureFlag for GroupedDiagnostics {
-    const NAME: &'static str = "grouped-diagnostics";
-}
-
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
