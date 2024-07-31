@@ -86,25 +86,10 @@ pub trait LanguageModelProvider: 'static {
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
-
-    // fn observable_entity(&self) ;
 }
 
 pub trait LanguageModelProviderState: 'static {
-    type ObservableEntity;
-
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>>;
-
-    fn subscribe<T: 'static>(
-        &self,
-        cx: &mut gpui::ModelContext<T>,
-        callback: impl Fn(&mut T, &mut gpui::ModelContext<T>) + 'static,
-    ) -> Option<gpui::Subscription> {
-        let entity = self.observable_entity()?;
-        Some(cx.observe(&entity, move |this, _, cx| {
-            callback(this, cx);
-        }))
-    }
+    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription>;
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

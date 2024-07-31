@@ -54,7 +54,9 @@ fn register_language_model_providers(
                 registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
             } else {
                 registry.unregister_provider(
-                    &LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),
+                    &LanguageModelProviderId::from(
+                        crate::provider::cloud::PROVIDER_NAME.to_string(),
+                    ),
                     cx,
                 );
             }
@@ -78,12 +80,9 @@ pub struct ActiveModel {
     model: Option<Arc<dyn LanguageModel>>,
 }
 
-pub enum Event {
-    ActiveModelChanged,
-    ProviderStateChanged,
-}
+pub struct ActiveModelChanged;
 
-impl EventEmitter<Event> for LanguageModelRegistry {}
+impl EventEmitter<ActiveModelChanged> for LanguageModelRegistry {}
 
 impl LanguageModelRegistry {
     pub fn global(cx: &AppContext) -> Model<Self> {
@@ -115,10 +114,7 @@ impl LanguageModelRegistry {
     ) {
         let name = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
-        });
-        if let Some(subscription) = subscription {
+        if let Some(subscription) = provider.subscribe(cx) {
             subscription.detach();
         }
 
@@ -191,7 +187,7 @@ impl LanguageModelRegistry {
             provider,
             model: None,
         });
-        cx.emit(Event::ActiveModelChanged);
+        cx.emit(ActiveModelChanged);
     }
 
     pub fn set_active_model(
@@ -206,13 +202,13 @@ impl LanguageModelRegistry {
                     provider,
                     model: Some(model),
                 });
-                cx.emit(Event::ActiveModelChanged);
+                cx.emit(ActiveModelChanged);
             } else {
                 log::warn!("Active model's provider not found in registry");
             }
         } else {
             self.active_model = None;
-            cx.emit(Event::ActiveModelChanged);
+            cx.emit(ActiveModelChanged);
         }
     }
 

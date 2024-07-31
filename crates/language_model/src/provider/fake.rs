@@ -36,9 +36,7 @@ pub struct FakeLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for FakeLanguageModelProvider {
-    type ObservableEntity = ();
-
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn subscribe<T: 'static>(&self, _: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
         None
     }
 }

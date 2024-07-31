@@ -393,13 +393,8 @@ impl AssistantPanel {
             cx.subscribe(&context_store, Self::handle_context_store_event),
             cx.subscribe(
                 &LanguageModelRegistry::global(cx),
-                |this, _, event: &language_model::Event, cx| match event {
-                    language_model::Event::ActiveModelChanged => {
-                        this.completion_provider_changed(cx);
-                    }
-                    language_model::Event::ProviderStateChanged => {
-                        this.ensure_authenticated(cx);
-                    }
+                |this, _, _: &language_model::ActiveModelChanged, cx| {
+                    this.completion_provider_changed(cx);
                 },
             ),
         ];
@@ -592,16 +587,6 @@ impl AssistantPanel {
     }
 
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
-        if self.is_authenticated(cx) {
-            for context_editor in self.context_editors(cx) {
-                context_editor.update(cx, |editor, cx| {
-                    editor.set_authentication_prompt(None, cx);
-                });
-            }
-            cx.notify();
-            return;
-        }
-
         let Some(provider_id) = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|p| p.id())
@@ -610,18 +595,15 @@ impl AssistantPanel {
         };
 
         let load_credentials = self.authenticate(cx);
+        let task = cx.spawn(|this, mut cx| async move {
+            let _ = load_credentials.await;
+            this.update(&mut cx, |this, cx| {
+                this.show_authentication_prompt(cx);
+            })
+            .log_err();
+        });
 
-        self.authenticate_provider_task = Some((
-            provider_id,
-            cx.spawn(|this, mut cx| async move {
-                let _ = load_credentials.await;
-                this.update(&mut cx, |this, cx| {
-                    this.show_authentication_prompt(cx);
-                    this.authenticate_provider_task = None;
-                })
-                .log_err();
-            }),
-        ));
+        self.authenticate_provider_task = Some((provider_id, task));
     }
 
     fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
