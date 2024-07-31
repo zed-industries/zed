@@ -153,7 +153,8 @@ async fn create_billing_subscription(
             quantity: Some(1),
             ..Default::default()
         }]);
-        params.success_url = Some("https://zed.dev/billing/success");
+        let success_url = format!("{}/settings", app.config.zed_dot_dev_url());
+        params.success_url = Some(&success_url);
 
         CheckoutSession::create(&stripe_client, params).await?
     };
@@ -260,7 +261,7 @@ async fn manage_billing_subscription(
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                 type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
                 redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: "https://zed.dev/settings".into(),
+                    return_url: format!("{}/settings", app.config.zed_dot_dev_url()),
                 }),
                 ..Default::default()
             }),
@@ -277,7 +278,8 @@ async fn manage_billing_subscription(
 
     let mut params = CreateBillingPortalSession::new(customer_id);
     params.flow_data = Some(flow);
-    params.return_url = Some("https://zed.dev/settings");
+    let return_url = format!("{}/settings", app.config.zed_dot_dev_url());
+    params.return_url = Some(&return_url);
 
     let session = BillingPortalSession::create(&stripe_client, params).await?;
 
