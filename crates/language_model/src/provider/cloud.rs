@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -50,16 +50,19 @@ pub struct CloudLanguageModelProvider {
     _maintain_client_status: Task<()>,
 }
 
-struct State {
+pub struct State {
     client: Arc<Client>,
     status: client::Status,
     _subscription: Subscription,
 }
 
 impl State {
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+        cx.spawn(move |this, mut cx| async move {
+            client.authenticate_and_connect(true, &cx).await?;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
     }
 }
 
@@ -81,8 +84,10 @@ impl CloudLanguageModelProvider {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
                     _ = this.update(&mut cx, |this, cx| {
-                        this.status = status;
-                        cx.notify();
+                        if this.status != status {
+                            this.status = status;
+                            cx.notify();
+                        }
                     });
                 } else {
                     break;
@@ -99,10 +104,10 @@ impl CloudLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
-        Some(cx.observe(&self.state, |_, _, cx| {
-            cx.notify();
-        }))
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
 }
 

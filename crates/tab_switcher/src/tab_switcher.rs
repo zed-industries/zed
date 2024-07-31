@@ -173,7 +173,7 @@ impl TabSwitcherDelegate {
         };
         cx.subscribe(&pane, |tab_switcher, _, event, cx| {
             match event {
-                PaneEvent::AddItem { .. } | PaneEvent::RemoveItem { .. } | PaneEvent::Remove => {
+                PaneEvent::AddItem { .. } | PaneEvent::RemovedItem { .. } | PaneEvent::Remove => {
                     tab_switcher.picker.update(cx, |picker, cx| {
                         let selected_item_id = picker.delegate.selected_item_id();
                         picker.delegate.update_matches(cx);

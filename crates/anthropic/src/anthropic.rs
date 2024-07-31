@@ -173,9 +173,9 @@ pub async fn stream_completion(
         let body_str = std::str::from_utf8(&body)?;
 
         match serde_json::from_str::<Event>(body_str) {
+            Ok(Event::Error { error }) => Err(api_error_to_err(error)),
             Ok(_) => Err(anyhow!(
-                "Unexpected success response while expecting an error: {}",
-                body_str,
+                "Unexpected success response while expecting an error: '{body_str}'",
             )),
             Err(_) => Err(anyhow!(
                 "Failed to connect to API: {} {}",
@@ -200,11 +200,21 @@ pub fn extract_text_from_events(
                     ContentDelta::TextDelta { text } => Some(Ok(text)),
                     _ => None,
                 },
+                Event::Error { error } => Some(Err(api_error_to_err(error))),
                 _ => None,
             },
             Err(error) => Some(Err(error)),
         }
     })
+}
+
+fn api_error_to_err(
+    ApiError {
+        error_type,
+        message,
+    }: ApiError,
+) -> anyhow::Error {
+    anyhow!("API error. Type: '{error_type}', message: '{message}'",)
 }
 
 #[derive(Debug, Serialize, Deserialize)]

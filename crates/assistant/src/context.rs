@@ -273,7 +273,7 @@ impl ContextOperation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
@@ -528,7 +528,7 @@ impl EditOperation {
             let buffer = project
                 .update(&mut cx, |project, cx| {
                     let project_path = project
-                        .project_path_for_full_path(Path::new(&path), cx)
+                        .find_project_path(Path::new(&path), cx)
                         .with_context(|| format!("worktree not found for {:?}", path))?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
@@ -2188,7 +2188,7 @@ impl ContextVersion {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
     pub argument: Option<String>,
@@ -2196,7 +2196,7 @@ pub struct PendingSlashCommand {
     pub source_range: Range<language::Anchor>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PendingSlashCommandStatus {
     Idle,
     Running { _task: Shared<Task<()>> },

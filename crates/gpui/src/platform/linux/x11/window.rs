@@ -791,15 +791,6 @@ impl X11WindowStatePtr {
                 state.hidden = true;
             }
         }
-
-        let hovered_window = self
-            .xcb_connection
-            .query_pointer(state.x_root_window)
-            .unwrap()
-            .reply()
-            .unwrap()
-            .child;
-        self.set_hovered(hovered_window == self.x_window);
     }
 
     pub fn close(&self) {
