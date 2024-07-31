@@ -101,6 +101,18 @@ impl SemanticDb {
     ) -> Option<Model<ProjectIndex>> {
         self.project_indices.get(&project.downgrade()).cloned()
     }
+
+    pub fn remaining_summaries(
+        &self,
+        project: &WeakModel<Project>,
+        cx: &mut AppContext,
+    ) -> Option<usize> {
+        self.project_indices.get(project).map(|project_index| {
+            project_index.update(cx, |project_index, cx| {
+                project_index.remaining_summaries(cx)
+            })
+        })
+    }
 }
 
 #[cfg(test)]

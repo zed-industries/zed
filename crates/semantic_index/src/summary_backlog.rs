@@ -40,4 +40,8 @@ impl SummaryBacklog {
             .drain()
             .map(|(path, (_size, mtime))| (path, mtime))
     }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
 }

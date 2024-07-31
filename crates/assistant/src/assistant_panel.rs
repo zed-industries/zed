@@ -47,6 +47,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
+use semantic_index::SemanticDb;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -2613,6 +2614,15 @@ impl ContextEditorToolbarItem {
 
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let project = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().downgrade());
+
+        let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
+            project.and_then(|project| db.remaining_summaries(&project, cx))
+        });
+
         let left_side = h_flex()
             .gap_2()
             .flex_1()
@@ -2630,6 +2640,10 @@ impl Render for ContextEditorToolbarItem {
             });
         let right_side = h_flex()
             .gap_2()
+            .children(
+                scan_items_remaining
+                    .map(|remaining_items| format!("Files to scan: {}", remaining_items)),
+            )
             .child(
                 ModelSelector::new(
                     self.fs.clone(),

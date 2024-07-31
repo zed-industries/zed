@@ -611,6 +611,10 @@ impl SummaryIndex {
             Ok(())
         }
     }
+
+    pub(crate) fn backlog_len(&self) -> usize {
+        self.backlog.lock().len()
+    }
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {

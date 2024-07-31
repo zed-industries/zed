@@ -511,6 +511,13 @@ impl ProjectIndex {
             log::info!("Summary backlog flushed in {:?}", flush_start.elapsed());
         })
     }
+
+    pub fn remaining_summaries(&self, cx: &mut ModelContext<Self>) -> usize {
+        self.worktree_indices(cx)
+            .iter()
+            .map(|index| index.read(cx).summary_index().backlog_len())
+            .sum()
+    }
 }
 
 impl EventEmitter<Status> for ProjectIndex {}
