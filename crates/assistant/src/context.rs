@@ -528,7 +528,7 @@ impl EditOperation {
             let buffer = project
                 .update(&mut cx, |project, cx| {
                     let project_path = project
-                        .project_path_for_full_path(Path::new(&path), cx)
+                        .find_project_path(Path::new(&path), cx)
                         .with_context(|| format!("worktree not found for {:?}", path))?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
