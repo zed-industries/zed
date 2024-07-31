@@ -11,15 +11,11 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 dap.workspace = true
-db.workspace = true
 editor.workspace = true
 futures.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
-picker.workspace = true
 project.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 task.workspace = true
 tasks_ui.workspace = true

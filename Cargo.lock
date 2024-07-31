@@ -3229,7 +3229,6 @@ name = "dap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-std",
  "dap-types",
  "futures 0.3.28",
  "gpui",
@@ -3237,16 +3236,11 @@ dependencies = [
  "log",
  "multi_buffer",
  "parking_lot",
- "postage",
- "release_channel",
- "schemars",
  "serde",
  "serde_json",
- "serde_json_lenient",
  "smol",
  "task",
  "text",
- "util",
 ]
 
 [[package]]
@@ -3313,15 +3307,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dap",
- "db",
  "editor",
  "futures 0.3.28",
- "fuzzy",
  "gpui",
- "picker",
  "project",
  "serde",
- "serde_derive",
  "serde_json",
  "task",
  "tasks_ui",
