@@ -912,7 +912,6 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, cx);
             });
         } else {
-            let pane = self.pane.downgrade();
             let configuration = cx.new_view(|cx| ConfigurationView {
                 fallback_handle: cx.focus_handle(),
                 focus_handles: Vec::new(),
@@ -3089,22 +3088,27 @@ impl Render for ConfigurationView {
             .child(h_flex().children(providers.iter().map(|provider| {
                 let id = provider.id();
                 let button_id = SharedString::from(format!("tab-{}", id.0));
-                let is_active = self.active_tab == Some(id);
-                ButtonLike::new(button_id).child(
-                    div()
-                        .py_1()
-                        .px_2()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_selected)
-                        .text_color(cx.theme().colors().text_accent)
-                        .child(provider.name().0),
-                )
-                // .on_click(cx.listener({
-                //     let id = id.clone();
-                //     move |_, cx| {
-                //         self.set_active_tab(id, cx);
-                //     }
-                // }))
+                let is_active = self.active_tab == Some(id.clone());
+                ButtonLike::new(button_id)
+                    .child(
+                        div()
+                            .py_1()
+                            .px_2()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_selected)
+                            .text_color(if is_active {
+                                cx.theme().colors().text_accent
+                            } else {
+                                cx.theme().colors().text
+                            })
+                            .child(provider.name().0),
+                    )
+                    .on_click(cx.listener({
+                        let id = id.clone();
+                        move |this, _, cx| {
+                            this.set_active_tab(id.clone(), cx);
+                        }
+                    }))
             })))
             .children(self.render_active_tab(cx))
     }
