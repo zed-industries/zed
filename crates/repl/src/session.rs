@@ -42,12 +42,10 @@ pub struct Session {
 }
 
 struct EditorBlock {
-    editor: WeakView<Editor>,
     code_range: Range<Anchor>,
     invalidation_anchor: Anchor,
     block_id: CustomBlockId,
     execution_view: View<ExecutionView>,
-    on_close: CloseBlockFn,
 }
 
 type CloseBlockFn =
@@ -84,7 +82,7 @@ impl EditorBlock {
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
                 position: code_range.end,
-                height: execution_view.num_lines(cx).saturating_add(1),
+                height: (execution_view.num_lines(cx) + 1) as u32,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
@@ -95,12 +93,10 @@ impl EditorBlock {
         })?;
 
         anyhow::Ok(Self {
-            editor,
             code_range,
             invalidation_anchor,
             block_id,
             execution_view,
-            on_close,
         })
     }
 
@@ -108,24 +104,6 @@ impl EditorBlock {
         self.execution_view.update(cx, |execution_view, cx| {
             execution_view.push_message(&message.content, cx);
         });
-
-        self.editor
-            .update(cx, |editor, cx| {
-                let mut replacements = HashMap::default();
-
-                replacements.insert(
-                    self.block_id,
-                    (
-                        Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                        Self::create_output_area_renderer(
-                            self.execution_view.clone(),
-                            self.on_close.clone(),
-                        ),
-                    ),
-                );
-                editor.replace_blocks(replacements, None, cx);
-            })
-            .ok();
     }
 
     fn create_output_area_renderer(

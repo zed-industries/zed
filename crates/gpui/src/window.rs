@@ -1366,11 +1366,7 @@ impl<'a> WindowContext<'a> {
 
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
-        let rem_size = self.rem_size();
-        let text_style = self.text_style();
-        text_style
-            .line_height
-            .to_pixels(text_style.font_size, rem_size)
+        self.text_style().line_height_in_pixels(self.rem_size())
     }
 
     /// Call to prevent the default action of an event. Currently only used to prevent

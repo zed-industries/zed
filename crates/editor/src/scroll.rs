@@ -307,8 +307,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_requested(&self) -> bool {
-        self.autoscroll_request.is_some()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
     pub fn is_dragging_scrollbar(&self) -> bool {

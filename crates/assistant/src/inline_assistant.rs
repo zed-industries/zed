@@ -331,11 +331,16 @@ impl InlineAssistant {
         prompt_editor: &View<PromptEditor>,
         cx: &mut WindowContext,
     ) -> [CustomBlockId; 2] {
+        let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
+            prompt_editor
+                .editor
+                .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1 + 2)
+        });
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
                 position: range.start,
-                height: prompt_editor.read(cx).height_in_lines,
+                height: prompt_editor_height,
                 render: build_assist_editor_renderer(prompt_editor),
                 disposition: BlockDisposition::Above,
             },
@@ -445,9 +450,6 @@ impl InlineAssistant {
             }
             PromptEditorEvent::DismissRequested => {
                 self.dismiss_assist(assist_id, cx);
-            }
-            PromptEditorEvent::Resized { height_in_lines } => {
-                self.resize_assist(assist_id, *height_in_lines, cx);
             }
         }
     }
@@ -786,33 +788,6 @@ impl InlineAssistant {
         });
     }
 
-    fn resize_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        height_in_lines: u8,
-        cx: &mut WindowContext,
-    ) {
-        if let Some(assist) = self.assists.get_mut(&assist_id) {
-            if let Some(editor) = assist.editor.upgrade() {
-                if let Some(decorations) = assist.decorations.as_ref() {
-                    let mut new_blocks = HashMap::default();
-                    new_blocks.insert(
-                        decorations.prompt_block_id,
-                        (
-                            Some(height_in_lines),
-                            build_assist_editor_renderer(&decorations.prompt_editor),
-                        ),
-                    );
-                    editor.update(cx, |editor, cx| {
-                        editor
-                            .display_map
-                            .update(cx, |map, cx| map.replace_blocks(new_blocks, cx))
-                    });
-                }
-            }
-        }
-    }
-
     fn unlink_assist_group(
         &mut self,
         assist_group_id: InlineAssistGroupId,
@@ -1029,8 +1004,8 @@ impl InlineAssistant {
                     editor
                 });
 
-                let height = deleted_lines_editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 as u8 + 1);
+                let height =
+                    deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     position: new_row,
                     height,
@@ -1194,13 +1169,11 @@ enum PromptEditorEvent {
     ConfirmRequested,
     CancelRequested,
     DismissRequested,
-    Resized { height_in_lines: u8 },
 }
 
 struct PromptEditor {
     id: InlineAssistId,
     fs: Arc<dyn Fs>,
-    height_in_lines: u8,
     editor: View<Editor>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -1307,9 +1280,8 @@ impl Render for PromptEditor {
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
-            .py_1p5()
-            .h_full()
-            .w_full()
+            .size_full()
+            .py(cx.line_height() / 2.)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
@@ -1427,7 +1399,6 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            height_in_lines: 1,
             editor: prompt_editor,
             edited_since_done: false,
             gutter_dimensions,
@@ -1443,7 +1414,6 @@ impl PromptEditor {
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
         };
-        this.count_lines(cx);
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
@@ -1451,8 +1421,6 @@ impl PromptEditor {
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.editor_subscriptions.clear();
-        self.editor_subscriptions
-            .push(cx.observe(&self.editor, Self::handle_prompt_editor_changed));
         self.editor_subscriptions
             .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
     }
@@ -1485,22 +1453,6 @@ impl PromptEditor {
 
     fn prompt(&self, cx: &AppContext) -> String {
         self.editor.read(cx).text(cx)
-    }
-
-    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
-        let height_in_lines = cmp::max(
-            2, // Make the editor at least two lines tall, to account for padding and buttons.
-            cmp::min(
-                self.editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
-                Self::MAX_LINES as u32,
-            ),
-        ) as u8;
-
-        if height_in_lines != self.height_in_lines {
-            self.height_in_lines = height_in_lines;
-            cx.emit(PromptEditorEvent::Resized { height_in_lines });
-        }
     }
 
     fn handle_parent_editor_event(
@@ -1543,10 +1495,6 @@ impl PromptEditor {
                 cx.notify();
             })
         })
-    }
-
-    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
-        self.count_lines(cx);
     }
 
     fn handle_prompt_editor_events(

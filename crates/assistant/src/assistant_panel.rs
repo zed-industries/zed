@@ -1917,18 +1917,20 @@ impl ContextEditor {
                 cx.update(|cx| {
                     for suggestion in suggestion_group.suggestions {
                         let description = suggestion.description.unwrap_or_else(|| "Delete".into());
+
                         let range = {
-                            let buffer = editor.read(cx).buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                            let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion.range.start)
                                 .unwrap()
-                                ..buffer
+                                ..multibuffer
                                     .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
                         };
+
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assist_ids.push(assistant.suggest_assist(
+                            let suggestion_id = assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
@@ -1936,16 +1938,20 @@ impl ContextEditor {
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
-                            ));
+                            );
+                            assist_ids.push(suggestion_id);
                         });
                     }
 
                     // Scroll the editor to the suggested assist
                     editor.update(cx, |editor, cx| {
-                        let anchor = {
-                            let buffer = editor.buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                        let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0
+                        {
+                            Anchor::min()
+                        } else {
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
                                 .unwrap()
                         };
