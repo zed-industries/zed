@@ -84,6 +84,16 @@ pub enum Motion {
         mode: FindRange,
         smartcase: bool,
     },
+    Sneak {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
+    SneakBackward {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
     RepeatFind {
         last_find: Box<Motion>,
     },
@@ -426,8 +436,10 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
-    if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
-        Vim::read(cx).active_operator()
+    if let Some(Operator::FindForward { .. })
+    | Some(Operator::Sneak { .. })
+    | Some(Operator::SneakBackward { .. })
+    | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()
     {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
@@ -498,6 +510,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
             | Jump { line: false, .. }
@@ -535,6 +549,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFindReversed { .. }
             | WindowTop
             | WindowMiddle
@@ -558,6 +574,8 @@ impl Motion {
             | EndOfLineDownward
             | Matching
             | FindForward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | WindowTop
             | WindowMiddle
             | WindowBottom
@@ -697,7 +715,23 @@ impl Motion {
                 find_backward(map, point, *after, *char, times, *mode, *smartcase),
                 SelectionGoal::None,
             ),
-            // ; -- repeat the last find done with t, f, T, F
+            Sneak {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
+            SneakBackward {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
+            // ; -- repeat the last find done with t, f, T, F, z, Z
             RepeatFind { last_find } => match **last_find {
                 Motion::FindForward {
                     before,
@@ -730,9 +764,46 @@ impl Motion {
 
                     (new_point, SelectionGoal::None)
                 }
+
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
                 _ => return None,
             },
-            // , -- repeat the last find done with t, f, T, F, in opposite direction
+            // , -- repeat the last find done with t, f, T, F, z, Z in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
                 Motion::FindForward {
                     before,
@@ -765,6 +836,43 @@ impl Motion {
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
                 }
+
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
                 _ => return None,
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
@@ -1641,6 +1749,73 @@ fn find_backward(
         }
     } else {
         from
+    }
+}
+
+fn sneak(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to = find_boundary(map, to, FindRange::MultiLine, |left, right| {
+            found = is_character_match(first_target, left, smartcase)
+                && is_character_match(second_target, right, smartcase);
+            found
+        });
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        // No need to check if column > 0 because we're looking for 2 characters
+        *to.column_mut() -= 1;
+        Some(to)
+    } else {
+        None
+    }
+}
+
+fn sneak_backward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to =
+            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            });
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        // No need to check if column > 0 because we're looking for 2 characters
+        *to.column_mut() -= 1;
+        Some(to)
+    } else {
+        None
     }
 }
 
