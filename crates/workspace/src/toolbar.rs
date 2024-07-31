@@ -113,7 +113,6 @@ impl Render for Toolbar {
                         this.child(
                             h_flex()
                                 .flex_auto()
-                                .items_center()
                                 .justify_start()
                                 .overflow_x_hidden()
                                 .children(self.left_items().map(|item| item.to_any())),
