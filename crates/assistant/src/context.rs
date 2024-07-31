@@ -273,7 +273,7 @@ impl ContextOperation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
@@ -2188,7 +2188,7 @@ impl ContextVersion {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
     pub argument: Option<String>,
@@ -2196,7 +2196,7 @@ pub struct PendingSlashCommand {
     pub source_range: Range<language::Anchor>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PendingSlashCommandStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
