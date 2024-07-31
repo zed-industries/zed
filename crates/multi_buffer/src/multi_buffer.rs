@@ -280,6 +280,7 @@ pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
+    is_singleton: bool,
     language_aware: bool,
 }
 
@@ -2423,6 +2424,7 @@ impl MultiBufferSnapshot {
             excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
             language_aware,
+            is_singleton: self.singleton,
         };
         chunks.seek(range.start);
         chunks
@@ -4486,12 +4488,18 @@ impl<'a> MultiBufferChunks<'a> {
 
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
+        let is_singleton = self.is_singleton;
         self.excerpts.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = self.excerpts.item() {
-            self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                self.range.start - self.excerpts.start()..self.range.end - self.excerpts.start(),
-                self.language_aware,
-            ));
+            if let Some(current_chunk) = self.excerpt_chunks.as_mut().filter(|_| is_singleton) {
+                current_chunk.content_chunks.seek(offset);
+            } else {
+                self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                    self.range.start - self.excerpts.start()
+                        ..self.range.end - self.excerpts.start(),
+                    self.language_aware,
+                ));
+            }
         } else {
             self.excerpt_chunks = None;
         }
