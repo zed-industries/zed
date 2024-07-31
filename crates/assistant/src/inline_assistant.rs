@@ -3,7 +3,7 @@ use crate::{
     Hunk, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::telemetry::Telemetry;
+use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -14,6 +14,7 @@ use editor::{
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use futures::{
     channel::mpsc,
@@ -22,9 +23,9 @@ use futures::{
     SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    point, AppContext, EventEmitter, FocusHandle, FocusableView, Global, HighlightStyle, Model,
-    ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
-    WindowContext,
+    anchored, deferred, point, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
+    FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
+    UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -47,7 +48,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1187,6 +1188,7 @@ struct PromptEditor {
     token_count: Option<usize>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
+    show_rate_limit_notice: bool,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1319,10 +1321,36 @@ impl Render for PromptEditor {
                             assistant panel tab.",
                         ),
                     )
-                    .children(
-                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                            let error_message = SharedString::from(error.to_string());
-                            Some(
+                    .map(|el| {
+                        let CodegenStatus::Error(error) = &self.codegen.read(cx).status else {
+                            return el;
+                        };
+
+                        let error_message = SharedString::from(error.to_string());
+                        if error.error_code() == proto::ErrorCode::RateLimitExceeded
+                            && cx.has_flag::<ZedPro>()
+                        {
+                            el.child(
+                                v_flex()
+                                    .child(
+                                        IconButton::new("rate-limit-error", IconName::XCircle)
+                                            .selected(self.show_rate_limit_notice)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                    )
+                                    .children(self.show_rate_limit_notice.then(|| {
+                                        deferred(
+                                            anchored()
+                                                .position_mode(gpui::AnchoredPositionMode::Local)
+                                                .position(point(px(0.), px(24.)))
+                                                .anchor(gpui::AnchorCorner::TopLeft)
+                                                .child(self.render_rate_limit_notice(cx)),
+                                        )
+                                    })),
+                            )
+                        } else {
+                            el.child(
                                 div()
                                     .id("error")
                                     .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
@@ -1332,10 +1360,8 @@ impl Render for PromptEditor {
                                             .color(Color::Error),
                                     ),
                             )
-                        } else {
-                            None
-                        },
-                    ),
+                        }
+                    }),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
             .child(
@@ -1413,6 +1439,7 @@ impl PromptEditor {
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
+            show_rate_limit_notice: false,
         };
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
@@ -1453,6 +1480,14 @@ impl PromptEditor {
 
     fn prompt(&self, cx: &AppContext) -> String {
         self.editor.read(cx).text(cx)
+    }
+
+    fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        self.show_rate_limit_notice = !self.show_rate_limit_notice;
+        if self.show_rate_limit_notice {
+            cx.focus_view(&self.editor);
+        }
+        cx.notify();
     }
 
     fn handle_parent_editor_event(
@@ -1520,6 +1555,12 @@ impl PromptEditor {
             EditorEvent::BufferEdited => {
                 self.count_tokens(cx);
             }
+            EditorEvent::Blurred => {
+                if self.show_rate_limit_notice {
+                    self.show_rate_limit_notice = false;
+                    cx.notify();
+                }
+            }
             _ => {}
         }
     }
@@ -1534,7 +1575,20 @@ impl PromptEditor {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Error(error) => {
+                if cx.has_flag::<ZedPro>()
+                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
+                    && !dismissed_rate_limit_notice()
+                {
+                    self.show_rate_limit_notice = true;
+                    cx.notify();
+                }
+
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1694,6 +1748,83 @@ impl PromptEditor {
             },
         )
     }
+
+    fn render_rate_limit_notice(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Popover::new().child(
+            v_flex()
+                .occlude()
+                .p_2()
+                .child(
+                    Label::new("Out of Tokens")
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD),
+                )
+                .child(Label::new(
+                    "Try Zed Pro for higher limits, a wider range of models, and more.",
+                ))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(CheckboxWithLabel::new(
+                            "dont-show-again",
+                            Label::new("Don't show again"),
+                            if dismissed_rate_limit_notice() {
+                                ui::Selection::Selected
+                            } else {
+                                ui::Selection::Unselected
+                            },
+                            |selection, cx| {
+                                let is_dismissed = match selection {
+                                    ui::Selection::Unselected => false,
+                                    ui::Selection::Indeterminate => return,
+                                    ui::Selection::Selected => true,
+                                };
+
+                                set_rate_limit_notice_dismissed(is_dismissed, cx)
+                            },
+                        ))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("dismiss", "Dismiss")
+                                        .style(ButtonStyle::Transparent)
+                                        .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                )
+                                .child(Button::new("more-info", "More Info").on_click(
+                                    |_event, cx| {
+                                        cx.dispatch_action(Box::new(
+                                            zed_actions::OpenAccountSettings,
+                                        ))
+                                    },
+                                )),
+                        ),
+                ),
+        )
+    }
+}
+
+const DISMISSED_RATE_LIMIT_NOTICE_KEY: &str = "dismissed-rate-limit-notice";
+
+fn dismissed_rate_limit_notice() -> bool {
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY)
+        .log_err()
+        .map_or(false, |s| s.is_some())
+}
+
+fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
+    db::write_and_log(cx, move || async move {
+        if is_dismissed {
+            db::kvp::KEY_VALUE_STORE
+                .write_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into(), "1".into())
+                .await
+        } else {
+            db::kvp::KEY_VALUE_STORE
+                .delete_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into())
+                .await
+        }
+    })
 }
 
 struct InlineAssist {

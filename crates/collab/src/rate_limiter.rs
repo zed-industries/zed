@@ -1,7 +1,7 @@
 use crate::{db::UserId, executor::Executor, Database, Error, Result};
-use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::{DashMap, DashSet};
+use rpc::ErrorCodeExt;
 use sea_orm::prelude::DateTimeUtc;
 use std::sync::Arc;
 use util::ResultExt;
@@ -73,7 +73,9 @@ impl RateLimiter {
             self.dirty_buckets.insert(bucket_key);
             Ok(())
         } else {
-            Err(anyhow!("rate limit exceeded"))?
+            Err(rpc::proto::ErrorCode::RateLimitExceeded
+                .message("rate limit exceeded".into())
+                .anyhow())?
         }
     }
 
@@ -122,7 +124,7 @@ impl RateLimiter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RateBucket {
     capacity: usize,
     token_count: usize,

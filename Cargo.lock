@@ -407,8 +407,10 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger",
+ "feature_flags",
  "fs",
  "futures 0.3.28",
  "fuzzy",
@@ -430,6 +432,7 @@ dependencies = [
  "paths",
  "picker",
  "project",
+ "proto",
  "rand 0.8.5",
  "regex",
  "rope",
@@ -454,6 +457,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
