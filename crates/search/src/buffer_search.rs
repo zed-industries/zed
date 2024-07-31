@@ -1076,7 +1076,9 @@ impl BufferSearchBar {
     }
 
     fn focus(&self, handle: &gpui::FocusHandle, cx: &mut ViewContext<Self>) {
-        cx.invalidate_character_coordinates();
+        cx.on_next_frame(|_, cx| {
+            cx.invalidate_character_coordinates();
+        });
         cx.focus(handle);
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
