@@ -435,7 +435,7 @@ impl SummaryIndex {
             while let Some(file) = unsummarized_files.next().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
-                    .update(|cx| Self::summarize_code(&file.contents, cx))?
+                    .update(|cx| Self::summarize_code(&file.contents, &file.path, cx))?
                     .await?;
 
                 // Note that the summary could be empty because of an error talking to a cloud provider,
@@ -461,7 +461,11 @@ impl SummaryIndex {
         }
     }
 
-    fn summarize_code(code: &str, cx: &AppContext) -> impl Future<Output = Result<String>> {
+    fn summarize_code(
+        code: &str,
+        path: &Path,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
         let summary_model_name: LanguageModelName = "gpt-4o-mini".to_string().into(); // TODO read this from the user's settings.
         let Some(model) = LanguageModelRegistry::read_global(cx)
@@ -472,8 +476,9 @@ impl SummaryIndex {
                 Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_name))
             });
         };
-        const PROMPT_BEFORE_CODE: &str = "Summarize this code in 3 sentences, using no newlines or bullet points in the summary:";
-        let prompt = format!("{PROMPT_BEFORE_CODE}\n{code}");
+        let utf8_path = path.to_string_lossy();
+        const PROMPT_BEFORE_CODE: &str = "Summarize what the code in this file does in 3 sentences, using no newlines or bullet points in the summary:";
+        let prompt = format!("{PROMPT_BEFORE_CODE}\n{utf8_path}:\n{code}");
 
         log::debug!(
             "Summarizing code by sending this prompt to {:?}: {:?}",
