@@ -180,9 +180,6 @@ impl DebugPanel {
         event: &Events,
         cx: &mut ViewContext<Self>,
     ) {
-        // Increment the sequence id because an event is being processed
-        let _ = client.next_sequence_id();
-
         match event {
             Events::Initialized(event) => Self::handle_initialized_event(client, event, cx),
             Events::Stopped(event) => Self::handle_stopped_event(client, event, cx),

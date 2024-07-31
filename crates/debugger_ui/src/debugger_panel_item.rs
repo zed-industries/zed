@@ -410,8 +410,21 @@ impl DebugPanelItem {
 
     fn handle_stop_action(&mut self, _: &Stop, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
+        let thread_ids = vec![self.thread_id; 1];
+
+        let support_terminate_threads = client
+            .capabilities()
+            .supports_terminate_threads_request
+            .unwrap_or_default();
+
         cx.background_executor()
-            .spawn(async move { client.stop().await })
+            .spawn(async move {
+                if support_terminate_threads {
+                    client.terminate_threads(Some(thread_ids)).await
+                } else {
+                    client.stop().await
+                }
+            })
             .detach();
     }
 }
