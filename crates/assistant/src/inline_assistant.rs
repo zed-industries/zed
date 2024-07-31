@@ -48,7 +48,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Popover, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -1633,6 +1633,7 @@ impl PromptEditor {
             CodegenStatus::Error(error) => {
                 if cx.has_flag::<ZedPro>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
+                    && !dismissed_rate_limit_notice()
                 {
                     self.show_rate_limit_notice = true;
                     cx.notify();
@@ -1798,9 +1799,11 @@ impl PromptEditor {
         )
     }
 
-    fn render_rate_limit_notice(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_rate_limit_notice(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         Popover::new().child(
             v_flex()
+                .occlude()
+                .p_2()
                 .child(
                     Label::new("Out of Tokens")
                         .size(LabelSize::Small)
@@ -1810,17 +1813,68 @@ impl PromptEditor {
                     "Try Zed Pro for higher limits, a wider range of models, and more.",
                 ))
                 .child(
-                    h_flex().justify_between().child(div()).child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("dismiss", "Dismiss").style(ButtonStyle::Transparent),
-                            )
-                            .child(Button::new("more-info", "More Info")),
-                    ),
+                    h_flex()
+                        .justify_between()
+                        .child(CheckboxWithLabel::new(
+                            "dont-show-again",
+                            Label::new("Don't show again"),
+                            if dismissed_rate_limit_notice() {
+                                ui::Selection::Selected
+                            } else {
+                                ui::Selection::Unselected
+                            },
+                            |selection, cx| {
+                                let is_dismissed = match selection {
+                                    ui::Selection::Unselected => false,
+                                    ui::Selection::Indeterminate => return,
+                                    ui::Selection::Selected => true,
+                                };
+
+                                set_rate_limit_notice_dismissed(is_dismissed, cx)
+                            },
+                        ))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("dismiss", "Dismiss")
+                                        .style(ButtonStyle::Transparent)
+                                        .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                )
+                                .child(Button::new("more-info", "More Info").on_click(
+                                    |_event, cx| {
+                                        cx.dispatch_action(Box::new(
+                                            zed_actions::OpenAccountSettings,
+                                        ))
+                                    },
+                                )),
+                        ),
                 ),
         )
     }
+}
+
+const DISMISSED_RATE_LIMIT_NOTICE_KEY: &str = "dismissed-rate-limit-notice";
+
+fn dismissed_rate_limit_notice() -> bool {
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY)
+        .log_err()
+        .map_or(false, |s| s.is_some())
+}
+
+fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
+    db::write_and_log(cx, move || async move {
+        if is_dismissed {
+            db::kvp::KEY_VALUE_STORE
+                .write_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into(), "1".into())
+                .await
+        } else {
+            db::kvp::KEY_VALUE_STORE
+                .delete_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into())
+                .await
+        }
+    })
 }
 
 struct InlineAssist {

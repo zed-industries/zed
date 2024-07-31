@@ -407,6 +407,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger",
  "feature_flags",
@@ -456,6 +457,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
