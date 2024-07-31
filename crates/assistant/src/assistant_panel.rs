@@ -589,7 +589,7 @@ impl AssistantPanel {
 
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
-            if self.active_context_editor(cx).is_none() {
+            if !self.has_any_context_editors(cx) {
                 self.new_context(cx);
             }
             return;
@@ -609,7 +609,7 @@ impl AssistantPanel {
                     this.update(&mut cx, |this, cx| {
                         if !provider.is_authenticated(cx) {
                             this.show_configuration_for_provider(Some(provider), cx)
-                        } else if this.active_context_editor(cx).is_none() {
+                        } else if !this.has_any_context_editors(cx) {
                             this.new_context(cx);
                         }
                         this.authenticate_provider_task = None;
@@ -880,7 +880,8 @@ impl AssistantPanel {
     }
 
     fn show_configuration(&mut self, _: &ShowConfiguration, cx: &mut ViewContext<Self>) {
-        self.show_configuration_for_provider(None, cx);
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        self.show_configuration_for_provider(provider, cx);
     }
 
     fn show_configuration_for_provider(
@@ -955,6 +956,13 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
+    }
+
+    fn has_any_context_editors(&self, cx: &AppContext) -> bool {
+        self.pane
+            .read(cx)
+            .items()
+            .any(|item| item.downcast::<ContextEditor>().is_some())
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
@@ -2965,7 +2973,7 @@ pub struct ConfigurationView {
 
 struct ActiveTab {
     provider: Arc<dyn LanguageModelProvider>,
-    auth_prompt: AnyView,
+    configuration_prompt: AnyView,
     focus_handle: Option<FocusHandle>,
 }
 
@@ -2975,7 +2983,7 @@ impl ConfigurationView {
         provider: Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
     ) {
-        let (view, focus_handle) = provider.authentication_prompt(cx);
+        let (view, focus_handle) = provider.configuration_view(cx);
 
         if let Some(focus_handle) = &focus_handle {
             focus_handle.focus(cx);
@@ -2983,32 +2991,18 @@ impl ConfigurationView {
 
         self.active_tab = Some(ActiveTab {
             provider,
-            auth_prompt: view,
+            configuration_prompt: view,
             focus_handle,
         });
         cx.notify();
     }
 
-    fn render_active_tab(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
+    fn render_active_tab(&mut self, _: &mut ViewContext<Self>) -> Option<Div> {
         let Some(active_tab) = &self.active_tab else {
             return None;
         };
 
-        let provider_content = if active_tab.provider.is_authenticated(cx) {
-            let button_id = SharedString::from(format!("reset-key-{}", active_tab.provider.id().0));
-            div()
-                .child("authenticated")
-                .child(Button::new(button_id, "Reset Key").on_click(cx.listener({
-                    let provider = active_tab.provider.clone();
-                    move |_, _, cx| {
-                        provider.reset_credentials(cx).detach_and_log_err(cx);
-                        cx.notify();
-                    }
-                })))
-        } else {
-            div().child(active_tab.auth_prompt.clone())
-        };
-        Some(div().child(provider_content))
+        Some(div().child(active_tab.configuration_prompt.clone()))
     }
 }
 

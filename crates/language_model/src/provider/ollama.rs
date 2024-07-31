@@ -140,7 +140,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         let state = self.state.clone();
         let fetch_models = Box::new(move |cx: &mut WindowContext| {
             state.update(cx, |this, cx| this.fetch_models(cx))

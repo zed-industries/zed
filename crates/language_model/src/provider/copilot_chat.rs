@@ -122,7 +122,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         let view = cx.new_view(|cx| AuthenticationPrompt::new(cx)).into();
         (view, None)
     }

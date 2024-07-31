@@ -84,7 +84,7 @@ pub trait LanguageModelProvider: 'static {
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>);
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>);
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 

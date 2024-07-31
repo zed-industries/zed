@@ -66,7 +66,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn authentication_prompt(&self, _: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, _: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         unimplemented!()
     }
 

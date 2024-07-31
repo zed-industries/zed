@@ -149,7 +149,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         }
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         let view = cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx));
         let focus_handle = view.focus_handle(cx);
         (view.into(), Some(focus_handle))
