@@ -196,7 +196,7 @@ impl Render for BufferSearchBar {
         };
 
         let search_line = h_flex()
-            .mb_1p5()
+            .mb_1()
             .child(
                 h_flex()
                     .id("editor-scroll")
