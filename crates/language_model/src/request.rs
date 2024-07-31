@@ -129,6 +129,33 @@ impl LanguageModelRequest {
             top_p: None,
         }
     }
+
+    pub fn into_mistral(self, model: String) -> mistral::Request {
+        mistral::Request {
+            model,
+            messages: self
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => mistral::RequestMessage::User {
+                        content: msg.content,
+                    },
+                    Role::Assistant => mistral::RequestMessage::Assistant {
+                        content: Some(msg.content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => mistral::RequestMessage::System {
+                        content: msg.content,
+                    },
+                })
+                .collect(),
+            stream: true,
+            stop: self.stop,
+            temperature: self.temperature,
+            tools: Vec::new(),
+            tool_choice: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

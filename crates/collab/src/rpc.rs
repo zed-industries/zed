@@ -4706,6 +4706,26 @@ async fn stream_complete_with_language_model(
                 })?;
             }
         }
+        Some(proto::LanguageModelProvider::Mistral) => {
+            let api_key = config
+                .mistral_api_key
+                .as_ref()
+                .context("no Mistral API key configured on the server")?;
+            let mut events = mistral::stream_completion(
+                session.http_client.as_ref(),
+                mistral::MISTRAL_API_URL,
+                api_key,
+                serde_json::from_str(&request.request)?,
+                None,
+            )
+            .await?;
+            while let Some(event) = events.next().await {
+                let event = event?;
+                response.send(proto::StreamCompleteWithLanguageModelResponse {
+                    event: serde_json::to_string(&event)?,
+                })?;
+            }
+        }
         None => return Err(anyhow!("unknown provider"))?,
     }
 

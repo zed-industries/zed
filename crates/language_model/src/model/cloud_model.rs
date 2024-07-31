@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "provider", rename_all = "lowercase")]
 pub enum CloudModel {
     Anthropic(anthropic::Model),
+    Mistral(mistral::Model),
     OpenAi(open_ai::Model),
     Google(google_ai::Model),
 }
@@ -19,6 +20,7 @@ impl CloudModel {
     pub fn id(&self) -> &str {
         match self {
             CloudModel::Anthropic(model) => model.id(),
+            CloudModel::Mistral(model) => model.id(),
             CloudModel::OpenAi(model) => model.id(),
             CloudModel::Google(model) => model.id(),
         }
@@ -27,6 +29,7 @@ impl CloudModel {
     pub fn display_name(&self) -> &str {
         match self {
             CloudModel::Anthropic(model) => model.display_name(),
+            CloudModel::Mistral(model) => model.display_name(),
             CloudModel::OpenAi(model) => model.display_name(),
             CloudModel::Google(model) => model.display_name(),
         }
@@ -35,6 +38,7 @@ impl CloudModel {
     pub fn max_token_count(&self) -> usize {
         match self {
             CloudModel::Anthropic(model) => model.max_token_count(),
+            CloudModel::Mistral(model) => model.max_token_count(),
             CloudModel::OpenAi(model) => model.max_token_count(),
             CloudModel::Google(model) => model.max_token_count(),
         }

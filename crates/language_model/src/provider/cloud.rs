@@ -1,3 +1,4 @@
+use super::mistral::count_mistral_tokens;
 use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
@@ -34,6 +35,7 @@ pub enum AvailableProvider {
     Anthropic,
     OpenAi,
     Google,
+    Mistral,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -138,6 +140,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 models.insert(model.id().to_string(), CloudModel::Google(model));
             }
         }
+        for model in mistral::Model::iter() {
+            if !matches!(model, mistral::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), CloudModel::Mistral(model));
+            }
+        }
 
         // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
@@ -155,6 +162,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     max_tokens: model.max_tokens,
                 }),
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+                AvailableProvider::Mistral => CloudModel::Mistral(mistral::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
                 }),
@@ -235,6 +246,7 @@ impl LanguageModel for CloudLanguageModel {
         match self.model.clone() {
             CloudModel::Anthropic(_) => count_anthropic_tokens(request, cx),
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
+            CloudModel::Mistral(model) => count_mistral_tokens(request, model, cx),
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let request = request.into_google(model.id().into());
@@ -313,6 +325,23 @@ impl LanguageModel for CloudLanguageModel {
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
+            CloudModel::Mistral(model) => {
+                let client = self.client.clone();
+                let request = request.into_mistral(model.id().into());
+                let future = self.request_limiter.stream(async move {
+                    let request = serde_json::to_string(&request)?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Mistral as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(mistral::extract_text_from_events(
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
         }
     }
 
@@ -371,6 +400,9 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
+            }
+            CloudModel::Mistral(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for Mistral"))).boxed()
             }
         }
     }

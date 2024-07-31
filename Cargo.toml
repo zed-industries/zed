@@ -61,6 +61,7 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/mistral",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
@@ -229,6 +230,7 @@ markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
+mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }

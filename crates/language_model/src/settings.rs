@@ -13,6 +13,7 @@ use crate::provider::{
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
     google::GoogleSettings,
+    mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
@@ -58,6 +59,7 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
+    pub mistral: MistralSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -69,6 +71,7 @@ pub struct AllLanguageModelSettingsContent {
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
+    pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -195,6 +198,62 @@ pub struct OpenAiSettingsContentV1 {
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum MistralSettingsContent {
+    Legacy(LegacyMistralSettingsContent),
+    Versioned(VersionedMistralSettingsContent),
+}
+
+impl MistralSettingsContent {
+    pub fn upgrade(self) -> (MistralSettingsContentV1, bool) {
+        match self {
+            MistralSettingsContent::Legacy(content) => (
+                MistralSettingsContentV1 {
+                    api_url: content.api_url,
+                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
+                    available_models: content.available_models.map(|models| {
+                        models
+                            .into_iter()
+                            .filter_map(|model| match model {
+                                mistral::Model::Custom { name, max_tokens } => {
+                                    Some(provider::mistral::AvailableModel { name, max_tokens })
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    }),
+                },
+                true,
+            ),
+            MistralSettingsContent::Versioned(content) => match content {
+                VersionedMistralSettingsContent::V1(content) => (content, false),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LegacyMistralSettingsContent {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<mistral::Model>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(tag = "version")]
+pub enum VersionedMistralSettingsContent {
+    #[serde(rename = "1")]
+    V1(MistralSettingsContentV1),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct MistralSettingsContentV1 {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
+}
+
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
@@ -291,6 +350,32 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.openai.available_models,
                 openai.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // Mistral
+            let (mistral, upgraded) = match value.mistral.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+
+            if upgraded {
+                settings.mistral.needs_setting_migration = true;
+            }
+
+            merge(
+                &mut settings.mistral.api_url,
+                mistral.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            if let Some(low_speed_timeout_in_seconds) = mistral
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.mistral.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
+            }
+            merge(
+                &mut settings.mistral.available_models,
+                mistral.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             merge(

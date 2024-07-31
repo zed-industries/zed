@@ -658,6 +658,7 @@ impl TestServer {
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
                 openai_api_key: None,
+                mistral_api_key: None,
                 google_ai_api_key: None,
                 anthropic_api_key: None,
                 clickhouse_url: None,

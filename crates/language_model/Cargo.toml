@@ -35,6 +35,7 @@ http_client.workspace = true
 inline_completion_button.workspace = true
 log.workspace = true
 menu.workspace = true
+mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 proto = { workspace = true, features = ["test-support"] }

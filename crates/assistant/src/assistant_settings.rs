@@ -4,6 +4,7 @@ use anthropic::Model as AnthropicModel;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
 use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
+use mistral::Model as MistralModel;
 use ollama::Model as OllamaModel;
 use open_ai::Model as OpenAiModel;
 use schemars::{schema::Schema, JsonSchema};
@@ -42,6 +43,13 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "mistral")]
+    Mistral {
+        default_model: Option<MistralModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+        available_models: Option<Vec<MistralModel>>,
     },
 }
 
@@ -173,6 +181,40 @@ impl AssistantSettingsContent {
                                 }
                             },
                         ),
+                        AssistantProviderContentV1::Mistral {
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                            ..
+                        } => update_settings_file::<AllLanguageModelSettings>(
+                            fs,
+                            cx,
+                            move |content, _| {
+                                if content.mistral.is_none() {
+                                    let available_models = available_models.map(|models| {
+                                        models
+                                            .into_iter()
+                                            .filter_map(|model| match model {
+                                                mistral::Model::Custom { name, max_tokens } => {
+                                                    Some(language_model::provider::mistral::AvailableModel { name, max_tokens })
+                                                }
+                                                _ => None,
+                                            })
+                                            .collect::<Vec<_>>()
+                                    });
+                                    content.mistral =
+                                        Some(language_model::settings::MistralSettingsContent::Versioned(
+                                            language_model::settings::VersionedMistralSettingsContent::V1(
+                                                language_model::settings::MistralSettingsContentV1 {
+                                                    api_url,
+                                                    low_speed_timeout_in_seconds,
+                                                    available_models
+                                                }
+                                            )
+                                        ));
+                                }
+                            },
+                        ),
                         _ => {}
                     }
                 }
@@ -218,6 +260,12 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "ollama".to_string(),
+                                    model: model.id().to_string(),
+                                })
+                            }
+                            AssistantProviderContentV1::Mistral { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "mistral".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -322,6 +370,28 @@ impl AssistantSettingsContent {
                             available_models,
                         });
                     }
+                    "mistral" => {
+                        let (api_url, low_speed_timeout_in_seconds, available_models) =
+                            match &settings.provider {
+                                Some(AssistantProviderContentV1::Mistral {
+                                    api_url,
+                                    low_speed_timeout_in_seconds,
+                                    available_models,
+                                    ..
+                                }) => (
+                                    api_url.clone(),
+                                    *low_speed_timeout_in_seconds,
+                                    available_models.clone(),
+                                ),
+                                _ => (None, None, None),
+                            };
+                        settings.provider = Some(AssistantProviderContentV1::Mistral {
+                            default_model: mistral::Model::from_id(&model).ok(),
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                        });
+                    }
                     _ => {}
                 },
                 VersionedAssistantSettingsContent::V2(settings) => {
@@ -401,6 +471,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
             "openai".into(),
             "zed.dev".into(),
             "copilot_chat".into(),
+            "mistral".into(),
         ]),
         ..Default::default()
     }

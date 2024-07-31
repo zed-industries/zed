@@ -40,6 +40,7 @@ http_client.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid.workspace = true
+mistral.workspace = true
 open_ai.workspace = true
 supermaven_api.workspace = true
 parking_lot.workspace = true
