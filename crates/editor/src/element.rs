@@ -6467,7 +6467,7 @@ mod tests {
                         disposition: BlockDisposition::Above,
                         height: 3,
                         position: Anchor::min(),
-                        render: Box::new(|_| div().into_any()),
+                        render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
                     }],
                     None,
                     cx,

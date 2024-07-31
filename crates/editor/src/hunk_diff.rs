@@ -431,10 +431,11 @@ impl Editor {
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let editor = cx.view().clone();
         let hunk = hunk.clone();
+        let height = editor_height.max(deleted_text_height);
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
-                height: editor_height.max(deleted_text_height),
+                height,
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
@@ -474,7 +475,8 @@ impl Editor {
                     h_flex()
                         .id("gutter with editor")
                         .bg(deleted_hunk_color)
-                        .size_full()
+                        .h(height as f32 * cx.line_height())
+                        .w_full()
                         .child(
                             h_flex()
                                 .id("gutter")
