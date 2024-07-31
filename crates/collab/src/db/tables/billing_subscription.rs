@@ -1,5 +1,6 @@
 use crate::db::{BillingCustomerId, BillingSubscriptionId};
 use sea_orm::entity::prelude::*;
+use serde::Serialize;
 
 /// A billing subscription.
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -34,8 +35,11 @@ impl ActiveModelBehavior for ActiveModel {}
 /// The status of a Stripe subscription.
 ///
 /// [Stripe docs](https://docs.stripe.com/api/subscriptions/object#subscription_object-status)
-#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
+#[derive(
+    Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
+)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[serde(rename_all = "snake_case")]
 pub enum StripeSubscriptionStatus {
     #[default]
     #[sea_orm(string_value = "incomplete")]
@@ -54,4 +58,17 @@ pub enum StripeSubscriptionStatus {
     Unpaid,
     #[sea_orm(string_value = "paused")]
     Paused,
+}
+
+impl StripeSubscriptionStatus {
+    pub fn is_cancelable(&self) -> bool {
+        match self {
+            Self::Trialing | Self::Active | Self::PastDue => true,
+            Self::Incomplete
+            | Self::IncompleteExpired
+            | Self::Canceled
+            | Self::Unpaid
+            | Self::Paused => false,
+        }
+    }
 }

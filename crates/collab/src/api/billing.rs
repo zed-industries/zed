@@ -3,7 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
-use axum::{extract, routing::post, Extension, Json, Router};
+use axum::{
+    extract::{self, Query},
+    routing::{get, post},
+    Extension, Json, Router,
+};
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -27,11 +31,58 @@ use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
-        .route("/billing/subscriptions", post(create_billing_subscription))
+        .route(
+            "/billing/subscriptions",
+            get(list_billing_subscriptions).post(create_billing_subscription),
+        )
         .route(
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
         )
+}
+
+#[derive(Debug, Deserialize)]
+struct ListBillingSubscriptionsParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct BillingSubscriptionJson {
+    id: BillingSubscriptionId,
+    name: String,
+    status: StripeSubscriptionStatus,
+    /// Whether this subscription can be canceled.
+    is_cancelable: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ListBillingSubscriptionsResponse {
+    subscriptions: Vec<BillingSubscriptionJson>,
+}
+
+async fn list_billing_subscriptions(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<ListBillingSubscriptionsParams>,
+) -> Result<Json<ListBillingSubscriptionsResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let subscriptions = app.db.get_billing_subscriptions(user.id).await?;
+
+    Ok(Json(ListBillingSubscriptionsResponse {
+        subscriptions: subscriptions
+            .into_iter()
+            .map(|subscription| BillingSubscriptionJson {
+                id: subscription.id,
+                name: "Zed Pro".to_string(),
+                status: subscription.stripe_subscription_status,
+                is_cancelable: subscription.stripe_subscription_status.is_cancelable(),
+            })
+            .collect(),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,7 +230,7 @@ async fn manage_billing_subscription(
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                 type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
                 redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: "https://zed.dev/billing".into(),
+                    return_url: "https://zed.dev/settings".into(),
                 }),
                 ..Default::default()
             }),
@@ -195,7 +246,7 @@ async fn manage_billing_subscription(
 
     let mut params = CreateBillingPortalSession::new(customer_id);
     params.flow_data = Some(flow);
-    params.return_url = Some("https://zed.dev/billing");
+    params.return_url = Some("https://zed.dev/settings");
 
     let session = BillingPortalSession::create(&stripe_client, params).await?;
 
