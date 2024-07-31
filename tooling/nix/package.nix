@@ -46,6 +46,7 @@ in
         libxkbcommon
         wayland
         xorg.libxcb
+        mold
       ]
       ++ lib.optionals stdenv.isDarwin (
         with darwin.apple_sdk.frameworks; [
@@ -91,7 +92,9 @@ in
       "--package=cli"
     ];
 
-    buildFeatures = ["gpui/runtime_shaders"];
+    buildFeatures = ["gpui/runtime_shaders" "mimalloc"];
+
+    RUSTFLAGS = "-C symbol-mangling-version=v0 --cfg tokio_unstable -C target-cpu=x86-64-v3 -C link-arg=-fuse-ld=mold";
 
     env = {
       ZSTD_SYS_USE_PKG_CONFIG = true;

@@ -28,6 +28,7 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    if: github.repository_owner == 'zed-industries'
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -88,6 +89,7 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    if: github.repository_owner == 'zed-industries'
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -109,6 +111,7 @@ jobs:
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - deploy
@@ -135,6 +138,7 @@ jobs:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
     runs-on: hosted-windows-1
+    if: github.repository_owner == 'zed-industries'
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -159,7 +163,9 @@ jobs:
     runs-on:
       - self-hosted
       - bundle
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: >
+      github.repository_owner == 'zed-industries' &&
+      (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     needs: [macos_tests]
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -272,7 +278,9 @@ jobs:
     runs-on:
       - self-hosted
       - deploy
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: >
+      github.repository_owner == 'zed-industries' &&
+      (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -342,7 +350,9 @@ jobs:
     name: Create arm64 Linux bundle
     runs-on:
       - hosted-linux-arm-1
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: >
+      github.repository_owner == 'zed-industries' &&
+      (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}

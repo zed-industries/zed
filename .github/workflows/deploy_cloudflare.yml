@@ -8,6 +8,7 @@ on:
 jobs:
   deploy-docs:
     name: Deploy Docs
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 
     steps:
