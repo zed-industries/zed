@@ -2056,12 +2056,12 @@ impl EditorElement {
                     v_flex()
                         .id(("path excerpt header", EntityId::from(block_id)))
                         .w_full()
-                        .h(snapshot.buffer_header_height() as f32 * cx.line_height())
-                        .p(header_padding)
+                        .px(header_padding)
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
+                                .h(2. * cx.line_height())
                                 .pl(gpui::px(12.))
                                 .pr(gpui::px(8.))
                                 .rounded_md()
@@ -2114,6 +2114,7 @@ impl EditorElement {
                         .children(show_excerpt_controls.then(|| {
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
+                                .h(1. * cx.line_height())
                                 .pt_1()
                                 .justify_end()
                                 .flex_none()
@@ -6467,7 +6468,7 @@ mod tests {
                         disposition: BlockDisposition::Above,
                         height: 3,
                         position: Anchor::min(),
-                        render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
+                        render: Box::new(|_| div().into_any()),
                     }],
                     None,
                     cx,

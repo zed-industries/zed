@@ -1694,7 +1694,7 @@ impl Editor {
             }),
             merge_adjacent: true,
         };
-        let file_header_size = 3;
+        let file_header_size = if show_excerpt_controls { 3 } else { 2 };
         let display_map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
