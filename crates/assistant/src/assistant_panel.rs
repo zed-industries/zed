@@ -2340,9 +2340,8 @@ impl ContextEditor {
             None => "Send",
         };
 
-        let (disabled, style, tooltip) = match token_state(&self.context, cx) {
+        let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                true,
                 ButtonStyle::Tinted(TintColor::Negative),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
@@ -2358,14 +2357,13 @@ impl ContextEditor {
                 } else {
                     (ButtonStyle::Filled, None)
                 };
-                (false, style, tooltip)
+                (style, tooltip)
             }
-            None => (false, ButtonStyle::Filled, None),
+            None => (ButtonStyle::Filled, None),
         };
 
         ButtonLike::new("send_button")
             .style(style)
-            .disabled(disabled)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_| tooltip.clone())
             })
