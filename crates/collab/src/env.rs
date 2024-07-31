@@ -24,7 +24,7 @@ pub fn load_dotenv() -> Result<()> {
 
 fn add_vars(env_content: String, vars: &mut Vec<(String, String)>) -> Result<()> {
     let env: toml::map::Map<String, toml::Value> = toml::de::from_str(&env_content)?;
-    Ok(for (key, value) in env {
+    for (key, value) in env {
         let value = match value {
             toml::Value::String(value) => value,
             toml::Value::Integer(value) => value.to_string(),
@@ -32,5 +32,6 @@ fn add_vars(env_content: String, vars: &mut Vec<(String, String)>) -> Result<()>
             _ => panic!("unsupported TOML value in .env.toml for key {}", key),
         };
         vars.push((key, value));
-    })
+    }
+    Ok(())
 }
