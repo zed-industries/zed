@@ -4535,18 +4535,18 @@ async fn acknowledge_buffer_version(
 struct CompleteWithLanguageModelRateLimit;
 
 impl RateLimit for CompleteWithLanguageModelRateLimit {
-    fn capacity() -> usize {
+    fn capacity(&self) -> usize {
         std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(120) // Picked arbitrarily
     }
 
-    fn refill_duration() -> chrono::Duration {
+    fn refill_duration(&self) -> chrono::Duration {
         chrono::Duration::hours(1)
     }
 
-    fn db_name() -> &'static str {
+    fn db_name(&self) -> &'static str {
         "complete-with-language-model"
     }
 }
@@ -4564,7 +4564,7 @@ async fn complete_with_language_model(
 
     session
         .rate_limiter
-        .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
+        .check(&CompleteWithLanguageModelRateLimit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4604,7 +4604,7 @@ async fn stream_complete_with_language_model(
 
     session
         .rate_limiter
-        .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
+        .check(&CompleteWithLanguageModelRateLimit, session.user_id())
         .await?;
 
     match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4686,7 +4686,7 @@ async fn count_language_model_tokens(
 
     session
         .rate_limiter
-        .check::<CountLanguageModelTokensRateLimit>(session.user_id())
+        .check(&CountLanguageModelTokensRateLimit, session.user_id())
         .await?;
 
     let result = match proto::LanguageModelProvider::from_i32(request.provider) {
@@ -4716,18 +4716,18 @@ async fn count_language_model_tokens(
 struct CountLanguageModelTokensRateLimit;
 
 impl RateLimit for CountLanguageModelTokensRateLimit {
-    fn capacity() -> usize {
+    fn capacity(&self) -> usize {
         std::env::var("COUNT_LANGUAGE_MODEL_TOKENS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(600) // Picked arbitrarily
     }
 
-    fn refill_duration() -> chrono::Duration {
+    fn refill_duration(&self) -> chrono::Duration {
         chrono::Duration::hours(1)
     }
 
-    fn db_name() -> &'static str {
+    fn db_name(&self) -> &'static str {
         "count-language-model-tokens"
     }
 }
@@ -4735,18 +4735,18 @@ impl RateLimit for CountLanguageModelTokensRateLimit {
 struct ComputeEmbeddingsRateLimit;
 
 impl RateLimit for ComputeEmbeddingsRateLimit {
-    fn capacity() -> usize {
+    fn capacity(&self) -> usize {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(5000) // Picked arbitrarily
     }
 
-    fn refill_duration() -> chrono::Duration {
+    fn refill_duration(&self) -> chrono::Duration {
         chrono::Duration::hours(1)
     }
 
-    fn db_name() -> &'static str {
+    fn db_name(&self) -> &'static str {
         "compute-embeddings"
     }
 }
@@ -4762,7 +4762,7 @@ async fn compute_embeddings(
 
     session
         .rate_limiter
-        .check::<ComputeEmbeddingsRateLimit>(session.user_id())
+        .check(&ComputeEmbeddingsRateLimit, session.user_id())
         .await?;
 
     let embeddings = match request.model.as_str() {
@@ -4834,10 +4834,12 @@ async fn authorize_access_to_language_models(session: &UserSession) -> Result<()
     let db = session.db().await;
     let flags = db.get_user_flags(session.user_id()).await?;
     if flags.iter().any(|flag| flag == "language-models") {
-        Ok(())
-    } else {
-        Err(anyhow!("permission denied"))?
+        return Ok(());
     }
+
+    // db.get_billing
+
+    Err(anyhow!("permission denied"))?
 }
 
 /// Get a Supermaven API key for the user
