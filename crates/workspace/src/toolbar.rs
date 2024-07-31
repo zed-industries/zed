@@ -105,12 +105,15 @@ impl Render for Toolbar {
             .bg(cx.theme().colors().toolbar_background)
             .child(
                 h_flex()
+                    .min_h(rems_from_px(24.))
+                    .items_center()
                     .justify_between()
                     .gap(Spacing::Large.rems(cx))
                     .when(has_left_items, |this| {
                         this.child(
                             h_flex()
                                 .flex_auto()
+                                .items_center()
                                 .justify_start()
                                 .overflow_x_hidden()
                                 .children(self.left_items().map(|item| item.to_any())),
