@@ -169,9 +169,7 @@ struct ManageBillingSubscriptionBody {
     github_user_id: i32,
     intent: ManageSubscriptionIntent,
     /// The ID of the subscription to manage.
-    ///
-    /// If not provided, we will try to use the active subscription (if there is only one).
-    subscription_id: Option<BillingSubscriptionId>,
+    subscription_id: BillingSubscriptionId,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,23 +204,11 @@ async fn manage_billing_subscription(
     let customer_id = CustomerId::from_str(&customer.stripe_customer_id)
         .context("failed to parse customer ID")?;
 
-    let subscription = if let Some(subscription_id) = body.subscription_id {
-        app.db
-            .get_billing_subscription_by_id(subscription_id)
-            .await?
-            .ok_or_else(|| anyhow!("subscription not found"))?
-    } else {
-        // If no subscription ID was provided, try to find the only active subscription ID.
-        let subscriptions = app.db.get_active_billing_subscriptions(user.id).await?;
-        if subscriptions.len() > 1 {
-            Err(anyhow!("user has multiple active subscriptions"))?;
-        }
-
-        subscriptions
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("user has no active subscriptions"))?
-    };
+    let subscription = app
+        .db
+        .get_billing_subscription_by_id(body.subscription_id)
+        .await?
+        .ok_or_else(|| anyhow!("subscription not found"))?;
 
     let flow = match body.intent {
         ManageSubscriptionIntent::Cancel => CreateBillingPortalSessionFlowData {

@@ -209,13 +209,11 @@ impl Session {
         };
 
         let db = self.db().await;
-        let active_subscriptions = db.get_active_billing_subscriptions(user_id).await?;
-
-        if !active_subscriptions.is_empty() {
-            return Ok(proto::Plan::ZedPro);
+        if db.has_active_billing_subscription(user_id).await? {
+            Ok(proto::Plan::ZedPro)
+        } else {
+            Ok(proto::Plan::Free)
         }
-
-        Ok(proto::Plan::Free)
     }
 
     fn dev_server_id(&self) -> Option<DevServerId> {
