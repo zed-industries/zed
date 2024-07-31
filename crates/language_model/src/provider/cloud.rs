@@ -50,7 +50,7 @@ pub struct CloudLanguageModelProvider {
     _maintain_client_status: Task<()>,
 }
 
-struct State {
+pub struct State {
     client: Arc<Client>,
     status: client::Status,
     _subscription: Subscription,
@@ -99,10 +99,10 @@ impl CloudLanguageModelProvider {
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription> {
-        Some(cx.observe(&self.state, |_, _, cx| {
-            cx.notify();
-        }))
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
 }
 
