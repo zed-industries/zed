@@ -541,6 +541,18 @@ inherits = "release"
 lto = false
 codegen-units = 16
 
+# Comment these out if you are working on macros.
+[profile.dev.build-override]
+opt-level = 3
+codegen-units = 1
+incremental = false
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
+debug = false
+incremental = false
+
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
