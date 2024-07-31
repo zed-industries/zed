@@ -37,7 +37,6 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType, TCPHost};
 use text::Point;
-use util::ResultExt;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ThreadStatus {
