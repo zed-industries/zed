@@ -280,7 +280,6 @@ pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
-    is_singleton: bool,
     language_aware: bool,
 }
 
@@ -299,6 +298,7 @@ pub struct ReversedMultiBufferBytes<'a> {
 }
 
 struct ExcerptChunks<'a> {
+    excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
 }
@@ -2424,7 +2424,6 @@ impl MultiBufferSnapshot {
             excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
             language_aware,
-            is_singleton: self.singleton,
         };
         chunks.seek(range.start);
         chunks
@@ -4147,9 +4146,16 @@ impl Excerpt {
         let content_chunks = self.buffer.chunks(chunks_start..chunks_end, language_aware);
 
         ExcerptChunks {
+            excerpt_id: self.id,
             content_chunks,
             footer_height,
         }
+    }
+
+    fn seek_chunks(&self, excerpt_chunks: &mut ExcerptChunks, offset: usize) {
+        let content_start = self.range.context.start.to_offset(&self.buffer);
+        let chunks_start = content_start + offset;
+        excerpt_chunks.content_chunks.seek(chunks_start);
     }
 
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
@@ -4488,15 +4494,18 @@ impl<'a> MultiBufferChunks<'a> {
 
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
-        let is_singleton = self.is_singleton;
         self.excerpts.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = self.excerpts.item() {
-            if let Some(current_chunk) = self.excerpt_chunks.as_mut().filter(|_| is_singleton) {
-                current_chunk.content_chunks.seek(offset);
+            let excerpt_start = self.excerpts.start();
+            if let Some(excerpt_chunks) = self
+                .excerpt_chunks
+                .as_mut()
+                .filter(|chunks| excerpt.id == chunks.excerpt_id)
+            {
+                excerpt.seek_chunks(excerpt_chunks, self.range.start - excerpt_start);
             } else {
                 self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                    self.range.start - self.excerpts.start()
-                        ..self.range.end - self.excerpts.start(),
+                    self.range.start - excerpt_start..self.range.end - excerpt_start,
                     self.language_aware,
                 ));
             }
