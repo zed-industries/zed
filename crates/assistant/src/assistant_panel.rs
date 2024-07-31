@@ -3031,14 +3031,12 @@ impl ConfigurationView {
     fn render_active_tab(&self, cx: &mut ViewContext<Self>) -> Option<Div> {
         let mut focus_handles = self.focus_handles.clone();
 
-        let providers = LanguageModelRegistry::read_global(cx)
-            .providers()
-            .cloned()
-            .collect::<Vec<_>>();
+        let providers = LanguageModelRegistry::read_global(cx).providers();
 
         let active_provider = providers
-            .iter()
-            .find(|provider| Some(provider.id()) == self.active_tab);
+            .into_iter()
+            .find(|provider| Some(provider.id()) == self.active_tab)
+            .clone();
 
         if let Some(active_provider) = active_provider {
             let provider_content = if active_provider.is_authenticated(cx) {
