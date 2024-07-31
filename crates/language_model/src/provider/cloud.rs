@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
-use ui::{prelude::*, Indicator};
+use ui::prelude::*;
 
 use crate::LanguageModelProvider;
 
@@ -432,8 +432,9 @@ impl Render for ConfigurationView {
                                 cx.open_url(ZED_AI_URL)
                             })))
                             .child(
-                        Button::new("upgrade", "Upgrade to Zed Pro")
+                        Button::new("upgrade", "Upgrade")
                             .style(ButtonStyle::Filled)
+                            .color(Color::Accent)
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.open_url(ACCOUNT_SETTINGS_URL)
                             })))

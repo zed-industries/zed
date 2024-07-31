@@ -2999,7 +2999,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_active_tab(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
+    fn render_active_tab_view(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
         let Some(active_tab) = &self.active_tab else {
             return None;
         };
@@ -3014,6 +3014,48 @@ impl ConfigurationView {
                 .child(active_tab.configuration_prompt.clone()),
         )
     }
+
+    fn render_tab(
+        &self,
+        provider: &Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let button_id = SharedString::from(format!("tab-{}", provider.id().0));
+        let is_active = self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
+        ButtonLike::new(button_id)
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Transparent)
+            .selected(is_active.clone())
+            .on_click(cx.listener({
+                let provider = provider.clone();
+                move |this, _, cx| {
+                    this.set_active_tab(provider.clone(), cx);
+                }
+            }))
+            .child(
+                div()
+                    .my_3()
+                    .pb_px()
+                    .border_b_1()
+                    .border_color(if is_active {
+                        cx.theme().colors().text_accent
+                    } else {
+                        cx.theme().colors().border_transparent
+                    })
+                    .when(!is_active, |this| {
+                        this.group_hover("", |this| {
+                            this.border_color(cx.theme().colors().border_variant)
+                        })
+                    })
+                    .child(Label::new(provider.name().0).size(LabelSize::Small).color(
+                        if is_active {
+                            Color::Accent
+                        } else {
+                            Color::Default
+                        },
+                    )),
+            )
+    }
 }
 
 impl Render for ConfigurationView {
@@ -3024,57 +3066,36 @@ impl Render for ConfigurationView {
             self.set_active_tab(providers[0].clone(), cx);
         }
 
-        let tabs = h_flex()
-            .mx_neg_1()
-            .gap_3()
-            .children(providers.iter().map(|provider| {
-                let button_id = SharedString::from(format!("tab-{}", provider.id().0));
-                let is_active =
-                    self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
-                ButtonLike::new(button_id)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Subtle)
-                    .selected(is_active.clone())
-                    .child(
-                        div()
-                            .my_3()
-                            .pb_px()
-                            .border_b_1()
-                            .border_color(if is_active {
-                                cx.theme().colors().text_accent
-                            } else {
-                                cx.theme().colors().border_transparent
-                            })
-                            .child(Label::new(provider.name().0).size(LabelSize::Small).color(
-                                if is_active {
-                                    Color::Accent
-                                } else {
-                                    Color::Default
-                                },
-                            )),
-                    )
-                    .on_click(cx.listener({
-                        let provider = provider.clone();
-                        move |this, _, cx| {
-                            this.set_active_tab(provider.clone(), cx);
-                        }
-                    }))
-            }));
+        let tabs = h_flex().mx_neg_1().gap_3().children(
+            providers
+                .iter()
+                .map(|provider| self.render_tab(provider, cx)),
+        );
+
+        let assistant_text = include_str!("./using-the-assistant.md");
 
         v_flex()
-            .size_full()
+            .id("assistant-configuration-view")
+            .w_full()
+            .min_h_full()
             .p(Spacing::XXLarge.rems(cx))
-            .gap_3()
-            .child(Headline::new("Get started with the Zed Assistant").size(HeadlineSize::Medium))
+            .overflow_y_scroll()
+            .gap_8()
+
+            .child(v_flex().gap_2()
+            .child(Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium))
             .child(
                 Label::new("Set up your assistant provider and learn how to work with the Assistant to streamline your workflow.")
                     .color(Color::Muted),
-            )
-            .child(Headline::new("Set up a Provider").size(HeadlineSize::Small))
+            ))
+            .child(v_flex().gap_2()
+            .child(Headline::new("Choosing a Provider").size(HeadlineSize::Small))
             .child(tabs)
-            .children(self.render_active_tab(cx))
+            .children(self.render_active_tab_view(cx))
+            )
+            .child(v_flex().gap_2()
             .child(Headline::new("Using the Assistant").size(HeadlineSize::Small))
-            .child(Label::new("The Assistant is a powerful...").color(Color::Muted))
+.child(Label::new(assistant_text)))
     }
 }
 
