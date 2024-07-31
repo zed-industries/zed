@@ -426,7 +426,7 @@ tree-sitter-css = "0.21"
 tree-sitter-elixir = "0.2"
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = "0.21"
-tree-sitter-go-mod = { git = "https://github.com/SomeoneToIgnore/tree-sitter-go-mod", rev = "8c1f54f12bb4c846336b634bc817645d6f35d641", package = "tree-sitter-gomod" }
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "1f55029bacd0a6a11f6eb894c4312d429dcf735c", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work", rev = "dcbabff454703c3a4bc98a23cf8778d4be46fd22" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
 tree-sitter-html = "0.20"
