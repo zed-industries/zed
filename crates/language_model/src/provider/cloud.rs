@@ -179,8 +179,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         self.state.read(cx).status.is_connected()
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
+    fn authenticate(&self, _cx: &mut AppContext) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {

@@ -12,9 +12,9 @@ use crate::{
     DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepOperations,
     EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
     MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, ResetKey, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
-use crate::{ContextStoreEvent, DeployConfiguration};
+use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::proto;
@@ -136,7 +136,6 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
@@ -365,7 +364,7 @@ impl AssistantPanel {
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
-                                        .action("Configure", Box::new(DeployConfiguration))
+                                        .action("Configure", Box::new(ShowConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
@@ -399,8 +398,10 @@ impl AssistantPanel {
                     language_model::Event::ActiveModelChanged => {
                         this.completion_provider_changed(cx);
                     }
-                    language_model::Event::ProviderStateChanged
-                    | language_model::Event::AddedProvider(_)
+                    language_model::Event::ProviderStateChanged => {
+                        this.ensure_authenticated(cx);
+                    }
+                    language_model::Event::AddedProvider(_)
                     | language_model::Event::RemovedProvider(_) => {
                         this.ensure_authenticated(cx);
                     }
@@ -418,7 +419,6 @@ impl AssistantPanel {
             languages: workspace.app_state().languages.clone(),
             fs: workspace.app_state().fs.clone(),
             subscriptions,
-            authentication_prompt: None,
             model_selector_menu_handle,
             model_summary_editor,
             authenticate_provider_task: None,
@@ -582,63 +582,42 @@ impl AssistantPanel {
                 *old_provider_id != new_provider_id
             })
         {
+            self.authenticate_provider_task = None;
             self.ensure_authenticated(cx);
         }
     }
 
-    fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
-        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            if !provider.is_authenticated(cx) {
-                return Some(provider.authentication_prompt(cx).0);
-            }
-        }
-        None
-    }
-
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
-            self.set_authentication_prompt(None, cx);
+            if self.active_context_editor(cx).is_none() {
+                self.new_context(cx);
+            }
             return;
         }
 
-        let Some(provider_id) = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|p| p.id())
-        else {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
 
         let load_credentials = self.authenticate(cx);
 
-        self.authenticate_provider_task = Some((
-            provider_id,
-            cx.spawn(|this, mut cx| async move {
-                let _ = load_credentials.await;
-                this.update(&mut cx, |this, cx| {
-                    this.show_authentication_prompt(cx);
-                    this.authenticate_provider_task = None;
-                })
-                .log_err();
-            }),
-        ));
-    }
-
-    fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
-        let prompt = Self::authentication_prompt(cx);
-        self.set_authentication_prompt(prompt, cx);
-    }
-
-    fn set_authentication_prompt(&mut self, prompt: Option<AnyView>, cx: &mut ViewContext<Self>) {
-        if self.active_context_editor(cx).is_none() {
-            self.new_context(cx);
+        if self.authenticate_provider_task.is_none() {
+            self.authenticate_provider_task = Some((
+                provider.id(),
+                cx.spawn(|this, mut cx| async move {
+                    let _ = load_credentials.await;
+                    this.update(&mut cx, |this, cx| {
+                        if !provider.is_authenticated(cx) {
+                            this.show_configuration_for_provider(Some(provider), cx)
+                        } else if this.active_context_editor(cx).is_none() {
+                            this.new_context(cx);
+                        }
+                        this.authenticate_provider_task = None;
+                    })
+                    .log_err();
+                }),
+            ));
         }
-
-        for context_editor in self.context_editors(cx) {
-            context_editor.update(cx, |editor, cx| {
-                editor.set_authentication_prompt(prompt.clone(), cx);
-            });
-        }
-        cx.notify();
     }
 
     pub fn inline_assist(
@@ -900,7 +879,15 @@ impl AssistantPanel {
         }
     }
 
-    fn deploy_configuration(&mut self, _: &DeployConfiguration, cx: &mut ViewContext<Self>) {
+    fn show_configuration(&mut self, _: &ShowConfiguration, cx: &mut ViewContext<Self>) {
+        self.show_configuration_for_provider(None, cx);
+    }
+
+    fn show_configuration_for_provider(
+        &mut self,
+        provider: Option<Arc<dyn LanguageModelProvider>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let configuration_item_ix = self
             .pane
             .read(cx)
@@ -912,9 +899,15 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, cx);
             });
         } else {
-            let configuration = cx.new_view(|cx| ConfigurationView {
-                fallback_handle: cx.focus_handle(),
-                active_tab: None,
+            let configuration = cx.new_view(|cx| {
+                let mut view = ConfigurationView {
+                    fallback_handle: cx.focus_handle(),
+                    active_tab: None,
+                };
+                if let Some(provider) = provider {
+                    view.set_active_tab(provider, cx);
+                }
+                view
             });
             self.pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(configuration), true, true, None, cx);
@@ -953,28 +946,8 @@ impl AssistantPanel {
         open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
     }
 
-    fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            let reset_credentials = provider.reset_credentials(cx);
-            cx.spawn(|this, mut cx| async move {
-                reset_credentials.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.show_authentication_prompt(cx);
-                })
-            })
-            .detach_and_log_err(cx);
-        }
-    }
-
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx);
-    }
-
-    fn context_editors(&self, cx: &AppContext) -> Vec<View<ContextEditor>> {
-        self.pane
-            .read(cx)
-            .items_of_type::<ContextEditor>()
-            .collect()
     }
 
     fn active_context_editor(&self, cx: &AppContext) -> Option<View<ContextEditor>> {
@@ -1105,8 +1078,10 @@ impl AssistantPanel {
                 |provider| provider.authenticate(cx),
             )
     }
+}
 
-    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl Render for AssistantPanel {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut registrar = DivRegistrar::new(
             |panel, cx| {
                 panel
@@ -1127,22 +1102,12 @@ impl AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(AssistantPanel::deploy_configuration))
+            .on_action(cx.listener(AssistantPanel::show_configuration))
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
-            .on_action(cx.listener(AssistantPanel::reset_credentials))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .child(registrar.size_full().child(self.pane.clone()))
-    }
-}
-
-impl Render for AssistantPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
-            authentication_prompt.clone().into_any()
-        } else {
-            self.render_signed_in(cx).into_any_element()
-        }
+            .into_any_element()
     }
 }
 
@@ -1265,7 +1230,6 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
-    authentication_prompt: Option<AnyView>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1323,7 +1287,6 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let mut this = Self {
             context,
-            authentication_prompt: None,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1341,15 +1304,6 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
         this
-    }
-
-    fn set_authentication_prompt(
-        &mut self,
-        authentication_prompt: Option<AnyView>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.authentication_prompt = authentication_prompt;
-        cx.notify();
     }
 
     fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
@@ -1378,10 +1332,6 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if self.authentication_prompt.is_some() {
-            return;
-        }
-
         if !self.apply_edit_step(cx) {
             self.send_to_model(cx);
         }
@@ -2442,26 +2392,19 @@ impl Render for ContextEditor {
             .size_full()
             .v_flex()
             .child(
-                if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
-                    div()
-                        .flex_grow()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(authentication_prompt.clone().into_any())
-                } else {
-                    div()
-                        .flex_grow()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(self.editor.clone())
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .absolute()
-                                .bottom_0()
-                                .p_4()
-                                .justify_end()
-                                .child(self.render_send_button(cx)),
-                        )
-                },
+                div()
+                    .flex_grow()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.editor.clone())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .absolute()
+                            .bottom_0()
+                            .p_4()
+                            .justify_end()
+                            .child(self.render_send_button(cx)),
+                    ),
             )
     }
 }
