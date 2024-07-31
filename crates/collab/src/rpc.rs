@@ -199,6 +199,25 @@ impl Session {
         }
     }
 
+    pub async fn current_plan(&self) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
+            return Ok(proto::Plan::ZedPro);
+        }
+
+        let Some(user_id) = self.user_id() else {
+            return Ok(proto::Plan::Free);
+        };
+
+        let db = self.db().await;
+        let active_subscriptions = db.get_active_billing_subscriptions(user_id).await?;
+
+        if !active_subscriptions.is_empty() {
+            return Ok(proto::Plan::ZedPro);
+        }
+
+        Ok(proto::Plan::Free)
+    }
+
     fn dev_server_id(&self) -> Option<DevServerId> {
         match &self.principal {
             Principal::User(_) | Principal::Impersonated { .. } => None,
@@ -3537,15 +3556,8 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 
-async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
-    let db = session.db().await;
-    let active_subscriptions = db.get_active_billing_subscriptions(user_id).await?;
-
-    let plan = if session.is_staff() || !active_subscriptions.is_empty() {
-        proto::Plan::ZedPro
-    } else {
-        proto::Plan::Free
-    };
+async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
+    let plan = session.current_plan().await?;
 
     session
         .peer
