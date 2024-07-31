@@ -171,8 +171,8 @@ async fn create_billing_subscription(
 enum ManageSubscriptionIntent {
     /// The user intends to cancel their subscription.
     Cancel,
-    /// The user intends to stop the cancelation of their subscription.
-    StopCancelation,
+    /// The user intends to stop the cancellation of their subscription.
+    StopCancellation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,7 +221,7 @@ async fn manage_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("subscription not found"))?;
 
-    if body.intent == ManageSubscriptionIntent::StopCancelation {
+    if body.intent == ManageSubscriptionIntent::StopCancellation {
         let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
             .context("failed to parse subscription ID")?;
 
@@ -273,7 +273,7 @@ async fn manage_billing_subscription(
             ),
             ..Default::default()
         },
-        ManageSubscriptionIntent::StopCancelation => unreachable!(),
+        ManageSubscriptionIntent::StopCancellation => unreachable!(),
     };
 
     let mut params = CreateBillingPortalSession::new(customer_id);
