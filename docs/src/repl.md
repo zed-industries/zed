@@ -42,7 +42,7 @@ Outputs can be cleared with the `repl: clear outputs` command, or from the REPL 
 
 ### Cell mode
 
-Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
+Zed (version >= 0.146) supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
 
 The `repl: run` command will run each block of code between the `# %%` markers as a separate cell.
 
