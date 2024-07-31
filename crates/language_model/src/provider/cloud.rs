@@ -21,7 +21,7 @@ use crate::LanguageModelProvider;
 use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
-pub const PROVIDER_NAME: &str = "zed.dev";
+pub const PROVIDER_NAME: &str = "Zed AI";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -397,17 +397,48 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const ZED_AI_URL: &str = "https://zed.dev/ai";
+        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/settings";
+
         let is_connected = self.state.read(cx).is_connected();
+
+        let is_pro = false;
+
         if is_connected {
-            div()
+            v_flex()
+                .gap_3()
+                .max_w_4_5()
+                .child(Label::new(
+                    if is_pro {
+                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google through Zed Pro."
+                    } else {
+                        "You have basic access to models from Anthropic, OpenAI, Google and more through the Zed AI Free plan."
+                    }))
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
+                    if is_pro {
+                        h_flex().child(
+                        Button::new("manage_settings", "Manage Subscription")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ACCOUNT_SETTINGS_URL)
+                            })))
+                    } else {
+                        h_flex()
+                            .gap_2()
+                            .child(
+                        Button::new("learn_more", "Learn more")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ZED_AI_URL)
+                            })))
+                            .child(
+                        Button::new("upgrade", "Upgrade to Zed Pro")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ACCOUNT_SETTINGS_URL)
+                            })))
+                    },
                 )
-                .child(Label::new("Connected!"))
-                .child(Label::new("Use the user menu to sign out."))
         } else {
             v_flex()
                 .gap_6()

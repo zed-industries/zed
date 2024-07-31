@@ -2999,12 +2999,20 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_active_tab(&mut self, _: &mut ViewContext<Self>) -> Option<Div> {
+    fn render_active_tab(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
         let Some(active_tab) = &self.active_tab else {
             return None;
         };
 
-        Some(div().child(active_tab.configuration_prompt.clone()))
+        Some(
+            div()
+                .p(Spacing::Large.rems(cx))
+                .bg(cx.theme().colors().surface_background)
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_md()
+                .child(active_tab.configuration_prompt.clone()),
+        )
     }
 }
 
@@ -3016,31 +3024,34 @@ impl Render for ConfigurationView {
             self.set_active_tab(providers[0].clone(), cx);
         }
 
-        let header = Headline::new("Configure Zed's AI Assistant")
-            .size(HeadlineSize::Large)
-            .into_element();
-
-        div()
-            .size_full()
-            .p(Spacing::XLarge.rems(cx))
-            .child(header)
-            .child(h_flex().children(providers.iter().map(|provider| {
+        let tabs = h_flex()
+            .mx_neg_1()
+            .gap_3()
+            .children(providers.iter().map(|provider| {
                 let button_id = SharedString::from(format!("tab-{}", provider.id().0));
                 let is_active =
                     self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
                 ButtonLike::new(button_id)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Subtle)
+                    .selected(is_active.clone())
                     .child(
                         div()
-                            .py_1()
-                            .px_2()
+                            .my_3()
+                            .pb_px()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border_selected)
-                            .text_color(if is_active {
+                            .border_color(if is_active {
                                 cx.theme().colors().text_accent
                             } else {
-                                cx.theme().colors().text
+                                cx.theme().colors().border_transparent
                             })
-                            .child(provider.name().0),
+                            .child(Label::new(provider.name().0).size(LabelSize::Small).color(
+                                if is_active {
+                                    Color::Accent
+                                } else {
+                                    Color::Default
+                                },
+                            )),
                     )
                     .on_click(cx.listener({
                         let provider = provider.clone();
@@ -3048,8 +3059,22 @@ impl Render for ConfigurationView {
                             this.set_active_tab(provider.clone(), cx);
                         }
                     }))
-            })))
+            }));
+
+        v_flex()
+            .size_full()
+            .p(Spacing::XXLarge.rems(cx))
+            .gap_3()
+            .child(Headline::new("Get started with the Zed Assistant").size(HeadlineSize::Medium))
+            .child(
+                Label::new("Set up your assistant provider and learn how to work with the Assistant to streamline your workflow.")
+                    .color(Color::Muted),
+            )
+            .child(Headline::new("Set up a Provider").size(HeadlineSize::Small))
+            .child(tabs)
             .children(self.render_active_tab(cx))
+            .child(Headline::new("Using the Assistant").size(HeadlineSize::Small))
+            .child(Label::new("The Assistant is a powerful...").color(Color::Muted))
     }
 }
 
@@ -3068,7 +3093,7 @@ impl Item for ConfigurationView {
     type Event = ();
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Configuration".into())
+        Some("Getting Started".into())
     }
 }
 
