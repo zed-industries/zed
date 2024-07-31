@@ -14,20 +14,22 @@ use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model
 use project::Project;
 use project_index::ProjectIndex;
 use std::{path::PathBuf, sync::Arc};
+use ui::ViewContext;
+use workspace::Workspace;
 
 pub use embedding::*;
 pub use project_index_debug_view::ProjectIndexDebugView;
 pub use summary_index::FileSummary;
 
-pub struct SemanticIndex {
+pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     db_connection: heed::Env,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
 
-impl Global for SemanticIndex {}
+impl Global for SemanticDb {}
 
-impl SemanticIndex {
+impl SemanticDb {
     pub async fn new(
         db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -47,7 +49,45 @@ impl SemanticIndex {
             .await
             .context("opening database connection")?;
 
-        Ok(SemanticIndex {
+        cx.update(|cx| {
+            cx.observe_new_views(
+                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+                    let project = workspace.project().clone();
+
+                    if cx.has_global::<SemanticDb>() {
+                        cx.update_global::<SemanticDb, _>(|this, cx| {
+                            let project_index = cx.new_model(|cx| {
+                                ProjectIndex::new(
+                                    project.clone(),
+                                    this.db_connection.clone(),
+                                    this.embedding_provider.clone(),
+                                    cx,
+                                )
+                            });
+
+                            let project_weak = project.downgrade();
+                            this.project_indices
+                                .insert(project_weak.clone(), project_index);
+
+                            cx.on_release(move |_, _, cx| {
+                                if cx.has_global::<SemanticDb>() {
+                                    cx.update_global::<SemanticDb, _>(|this, _| {
+                                        this.project_indices.remove(&project_weak);
+                                    })
+                                }
+                            })
+                            .detach();
+                        })
+                    } else {
+                        log::info!("No SemanticDb, skipping project index")
+                    }
+                },
+            )
+            .detach();
+        })
+        .ok();
+
+        Ok(SemanticDb {
             db_connection,
             embedding_provider,
             project_indices: HashMap::default(),
@@ -57,33 +97,9 @@ impl SemanticIndex {
     pub fn project_index(
         &mut self,
         project: Model<Project>,
-        cx: &mut AppContext,
-    ) -> Model<ProjectIndex> {
-        let project_weak = project.downgrade();
-        project.update(cx, move |_, cx| {
-            cx.on_release(move |_, cx| {
-                if cx.has_global::<SemanticIndex>() {
-                    cx.update_global::<SemanticIndex, _>(|this, _| {
-                        this.project_indices.remove(&project_weak);
-                    })
-                }
-            })
-            .detach();
-        });
-
-        self.project_indices
-            .entry(project.downgrade())
-            .or_insert_with(|| {
-                cx.new_model(|cx| {
-                    ProjectIndex::new(
-                        project,
-                        self.db_connection.clone(),
-                        self.embedding_provider.clone(),
-                        cx,
-                    )
-                })
-            })
-            .clone()
+        _cx: &mut AppContext,
+    ) -> Option<Model<ProjectIndex>> {
+        self.project_indices.get(&project.downgrade()).cloned()
     }
 }
 
@@ -156,7 +172,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut semantic_index = SemanticIndex::new(
+        let mut semantic_index = SemanticDb::new(
             temp_dir.path().into(),
             Arc::new(TestEmbeddingProvider::new(16, |text| {
                 let mut embedding = vec![0f32; 2];
@@ -192,7 +208,9 @@ mod tests {
             languages::init(language_registry, node_runtime, cx);
         });
 
-        let project_index = cx.update(|cx| semantic_index.project_index(project.clone(), cx));
+        let project_index = cx
+            .update(|cx| semantic_index.project_index(project.clone(), cx))
+            .unwrap();
 
         while project_index
             .read_with(cx, |index, cx| index.path_count(cx))

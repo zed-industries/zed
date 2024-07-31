@@ -6,7 +6,7 @@ use completion::LanguageModelCompletionProvider;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
-use semantic_index::{FileSummary, SemanticIndex};
+use semantic_index::{FileSummary, SemanticDb};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
@@ -49,8 +49,11 @@ impl SlashCommand for AutoCommand {
         };
 
         let project = workspace.read(cx).project().clone();
-        let project_index =
-            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
+        let Some(project_index) =
+            cx.update_global(|index: &mut SemanticDb, cx| index.project_index(project, cx))
+        else {
+            return Task::ready(Err(anyhow!("No project indexer, cannot use /auto")));
+        };
 
         cx.spawn(|cx: gpui::AsyncAppContext| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
@@ -83,8 +86,11 @@ impl SlashCommand for AutoCommand {
 
         let original_prompt = argument.to_string();
         let project = workspace.read(cx).project().clone();
-        let project_index =
-            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
+        let Some(project_index) =
+            cx.update_global(|index: &mut SemanticDb, cx| index.project_index(project, cx))
+        else {
+            return Task::ready(Err(anyhow!("no project indexer")));
+        };
 
         let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
             let summaries = project_index

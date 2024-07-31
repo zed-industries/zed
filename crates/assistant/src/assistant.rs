@@ -26,7 +26,7 @@ use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
-use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
@@ -179,12 +179,13 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
         let client = client.clone();
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticIndex::new(
+            let semantic_index = SemanticDb::new(
                 paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
                 &mut cx,
             )
             .await?;
+
             cx.update(|cx| cx.set_global(semantic_index))
         }
     })
