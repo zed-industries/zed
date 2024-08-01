@@ -3010,7 +3010,7 @@ impl<'a> WindowContext<'a> {
 
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
-        if self.is_window_hovered() {
+        if self.is_window_hovered() && !self.app.has_active_drag() {
             let style = self
                 .window
                 .rendered_frame
