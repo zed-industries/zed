@@ -54,9 +54,7 @@ fn register_language_model_providers(
                 registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
             } else {
                 registry.unregister_provider(
-                    &LanguageModelProviderId::from(
-                        crate::provider::cloud::PROVIDER_NAME.to_string(),
-                    ),
+                    LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),
                     cx,
                 );
             }
@@ -80,9 +78,14 @@ pub struct ActiveModel {
     model: Option<Arc<dyn LanguageModel>>,
 }
 
-pub struct ActiveModelChanged;
+pub enum Event {
+    ActiveModelChanged,
+    ProviderStateChanged,
+    AddedProvider(LanguageModelProviderId),
+    RemovedProvider(LanguageModelProviderId),
+}
 
-impl EventEmitter<ActiveModelChanged> for LanguageModelRegistry {}
+impl EventEmitter<Event> for LanguageModelRegistry {}
 
 impl LanguageModelRegistry {
     pub fn global(cx: &AppContext) -> Model<Self> {
@@ -112,23 +115,26 @@ impl LanguageModelRegistry {
         provider: T,
         cx: &mut ModelContext<Self>,
     ) {
-        let name = provider.id();
+        let id = provider.id();
 
-        if let Some(subscription) = provider.subscribe(cx) {
+        let subscription = provider.subscribe(cx, |_, cx| {
+            cx.emit(Event::ProviderStateChanged);
+        });
+        if let Some(subscription) = subscription {
             subscription.detach();
         }
 
-        self.providers.insert(name, Arc::new(provider));
-        cx.notify();
+        self.providers.insert(id.clone(), Arc::new(provider));
+        cx.emit(Event::AddedProvider(id));
     }
 
     pub fn unregister_provider(
         &mut self,
-        name: &LanguageModelProviderId,
+        id: LanguageModelProviderId,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.providers.remove(name).is_some() {
-            cx.notify();
+        if self.providers.remove(&id).is_some() {
+            cx.emit(Event::RemovedProvider(id));
         }
     }
 
@@ -187,7 +193,7 @@ impl LanguageModelRegistry {
             provider,
             model: None,
         });
-        cx.emit(ActiveModelChanged);
+        cx.emit(Event::ActiveModelChanged);
     }
 
     pub fn set_active_model(
@@ -202,13 +208,13 @@ impl LanguageModelRegistry {
                     provider,
                     model: Some(model),
                 });
-                cx.emit(ActiveModelChanged);
+                cx.emit(Event::ActiveModelChanged);
             } else {
                 log::warn!("Active model's provider not found in registry");
             }
         } else {
             self.active_model = None;
-            cx.emit(ActiveModelChanged);
+            cx.emit(Event::ActiveModelChanged);
         }
     }
 
@@ -239,7 +245,7 @@ mod tests {
         assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(&crate::provider::fake::provider_id(), cx);
+            registry.unregister_provider(crate::provider::fake::provider_id(), cx);
         });
 
         let providers = registry.read(cx).providers();

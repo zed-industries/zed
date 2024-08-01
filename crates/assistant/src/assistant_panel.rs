@@ -58,6 +58,7 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
@@ -138,7 +139,7 @@ pub struct AssistantPanel {
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
-    authentificate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
+    authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
 }
 
 #[derive(Clone)]
@@ -393,8 +394,15 @@ impl AssistantPanel {
             cx.subscribe(&context_store, Self::handle_context_store_event),
             cx.subscribe(
                 &LanguageModelRegistry::global(cx),
-                |this, _, _: &language_model::ActiveModelChanged, cx| {
-                    this.completion_provider_changed(cx);
+                |this, _, event: &language_model::Event, cx| match event {
+                    language_model::Event::ActiveModelChanged => {
+                        this.completion_provider_changed(cx);
+                    }
+                    language_model::Event::ProviderStateChanged
+                    | language_model::Event::AddedProvider(_)
+                    | language_model::Event::RemovedProvider(_) => {
+                        this.ensure_authenticated(cx);
+                    }
                 },
             ),
         ];
@@ -412,7 +420,7 @@ impl AssistantPanel {
             authentication_prompt: None,
             model_selector_menu_handle,
             model_summary_editor,
-            authentificate_provider_task: None,
+            authenticate_provider_task: None,
         }
     }
 
@@ -457,7 +465,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::RemoveItem { .. } => {
+            pane::Event::RemovedItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
             }
@@ -537,7 +545,7 @@ impl AssistantPanel {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
-                workspace.clone(),
+                self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
                 assistant_panel,
@@ -567,33 +575,13 @@ impl AssistantPanel {
         };
 
         if self
-            .authentificate_provider_task
+            .authenticate_provider_task
             .as_ref()
             .map_or(true, |(old_provider_id, _)| {
                 *old_provider_id != new_provider_id
             })
         {
-            let load_credentials = self.authenticate(cx);
-            let task = cx.spawn(|this, mut cx| async move {
-                let _ = load_credentials.await;
-                this.update(&mut cx, |this, cx| {
-                    if this.active_context_editor(cx).is_none() {
-                        this.new_context(cx);
-                    }
-
-                    let authentication_prompt = Self::authentication_prompt(cx);
-                    for context_editor in this.context_editors(cx) {
-                        context_editor.update(cx, |editor, cx| {
-                            editor.set_authentication_prompt(authentication_prompt.clone(), cx);
-                        });
-                    }
-
-                    cx.notify();
-                })
-                .log_err();
-            });
-
-            self.authentificate_provider_task = Some((new_provider_id, task));
+            self.ensure_authenticated(cx);
         }
     }
 
@@ -604,6 +592,52 @@ impl AssistantPanel {
             }
         }
         None
+    }
+
+    fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
+        if self.is_authenticated(cx) {
+            self.set_authentication_prompt(None, cx);
+            return;
+        }
+
+        let Some(provider_id) = LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map(|p| p.id())
+        else {
+            return;
+        };
+
+        let load_credentials = self.authenticate(cx);
+
+        self.authenticate_provider_task = Some((
+            provider_id,
+            cx.spawn(|this, mut cx| async move {
+                let _ = load_credentials.await;
+                this.update(&mut cx, |this, cx| {
+                    this.show_authentication_prompt(cx);
+                    this.authenticate_provider_task = None;
+                })
+                .log_err();
+            }),
+        ));
+    }
+
+    fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        let prompt = Self::authentication_prompt(cx);
+        self.set_authentication_prompt(prompt, cx);
+    }
+
+    fn set_authentication_prompt(&mut self, prompt: Option<AnyView>, cx: &mut ViewContext<Self>) {
+        if self.active_context_editor(cx).is_none() {
+            self.new_context(cx);
+        }
+
+        for context_editor in self.context_editors(cx) {
+            context_editor.update(cx, |editor, cx| {
+                editor.set_authentication_prompt(prompt.clone(), cx);
+            });
+        }
+        cx.notify();
     }
 
     pub fn inline_assist(
@@ -755,12 +789,9 @@ impl AssistantPanel {
                 let context = task.await?;
 
                 this.update(&mut cx, |this, cx| {
-                    let Some(workspace) = this.workspace.upgrade() else {
-                        return Ok(());
-                    };
-                    let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
-                        make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-                    });
+                    let workspace = this.workspace.clone();
+                    let project = this.project.clone();
+                    let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
@@ -770,7 +801,7 @@ impl AssistantPanel {
                         let mut editor = ContextEditor::for_context(
                             context,
                             fs,
-                            workspace.clone(),
+                            workspace,
                             project,
                             lsp_adapter_delegate,
                             weak_assistant_panel,
@@ -792,17 +823,14 @@ impl AssistantPanel {
             None
         } else {
             let context = self.context_store.update(cx, |store, cx| store.create(cx));
-            let workspace = self.workspace.upgrade()?;
-            let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
-                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-            });
+            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
 
             let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
                     self.fs.clone(),
-                    workspace.clone(),
+                    self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
                     assistant_panel,
@@ -904,7 +932,14 @@ impl AssistantPanel {
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
         if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            provider.reset_credentials(cx).detach_and_log_err(cx);
+            let reset_credentials = provider.reset_credentials(cx);
+            cx.spawn(|this, mut cx| async move {
+                reset_credentials.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.show_authentication_prompt(cx);
+                })
+            })
+            .detach_and_log_err(cx);
         }
     }
 
@@ -963,9 +998,6 @@ impl AssistantPanel {
             let context = context.await?;
             let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1019,9 +1051,6 @@ impl AssistantPanel {
             let context = context.await?;
             let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1153,16 +1182,7 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            let load_credentials = self.authenticate(cx);
-            cx.spawn(|this, mut cx| async move {
-                load_credentials.await?;
-                this.update(&mut cx, |this, cx| {
-                    if this.is_authenticated(cx) && this.active_context_editor(cx).is_none() {
-                        this.new_context(cx);
-                    }
-                })
-            })
-            .detach_and_log_err(cx);
+            self.ensure_authenticated(cx);
         }
     }
 
@@ -1244,7 +1264,7 @@ impl ContextEditor {
     fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
-        workspace: View<Workspace>,
+        workspace: WeakView<Workspace>,
         project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         assistant_panel: WeakView<AssistantPanel>,
@@ -1252,7 +1272,7 @@ impl ContextEditor {
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
             Some(cx.view().downgrade()),
-            Some(workspace.downgrade()),
+            Some(workspace.clone()),
         );
 
         let editor = cx.new_view(|cx| {
@@ -1286,7 +1306,7 @@ impl ContextEditor {
             scroll_position: None,
             remote_id: None,
             fs,
-            workspace: workspace.downgrade(),
+            workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
@@ -1897,18 +1917,20 @@ impl ContextEditor {
                 cx.update(|cx| {
                     for suggestion in suggestion_group.suggestions {
                         let description = suggestion.description.unwrap_or_else(|| "Delete".into());
+
                         let range = {
-                            let buffer = editor.read(cx).buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                            let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
+                            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion.range.start)
                                 .unwrap()
-                                ..buffer
+                                ..multibuffer
                                     .anchor_in_excerpt(excerpt_id, suggestion.range.end)
                                     .unwrap()
                         };
+
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assist_ids.push(assistant.suggest_assist(
+                            let suggestion_id = assistant.suggest_assist(
                                 &editor,
                                 range,
                                 description,
@@ -1916,16 +1938,20 @@ impl ContextEditor {
                                 Some(workspace.clone()),
                                 assistant_panel.upgrade().as_ref(),
                                 cx,
-                            ));
+                            );
+                            assist_ids.push(suggestion_id);
                         });
                     }
 
                     // Scroll the editor to the suggested assist
                     editor.update(cx, |editor, cx| {
-                        let anchor = {
-                            let buffer = editor.buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                            buffer
+                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                        let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0
+                        {
+                            Anchor::min()
+                        } else {
+                            multibuffer
                                 .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
                                 .unwrap()
                         };
@@ -2307,8 +2333,34 @@ impl ContextEditor {
             },
             None => "Send",
         };
+
+        let (style, tooltip) = match token_state(&self.context, cx) {
+            Some(TokenState::NoTokensLeft { .. }) => (
+                ButtonStyle::Tinted(TintColor::Negative),
+                Some(Tooltip::text("Token limit reached", cx)),
+            ),
+            Some(TokenState::HasMoreTokens {
+                over_warn_threshold,
+                ..
+            }) => {
+                let (style, tooltip) = if over_warn_threshold {
+                    (
+                        ButtonStyle::Tinted(TintColor::Warning),
+                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+                    )
+                } else {
+                    (ButtonStyle::Filled, None)
+                };
+                (style, tooltip)
+            }
+            None => (ButtonStyle::Filled, None),
+        };
+
         ButtonLike::new("send_button")
-            .style(ButtonStyle::Filled)
+            .style(style)
+            .when_some(tooltip, |button, tooltip| {
+                button.tooltip(move |_| tooltip.clone())
+            })
             .layer(ElevationIndex::ModalSurface)
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
@@ -2713,25 +2765,30 @@ impl ContextEditorToolbarItem {
     }
 
     fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let context = &self
             .active_context_editor
             .as_ref()?
             .upgrade()?
             .read(cx)
             .context;
-        let token_count = context.read(cx).token_count()?;
-        let max_token_count = model.max_token_count();
-
-        let remaining_tokens = max_token_count as isize - token_count as isize;
-        let token_count_color = if remaining_tokens <= 0 {
-            Color::Error
-        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
-            Color::Warning
-        } else {
-            Color::Muted
+        let (token_count_color, token_count, max_token_count) = match token_state(context, cx)? {
+            TokenState::NoTokensLeft {
+                max_token_count,
+                token_count,
+            } => (Color::Error, token_count, max_token_count),
+            TokenState::HasMoreTokens {
+                max_token_count,
+                token_count,
+                over_warn_threshold,
+            } => {
+                let color = if over_warn_threshold {
+                    Color::Warning
+                } else {
+                    Color::Muted
+                };
+                (color, token_count, max_token_count)
+            }
         };
-
         Some(
             h_flex()
                 .gap_0p5()
@@ -2787,7 +2844,13 @@ impl Render for ContextEditorToolbarItem {
                                             Label::new(
                                                 LanguageModelRegistry::read_global(cx)
                                                     .active_model()
-                                                    .map(|model| model.name().0)
+                                                    .map(|model| {
+                                                        format!(
+                                                            "{}: {}",
+                                                            model.provider_name().0,
+                                                            model.name().0
+                                                        )
+                                                    })
                                                     .unwrap_or_else(|| "No model selected".into()),
                                             )
                                             .size(LabelSize::Small)
@@ -3057,4 +3120,41 @@ fn slash_command_error_block_renderer(message: String) -> RenderBlock {
             )
             .into_any()
     })
+}
+
+enum TokenState {
+    NoTokensLeft {
+        max_token_count: usize,
+        token_count: usize,
+    },
+    HasMoreTokens {
+        max_token_count: usize,
+        token_count: usize,
+        over_warn_threshold: bool,
+    },
+}
+
+fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> {
+    const WARNING_TOKEN_THRESHOLD: f32 = 0.8;
+
+    let model = LanguageModelRegistry::read_global(cx).active_model()?;
+    let token_count = context.read(cx).token_count()?;
+    let max_token_count = model.max_token_count();
+
+    let remaining_tokens = max_token_count as isize - token_count as isize;
+    let token_state = if remaining_tokens <= 0 {
+        TokenState::NoTokensLeft {
+            max_token_count,
+            token_count,
+        }
+    } else {
+        let over_warn_threshold =
+            token_count as f32 / max_token_count as f32 >= WARNING_TOKEN_THRESHOLD;
+        TokenState::HasMoreTokens {
+            max_token_count,
+            token_count,
+            over_warn_threshold,
+        }
+    };
+    Some(token_state)
 }

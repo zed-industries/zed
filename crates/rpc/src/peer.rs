@@ -516,11 +516,7 @@ impl Peer {
                 future::ready(match response {
                     Ok(response) => {
                         if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                            Some(Err(anyhow!(
-                                "RPC request {} failed - {}",
-                                T::NAME,
-                                error.message
-                            )))
+                            Some(Err(RpcError::from_proto(&error, T::NAME)))
                         } else if let Some(proto::envelope::Payload::EndStream(_)) =
                             &response.payload
                         {

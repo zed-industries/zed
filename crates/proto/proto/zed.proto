@@ -311,6 +311,7 @@ enum ErrorCode {
     DevServerOffline = 15;
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
+    RateLimitExceeded = 18;
     reserved 6;
 }
 

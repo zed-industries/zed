@@ -89,7 +89,20 @@ pub trait LanguageModelProvider: 'static {
 }
 
 pub trait LanguageModelProviderState: 'static {
-    fn subscribe<T: 'static>(&self, cx: &mut gpui::ModelContext<T>) -> Option<gpui::Subscription>;
+    type ObservableEntity;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>>;
+
+    fn subscribe<T: 'static>(
+        &self,
+        cx: &mut gpui::ModelContext<T>,
+        callback: impl Fn(&mut T, &mut gpui::ModelContext<T>) + 'static,
+    ) -> Option<gpui::Subscription> {
+        let entity = self.observable_entity()?;
+        Some(cx.observe(&entity, move |this, _, cx| {
+            callback(this, cx);
+        }))
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

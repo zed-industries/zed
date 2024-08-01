@@ -43,11 +43,6 @@ impl FeatureFlag for LanguageModels {
     const NAME: &'static str = "language-models";
 }
 
-pub struct GroupedDiagnostics {}
-impl FeatureFlag for GroupedDiagnostics {
-    const NAME: &'static str = "grouped-diagnostics";
-}
-
 pub struct ZedPro {}
 impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";

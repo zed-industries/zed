@@ -196,6 +196,7 @@ impl Render for BufferSearchBar {
         };
 
         let search_line = h_flex()
+            .mb_1()
             .child(
                 h_flex()
                     .id("editor-scroll")
@@ -295,7 +296,7 @@ impl Render for BufferSearchBar {
                         &SelectNextMatch,
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(h_flex().min_w(rems_from_px(40.)).child(
+                        this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
                             Label::new(match_text).color(if self.active_match_index.is_some() {
                                 Color::Default
                             } else {
