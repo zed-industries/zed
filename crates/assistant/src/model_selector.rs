@@ -37,13 +37,20 @@ impl<T: PopoverTrigger> ModelSelector<T> {
 }
 
 impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let mut menu = PopoverMenu::new("model-switcher");
         if let Some(handle) = self.handle {
             menu = menu.with_handle(handle);
         }
 
         let info_text = self.info_text.clone();
+
+        let pro_badge = div()
+            .h_5()
+            .w_8()
+            .rounded_full()
+            .bg(cx.theme().status().info_background)
+            .child(Label::new("Pro"));
 
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
@@ -111,11 +118,24 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let model_name = available_model.name().0.clone();
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
-                                move |_| {
+                                move |cx| {
                                     h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(Label::new(model_name.clone()))
+                                        .child(
+                                            h_flex()
+                                                .h_5()
+                                                .w_9()
+                                                .justify_center()
+                                                .rounded_full()
+                                                // .bg(cx.theme().status().info_background)
+                                                .child(
+                                                    Label::new("Pro")
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
                                         .when(
                                             selected_model.as_ref() == Some(&id)
                                                 && selected_provider.as_ref() == Some(&provider_id),
