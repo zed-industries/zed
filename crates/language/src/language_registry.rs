@@ -1,4 +1,3 @@
-use crate::language_settings::LanguageSettings;
 use crate::{
     language_settings::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
