@@ -715,17 +715,21 @@ impl FoldSnapshot {
         highlights: Highlights<'a>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
+        transform_cursor.seek(&range.start, Bias::Right, &());
 
-        let inlay_end = {
-            transform_cursor.seek(&range.end, Bias::Right, &());
-            let overshoot = range.end.0 - transform_cursor.start().0 .0;
+        let inlay_start = {
+            let overshoot = range.start.0 - transform_cursor.start().0 .0;
             transform_cursor.start().1 + InlayOffset(overshoot)
         };
 
-        let inlay_start = {
-            transform_cursor.seek(&range.start, Bias::Right, &());
-            let overshoot = range.start.0 - transform_cursor.start().0 .0;
-            transform_cursor.start().1 + InlayOffset(overshoot)
+        let inlay_end = {
+            let transform_end = transform_cursor.end(&());
+            if range.end < transform_end.0 {
+                let overshoot = range.end.0 - transform_cursor.start().0 .0;
+                transform_cursor.start().1 + InlayOffset(overshoot)
+            } else {
+                transform_end.1
+            }
         };
 
         FoldChunks {
@@ -737,8 +741,8 @@ impl FoldSnapshot {
             ),
             inlay_chunk: None,
             inlay_offset: inlay_start,
-            output_offset: range.start.0,
-            max_output_offset: range.end.0,
+            output_offset: range.start,
+            max_output_offset: range.end,
         }
     }
 
@@ -1079,8 +1083,8 @@ pub struct FoldChunks<'a> {
     inlay_chunks: InlayChunks<'a>,
     inlay_chunk: Option<(InlayOffset, Chunk<'a>)>,
     inlay_offset: InlayOffset,
-    output_offset: usize,
-    max_output_offset: usize,
+    output_offset: FoldOffset,
+    max_output_offset: FoldOffset,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -1098,7 +1102,6 @@ impl<'a> Iterator for FoldChunks<'a> {
         if let Some(placeholder) = transform.placeholder.as_ref() {
             self.inlay_chunk.take();
             self.inlay_offset += InlayOffset(transform.summary.input.len);
-            self.inlay_chunks.seek(self.inlay_offset);
 
             while self.inlay_offset >= self.transform_cursor.end(&()).1
                 && self.transform_cursor.item().is_some()
@@ -1106,7 +1109,18 @@ impl<'a> Iterator for FoldChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            self.output_offset += placeholder.text.len();
+            let transform_start = self.transform_cursor.start();
+            let transform_end = self.transform_cursor.end(&());
+            let inlay_end = if self.max_output_offset < transform_end.0 {
+                let overshoot = self.max_output_offset.0 - transform_start.0 .0;
+                transform_start.1 + InlayOffset(overshoot)
+            } else {
+                transform_end.1
+            };
+
+            self.inlay_chunks.seek(self.inlay_offset..inlay_end);
+
+            self.output_offset.0 += placeholder.text.len();
             return Some(Chunk {
                 text: placeholder.text,
                 renderer: Some(placeholder.renderer.clone()),
@@ -1136,7 +1150,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             }
 
             self.inlay_offset = chunk_end;
-            self.output_offset += chunk.text.len();
+            self.output_offset.0 += chunk.text.len();
             return Some(chunk);
         }
 

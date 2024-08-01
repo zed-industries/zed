@@ -93,6 +93,7 @@ settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
+tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
