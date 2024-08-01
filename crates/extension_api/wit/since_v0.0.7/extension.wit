@@ -133,7 +133,7 @@ world extension {
     export complete-slash-command-argument: func(command: slash-command, query: string) -> result<list<slash-command-argument-completion>, string>;
 
     /// Returns the output from running the provided slash command.
-    export run-slash-command: func(command: slash-command, argument: option<string>, worktree: borrow<worktree>) -> result<slash-command-output, string>;
+    export run-slash-command: func(command: slash-command, argument: option<string>, worktree: option<borrow<worktree>>) -> result<slash-command-output, string>;
 
     /// Indexes the docs for the specified package.
     export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
