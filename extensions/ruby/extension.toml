@@ -17,6 +17,7 @@ languages = ["Ruby", "ERB"]
 [language_servers.rubocop]
 name = "Rubocop"
 languages = ["Ruby"]
+secondary = true
 
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"

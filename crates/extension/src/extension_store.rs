@@ -1195,18 +1195,23 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
-                            this.language_registry.register_lsp_adapter(
-                                language.clone(),
-                                Arc::new(ExtensionLspAdapter {
-                                    extension: wasm_extension.clone(),
-                                    host: this.wasm_host.clone(),
-                                    language_server_id: language_server_id.clone(),
-                                    config: wit::LanguageServerConfig {
-                                        name: language_server_id.0.to_string(),
-                                        language_name: language.to_string(),
-                                    },
-                                }),
-                            );
+                            let adapter = Arc::new(ExtensionLspAdapter {
+                                extension: wasm_extension.clone(),
+                                host: this.wasm_host.clone(),
+                                language_server_id: language_server_id.clone(),
+                                config: wit::LanguageServerConfig {
+                                    name: language_server_id.0.to_string(),
+                                    language_name: language.to_string(),
+                                },
+                            });
+
+                            if language_server_config.secondary {
+                                this.language_registry
+                                    .register_secondary_lsp_adapter(language.clone(), adapter);
+                            } else {
+                                this.language_registry
+                                    .register_lsp_adapter(language.clone(), adapter);
+                            }
                         }
                     }
 

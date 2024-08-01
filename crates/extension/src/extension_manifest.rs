@@ -114,6 +114,8 @@ pub struct LanguageServerManifestEntry {
     pub language_ids: HashMap<String, String>,
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+    #[serde(default)]
+    pub secondary: bool,
 }
 
 impl LanguageServerManifestEntry {
