@@ -3723,7 +3723,6 @@ async fn test_fold_perf(cx: &mut TestAppContext) {
         );
     });
     eprintln!("{:?}", t0.elapsed());
-    dbg!(view.display_text());
     eprintln!("<<");
 }
 

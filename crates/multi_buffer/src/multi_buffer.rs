@@ -2425,7 +2425,6 @@ impl MultiBufferSnapshot {
             excerpt_chunks: None,
             language_aware,
         };
-        dbg!(range.clone());
         chunks.seek(range);
         chunks
     }

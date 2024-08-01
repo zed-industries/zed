@@ -1093,9 +1093,7 @@ impl<'a> SyntaxMapMatches<'a> {
 
 impl<'a> SyntaxMapCapturesLayer<'a> {
     fn advance(&mut self) {
-        let t0 = std::time::Instant::now();
         self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[ix]);
-        eprintln!("advance {:?}", t0.elapsed());
     }
 
     fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
