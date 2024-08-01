@@ -32,7 +32,7 @@ impl ZedModel {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            ZedModel::Qwen2_7bInstruct => 8192,
+            ZedModel::Qwen2_7bInstruct => 28000,
         }
     }
 }
