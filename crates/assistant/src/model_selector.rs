@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::SharedString;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelAvailability, LanguageModelRegistry};
+use proto::Plan;
 use settings::update_settings_file;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
@@ -37,7 +38,7 @@ impl<T: PopoverTrigger> ModelSelector<T> {
 }
 
 impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let mut menu = PopoverMenu::new("model-switcher");
         if let Some(handle) = self.handle {
             menu = menu.with_handle(handle);
@@ -109,7 +110,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let id = available_model.id();
                                 let provider_id = available_model.provider_id();
                                 let model_name = available_model.name().0.clone();
-                                let _availability = available_model.availability();
+                                let availability = available_model.availability();
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
                                 move |_| {
@@ -133,11 +134,19 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                                     },
                                                 ),
                                         )
-                                        .child(
-                                            Label::new("Pro")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
+                                        .children(match availability {
+                                            LanguageModelAvailability::Public => None,
+                                            LanguageModelAvailability::RequiresPlan(Plan::Free) => {
+                                                None
+                                            }
+                                            LanguageModelAvailability::RequiresPlan(
+                                                Plan::ZedPro,
+                                            ) => Some(
+                                                Label::new("Pro")
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted),
+                                            ),
+                                        })
                                         .into_any()
                                 }
                             },
