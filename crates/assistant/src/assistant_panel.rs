@@ -46,7 +46,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -139,6 +139,7 @@ pub struct AssistantPanel {
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
+    configuration_subscription: Option<Subscription>,
 }
 
 #[derive(Clone)]
@@ -423,6 +424,7 @@ impl AssistantPanel {
             model_selector_menu_handle,
             model_summary_editor,
             authenticate_provider_task: None,
+            configuration_subscription: None,
         };
 
         if LanguageModelRegistry::read_global(cx)
@@ -478,6 +480,17 @@ impl AssistantPanel {
                 true
             }
 
+            pane::Event::RemoveItem { idx } => {
+                if self
+                    .pane
+                    .read(cx)
+                    .item_for_index(*idx)
+                    .map_or(false, |item| item.downcast::<ConfigurationView>().is_some())
+                {
+                    self.configuration_subscription = None;
+                }
+                false
+            }
             pane::Event::RemovedItem { .. } => {
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
@@ -546,12 +559,7 @@ impl AssistantPanel {
             log::error!("no context found with ID: {}", context_id.to_proto());
             return;
         };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
-            make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-        });
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
 
         let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
@@ -943,6 +951,27 @@ impl AssistantPanel {
                 }
                 view
             });
+            self.configuration_subscription = Some(cx.subscribe(
+                &configuration,
+                |this, _, event: &ConfigurationViewEvent, cx| match event {
+                    ConfigurationViewEvent::NewProviderContextEditor(provider) => {
+                        if LanguageModelRegistry::read_global(cx)
+                            .active_provider()
+                            .map_or(true, |p| p.id() != provider.id())
+                        {
+                            if let Some(model) = provider.provided_models(cx).first().cloned() {
+                                update_settings_file::<AssistantSettings>(
+                                    this.fs.clone(),
+                                    cx,
+                                    move |settings, _| settings.set_model(model),
+                                );
+                            }
+                        }
+
+                        this.new_context(cx);
+                    }
+                },
+            ));
             self.pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(configuration), true, true, None, cx);
             });
@@ -1024,12 +1053,7 @@ impl AssistantPanel {
         let project = self.project.clone();
         let workspace = self.workspace.clone();
 
-        let lsp_adapter_delegate = workspace
-            .update(cx, |workspace, cx| {
-                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-            })
-            .log_err()
-            .flatten();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -1076,13 +1100,7 @@ impl AssistantPanel {
             .update(cx, |store, cx| store.open_remote_context(id, cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-
-        let lsp_adapter_delegate = workspace
-            .update(cx, |workspace, cx| {
-                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
-            })
-            .log_err()
-            .flatten();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -3100,6 +3118,9 @@ impl ConfigurationView {
             return None;
         };
 
+        let provider = active_tab.provider.clone();
+        let provider_name = provider.name().0.clone();
+
         let show_spinner = active_tab.is_loading_credentials();
 
         let content = if show_spinner {
@@ -3123,13 +3144,41 @@ impl ConfigurationView {
         };
 
         Some(
-            div()
-                .p(Spacing::Large.rems(cx))
-                .bg(cx.theme().colors().title_bar_background)
-                .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .rounded_md()
-                .child(content),
+            v_flex()
+                .gap_4()
+                .child(
+                    div()
+                        .p(Spacing::Large.rems(cx))
+                        .bg(cx.theme().colors().title_bar_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .rounded_md()
+                        .child(content),
+                )
+                .when(
+                    !show_spinner && provider.is_authenticated(cx),
+                    move |this| {
+                        this.child(
+                            h_flex().justify_end().child(
+                                Button::new(
+                                    "new-context",
+                                    format!("Open new context using {}", provider_name),
+                                )
+                                .icon_position(IconPosition::Start)
+                                .icon(IconName::Plus)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ModalSurface)
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                                            provider.clone(),
+                                        ))
+                                    },
+                                )),
+                            ),
+                        )
+                    },
+                ),
         )
     }
 
@@ -3218,7 +3267,11 @@ impl Render for ConfigurationView {
     }
 }
 
-impl EventEmitter<()> for ConfigurationView {}
+pub enum ConfigurationViewEvent {
+    NewProviderContextEditor(Arc<dyn LanguageModelProvider>),
+}
+
+impl EventEmitter<ConfigurationViewEvent> for ConfigurationView {}
 
 impl FocusableView for ConfigurationView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
@@ -3230,7 +3283,7 @@ impl FocusableView for ConfigurationView {
 }
 
 impl Item for ConfigurationView {
-    type Event = ();
+    type Event = ConfigurationViewEvent;
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Configuration".into())
