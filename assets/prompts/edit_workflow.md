@@ -32,6 +32,7 @@ This code defines a User struct and implements two methods:
 
 2. User: Great! Now, how can I create a User instance and call the print_info method?
 A: You can create a User instance and call the print_info method like this:
+
 <step>Create a User instance and call print_info
 ```rust
 fn main() {
@@ -68,6 +69,7 @@ impl User {
 }
 ```
 </step>
+
 <step>Update the main function
 ```rust
 fn main() {
@@ -76,6 +78,7 @@ fn main() {
 }
 ```
 </step>
+
 This will now output: `Name: Alice, Age: 30, Email: alice@example.com`
 The changes include:
 1. Adding the `email` field to the User struct
