@@ -106,6 +106,7 @@ impl IconSize {
 )]
 pub enum IconName {
     Ai,
+    AiAnthropic,
     ArrowCircle,
     ArrowDown,
     ArrowDownFromLine,
@@ -262,6 +263,7 @@ impl IconName {
     pub fn path(self) -> &'static str {
         match self {
             IconName::Ai => "icons/ai.svg",
+            IconName::AiAnthropic => "icons/ai_anthropic.svg",
             IconName::ArrowCircle => "icons/arrow_circle.svg",
             IconName::ArrowDown => "icons/arrow_down.svg",
             IconName::ArrowDownFromLine => "icons/arrow_down_from_line.svg",

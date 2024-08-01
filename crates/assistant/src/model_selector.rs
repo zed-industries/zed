@@ -105,6 +105,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                         .map(|m| m.id());
 
                     for available_model in available_models {
+                        let provider = provider.clone();
                         menu = menu.custom_entry(
                             {
                                 let id = available_model.id();
@@ -114,12 +115,19 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
                                 move |_| {
+                                    let provider = provider.clone();
+
                                     h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(
                                             h_flex()
-                                                .gap_1()
+                                                .gap_1p5()
+                                                .child(
+                                                    Icon::new(provider.icon())
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted),
+                                                )
                                                 .child(Label::new(model_name.clone()))
                                                 .when(
                                                     selected_model.as_ref() == Some(&id)
