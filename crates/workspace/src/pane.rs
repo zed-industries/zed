@@ -2017,7 +2017,7 @@ impl Pane {
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        let load_path_task = workspace.load_path(path.into(), cx);
+                        let load_path_task = workspace.load_path(path, cx);
                         cx.spawn(|workspace, mut cx| async move {
                             match load_path_task.await {
                                 Ok((project_entry_id, build_item)) => {
@@ -2120,8 +2120,8 @@ impl Pane {
                     {
                         let opened_items: Vec<_> = open_task.await;
                         _ = workspace.update(&mut cx, |workspace, cx| {
-                            for item in opened_items {
-                                if let Some(Err(e)) = item {
+                            for item in opened_items.into_iter().flatten() {
+                                if let Err(e) = item {
                                     workspace.show_error(&e, cx);
                                 }
                             }
