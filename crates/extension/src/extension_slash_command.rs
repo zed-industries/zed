@@ -81,7 +81,7 @@ impl SlashCommand for ExtensionSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let argument = argument.map(|arg| arg.to_string());
@@ -91,6 +91,9 @@ impl SlashCommand for ExtensionSlashCommand {
                     let this = self.clone();
                     move |extension, store| {
                         async move {
+                            let delegate = delegate.ok_or_else(|| {
+                                anyhow!("no worktree for extension slash command")
+                            })?;
                             let resource = store.data_mut().table().push(delegate)?;
                             let output = extension
                                 .call_run_slash_command(
