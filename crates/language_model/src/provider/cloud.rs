@@ -415,7 +415,7 @@ impl Render for ConfigurationView {
                 .max_w_4_5()
                 .child(Label::new(
                     if is_pro {
-                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google through Zed Pro."
+                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
                     } else {
                         "You have basic access to models from Anthropic, OpenAI, Google and more through the Zed AI Free plan."
                     }))
