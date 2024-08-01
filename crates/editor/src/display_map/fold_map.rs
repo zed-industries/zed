@@ -11,7 +11,7 @@ use std::{
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
-use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
 use util::post_inc;
 
 #[derive(Clone)]
@@ -277,6 +277,17 @@ impl FoldMap {
                 "transform tree does not match inlay snapshot's length"
             );
 
+            let mut prev_transform_isomorphic = false;
+            for transform in self.snapshot.transforms.iter() {
+                if !transform.is_fold() && prev_transform_isomorphic {
+                    panic!(
+                        "found adjacent isomorphic transforms: {:?}",
+                        self.snapshot.transforms.items(&())
+                    );
+                }
+                prev_transform_isomorphic = !transform.is_fold();
+            }
+
             let mut folds = self.snapshot.folds.iter().peekable();
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
@@ -303,11 +314,24 @@ impl FoldMap {
         } else {
             let mut inlay_edits_iter = inlay_edits.iter().cloned().peekable();
 
-            let mut new_transforms = SumTree::new();
+            let mut new_transforms = SumTree::<Transform>::new();
             let mut cursor = self.snapshot.transforms.cursor::<InlayOffset>();
             cursor.seek(&InlayOffset(0), Bias::Right, &());
 
             while let Some(mut edit) = inlay_edits_iter.next() {
+                if let Some(item) = cursor.item() {
+                    if !item.is_fold() {
+                        new_transforms.update_last(
+                            |transform| {
+                                if !transform.is_fold() {
+                                    transform.summary.add_summary(&item.summary, &());
+                                    cursor.next(&());
+                                }
+                            },
+                            &(),
+                        );
+                    }
+                }
                 new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
                 edit.new.start -= edit.old.start - *cursor.start();
                 edit.old.start = *cursor.start();
@@ -392,16 +416,7 @@ impl FoldMap {
                     if fold_range.start.0 > sum.input.len {
                         let text_summary = inlay_snapshot
                             .text_summary_for_range(InlayOffset(sum.input.len)..fold_range.start);
-                        new_transforms.push(
-                            Transform {
-                                summary: TransformSummary {
-                                    output: text_summary.clone(),
-                                    input: text_summary,
-                                },
-                                placeholder: None,
-                            },
-                            &(),
-                        );
+                        push_isomorphic(&mut new_transforms, text_summary);
                     }
 
                     if fold_range.end > fold_range.start {
@@ -438,32 +453,14 @@ impl FoldMap {
                 if sum.input.len < edit.new.end.0 {
                     let text_summary = inlay_snapshot
                         .text_summary_for_range(InlayOffset(sum.input.len)..edit.new.end);
-                    new_transforms.push(
-                        Transform {
-                            summary: TransformSummary {
-                                output: text_summary.clone(),
-                                input: text_summary,
-                            },
-                            placeholder: None,
-                        },
-                        &(),
-                    );
+                    push_isomorphic(&mut new_transforms, text_summary);
                 }
             }
 
             new_transforms.append(cursor.suffix(&()), &());
             if new_transforms.is_empty() {
                 let text_summary = inlay_snapshot.text_summary();
-                new_transforms.push(
-                    Transform {
-                        summary: TransformSummary {
-                            output: text_summary.clone(),
-                            input: text_summary,
-                        },
-                        placeholder: None,
-                    },
-                    &(),
-                );
+                push_isomorphic(&mut new_transforms, text_summary);
             }
 
             drop(cursor);
@@ -784,6 +781,32 @@ impl FoldSnapshot {
         } else {
             FoldPoint(self.transforms.summary().output.lines)
         }
+    }
+}
+
+fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
+    let mut did_merge = false;
+    transforms.update_last(
+        |last| {
+            if !last.is_fold() {
+                last.summary.input += summary.clone();
+                last.summary.output += summary.clone();
+                did_merge = true;
+            }
+        },
+        &(),
+    );
+    if !did_merge {
+        transforms.push(
+            Transform {
+                summary: TransformSummary {
+                    input: summary.clone(),
+                    output: summary,
+                },
+                placeholder: None,
+            },
+            &(),
+        )
     }
 }
 
