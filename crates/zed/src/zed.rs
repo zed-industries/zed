@@ -35,6 +35,7 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
+use workspace::InitializeWorkspaceFn;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -119,7 +120,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
 }
 
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.set_global(InitializeWorkspaceFn(Arc::new(move |workspace: &mut Workspace, cx| {
         let workspace_handle = cx.view().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, cx);
@@ -236,53 +237,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 })
             });
         }
-
-        cx.spawn(|workspace_handle, mut cx| async move {
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
-
-            let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
-            let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            let channels_panel =
-                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-            let chat_panel =
-                collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-                workspace_handle.clone(),
-                cx.clone(),
-            );
-
-            let (
-                project_panel,
-                outline_panel,
-                terminal_panel,
-                assistant_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
-            ) = futures::try_join!(
-                project_panel,
-                outline_panel,
-                terminal_panel,
-                assistant_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
-            )?;
-
-            workspace_handle.update(&mut cx, |workspace, cx| {
-                workspace.add_panel(assistant_panel, cx);
-                workspace.add_panel(project_panel, cx);
-                workspace.add_panel(outline_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(channels_panel, cx);
-                workspace.add_panel(chat_panel, cx);
-                workspace.add_panel(notification_panel, cx);
-                cx.focus_self();
-            })
-        })
-        .detach();
 
         workspace
             .register_action(about)
@@ -532,8 +486,53 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
 
         workspace.focus_handle(cx).focus(cx);
-    })
-    .detach();
+
+        cx.spawn(|workspace_handle, mut cx| async move {
+            let assistant_panel =
+                assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
+
+            let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+            let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+            let channels_panel =
+                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            let chat_panel =
+                collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
+            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+                workspace_handle.clone(),
+                cx.clone(),
+            );
+
+            let (
+                project_panel,
+                outline_panel,
+                terminal_panel,
+                assistant_panel,
+                channels_panel,
+                chat_panel,
+                notification_panel,
+            ) = futures::try_join!(
+                project_panel,
+                outline_panel,
+                terminal_panel,
+                assistant_panel,
+                channels_panel,
+                chat_panel,
+                notification_panel,
+            )?;
+
+            workspace_handle.update(&mut cx, |workspace, cx| {
+                workspace.add_panel(assistant_panel, cx);
+                workspace.add_panel(project_panel, cx);
+                workspace.add_panel(outline_panel, cx);
+                workspace.add_panel(terminal_panel, cx);
+                workspace.add_panel(channels_panel, cx);
+                workspace.add_panel(chat_panel, cx);
+                workspace.add_panel(notification_panel, cx);
+                cx.focus_self();
+            })
+        })
+    })));
 }
 
 fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {

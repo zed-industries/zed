@@ -148,6 +148,12 @@ actions!(
     ]
 );
 
+pub struct InitializeWorkspaceFn(
+    pub Arc<dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>>,
+);
+
+impl Global for InitializeWorkspaceFn {}
+
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
@@ -1166,6 +1172,16 @@ impl Workspace {
             };
 
             notify_if_database_failed(window, &mut cx);
+
+            let initialize_workspace = window.update(&mut cx, |workspace, cx| {
+                let initialize_workspace = cx.try_global::<InitializeWorkspaceFn>()?.0.clone();
+                Some((initialize_workspace)(workspace, cx))
+            })?;
+
+            if let Some(initialize_workspace) = initialize_workspace {
+                initialize_workspace.await.log_err();
+            }
+
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
                     open_items(serialized_workspace, project_paths, app_state, cx)
