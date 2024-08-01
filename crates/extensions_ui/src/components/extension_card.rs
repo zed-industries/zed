@@ -48,7 +48,6 @@ impl RenderOnce for ExtensionCard {
                             .absolute()
                             .top_0()
                             .left_0()
-                            .occlude()
                             .size_full()
                             .items_center()
                             .justify_center()

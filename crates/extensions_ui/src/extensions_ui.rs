@@ -587,6 +587,7 @@ impl ExtensionsPage {
                                     SharedString::from(format!("repository-{}", extension.id)),
                                     IconName::Github,
                                 )
+                                .disabled(has_dev_extension)
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
                                 .style(ButtonStyle::Filled)
@@ -608,6 +609,7 @@ impl ExtensionsPage {
                                         SharedString::from(format!("more-{}", extension.id)),
                                         IconName::Ellipsis,
                                     )
+                                    .disabled(has_dev_extension)
                                     .icon_color(Color::Accent)
                                     .icon_size(IconSize::Small)
                                     .style(ButtonStyle::Filled),
@@ -690,7 +692,7 @@ impl ExtensionsPage {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
             // The button here is a placeholder, as it won't be interactable anyways.
             return (
-                Button::new(SharedString::from(extension.id.clone()), "Install"),
+                Button::new(SharedString::from(extension.id.clone()), "Install").disabled(true),
                 None,
             );
         }
