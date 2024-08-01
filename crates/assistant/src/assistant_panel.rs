@@ -378,6 +378,7 @@ impl AssistantPanel {
                         el.child(Pane::render_menu_overlay(new_item_menu))
                     })
                     .into_any_element()
+                    .into()
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), cx);
