@@ -6012,6 +6012,8 @@ impl Editor {
             return;
         };
 
+        dbg!(buffer.read(cx).project_path(cx));
+
         let buffer_id = buffer.read(cx).remote_id();
 
         let breakpoint = Breakpoint {

@@ -1124,6 +1124,7 @@ impl ProjectItem for Editor {
         buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        dbg!("Opening a buffer as a project item");
         Self::for_buffer(buffer, Some(project), cx)
     }
 }

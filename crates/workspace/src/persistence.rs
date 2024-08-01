@@ -135,6 +135,31 @@ impl Column for SerializedWindowBounds {
     }
 }
 
+struct Breakpoint {
+    position: u64,
+}
+
+impl sqlez::bindable::StaticColumnCount for Breakpoint {}
+impl sqlez::bindable::Bind for Breakpoint {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        statement.bind(&self.position, start_index)
+    }
+}
+
+impl Column for Breakpoint {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let position = statement
+            .column_int64(start_index)
+            .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
+            as u64;
+        Ok((Breakpoint { position }, start_index + 1))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct SerializedPixels(gpui::Pixels);
 impl sqlez::bindable::StaticColumnCount for SerializedPixels {}
@@ -202,6 +227,13 @@ define_connection! {
     //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
     //     active: bool, // Indicates if this item is the active one in the pane
     //     preview: bool // Indicates if this item is a preview item
+    // )
+    //
+    // Anthony is testing database configs below
+    // CREATE TABLE breakpoints(
+    //      workspace_id: usize Foreign Key, // References workspace table
+    //      local_path: PathBuf, // References the file that the breakpoints belong too
+    //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[sql!(
@@ -348,6 +380,15 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN session_id TEXT DEFAULT NULL;
     ),
+    sql!(CREATE TABLE breakpoints (
+               workspace_id INTEGER NOT NULL,
+               file_path BLOB NOT NULL,
+               breakpoint_location INTEGER NOT NULL,
+               FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+               ON DELETE CASCADE
+               ON UPDATE CASCADE
+           ) STRICT;
+       ),
     ];
 }
 
@@ -689,6 +730,27 @@ impl WorkspaceDb {
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
+        }
+    }
+
+    query! {
+        pub fn breakpoints(id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
+            SELECT breakpoint_location
+            FROM breakpoints
+            WHERE workspace_id = ?1 AND file_path = ?2
+        }
+    }
+
+    query! {
+        pub fn clear_breakpoints(id: WorkspaceId, file_path: &Path) -> Result<()> {
+            DELETE FROM breakpoints
+            WHERE workspace_id = ?1 AND file_path = ?2
+        }
+    }
+
+    query! {
+        pub fn insert_breakpoint(id: WorkspaceId, file_path: &Path, breakpoint_location: Breakpoint) -> Result<()> {
+            INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location) VALUES (?1, ?2, ?3)
         }
     }
 

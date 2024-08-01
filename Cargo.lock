@@ -13370,6 +13370,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap-types",
  "db",
  "derive_more",
  "dev_server_projects",

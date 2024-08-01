@@ -8,12 +8,14 @@ use util::paths::PathExt;
 
 use crate::statement::{SqlType, Statement};
 
+/// Define the number of columns that a type occupies in a query/database
 pub trait StaticColumnCount {
     fn column_count() -> usize {
         1
     }
 }
 
+/// Bind values of different types to placeholders in a prepared SQL statement.
 pub trait Bind {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32>;
 }
