@@ -433,7 +433,7 @@ impl Render for ConfigurationView {
                             })))
                             .child(
                         Button::new("upgrade", "Upgrade")
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Subtle)
                             .color(Color::Accent)
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.open_url(ACCOUNT_SETTINGS_URL)

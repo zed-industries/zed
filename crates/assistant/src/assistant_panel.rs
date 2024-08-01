@@ -3007,7 +3007,7 @@ impl ConfigurationView {
         Some(
             div()
                 .p(Spacing::Large.rems(cx))
-                .bg(cx.theme().colors().surface_background)
+                .bg(cx.theme().colors().title_bar_background)
                 .border_1()
                 .border_color(cx.theme().colors().border_variant)
                 .rounded_md()
@@ -3080,22 +3080,43 @@ impl Render for ConfigurationView {
             .min_h_full()
             .p(Spacing::XXLarge.rems(cx))
             .overflow_y_scroll()
-            .gap_8()
-
-            .child(v_flex().gap_2()
-            .child(Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium))
+            .gap_6()
             .child(
-                Label::new("Set up your assistant provider and learn how to work with the Assistant to streamline your workflow.")
-                    .color(Color::Muted),
-            ))
-            .child(v_flex().gap_2()
-            .child(Headline::new("Choosing a Provider").size(HeadlineSize::Small))
-            .child(tabs)
-            .children(self.render_active_tab_view(cx))
+                v_flex()
+                    .gap_2()
+                    .child(
+                        Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium),
+                    )
+                    .child(
+                        Label::new("Choose a provider to get started with the assistant.")
+                            .color(Color::Muted),
+                    ),
             )
-            .child(v_flex().gap_2()
-            .child(Headline::new("Using the Assistant").size(HeadlineSize::Small))
-.child(Label::new(assistant_text)))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new("Choosing a Provider").size(HeadlineSize::Small))
+                    .child(tabs)
+                    .children(self.render_active_tab_view(cx)),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new("Using the Assistant").size(HeadlineSize::Small))
+                    .child(Label::new(assistant_text)),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new("Adding Prompts").size(HeadlineSize::Small))
+                    .child(Label::new(assistant_text)),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new("Viewing past contexts").size(HeadlineSize::Small))
+                    .child(Label::new(assistant_text)),
+            )
     }
 }
 
