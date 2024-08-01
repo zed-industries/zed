@@ -535,6 +535,7 @@ pub struct Window {
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    mouse_down: bool,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     scale_factor: f32,
@@ -811,6 +812,7 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            mouse_down: false,
             mouse_hit_test: HitTest::default(),
             modifiers,
             scale_factor,
@@ -3010,7 +3012,7 @@ impl<'a> WindowContext<'a> {
 
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
-        if self.is_window_hovered() && !self.app.has_active_drag() {
+        if self.is_window_hovered() && !self.app.has_active_drag() && !self.window.mouse_down {
             let style = self
                 .window
                 .rendered_frame
@@ -3082,11 +3084,13 @@ impl<'a> WindowContext<'a> {
             }
             PlatformInput::MouseDown(mouse_down) => {
                 self.window.mouse_position = mouse_down.position;
+                self.window.mouse_down = true;
                 self.window.modifiers = mouse_down.modifiers;
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
                 self.window.mouse_position = mouse_up.position;
+                self.window.mouse_down = false;
                 self.window.modifiers = mouse_up.modifiers;
                 PlatformInput::MouseUp(mouse_up)
             }
