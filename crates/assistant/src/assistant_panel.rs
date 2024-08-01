@@ -91,7 +91,8 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
-                .register_action(ContextEditor::insert_selection);
+                .register_action(ContextEditor::insert_selection)
+                .register_action(AssistantPanel::show_configuration);
         },
     )
     .detach();
@@ -879,7 +880,25 @@ impl AssistantPanel {
         }
     }
 
-    fn show_configuration(&mut self, _: &ShowConfiguration, cx: &mut ViewContext<Self>) {
+    fn show_configuration(
+        workspace: &mut Workspace,
+        _: &ShowConfiguration,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        panel.update(cx, |this, cx| {
+            this.show_configuration_for_active_provider(cx);
+        })
+    }
+
+    fn show_configuration_for_active_provider(&mut self, cx: &mut ViewContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         self.show_configuration_for_provider(provider, cx);
     }
@@ -1110,7 +1129,9 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(AssistantPanel::show_configuration))
+            .on_action(cx.listener(|this, _: &ShowConfiguration, cx| {
+                this.show_configuration_for_active_provider(cx)
+            }))
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
