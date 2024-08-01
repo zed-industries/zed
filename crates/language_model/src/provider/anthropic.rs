@@ -461,8 +461,9 @@ impl Render for ConfigurationView {
         ];
 
         if self.state.read(cx).is_authenticated() {
-            v_flex()
+            h_flex()
                 .size_full()
+                .justify_between()
                 .child(
                     h_flex()
                         .gap_2()
@@ -471,7 +472,9 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Button::new("reset-key", "Reset key")
-                        .icon(Some(IconName::GenericRestore))
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
                         .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )
                 .into_any()
