@@ -929,6 +929,15 @@ impl AssistantPanel {
         if let Some(configuration_item_ix) = configuration_item_ix {
             self.pane.update(cx, |pane, cx| {
                 pane.activate_item(configuration_item_ix, true, true, cx);
+                if let Some((item, provider)) =
+                    pane.item_for_index(configuration_item_ix).zip(provider)
+                {
+                    if let Some(view) = item.downcast::<ConfigurationView>() {
+                        view.update(cx, |view, cx| {
+                            view.set_active_tab(provider, cx);
+                        });
+                    }
+                }
             });
         } else {
             let configuration = cx.new_view(|cx| {
