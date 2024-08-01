@@ -402,7 +402,7 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
-        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/settings";
+        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
         let is_connected = self.state.read(cx).is_connected();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
