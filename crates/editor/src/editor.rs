@@ -570,9 +570,10 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    /// All the breakpoints that are active within a project
-    /// Is shared with editor's active project
-    breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, HashSet<Breakpoint>>>>>,
+    /// All the breakpoints that are contained within open buffers in the editor
+    opened_breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
+    /// All breakpoints that belong to this project but are in closed files
+    closed_breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1791,7 +1792,7 @@ impl Editor {
         };
 
         let breakpoints = if let Some(project) = project.as_ref() {
-            Some(project.update(cx, |project, _cx| project.breakpoints.clone()))
+            Some(project.update(cx, |project, _cx| project.open_breakpoints.clone()))
         } else {
             None
         };
@@ -1898,7 +1899,8 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            breakpoints,
+            opened_breakpoints: breakpoints,
+            closed_breakpoints: None,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -6004,7 +6006,7 @@ impl Editor {
             return;
         };
 
-        let Some(breakpoints) = &self.breakpoints else {
+        let Some(breakpoints) = &self.opened_breakpoints else {
             return;
         };
 
@@ -6013,12 +6015,7 @@ impl Editor {
         };
 
         let buffer = buffer.read(cx);
-
-        let Some(file_path) = buffer.project_path(cx) else {
-            return;
-        };
-
-        let snapshot = buffer.snapshot();
+        let buffer_id = buffer.remote_id();
 
         let breakpoint = Breakpoint {
             position: breakpoint_position,
@@ -6030,7 +6027,7 @@ impl Editor {
         {
             let mut write_guard = breakpoints.write();
 
-            let breakpoint_set = write_guard.entry(file_path.clone()).or_default();
+            let breakpoint_set = write_guard.entry(buffer_id).or_default();
 
             if !breakpoint_set.remove(&breakpoint) {
                 breakpoint_set.insert(breakpoint);
@@ -6039,7 +6036,7 @@ impl Editor {
 
         project.update(cx, |project, cx| {
             if project.has_active_debugger() {
-                project.update_file_breakpoints(snapshot, file_path, cx);
+                project.update_file_breakpoints(buffer_id, cx);
             }
         });
 

@@ -43,7 +43,7 @@ use item::{
     ProjectItem, SerializableItem, SerializableItemHandle,
 };
 use itertools::Itertools;
-use language::{proto::deserialize_selection, LanguageRegistry, Rope};
+use language::{LanguageRegistry, Rope};
 use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
@@ -4021,7 +4021,7 @@ impl Workspace {
         if let Some(location) = location {
             let breakpoint_lines = self
                 .project
-                .update(cx, |project, cx| project.seralize_breakpoints(cx));
+                .update(cx, |project, cx| project.serialize_breakpoints(cx));
 
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);

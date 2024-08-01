@@ -505,7 +505,7 @@ impl WorkspaceDb {
                     log::error!("Breakpoints are empty");
                 }
 
-                let mut map: HashMap<PathBuf, Vec<u64>> = HashMap::new();
+                let mut map: HashMap<PathBuf, Vec<u64>> = Default::default();
 
                 for (file_path, breakpoint) in bp {
                     map.entry(file_path).or_default().push(breakpoint.position);
@@ -1278,6 +1278,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -1289,6 +1290,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1392,6 +1394,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -1425,6 +1428,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -1436,6 +1440,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1477,6 +1482,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -1512,6 +1518,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
+            breakpoints: None,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -1523,6 +1530,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
+            breakpoints: None,
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -1534,6 +1542,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-2".to_owned()),
+            breakpoints: None,
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -1545,6 +1554,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1582,6 +1592,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
+            breakpoints: None,
         }
     }
 

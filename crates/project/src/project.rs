@@ -182,7 +182,8 @@ pub struct Project {
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    pub breakpoints: Arc<RwLock<BTreeMap<ProjectPath, HashSet<Breakpoint>>>>,
+    pub open_breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
+    closed_breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -826,7 +827,8 @@ impl Project {
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 debug_adapters: Default::default(),
-                breakpoints: Default::default(),
+                open_breakpoints: Default::default(),
+                closed_breakpoints: Default::default(),
                 language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_formatting_failure: None,
@@ -1021,7 +1023,8 @@ impl Project {
                     })
                     .collect(),
                 debug_adapters: Default::default(),
-                breakpoints: Default::default(),
+                open_breakpoints: Default::default(),
+                closed_breakpoints: Default::default(),
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
@@ -1153,18 +1156,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         cx.spawn(|project, mut cx| async move {
+            // TODO: Send breakpoints from unopened files as well
             let task = project.update(&mut cx, |project, cx| {
                 let mut tasks = Vec::new();
-                let buffer_store = project.buffer_store.read(cx);
 
-                for (project_path, breakpoints) in project.breakpoints.read().iter() {
-                    let buffer_id = buffer_store.buffer_id_for_project_path(project_path);
-
-                    let Some(buffer_id) = buffer_id else {
+                for (buffer_id, breakpoints) in project.open_breakpoints.read().iter() {
+                    let Some(buffer) = maybe!({
+                        let buffer = project.buffer_for_id(*buffer_id, cx)?;
+                        Some(buffer.read(cx))
+                    }) else {
                         continue;
                     };
 
                     let res = maybe!({
+                        let project_path = buffer.project_path(cx)?;
                         let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
                         let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
@@ -1172,17 +1177,13 @@ impl Project {
                     });
 
                     if let Some((path, breakpoints)) = res {
-                        let Some(buffer) = &project.buffer_for_id(*buffer_id, cx) else {
-                            continue;
-                        };
-
                         tasks.push(
                             client.set_breakpoints(
                                 path.clone(),
                                 Some(
                                     breakpoints
                                         .iter()
-                                        .map(|b| b.source_for_snapshot(&buffer.read(cx).snapshot()))
+                                        .map(|b| b.source_for_snapshot(&buffer.snapshot()))
                                         .collect::<Vec<_>>(),
                                 ),
                             ),
@@ -1288,23 +1289,19 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
-    pub fn breakpoint_lines_for_project_path(
+    pub fn serialize_breakpoint_for_buffer_id(
         &self,
-        project_path: &ProjectPath,
+        buffer_id: &BufferId,
         cx: &ModelContext<Self>,
-    ) -> Option<Vec<u64>> {
-        let buffer_id = self
-            .buffer_store
-            .read(cx)
-            .buffer_id_for_project_path(project_path)?;
-
+    ) -> Option<(PathBuf, Vec<u64>)> {
         let buffer = self.buffer_for_id(*buffer_id, cx)?.read(cx);
+        let path = buffer.project_path(cx)?;
+        let bp_read_guard = self.open_breakpoints.read();
 
-        let bp_read_guard = self.breakpoints.read();
-
-        Some(
+        Some((
+            path.path.to_path_buf(),
             bp_read_guard
-                .get(project_path)?
+                .get(buffer_id)?
                 .iter()
                 .map(|breakpoint| {
                     buffer
@@ -1312,30 +1309,27 @@ impl Project {
                         .row as u64
                 })
                 .collect(),
-        )
+        ))
     }
 
-    pub fn seralize_breakpoints(&self, cx: &ModelContext<Self>) -> Vec<(PathBuf, Vec<u64>)> {
-        let breakpoint_read_guard = self.breakpoints.read();
+    pub fn serialize_breakpoints(&self, cx: &ModelContext<Self>) -> Vec<(PathBuf, Vec<u64>)> {
+        let breakpoint_read_guard = self.open_breakpoints.read();
         let mut result = Vec::new();
 
-        for project_path in breakpoint_read_guard.keys() {
-            if let Some(breakpoint_lines) =
-                self.breakpoint_lines_for_project_path(&project_path, cx)
+        for buffer_id in breakpoint_read_guard.keys() {
+            if let Some(serialize_breakpoints) =
+                self.serialize_breakpoint_for_buffer_id(&buffer_id, cx)
             {
-                result.push((project_path.path.to_path_buf(), breakpoint_lines))
+                result.push(serialize_breakpoints)
             }
         }
 
+        // TODO Add breakpoints that are in closed buffers
         result
     }
 
-    pub fn update_file_breakpoints(
-        &self,
-        snapshot: BufferSnapshot,
-        project_path: ProjectPath,
-        cx: &ModelContext<Self>,
-    ) {
+    // We don't need to send breakpoints from closed files because ... TODO: Fill in reasoning
+    pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &ModelContext<Self>) {
         let clients = self
             .debug_adapters
             .iter()
@@ -1345,7 +1339,18 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
+        if clients.is_empty() {
+            return;
+        }
+
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        let buffer = buffer.read(cx);
+
         let file_path = maybe!({
+            let project_path = buffer.project_path(cx)?;
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
@@ -1356,9 +1361,10 @@ impl Project {
             return;
         };
 
-        let read_guard = self.breakpoints.read();
+        let read_guard = self.open_breakpoints.read();
 
-        let breakpoints_locations = read_guard.get(&project_path);
+        let breakpoints_locations = read_guard.get(&buffer_id);
+        let snapshot = buffer.snapshot();
 
         if let Some(breakpoints_locations) = breakpoints_locations {
             let breakpoints_locations = Some(

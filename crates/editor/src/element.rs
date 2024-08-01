@@ -1576,7 +1576,7 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            let Some(breakpoints) = &editor.breakpoints else {
+            let Some(breakpoints) = &editor.opened_breakpoints else {
                 return vec![];
             };
 
@@ -1584,14 +1584,10 @@ impl EditorElement {
                 return vec![];
             };
 
-            let Some(project_path) = project::Item::project_path(active_buffer.read(cx), cx) else {
-                return vec![];
-            };
-
+            let buffer_id = active_buffer.read(cx).remote_id();
             let read_guard = breakpoints.read();
 
-            let mut breakpoints_to_render = if let Some(breakpoint_set) =
-                read_guard.get(&project_path)
+            let mut breakpoints_to_render = if let Some(breakpoint_set) = read_guard.get(&buffer_id)
             {
                 breakpoint_set
                     .iter()
