@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
 };
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator};
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
@@ -39,6 +39,10 @@ pub struct State {
 }
 
 impl State {
+    fn is_authenticated(&self) -> bool {
+        !self.available_models.is_empty()
+    }
+
     fn fetch_models(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = self.http_client.clone();
@@ -129,7 +133,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
-        !self.state.read(cx).available_models.is_empty()
+        self.state.read(cx).is_authenticated()
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -140,14 +144,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         let state = self.state.clone();
-        let fetch_models = Box::new(move |cx: &mut WindowContext| {
-            state.update(cx, |this, cx| this.fetch_models(cx))
-        });
-
-        cx.new_view(|cx| DownloadOllamaMessage::new(fetch_models, cx))
-            .into()
+        (
+            cx.new_view(|cx| ConfigurationView::new(state, cx)).into(),
+            None,
+        )
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -287,16 +289,19 @@ impl LanguageModel for OllamaLanguageModel {
     }
 }
 
-struct DownloadOllamaMessage {
-    retry_connection: Box<dyn Fn(&mut WindowContext) -> Task<Result<()>>>,
+struct ConfigurationView {
+    state: gpui::Model<State>,
 }
 
-impl DownloadOllamaMessage {
-    pub fn new(
-        retry_connection: Box<dyn Fn(&mut WindowContext) -> Task<Result<()>>>,
-        _cx: &mut ViewContext<Self>,
-    ) -> Self {
-        Self { retry_connection }
+impl ConfigurationView {
+    pub fn new(state: gpui::Model<State>, _cx: &mut ViewContext<Self>) -> Self {
+        Self { state }
+    }
+
+    fn retry_connection(&self, cx: &mut WindowContext) {
+        self.state
+            .update(cx, |state, cx| state.fetch_models(cx))
+            .detach_and_log_err(cx);
     }
 
     fn render_download_button(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -314,15 +319,7 @@ impl DownloadOllamaMessage {
             .size(ButtonSize::Large)
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new("Retry"))
-            .on_click(cx.listener(move |this, _, cx| {
-                let connected = (this.retry_connection)(cx);
-
-                cx.spawn(|_this, _cx| async move {
-                    connected.await?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx)
-            }))
+            .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
     }
 
     fn render_next_steps(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -347,10 +344,22 @@ impl DownloadOllamaMessage {
     }
 }
 
-impl Render for DownloadOllamaMessage {
+impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .p_4()
+        let is_authenticated = self.state.read(cx).is_authenticated();
+
+        if is_authenticated {
+            v_flex()
+                .size_full()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("Ollama configured").size(LabelSize::Small)),
+                )
+                .into_any()
+        } else {
+            v_flex()
             .size_full()
             .gap_2()
             .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.").size(LabelSize::Large))
@@ -369,5 +378,6 @@ impl Render for DownloadOllamaMessage {
             )
             .child(self.render_next_steps(cx))
             .into_any()
+        }
     }
 }

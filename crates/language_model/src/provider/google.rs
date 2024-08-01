@@ -4,8 +4,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use google_ai::stream_generate_content;
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
-    WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FocusHandle, FocusableView, FontStyle, ModelContext,
+    Subscription, Task, TextStyle, View, WhiteSpace,
 };
 use http_client::HttpClient;
 use schemars::JsonSchema;
@@ -14,7 +14,7 @@ use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, Indicator};
 use util::ResultExt;
 
 use crate::{
@@ -47,6 +47,24 @@ pub struct GoogleLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     _subscription: Subscription,
+}
+
+impl State {
+    fn is_authenticated(&self) -> bool {
+        self.api_key.is_some()
+    }
+
+    fn reset_api_key(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let delete_credentials =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).google.api_url);
+        cx.spawn(|this, mut cx| async move {
+            delete_credentials.await.ok();
+            this.update(&mut cx, |this, cx| {
+                this.api_key = None;
+                cx.notify();
+            })
+        })
+    }
 }
 
 impl GoogleLanguageModelProvider {
@@ -118,7 +136,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.state.read(cx).api_key.is_some()
+        self.state.read(cx).is_authenticated()
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -149,9 +167,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         }
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(self.state.clone(), cx))
-            .into()
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+        let view = cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx));
+
+        let focus_handle = view.focus_handle(cx);
+        (view.into(), Some(focus_handle))
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -267,15 +287,15 @@ impl LanguageModel for GoogleLanguageModel {
     }
 }
 
-struct AuthenticationPrompt {
-    api_key: View<Editor>,
+struct ConfigurationView {
+    api_key_editor: View<Editor>,
     state: gpui::Model<State>,
 }
 
-impl AuthenticationPrompt {
+impl ConfigurationView {
     fn new(state: gpui::Model<State>, cx: &mut WindowContext) -> Self {
         Self {
-            api_key: cx.new_view(|cx| {
+            api_key_editor: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("AIzaSy...", cx);
                 editor
@@ -285,7 +305,7 @@ impl AuthenticationPrompt {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        let api_key = self.api_key.read(cx).text(cx);
+        let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
         }
@@ -302,6 +322,14 @@ impl AuthenticationPrompt {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", cx));
+        self.state
+            .update(cx, |state, cx| state.reset_api_key(cx))
+            .detach_and_log_err(cx);
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -321,7 +349,7 @@ impl AuthenticationPrompt {
             white_space: WhiteSpace::Normal,
         };
         EditorElement::new(
-            &self.api_key,
+            &self.api_key_editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -332,7 +360,13 @@ impl AuthenticationPrompt {
     }
 }
 
-impl Render for AuthenticationPrompt {
+impl FocusableView for ConfigurationView {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.api_key_editor.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const INSTRUCTIONS: [&str; 4] = [
             "To use the Google AI assistant, you need to add your Google AI API key.",
@@ -341,38 +375,48 @@ impl Render for AuthenticationPrompt {
             "Paste your Google AI API key below and hit enter to use the assistant:",
         ];
 
-        v_flex()
-            .p_4()
-            .size_full()
-            .on_action(cx.listener(Self::save_api_key))
-            .children(
-                INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .my_2()
-                    .px_2()
-                    .py_1()
-                    .bg(cx.theme().colors().editor_background)
-                    .rounded_md()
-                    .child(self.render_api_key_editor(cx)),
-            )
-            .child(
-                Label::new(
-                    "You can also assign the GOOGLE_AI_API_KEY environment variable and restart Zed.",
+        if self.state.read(cx).is_authenticated() {
+            h_flex()
+                .size_full()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("API Key configured").size(LabelSize::Small)),
                 )
-                .size(LabelSize::Small),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new("Click on").size(LabelSize::Small))
-                    .child(Icon::new(IconName::ZedAssistant).size(IconSize::XSmall))
-                    .child(
-                        Label::new("in the status bar to close this panel.").size(LabelSize::Small),
-                    ),
-            )
-            .into_any()
+                .child(
+                    Button::new("reset-key", "Reset key")
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
+                )
+                .into_any()
+        } else {
+            v_flex()
+                .size_full()
+                .on_action(cx.listener(Self::save_api_key))
+                .children(
+                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .my_2()
+                        .px_2()
+                        .py_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_md()
+                        .child(self.render_api_key_editor(cx)),
+                )
+                .child(
+                    Label::new(
+                        "You can also assign the GOOGLE_AI_API_KEY environment variable and restart Zed.",
+                    )
+                    .size(LabelSize::Small),
+                )
+                .into_any()
+        }
     }
 }

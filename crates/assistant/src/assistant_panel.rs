@@ -1,4 +1,3 @@
-use crate::ContextStoreEvent;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -13,8 +12,9 @@ use crate::{
     DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepOperations,
     EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
     MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, ResetKey, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
+use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::proto;
@@ -31,18 +31,20 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    TextStyleRefinement, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
     ToOffset,
 };
-use language_model::{LanguageModelProviderId, LanguageModelRegistry, Role};
+use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
+use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -58,6 +60,7 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use theme::ThemeSettings;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -91,7 +94,8 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
-                .register_action(ContextEditor::insert_selection);
+                .register_action(ContextEditor::insert_selection)
+                .register_action(AssistantPanel::show_configuration);
         },
     )
     .detach();
@@ -136,7 +140,6 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
@@ -365,6 +368,7 @@ impl AssistantPanel {
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action("Configure", Box::new(ShowConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
@@ -399,8 +403,10 @@ impl AssistantPanel {
                     language_model::Event::ActiveModelChanged => {
                         this.completion_provider_changed(cx);
                     }
-                    language_model::Event::ProviderStateChanged
-                    | language_model::Event::AddedProvider(_)
+                    language_model::Event::ProviderStateChanged => {
+                        this.ensure_authenticated(cx);
+                    }
+                    language_model::Event::AddedProvider(_)
                     | language_model::Event::RemovedProvider(_) => {
                         this.ensure_authenticated(cx);
                     }
@@ -408,7 +414,7 @@ impl AssistantPanel {
             ),
         ];
 
-        Self {
+        let mut this = Self {
             pane,
             workspace: workspace.weak_handle(),
             width: None,
@@ -418,11 +424,21 @@ impl AssistantPanel {
             languages: workspace.app_state().languages.clone(),
             fs: workspace.app_state().fs.clone(),
             subscriptions,
-            authentication_prompt: None,
             model_selector_menu_handle,
             model_summary_editor,
             authenticate_provider_task: None,
-        }
+        };
+
+        if LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .is_none()
+        {
+            this.show_configuration_for_provider(None, cx);
+        } else {
+            this.new_context(cx);
+        };
+
+        this
     }
 
     fn handle_pane_event(
@@ -582,63 +598,39 @@ impl AssistantPanel {
                 *old_provider_id != new_provider_id
             })
         {
+            self.authenticate_provider_task = None;
             self.ensure_authenticated(cx);
         }
     }
 
-    fn authentication_prompt(cx: &mut WindowContext) -> Option<AnyView> {
-        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            if !provider.is_authenticated(cx) {
-                return Some(provider.authentication_prompt(cx));
-            }
-        }
-        None
-    }
-
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
-            self.set_authentication_prompt(None, cx);
             return;
         }
 
-        let Some(provider_id) = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|p| p.id())
-        else {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
 
         let load_credentials = self.authenticate(cx);
 
-        self.authenticate_provider_task = Some((
-            provider_id,
-            cx.spawn(|this, mut cx| async move {
-                let _ = load_credentials.await;
-                this.update(&mut cx, |this, cx| {
-                    this.show_authentication_prompt(cx);
-                    this.authenticate_provider_task = None;
-                })
-                .log_err();
-            }),
-        ));
-    }
-
-    fn show_authentication_prompt(&mut self, cx: &mut ViewContext<Self>) {
-        let prompt = Self::authentication_prompt(cx);
-        self.set_authentication_prompt(prompt, cx);
-    }
-
-    fn set_authentication_prompt(&mut self, prompt: Option<AnyView>, cx: &mut ViewContext<Self>) {
-        if self.active_context_editor(cx).is_none() {
-            self.new_context(cx);
+        if self.authenticate_provider_task.is_none() {
+            self.authenticate_provider_task = Some((
+                provider.id(),
+                cx.spawn(|this, mut cx| async move {
+                    let _ = load_credentials.await;
+                    this.update(&mut cx, |this, cx| {
+                        if !provider.is_authenticated(cx) {
+                            this.show_configuration_for_provider(Some(provider), cx)
+                        } else if !this.has_any_context_editors(cx) {
+                            this.new_context(cx);
+                        }
+                        this.authenticate_provider_task = None;
+                    })
+                    .log_err();
+                }),
+            ));
         }
-
-        for context_editor in self.context_editors(cx) {
-            context_editor.update(cx, |editor, cx| {
-                editor.set_authentication_prompt(prompt.clone(), cx);
-            });
-        }
-        cx.notify();
     }
 
     pub fn inline_assist(
@@ -900,6 +892,58 @@ impl AssistantPanel {
         }
     }
 
+    fn show_configuration(
+        workspace: &mut Workspace,
+        _: &ShowConfiguration,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        panel.update(cx, |this, cx| {
+            this.show_configuration_for_active_provider(cx);
+        })
+    }
+
+    fn show_configuration_for_active_provider(&mut self, cx: &mut ViewContext<Self>) {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        self.show_configuration_for_provider(provider, cx);
+    }
+
+    fn show_configuration_for_provider(
+        &mut self,
+        provider: Option<Arc<dyn LanguageModelProvider>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let configuration_item_ix = self
+            .pane
+            .read(cx)
+            .items()
+            .position(|item| item.downcast::<ConfigurationView>().is_some());
+
+        if let Some(configuration_item_ix) = configuration_item_ix {
+            self.pane.update(cx, |pane, cx| {
+                pane.activate_item(configuration_item_ix, true, true, cx);
+            });
+        } else {
+            let configuration = cx.new_view(|cx| {
+                let mut view = ConfigurationView::new(self.focus_handle(cx), cx);
+                if let Some(provider) = provider {
+                    view.set_active_tab(provider, cx);
+                }
+                view
+            });
+            self.pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(configuration), true, true, None, cx);
+            });
+        }
+    }
+
     fn deploy_history(&mut self, _: &DeployHistory, cx: &mut ViewContext<Self>) {
         let history_item_ix = self
             .pane
@@ -931,28 +975,8 @@ impl AssistantPanel {
         open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
     }
 
-    fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        if let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() {
-            let reset_credentials = provider.reset_credentials(cx);
-            cx.spawn(|this, mut cx| async move {
-                reset_credentials.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.show_authentication_prompt(cx);
-                })
-            })
-            .detach_and_log_err(cx);
-        }
-    }
-
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx);
-    }
-
-    fn context_editors(&self, cx: &AppContext) -> Vec<View<ContextEditor>> {
-        self.pane
-            .read(cx)
-            .items_of_type::<ContextEditor>()
-            .collect()
     }
 
     fn active_context_editor(&self, cx: &AppContext) -> Option<View<ContextEditor>> {
@@ -960,6 +984,13 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
+    }
+
+    fn has_any_context_editors(&self, cx: &AppContext) -> bool {
+        self.pane
+            .read(cx)
+            .items()
+            .any(|item| item.downcast::<ContextEditor>().is_some())
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
@@ -1083,8 +1114,10 @@ impl AssistantPanel {
                 |provider| provider.authenticate(cx),
             )
     }
+}
 
-    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl Render for AssistantPanel {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut registrar = DivRegistrar::new(
             |panel, cx| {
                 panel
@@ -1105,21 +1138,14 @@ impl AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
+            .on_action(cx.listener(|this, _: &ShowConfiguration, cx| {
+                this.show_configuration_for_active_provider(cx)
+            }))
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
-            .on_action(cx.listener(AssistantPanel::reset_credentials))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .child(registrar.size_full().child(self.pane.clone()))
-    }
-}
-
-impl Render for AssistantPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
-            authentication_prompt.clone().into_any()
-        } else {
-            self.render_signed_in(cx).into_any_element()
-        }
+            .into_any_element()
     }
 }
 
@@ -1242,7 +1268,6 @@ struct ActiveEditStep {
 
 pub struct ContextEditor {
     context: Model<Context>,
-    authentication_prompt: Option<AnyView>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -1300,7 +1325,6 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let mut this = Self {
             context,
-            authentication_prompt: None,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1318,15 +1342,6 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
         this
-    }
-
-    fn set_authentication_prompt(
-        &mut self,
-        authentication_prompt: Option<AnyView>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.authentication_prompt = authentication_prompt;
-        cx.notify();
     }
 
     fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
@@ -1355,10 +1370,6 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if self.authentication_prompt.is_some() {
-            return;
-        }
-
         if !self.apply_edit_step(cx) {
             self.send_to_model(cx);
         }
@@ -2419,26 +2430,19 @@ impl Render for ContextEditor {
             .size_full()
             .v_flex()
             .child(
-                if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
-                    div()
-                        .flex_grow()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(authentication_prompt.clone().into_any())
-                } else {
-                    div()
-                        .flex_grow()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(self.editor.clone())
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .absolute()
-                                .bottom_0()
-                                .p_4()
-                                .justify_end()
-                                .child(self.render_send_button(cx)),
-                        )
-                },
+                div()
+                    .flex_grow()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.editor.clone())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .absolute()
+                            .bottom_0()
+                            .p_4()
+                            .justify_end()
+                            .child(self.render_send_button(cx)),
+                    ),
             )
     }
 }
@@ -2989,6 +2993,253 @@ impl Item for ContextHistory {
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("History".into())
+    }
+}
+
+pub struct ConfigurationView {
+    fallback_handle: FocusHandle,
+    using_assistant_description: View<Markdown>,
+    active_tab: Option<ActiveTab>,
+}
+
+struct ActiveTab {
+    provider: Arc<dyn LanguageModelProvider>,
+    configuration_prompt: AnyView,
+    focus_handle: Option<FocusHandle>,
+    load_credentials_task: Option<Task<()>>,
+}
+
+impl ActiveTab {
+    fn is_loading_credentials(&self) -> bool {
+        if let Some(task) = &self.load_credentials_task {
+            if let Task::Spawned(_) = task {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+// TODO: We need to remove this once we have proper text and styling
+const SHOW_CONFIGURATION_TEXT: bool = false;
+
+impl ConfigurationView {
+    fn new(fallback_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
+        let usage_description = cx.new_view(|cx| {
+            let text = include_str!("./using-the-assistant.md");
+
+            let settings = ThemeSettings::get_global(cx);
+            let mut base_text_style = cx.text_style();
+            base_text_style.refine(&TextStyleRefinement {
+                font_family: Some(settings.ui_font.family.clone()),
+                font_size: Some(TextSize::XSmall.rems(cx).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(gpui::transparent_black()),
+                ..Default::default()
+            });
+            let markdown_style = MarkdownStyle {
+                base_text_style,
+                selection_background_color: { cx.theme().players().local().selection },
+                inline_code: TextStyleRefinement {
+                    background_color: Some(cx.theme().colors().background),
+                    ..Default::default()
+                },
+                link: TextStyleRefinement {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            Markdown::new(text.to_string(), markdown_style.clone(), None, cx, None)
+        });
+
+        Self {
+            fallback_handle,
+            using_assistant_description: usage_description,
+            active_tab: None,
+        }
+    }
+
+    fn set_active_tab(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let (view, focus_handle) = provider.configuration_view(cx);
+
+        if let Some(focus_handle) = &focus_handle {
+            focus_handle.focus(cx);
+        } else {
+            self.fallback_handle.focus(cx);
+        }
+
+        let load_credentials = provider.authenticate(cx);
+        let load_credentials_task = cx.spawn(|this, mut cx| async move {
+            let _ = load_credentials.await;
+            this.update(&mut cx, |this, cx| {
+                if let Some(active_tab) = &mut this.active_tab {
+                    active_tab.load_credentials_task = None;
+                    cx.notify();
+                }
+            })
+            .log_err();
+        });
+
+        self.active_tab = Some(ActiveTab {
+            provider,
+            configuration_prompt: view,
+            focus_handle,
+            load_credentials_task: Some(load_credentials_task),
+        });
+        cx.notify();
+    }
+
+    fn render_active_tab_view(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
+        let Some(active_tab) = &self.active_tab else {
+            return None;
+        };
+
+        let show_spinner = active_tab.is_loading_credentials();
+
+        let content = if show_spinner {
+            let loading_icon = svg()
+                .size_4()
+                .path(IconName::ArrowCircle.path())
+                .text_color(cx.text_style().color)
+                .with_animation(
+                    "icon_circle_arrow",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+                );
+
+            h_flex()
+                .gap_2()
+                .child(loading_icon)
+                .child(Label::new("Loading provider configuration...").size(LabelSize::Small))
+                .into_any_element()
+        } else {
+            active_tab.configuration_prompt.clone().into_any_element()
+        };
+
+        Some(
+            div()
+                .p(Spacing::Large.rems(cx))
+                .bg(cx.theme().colors().title_bar_background)
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_md()
+                .child(content),
+        )
+    }
+
+    fn render_tab(
+        &self,
+        provider: &Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let button_id = SharedString::from(format!("tab-{}", provider.id().0));
+        let is_active = self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
+        ButtonLike::new(button_id)
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Transparent)
+            .selected(is_active)
+            .on_click(cx.listener({
+                let provider = provider.clone();
+                move |this, _, cx| {
+                    this.set_active_tab(provider.clone(), cx);
+                }
+            }))
+            .child(
+                div()
+                    .my_3()
+                    .pb_px()
+                    .border_b_1()
+                    .border_color(if is_active {
+                        cx.theme().colors().text_accent
+                    } else {
+                        cx.theme().colors().border_transparent
+                    })
+                    .when(!is_active, |this| {
+                        this.group_hover("", |this| {
+                            this.border_color(cx.theme().colors().border_variant)
+                        })
+                    })
+                    .child(Label::new(provider.name().0).size(LabelSize::Small).color(
+                        if is_active {
+                            Color::Accent
+                        } else {
+                            Color::Default
+                        },
+                    )),
+            )
+    }
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+
+        if self.active_tab.is_none() && !providers.is_empty() {
+            self.set_active_tab(providers[0].clone(), cx);
+        }
+
+        let tabs = h_flex().mx_neg_1().gap_3().children(
+            providers
+                .iter()
+                .map(|provider| self.render_tab(provider, cx)),
+        );
+
+        v_flex()
+            .id("assistant-configuration-view")
+            .w_full()
+            .min_h_full()
+            .p(Spacing::XXLarge.rems(cx))
+            .overflow_y_scroll()
+            .gap_6()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium),
+                    )
+                    .child(
+                        Label::new("Choose a provider to get started with the assistant.")
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new("Choosing a Provider").size(HeadlineSize::Small))
+                    .child(tabs)
+                    .children(self.render_active_tab_view(cx)),
+            )
+            .when(SHOW_CONFIGURATION_TEXT, |this| {
+                this.child(self.using_assistant_description.clone())
+            })
+    }
+}
+
+impl EventEmitter<()> for ConfigurationView {}
+
+impl FocusableView for ConfigurationView {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.active_tab
+            .as_ref()
+            .and_then(|tab| tab.focus_handle.clone())
+            .unwrap_or(self.fallback_handle.clone())
+    }
+}
+
+impl Item for ConfigurationView {
+    type Event = ();
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Configuration".into())
     }
 }
 

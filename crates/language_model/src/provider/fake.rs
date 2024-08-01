@@ -6,7 +6,7 @@ use crate::{
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, Task};
 use http_client::Result;
 use std::{
     future,
@@ -66,7 +66,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn authentication_prompt(&self, _: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, _: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
         unimplemented!()
     }
 

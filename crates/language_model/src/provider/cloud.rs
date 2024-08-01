@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -21,7 +21,7 @@ use crate::LanguageModelProvider;
 use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
-pub const PROVIDER_NAME: &str = "zed.dev";
+pub const PROVIDER_NAME: &str = "Zed AI";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -57,6 +57,10 @@ pub struct State {
 }
 
 impl State {
+    fn is_connected(&self) -> bool {
+        self.status.is_connected()
+    }
+
     fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |this, mut cx| async move {
@@ -179,15 +183,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         self.state.read(cx).status.is_connected()
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
+    fn authenticate(&self, _cx: &mut AppContext) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| AuthenticationPrompt {
-            state: self.state.clone(),
-        })
-        .into()
+    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+        let view = cx
+            .new_view(|_cx| ConfigurationView {
+                state: self.state.clone(),
+            })
+            .into();
+        (view, None)
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -376,38 +382,88 @@ impl LanguageModel for CloudLanguageModel {
     }
 }
 
-struct AuthenticationPrompt {
+struct ConfigurationView {
     state: gpui::Model<State>,
 }
 
-impl Render for AuthenticationPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
+impl ConfigurationView {
+    fn authenticate(&mut self, cx: &mut ViewContext<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.authenticate(cx).detach_and_log_err(cx);
+        });
+        cx.notify();
+    }
+}
 
-        v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
+impl Render for ConfigurationView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const ZED_AI_URL: &str = "https://zed.dev/ai";
+        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/settings";
+
+        let is_connected = self.state.read(cx).is_connected();
+
+        let is_pro = false;
+
+        if is_connected {
             v_flex()
-                .gap_2()
+                .gap_3()
+                .max_w_4_5()
+                .child(Label::new(
+                    if is_pro {
+                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google through Zed Pro."
+                    } else {
+                        "You have basic access to models from Anthropic, OpenAI, Google and more through the Zed AI Free plan."
+                    }))
                 .child(
-                    Button::new("sign_in", "Sign in")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_position(IconPosition::Start)
-                        .style(ButtonStyle::Filled)
-                        .full_width()
-                        .on_click(cx.listener(move |this, _, cx| {
-                            this.state.update(cx, |provider, cx| {
-                                provider.authenticate(cx).detach_and_log_err(cx);
-                                cx.notify();
-                            });
-                        })),
+                    if is_pro {
+                        h_flex().child(
+                        Button::new("manage_settings", "Manage Subscription")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ACCOUNT_SETTINGS_URL)
+                            })))
+                    } else {
+                        h_flex()
+                            .gap_2()
+                            .child(
+                        Button::new("learn_more", "Learn more")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ZED_AI_URL)
+                            })))
+                            .child(
+                        Button::new("upgrade", "Upgrade")
+                            .style(ButtonStyle::Subtle)
+                            .color(Color::Accent)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.open_url(ACCOUNT_SETTINGS_URL)
+                            })))
+                    },
                 )
+        } else {
+            v_flex()
+                .gap_6()
+                .child(Label::new("Use the zed.dev to access language models."))
                 .child(
-                    div().flex().w_full().items_center().child(
-                        Label::new("Sign in to enable collaboration.")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
-                ),
-        )
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("sign_in", "Sign in")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .style(ButtonStyle::Filled)
+                                .full_width()
+                                .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
+                        )
+                        .child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("Sign in to enable collaboration.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                        ),
+                )
+        }
     }
 }
