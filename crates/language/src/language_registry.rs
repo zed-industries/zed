@@ -7,7 +7,7 @@ use crate::{
     LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap};
+use collections::{hash_map, HashMap, HashSet};
 use futures::TryFutureExt;
 use futures::{
     channel::{mpsc, oneshot},
@@ -186,6 +186,22 @@ impl LanguageRegistry {
     /// Clears out all of the loaded languages and reload them from scratch.
     pub fn reload(&self) {
         self.state.write().reload();
+    }
+
+    /// Reorders the list of language servers for the given language.
+    ///
+    /// Uses the provided list of ordered [`CachedLspAdapters`] as the desired order.
+    ///
+    /// Any existing language servers not present in `ordered_lsp_adapters` will be
+    /// appended to the end.
+    pub fn reorder_language_servers(
+        &self,
+        language: &Arc<Language>,
+        ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
+    ) {
+        self.state
+            .write()
+            .reorder_language_servers(language, ordered_lsp_adapters);
     }
 
     /// Removes the specified languages and grammars from the registry.
@@ -918,6 +934,36 @@ impl LanguageRegistryState {
             language.loaded = false;
         }
         *self.subscription.0.borrow_mut() = ();
+    }
+
+    /// Reorders the list of language servers for the given language.
+    ///
+    /// Uses the provided list of ordered [`CachedLspAdapters`] as the desired order.
+    ///
+    /// Any existing language servers not present in `ordered_lsp_adapters` will be
+    /// appended to the end.
+    fn reorder_language_servers(
+        &mut self,
+        language: &Arc<Language>,
+        ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
+    ) {
+        let Some(lsp_adapters) = self.lsp_adapters.get_mut(&language.config.name) else {
+            return;
+        };
+
+        let ordered_lsp_adapter_ids = ordered_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<HashSet<_>>();
+
+        let mut new_lsp_adapters = ordered_lsp_adapters;
+        for adapter in lsp_adapters.iter() {
+            if !ordered_lsp_adapter_ids.contains(&adapter.name) {
+                new_lsp_adapters.push(adapter.clone());
+            }
+        }
+
+        *lsp_adapters = new_lsp_adapters;
     }
 
     fn remove_languages(
