@@ -9,8 +9,8 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepOperations,
-    EditSuggestionGroup, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepState,
+    EditStepSuggestions, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
     MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
@@ -40,8 +40,7 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
-    ToOffset,
+    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
 use markdown::{Markdown, MarkdownStyle};
@@ -1445,18 +1444,19 @@ impl ContextEditor {
                     .text_for_range(step.source_range.clone())
                     .collect::<String>()
             ));
-            match &step.operations {
-                Some(EditStepOperations::Ready(operations)) => {
-                    output.push_str("Parsed Operations:\n");
-                    for op in operations {
+            match &step.state {
+                Some(EditStepState::Resolved(resolution)) => {
+                    output.push_str("Resolution:\n");
+                    output.push_str(&format!("  {:?}\n", resolution.step_title));
+                    for op in &resolution.operations {
                         output.push_str(&format!("  {:?}\n", op));
                     }
                 }
-                Some(EditStepOperations::Pending(_)) => {
-                    output.push_str("Operations: Pending\n");
+                Some(EditStepState::Pending(_)) => {
+                    output.push_str("Resolution: Pending\n");
                 }
                 None => {
-                    output.push_str("Operations: None\n");
+                    output.push_str("Resolution: None\n");
                 }
             }
             output.push('\n');
@@ -1897,12 +1897,18 @@ impl ContextEditor {
                     }
 
                     if let Some(new_active_step) = self.edit_step_for_cursor(cx) {
-                        let suggestions = new_active_step.edit_suggestions(&self.project, cx);
+                        let start = new_active_step.source_range.start;
+                        let open_editor = new_active_step
+                            .edit_suggestions(&self.project, cx)
+                            .map(|suggestions| {
+                                self.open_editor_for_edit_suggestions(suggestions, cx)
+                            })
+                            .unwrap_or_else(|| Task::ready(Ok(())));
                         self.active_edit_step = Some(ActiveEditStep {
-                            start: new_active_step.source_range.start,
+                            start,
                             assist_ids: Vec::new(),
                             editor: None,
-                            _open_editor: self.open_editor_for_edit_suggestions(suggestions, cx),
+                            _open_editor: open_editor,
                         });
                     }
                 }
@@ -1914,23 +1920,33 @@ impl ContextEditor {
 
     fn open_editor_for_edit_suggestions(
         &mut self,
-        edit_suggestions: Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>>,
+        edit_step_suggestions: Task<EditStepSuggestions>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let assistant_panel = self.assistant_panel.clone();
         cx.spawn(|this, mut cx| async move {
-            let edit_suggestions = edit_suggestions.await;
+            let edit_step_suggestions = edit_step_suggestions.await;
 
             let mut assist_ids = Vec::new();
-            let editor = if edit_suggestions.is_empty() {
+            let editor = if edit_step_suggestions.suggestions.is_empty() {
                 return Ok(());
-            } else if edit_suggestions.len() == 1
-                && edit_suggestions.values().next().unwrap().len() == 1
+            } else if edit_step_suggestions.suggestions.len() == 1
+                && edit_step_suggestions
+                    .suggestions
+                    .values()
+                    .next()
+                    .unwrap()
+                    .len()
+                    == 1
             {
                 // If there's only one buffer and one suggestion group, open it directly
-                let (buffer, suggestion_groups) = edit_suggestions.into_iter().next().unwrap();
+                let (buffer, suggestion_groups) = edit_step_suggestions
+                    .suggestions
+                    .into_iter()
+                    .next()
+                    .unwrap();
                 let suggestion_group = suggestion_groups.into_iter().next().unwrap();
                 let editor = workspace.update(&mut cx, |workspace, cx| {
                     let active_pane = workspace.active_pane().clone();
@@ -1995,8 +2011,9 @@ impl ContextEditor {
                 let mut inline_assist_suggestions = Vec::new();
                 let multibuffer = cx.new_model(|cx| {
                     let replica_id = project.read(cx).replica_id();
-                    let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite);
-                    for (buffer, suggestion_groups) in edit_suggestions {
+                    let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
+                        .with_title(edit_step_suggestions.title);
+                    for (buffer, suggestion_groups) in edit_step_suggestions.suggestions {
                         let excerpt_ids = multibuffer.push_excerpts(
                             buffer,
                             suggestion_groups
@@ -2349,9 +2366,9 @@ impl ContextEditor {
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
         let button_text = match self.edit_step_for_cursor(cx) {
-            Some(edit_step) => match &edit_step.operations {
-                Some(EditStepOperations::Pending(_)) => "Computing Changes...",
-                Some(EditStepOperations::Ready(_)) => "Apply Changes",
+            Some(edit_step) => match &edit_step.state {
+                Some(EditStepState::Pending(_)) => "Computing Changes...",
+                Some(EditStepState::Resolved(_)) => "Apply Changes",
                 None => "Send",
             },
             None => "Send",

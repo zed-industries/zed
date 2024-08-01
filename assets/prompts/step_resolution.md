@@ -37,6 +37,7 @@ What are the operations for the step: <step>Add a new method 'calculate_area' to
 
 A (wrong):
 {
+  "title": "Add Rectangle methods",
   "operations": [
     {
       "kind": "AppendChild",
@@ -57,6 +58,7 @@ This demonstrates what NOT to do. NEVER append multiple children at the same loc
 
 A (corrected):
 {
+  "title": "Add Rectangle methods",
   "operations": [
     {
       "kind": "AppendChild",
@@ -72,6 +74,7 @@ What are the operations for the step: <step>Implement the 'Display' trait for th
 
 A:
 {
+  "title": "Implement Display for Rectangle",
   "operations": [
     {
       "kind": "InsertSiblingAfter",
@@ -110,6 +113,7 @@ What are the operations for the step: <step>Update the 'print_info' method to us
 
 A:
 {
+  "title": "Use formatted output",
   "operations": [
     {
       "kind": "Update",
@@ -125,13 +129,14 @@ What are the operations for the step: <step>Remove the 'email' field from the Us
 
 A:
 {
+  "title": "Remove email field",
   "operations": [
-    {
-      "kind": "Delete",
-      "path": "src/user.rs",
-      "symbol": "struct User email"
-    }
-  ]
+      {
+        "kind": "Delete",
+        "path": "src/user.rs",
+        "symbol": "struct User email"
+      }
+    ]
 }
 
 Example 3:
@@ -162,6 +167,7 @@ What are the operations for the step: <step>Add a 'use std::fmt;' statement at t
 
 A:
 {
+  "title": "Add use std::fmt statement",
   "operations": [
     {
       "kind": "PrependChild",
@@ -176,6 +182,7 @@ What are the operations for the step: <step>Add a new method 'start_engine' in t
 
 A:
 {
+  "title": "Add start_engine method",
   "operations": [
     {
       "kind": "InsertSiblingAfter",
@@ -219,6 +226,7 @@ What are the operations for the step: <step>Make salary an f32</step>
 
 A (wrong):
 {
+  "title": "Change salary to f32",
   "operations": [
     {
       "kind": "Update",
@@ -239,6 +247,7 @@ This example demonstrates what not to do. `struct Employee salary` is a child of
 
 A (corrected):
 {
+  "title": "Change salary to f32",
   "operations": [
     {
       "kind": "Update",
@@ -254,6 +263,7 @@ What are the correct operations for the step: <step>Remove the 'department' fiel
 
 A:
 {
+  "title": "Remove department",
   "operations": [
     {
       "kind": "Delete",
@@ -300,6 +310,7 @@ impl Game {
 
 A:
 {
+  "title": "Add level field to Player",
   "operations": [
     {
       "kind": "InsertSiblingAfter",
@@ -337,6 +348,7 @@ impl Config {
 
 A:
 {
+  "title": "Add load_from_file method",
   "operations": [
     {
       "kind": "PrependChild",
@@ -376,6 +388,7 @@ impl Database {
 
 A:
 {
+  "title": "Add error handling to query",
   "operations": [
     {
       "kind": "PrependChild",
