@@ -391,6 +391,12 @@ impl SummaryIndex {
 
                                         let digest = {
                                             let mut hasher = blake3::Hasher::new();
+                                            // Incorporate both the (relative) file path as well as the contents of the file into the hash.
+                                            // This is because in some languages and frameworks, identical files can do different things
+                                            // depending on their paths (e.g. Rails controllers). It's also why we send the path to the model.
+                                            hasher.update(
+                                                path.display().to_string().as_str().as_bytes(),
+                                            );
                                             hasher.update(contents.as_bytes());
                                             hasher.finalize().to_hex()
                                         };
