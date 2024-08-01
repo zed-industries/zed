@@ -795,7 +795,7 @@ impl AssistantPanel {
                     let weak_assistant_panel = cx.view().downgrade();
 
                     let editor = cx.new_view(|cx| {
-                        let mut editor = ContextEditor::for_context(
+                        ContextEditor::for_context(
                             context,
                             fs,
                             workspace,
@@ -803,9 +803,7 @@ impl AssistantPanel {
                             lsp_adapter_delegate,
                             weak_assistant_panel,
                             cx,
-                        );
-                        editor.insert_default_prompt(cx);
-                        editor
+                        )
                     });
 
                     this.show_context(editor, cx);
