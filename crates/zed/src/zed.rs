@@ -425,7 +425,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(
                 |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
                     let server_url = &client::ClientSettings::get_global(cx).server_url;
-                    cx.open_url(&format!("{server_url}/settings"));
+                    cx.open_url(&format!("{server_url}/account"));
                 },
             )
             .register_action(
