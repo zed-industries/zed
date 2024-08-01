@@ -3467,7 +3467,12 @@ mod tests {
                 app_state.client.http_client().clone(),
                 cx,
             );
-            language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+            language_model::init(
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.fs.clone(),
+                cx,
+            );
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(
                 app_state.fs.clone(),
