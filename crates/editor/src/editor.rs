@@ -11824,24 +11824,8 @@ impl Editor {
         editor_snapshot: &EditorSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> Option<gpui::Point<Pixels>> {
-        let text_layout_details = self.text_layout_details(cx);
-        let line_height = text_layout_details
-            .editor_style
-            .text
-            .line_height_in_pixels(cx.rem_size());
         let source_point = source.to_display_point(editor_snapshot);
-        let first_visible_line = text_layout_details
-            .scroll_anchor
-            .anchor
-            .to_display_point(editor_snapshot);
-        if first_visible_line > source_point {
-            return None;
-        }
-        let source_x = editor_snapshot.x_for_display_point(source_point, &text_layout_details);
-        let source_y = line_height
-            * ((source_point.row() - first_visible_line.row()).0 as f32
-                - text_layout_details.scroll_anchor.offset.y);
-        Some(gpui::Point::new(source_x, source_y))
+        self.display_to_pixel_point(source_point, editor_snapshot, cx)
     }
 
     pub fn display_to_pixel_point(
@@ -11852,15 +11836,16 @@ impl Editor {
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
         let text_layout_details = self.text_layout_details(cx);
-        let first_visible_line = text_layout_details
+        let scroll_top = text_layout_details
             .scroll_anchor
-            .anchor
-            .to_display_point(editor_snapshot);
-        if first_visible_line > source {
+            .scroll_position(editor_snapshot)
+            .y;
+
+        if source.row().as_f32() < scroll_top.floor() {
             return None;
         }
         let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
-        let source_y = line_height * (source.row() - first_visible_line.row()).0 as f32;
+        let source_y = line_height * (source.row().as_f32() - scroll_top);
         Some(gpui::Point::new(source_x, source_y))
     }
 }
