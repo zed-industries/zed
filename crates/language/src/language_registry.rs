@@ -251,7 +251,7 @@ impl LanguageRegistry {
             name,
             Arc::new(move || {
                 let lsp_adapter = load();
-                CachedLspAdapter::new(lsp_adapter, true)
+                CachedLspAdapter::new(lsp_adapter)
             }),
         );
     }
@@ -273,20 +273,7 @@ impl LanguageRegistry {
             .lsp_adapters
             .entry(language_name)
             .or_default()
-            .push(CachedLspAdapter::new(adapter, true));
-    }
-
-    pub fn register_secondary_lsp_adapter(
-        &self,
-        language_name: Arc<str>,
-        adapter: Arc<dyn LspAdapter>,
-    ) {
-        self.state
-            .write()
-            .lsp_adapters
-            .entry(language_name)
-            .or_default()
-            .push(CachedLspAdapter::new(adapter, false));
+            .push(CachedLspAdapter::new(adapter));
     }
 
     #[cfg(any(feature = "test-support", test))]
@@ -295,22 +282,12 @@ impl LanguageRegistry {
         language_name: &str,
         adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        self.register_specific_fake_lsp_adapter(language_name, true, adapter)
-    }
-
-    #[cfg(any(feature = "test-support", test))]
-    pub fn register_specific_fake_lsp_adapter(
-        &self,
-        language_name: &str,
-        primary: bool,
-        adapter: crate::FakeLspAdapter,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         self.state
             .write()
             .lsp_adapters
             .entry(language_name.into())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter), primary));
+            .push(CachedLspAdapter::new(Arc::new(adapter)));
         self.fake_language_servers(language_name)
     }
 
