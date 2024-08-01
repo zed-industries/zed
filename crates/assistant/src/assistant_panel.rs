@@ -31,7 +31,7 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
@@ -413,7 +413,7 @@ impl AssistantPanel {
             ),
         ];
 
-        Self {
+        let mut this = Self {
             pane,
             workspace: workspace.weak_handle(),
             width: None,
@@ -426,7 +426,18 @@ impl AssistantPanel {
             model_selector_menu_handle,
             model_summary_editor,
             authenticate_provider_task: None,
-        }
+        };
+
+        if LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .is_none()
+        {
+            this.show_configuration_for_provider(None, cx);
+        } else {
+            this.new_context(cx);
+        };
+
+        this
     }
 
     fn handle_pane_event(
@@ -593,9 +604,6 @@ impl AssistantPanel {
 
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
-            if !self.has_any_context_editors(cx) {
-                self.new_context(cx);
-            }
             return;
         }
 
@@ -2997,6 +3005,18 @@ struct ActiveTab {
     provider: Arc<dyn LanguageModelProvider>,
     configuration_prompt: AnyView,
     focus_handle: Option<FocusHandle>,
+    load_credentials_task: Option<Task<()>>,
+}
+
+impl ActiveTab {
+    fn is_loading_credentials(&self) -> bool {
+        if let Some(task) = &self.load_credentials_task {
+            if let Task::Spawned(_) = task {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // TODO: We need to remove this once we have proper text and styling
@@ -3056,10 +3076,23 @@ impl ConfigurationView {
             self.fallback_handle.focus(cx);
         }
 
+        let load_credentials = provider.authenticate(cx);
+        let load_credentials_task = cx.spawn(|this, mut cx| async move {
+            let _ = load_credentials.await;
+            this.update(&mut cx, |this, cx| {
+                if let Some(active_tab) = &mut this.active_tab {
+                    active_tab.load_credentials_task = None;
+                    cx.notify();
+                }
+            })
+            .log_err();
+        });
+
         self.active_tab = Some(ActiveTab {
             provider,
             configuration_prompt: view,
             focus_handle,
+            load_credentials_task: Some(load_credentials_task),
         });
         cx.notify();
     }
@@ -3069,6 +3102,28 @@ impl ConfigurationView {
             return None;
         };
 
+        let show_spinner = active_tab.is_loading_credentials();
+
+        let content = if show_spinner {
+            let loading_icon = svg()
+                .size_4()
+                .path(IconName::ArrowCircle.path())
+                .text_color(cx.text_style().color)
+                .with_animation(
+                    "icon_circle_arrow",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+                );
+
+            h_flex()
+                .gap_2()
+                .child(loading_icon)
+                .child(Label::new("Loading provider configuration...").size(LabelSize::Small))
+                .into_any_element()
+        } else {
+            active_tab.configuration_prompt.clone().into_any_element()
+        };
+
         Some(
             div()
                 .p(Spacing::Large.rems(cx))
@@ -3076,7 +3131,7 @@ impl ConfigurationView {
                 .border_1()
                 .border_color(cx.theme().colors().border_variant)
                 .rounded_md()
-                .child(active_tab.configuration_prompt.clone()),
+                .child(content),
         )
     }
 
