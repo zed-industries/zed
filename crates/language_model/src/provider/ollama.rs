@@ -7,7 +7,7 @@ use ollama::{
 };
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator};
+use ui::{prelude::*, Indicator};
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
@@ -303,81 +303,79 @@ impl ConfigurationView {
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
     }
-
-    fn render_download_button(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        ButtonLike::new("download_ollama_button")
-            .style(ButtonStyle::Filled)
-            .size(ButtonSize::Large)
-            .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Get Ollama"))
-            .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
-    }
-
-    fn render_retry_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        ButtonLike::new("retry_ollama_models")
-            .style(ButtonStyle::Filled)
-            .size(ButtonSize::Large)
-            .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Retry"))
-            .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
-    }
-
-    fn render_next_steps(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .p_4()
-            .size_full()
-            .gap_2()
-            .child(
-                Label::new("Once Ollama is on your machine, make sure to download a model or two.")
-                    .size(LabelSize::Large),
-            )
-            .child(
-                h_flex().w_full().p_4().justify_center().gap_2().child(
-                    ButtonLike::new("view-models")
-                        .style(ButtonStyle::Filled)
-                        .size(ButtonSize::Large)
-                        .layer(ElevationIndex::ModalSurface)
-                        .child(Label::new("View Available Models"))
-                        .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
-                ),
-            )
-    }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        if is_authenticated {
-            v_flex()
-                .size_full()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("Ollama configured").size(LabelSize::Small)),
-                )
-                .into_any()
-        } else {
-            v_flex()
+        v_flex()
             .size_full()
-            .gap_2()
-            .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.").size(LabelSize::Large))
+            .gap_4()
             .child(
                 h_flex()
                     .w_full()
-                    .p_4()
-                    .justify_center()
                     .gap_2()
-                    .child(
-                        self.render_download_button(cx)
-                    )
-                    .child(
-                        self.render_retry_button(cx)
-                    )
+                    .child(Label::new(
+                        "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.",
+                    )),
             )
-            .child(self.render_next_steps(cx))
+            .child(if is_authenticated {
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Indicator::dot().color(Color::Success))
+                            .child(
+                                Label::new("Connected").size(LabelSize::Small),
+                            ),
+                    )
+            } else {
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded."))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .pt_2()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .when(!is_authenticated, |this| {
+                                        this.child(
+                                            Button::new("download_ollama_button", "Download")
+                                                .style(ButtonStyle::Subtle)
+                                                .icon(IconName::Download)
+                                                .icon_position(IconPosition::Start)
+                                                .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                        )
+                                    })
+                                    .child(
+                                        Button::new("view-models", "All Models")
+                                            .style(ButtonStyle::Subtle)
+                                            .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL))
+                                    ),
+                            )
+                            .child(
+                                        if is_authenticated {
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected").size(LabelSize::Small)).into_any_element()
+                                        } else {
+                                            Button::new("retry_ollama_models", "Connect")
+                                                .icon_position(IconPosition::Start)
+                                                .icon(IconName::ArrowCircle)
+                                                .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx))).into_any_element()
+                                        }
+                                    ),
+                    )
+            })
             .into_any()
-        }
     }
 }
