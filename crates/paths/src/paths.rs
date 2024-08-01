@@ -217,7 +217,7 @@ pub fn copilot_chat_config_path() -> &'static PathBuf {
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
         if cfg!(target_os = "windows") {
-            home_dir().join("AppData")
+            home_dir().join("AppData").join("Local")
         } else {
             home_dir().join(".config")
         }
