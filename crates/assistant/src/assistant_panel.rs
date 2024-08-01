@@ -3009,7 +3009,6 @@ impl Item for ContextHistory {
 
 pub struct ConfigurationView {
     fallback_handle: FocusHandle,
-    using_assistant_description: View<Markdown>,
     active_tab: Option<ActiveTab>,
 }
 
@@ -3030,9 +3029,6 @@ impl ActiveTab {
         false
     }
 }
-
-// TODO: We need to remove this once we have proper text and styling
-const SHOW_CONFIGURATION_TEXT: bool = false;
 
 impl ConfigurationView {
     fn new(fallback_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
@@ -3070,7 +3066,6 @@ impl ConfigurationView {
 
         Self {
             fallback_handle,
-            using_assistant_description: usage_description,
             active_tab: None,
         }
     }
@@ -3214,24 +3209,21 @@ impl Render for ConfigurationView {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(
-                        Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium),
-                    )
-                    .child(
-                        Label::new("Configure a provider to get started with the assistant. Then create a new context.")
-                            .color(Color::Muted),
-                    ),
+                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium)),
             )
             .child(
                 v_flex()
                     .gap_2()
                     .child(Headline::new("Configure providers").size(HeadlineSize::Small))
+                    .child(
+                        Label::new(
+                            "At least one provider must be configured to use the assistant.",
+                        )
+                        .color(Color::Muted),
+                    )
                     .child(tabs)
                     .children(self.render_active_tab_view(cx)),
             )
-            .when(SHOW_CONFIGURATION_TEXT, |this| {
-                this.child(self.using_assistant_description.clone())
-            })
     }
 }
 

@@ -7,7 +7,7 @@ use ollama::{
 };
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc, time::Duration};
-use ui::{prelude::*, Indicator};
+use ui::{prelude::*, ButtonLike, Indicator};
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
@@ -17,6 +17,7 @@ use crate::{
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
+const OLLAMA_SITE: &str = "https://ollama.com/";
 
 const PROVIDER_ID: &str = "ollama";
 const PROVIDER_NAME: &str = "Ollama";
@@ -310,68 +311,100 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let ollama_intro = "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.";
-        let ollama_reqs = "To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.";
+        let ollama_reqs =
+            "Ollama must be running with at least one model installed to use it in the assistant.";
+
+        let mut inline_code_bg = cx.theme().colors().editor_background;
+        inline_code_bg.fade_out(0.5);
 
         v_flex()
             .size_full()
-            .gap_4()
-            .child(Label::new(ollama_intro))
-            .child(if is_authenticated {
-                v_flex().size_full().child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("Connected").size(LabelSize::Small)),
-                )
-            } else {
+            .gap_3()
+            .child(
                 v_flex()
                     .size_full()
-                    .gap_4()
+                    .gap_2()
+                    .p_1()
+                    .child(Label::new(ollama_intro))
                     .child(Label::new(ollama_reqs))
                     .child(
                         h_flex()
-                            .w_full()
-                            .pt_2()
-                            .justify_between()
-                            .gap_2()
+                            .gap_0p5()
+                            .child(Label::new("Once installed, try "))
                             .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .when(!is_authenticated, |this| {
-                                        this.child(
-                                            Button::new("download_ollama_button", "Download")
-                                                .style(ButtonStyle::Subtle)
-                                                .icon(IconName::Download)
-                                                .icon_position(IconPosition::Start)
-                                                .on_click(move |_, cx| {
-                                                    cx.open_url(OLLAMA_DOWNLOAD_URL)
-                                                }),
-                                        )
-                                    })
-                                    .child(
-                                        Button::new("view-models", "All Models")
+                                div()
+                                    .bg(inline_code_bg)
+                                    .px_1p5()
+                                    .rounded_md()
+                                    .child(Label::new("ollama run llama3.1")),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .pt_2()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .map(|this| {
+                                if is_authenticated {
+                                    this.child(
+                                        Button::new("ollama-site", "Ollama")
                                             .style(ButtonStyle::Subtle)
-                                            .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
-                                    ),
-                            )
-                            .child(if is_authenticated {
+                                            .icon(IconName::ExternalLink)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, cx| cx.open_url(OLLAMA_SITE))
+                                            .into_any_element(),
+                                    )
+                                } else {
+                                    this.child(
+                                        Button::new("download_ollama_button", "Download Ollama")
+                                            .style(ButtonStyle::Subtle)
+                                            .icon(IconName::ExternalLink)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                            .into_any_element(),
+                                    )
+                                }
+                            })
+                            .child(
+                                Button::new("view-models", "All Models")
+                                    .style(ButtonStyle::Subtle)
+                                    .icon(IconName::ExternalLink)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                            ),
+                    )
+                    .child(if is_authenticated {
+                        // This is only a button to ensure the spacing is correct
+                        // it should stay disabled
+                        ButtonLike::new("connected")
+                            .disabled(true)
+                            // Since this won't ever be clickable, we can use the arrow cursor
+                            .cursor_style(gpui::CursorStyle::Arrow)
+                            .child(
                                 h_flex()
                                     .gap_2()
                                     .child(Indicator::dot().color(Color::Success))
-                                    .child(Label::new("Connected").size(LabelSize::Small))
-                                    .into_any_element()
-                            } else {
-                                Button::new("retry_ollama_models", "Connect")
-                                    .icon_position(IconPosition::Start)
-                                    .icon(IconName::ArrowCircle)
-                                    .on_click(
-                                        cx.listener(move |this, _, cx| this.retry_connection(cx)),
-                                    )
-                                    .into_any_element()
-                            }),
-                    )
-            })
+                                    .child(Label::new("Connected"))
+                                    .into_any_element(),
+                            )
+                            .into_any_element()
+                    } else {
+                        Button::new("retry_ollama_models", "Connect")
+                            .icon_position(IconPosition::Start)
+                            .icon(IconName::ArrowCircle)
+                            .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
+                            .into_any_element()
+                    }),
+            )
             .into_any()
     }
 }
