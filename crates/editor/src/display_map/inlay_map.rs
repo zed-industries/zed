@@ -234,6 +234,7 @@ impl<'a> InlayChunks<'a> {
         self.inlay_chunks = None;
         self.buffer_chunk = None;
         self.output_offset = new_range.start;
+        self.max_output_offset = new_range.end;
     }
 
     pub fn offset(&self) -> InlayOffset {
