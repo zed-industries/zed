@@ -66,6 +66,11 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(GlobalPromptStore(prompt_store_future))
 }
 
+const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+    "This prompt supports special functionality.\n",
+    "It's read-only, but you can remove it from your default prompt."
+);
+
 /// This function opens a new prompt library window if one doesn't exist already.
 /// If one exists, it brings it to the foreground.
 ///
@@ -233,15 +238,29 @@ impl PickerDelegate for PromptPickerDelegate {
             .end_hover_slot(
                 h_flex()
                     .gap_2()
-                    .child(
+                    .child(if prompt_id.is_built_in() {
+                        div()
+                            .id("built-in-prompt")
+                            .child(Icon::new(IconName::FileLock).color(Color::Muted))
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    "Built-in prompt",
+                                    None,
+                                    BUILT_IN_TOOLTIP_TEXT,
+                                    cx,
+                                )
+                            })
+                            .into_any()
+                    } else {
                         IconButton::new("delete-prompt", IconName::Trash)
                             .icon_color(Color::Muted)
                             .shape(IconButtonShape::Square)
                             .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.emit(PromptPickerEvent::Deleted { prompt_id })
-                            })),
-                    )
+                            }))
+                            .into_any_element()
+                    })
                     .child(
                         IconButton::new("toggle-default-prompt", IconName::Sparkle)
                             .selected(default)
@@ -354,6 +373,10 @@ impl PromptLibrary {
     pub fn save_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
+        if prompt_id.is_built_in() {
+            return;
+        }
+
         let prompt_metadata = self.store.metadata(prompt_id).unwrap();
         let prompt_editor = self.prompt_editors.get_mut(&prompt_id).unwrap();
         let title = prompt_editor.title_editor.read(cx).text(cx);
@@ -463,6 +486,7 @@ impl PromptLibrary {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
+                            editor.set_read_only(true);
                             editor
                         });
                         let body_editor = cx.new_view(|cx| {
@@ -474,6 +498,7 @@ impl PromptLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, cx);
+                            editor.set_read_only(true);
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
@@ -943,7 +968,23 @@ impl PromptLibrary {
                                                             )
                                                     },
                                                 ))
-                                                .child(
+                                                .child(if prompt_id.is_built_in() {
+                                                    div()
+                                                        .id("built-in-prompt")
+                                                        .child(
+                                                            Icon::new(IconName::FileLock)
+                                                                .color(Color::Muted),
+                                                        )
+                                                        .tooltip(move |cx| {
+                                                            Tooltip::with_meta(
+                                                                "Built-in prompt",
+                                                                None,
+                                                                BUILT_IN_TOOLTIP_TEXT,
+                                                                cx,
+                                                            )
+                                                        })
+                                                        .into_any()
+                                                } else {
                                                     IconButton::new(
                                                         "delete-prompt",
                                                         IconName::Trash,
@@ -961,8 +1002,9 @@ impl PromptLibrary {
                                                     })
                                                     .on_click(|_, cx| {
                                                         cx.dispatch_action(Box::new(DeletePrompt));
-                                                    }),
-                                                )
+                                                    })
+                                                    .into_any_element()
+                                                })
                                                 .child(
                                                     IconButton::new(
                                                         "duplicate-prompt",
@@ -1062,7 +1104,6 @@ pub struct PromptMetadata {
     pub title: Option<SharedString>,
     pub default: bool,
     pub saved_at: DateTime<Utc>,
-    pub built_in: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1077,6 +1118,10 @@ impl PromptId {
         PromptId::User {
             uuid: Uuid::new_v4(),
         }
+    }
+
+    pub fn is_built_in(&self) -> bool {
+        !matches!(self, PromptId::User { .. })
     }
 }
 
@@ -1163,13 +1208,17 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
-                Ok(PromptStore {
+                let store = PromptStore {
                     executor,
                     env: db_env,
                     metadata_cache: RwLock::new(metadata_cache),
                     metadata,
                     bodies,
-                })
+                };
+
+                store.save_built_in_prompts().log_err();
+
+                Ok(store)
             }
         })
     }
@@ -1237,7 +1286,6 @@ impl PromptStore {
                         title: metadata_v1.title.clone(),
                         default: metadata_v1.default,
                         saved_at: metadata_v1.saved_at,
-                        built_in: false,
                     },
                 )?;
                 bodies_db.put(&mut txn, &prompt_id_v2, &body_v1)?;
@@ -1346,12 +1394,15 @@ impl PromptStore {
         default: bool,
         body: Rope,
     ) -> Task<Result<()>> {
+        if id.is_built_in() {
+            return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
+        }
+
         let prompt_metadata = PromptMetadata {
             id,
             title,
             default,
             saved_at: Utc::now(),
-            built_in: false,
         };
         self.metadata_cache.write().insert(prompt_metadata.clone());
 
@@ -1371,20 +1422,72 @@ impl PromptStore {
         })
     }
 
+    fn save_built_in_prompts(&self) -> Result<()> {
+        self.save_built_in_prompt(
+            PromptId::EditWorkflow,
+            "Built-in: Editing Workflow",
+            "prompts/edit_workflow.md",
+        )?;
+        Ok(())
+    }
+
+    /// Write a built-in prompt to the database, preserving the value of the default field
+    /// if a prompt with this id already exists. This method blocks.
+    fn save_built_in_prompt(
+        &self,
+        id: PromptId,
+        title: impl Into<SharedString>,
+        body_path: &str,
+    ) -> Result<()> {
+        let mut metadata_cache = self.metadata_cache.write();
+        let existing_metadata = metadata_cache.metadata_by_id.get(&id).cloned();
+
+        let prompt_metadata = PromptMetadata {
+            id,
+            title: Some(title.into()),
+            default: existing_metadata.map_or(true, |m| m.default),
+            saved_at: Utc::now(),
+        };
+
+        metadata_cache.insert(prompt_metadata.clone());
+
+        let db_connection = self.env.clone();
+        let bodies = self.bodies;
+        let metadata_db = self.metadata;
+
+        let mut txn = db_connection.write_txn()?;
+        metadata_db.put(&mut txn, &id, &prompt_metadata)?;
+
+        let body = String::from_utf8(Assets.load(body_path)?.unwrap().to_vec())?;
+        bodies.put(&mut txn, &id, &body)?;
+
+        txn.commit()?;
+        Ok(())
+    }
+
     fn save_metadata(
         &self,
         id: PromptId,
-        title: Option<SharedString>,
+        mut title: Option<SharedString>,
         default: bool,
     ) -> Task<Result<()>> {
+        let mut cache = self.metadata_cache.write();
+
+        if id.is_built_in() {
+            title = cache
+                .metadata_by_id
+                .get(&id)
+                .and_then(|metadata| metadata.title.clone());
+        }
+
         let prompt_metadata = PromptMetadata {
             id,
             title,
             default,
             saved_at: Utc::now(),
-            built_in: false,
         };
-        self.metadata_cache.write().insert(prompt_metadata.clone());
+
+        cache.insert(prompt_metadata.clone());
 
         let db_connection = self.env.clone();
         let metadata = self.metadata;
@@ -1402,10 +1505,10 @@ impl PromptStore {
         self.metadata_cache.read().metadata.first().cloned()
     }
 
-    pub fn operations_prompt(&self) -> String {
+    pub fn step_resolution_prompt(&self) -> String {
         String::from_utf8(
             Assets
-                .load("prompts/operations.md")
+                .load("prompts/step_resolution.md")
                 .unwrap()
                 .unwrap()
                 .to_vec(),
