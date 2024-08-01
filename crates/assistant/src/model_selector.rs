@@ -45,13 +45,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
 
         let info_text = self.info_text.clone();
 
-        let pro_badge = div()
-            .h_5()
-            .w_8()
-            .rounded_full()
-            .bg(cx.theme().status().info_background)
-            .child(Label::new("Pro"));
-
         menu.menu(move |cx| {
             ContextMenu::build(cx, |mut menu, cx| {
                 if let Some(info_text) = info_text.clone() {
@@ -118,28 +111,31 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let model_name = available_model.name().0.clone();
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
-                                move |cx| {
+                                move |_| {
                                     h_flex()
                                         .w_full()
                                         .justify_between()
-                                        .child(Label::new(model_name.clone()))
                                         .child(
                                             h_flex()
-                                                .h_5()
-                                                .w_9()
-                                                .justify_center()
-                                                .rounded_full()
-                                                // .bg(cx.theme().status().info_background)
-                                                .child(
-                                                    Label::new("Pro")
-                                                        .size(LabelSize::XSmall)
-                                                        .color(Color::Muted),
+                                                .gap_1()
+                                                .child(Label::new(model_name.clone()))
+                                                .when(
+                                                    selected_model.as_ref() == Some(&id)
+                                                        && selected_provider.as_ref()
+                                                            == Some(&provider_id),
+                                                    |this| {
+                                                        this.child(
+                                                            Icon::new(IconName::Check)
+                                                                .color(Color::Accent)
+                                                                .size(IconSize::Small),
+                                                        )
+                                                    },
                                                 ),
                                         )
-                                        .when(
-                                            selected_model.as_ref() == Some(&id)
-                                                && selected_provider.as_ref() == Some(&provider_id),
-                                            |this| this.child(Icon::new(IconName::Check)),
+                                        .child(
+                                            Label::new("Pro")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
                                         )
                                         .into_any()
                                 }

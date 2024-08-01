@@ -23,7 +23,7 @@ use crate::LanguageModelProvider;
 use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
-pub const PROVIDER_NAME: &str = "Zed AI";
+pub const PROVIDER_NAME: &str = "Zed";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
