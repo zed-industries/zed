@@ -719,14 +719,18 @@ impl FoldSnapshot {
             transform_cursor.start().1 + InlayOffset(overshoot)
         };
 
-        let inlay_end = {
-            let transform_end = transform_cursor.end(&());
-            if range.end < transform_end.0 {
-                let overshoot = range.end.0 - transform_cursor.start().0 .0;
-                transform_cursor.start().1 + InlayOffset(overshoot)
-            } else {
-                transform_end.1
-            }
+        let transform_end = transform_cursor.end(&());
+
+        let inlay_end = if transform_cursor
+            .item()
+            .map_or(true, |transform| transform.is_fold())
+        {
+            inlay_start
+        } else if range.end < transform_end.0 {
+            let overshoot = range.end.0 - transform_cursor.start().0 .0;
+            transform_cursor.start().1 + InlayOffset(overshoot)
+        } else {
+            transform_end.1
         };
 
         FoldChunks {
@@ -1132,6 +1136,19 @@ impl<'a> Iterator for FoldChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
+            self.output_offset.0 += placeholder.text.len();
+            return Some(Chunk {
+                text: placeholder.text,
+                renderer: Some(placeholder.renderer.clone()),
+                ..Default::default()
+            });
+        }
+
+        // When we reach a non-fold region, seek the underlying text
+        // chunk iterator to the next unfolded range.
+        if self.inlay_offset == self.transform_cursor.start().1
+            && self.inlay_chunks.offset() != self.inlay_offset
+        {
             let transform_start = self.transform_cursor.start();
             let transform_end = self.transform_cursor.end(&());
             let inlay_end = if self.max_output_offset < transform_end.0 {
@@ -1142,13 +1159,6 @@ impl<'a> Iterator for FoldChunks<'a> {
             };
 
             self.inlay_chunks.seek(self.inlay_offset..inlay_end);
-
-            self.output_offset.0 += placeholder.text.len();
-            return Some(Chunk {
-                text: placeholder.text,
-                renderer: Some(placeholder.renderer.clone()),
-                ..Default::default()
-            });
         }
 
         // Retrieve a chunk from the current location in the buffer.
