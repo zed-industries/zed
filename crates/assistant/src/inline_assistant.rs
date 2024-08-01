@@ -1014,6 +1014,7 @@ impl InlineAssistant {
                         div()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
+                            .h(height as f32 * cx.line_height())
                             .pl(cx.gutter_dimensions.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()

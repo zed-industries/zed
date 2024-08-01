@@ -2373,7 +2373,7 @@ impl EditorElement {
         };
 
         if let BlockId::Custom(custom_block_id) = block_id {
-            let element_height_in_lines = (final_size.height / line_height).ceil() as u32;
+            let element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
             if element_height_in_lines != block.height() {
                 resized_blocks.insert(custom_block_id, element_height_in_lines);
             }
