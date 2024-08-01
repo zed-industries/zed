@@ -1,3 +1,5 @@
+(line_comment) @annotation
+
 (struct_item
     (visibility_modifier)? @context
     "struct" @context

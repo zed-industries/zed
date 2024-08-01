@@ -2884,6 +2884,7 @@ impl BufferSnapshot {
                 highlight_ranges,
                 name_ranges,
                 body_range: open_index.zip(close_index).map(|(start, end)| start..end),
+                annotation_range: None,
             });
         }
 
@@ -2910,6 +2911,7 @@ impl BufferSnapshot {
                 body_range: item.body_range.map(|body_range| {
                     self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
                 }),
+                annotation_range: None,
             });
             item_ends_stack.push(item.range.end);
         }
