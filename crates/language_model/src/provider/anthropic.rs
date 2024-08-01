@@ -483,7 +483,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
                 )
                 .child(
                     h_flex()

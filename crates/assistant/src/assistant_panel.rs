@@ -34,16 +34,14 @@ use gpui::{
     div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    TextStyleRefinement, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
-use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -59,7 +57,6 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use theme::ThemeSettings;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -3035,7 +3032,6 @@ impl Item for ContextHistory {
 
 pub struct ConfigurationView {
     fallback_handle: FocusHandle,
-    using_assistant_description: View<Markdown>,
     active_tab: Option<ActiveTab>,
 }
 
@@ -3057,46 +3053,10 @@ impl ActiveTab {
     }
 }
 
-// TODO: We need to remove this once we have proper text and styling
-const SHOW_CONFIGURATION_TEXT: bool = false;
-
 impl ConfigurationView {
-    fn new(fallback_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
-        let usage_description = cx.new_view(|cx| {
-            let text = include_str!("./using-the-assistant.md");
-
-            let settings = ThemeSettings::get_global(cx);
-            let mut base_text_style = cx.text_style();
-            base_text_style.refine(&TextStyleRefinement {
-                font_family: Some(settings.ui_font.family.clone()),
-                font_size: Some(TextSize::XSmall.rems(cx).into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(gpui::transparent_black()),
-                ..Default::default()
-            });
-            let markdown_style = MarkdownStyle {
-                base_text_style,
-                selection_background_color: { cx.theme().players().local().selection },
-                inline_code: TextStyleRefinement {
-                    background_color: Some(cx.theme().colors().background),
-                    ..Default::default()
-                },
-                link: TextStyleRefinement {
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            Markdown::new(text.to_string(), markdown_style.clone(), None, cx, None)
-        });
-
+    fn new(fallback_handle: FocusHandle, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             fallback_handle,
-            using_assistant_description: usage_description,
             active_tab: None,
         }
     }
@@ -3240,24 +3200,21 @@ impl Render for ConfigurationView {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(
-                        Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium),
-                    )
-                    .child(
-                        Label::new("Configure a provider to get started with the assistant. Then create a new context.")
-                            .color(Color::Muted),
-                    ),
+                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium)),
             )
             .child(
                 v_flex()
                     .gap_2()
                     .child(Headline::new("Configure providers").size(HeadlineSize::Small))
+                    .child(
+                        Label::new(
+                            "At least one provider must be configured to use the assistant.",
+                        )
+                        .color(Color::Muted),
+                    )
                     .child(tabs)
                     .children(self.render_active_tab_view(cx)),
             )
-            .when(SHOW_CONFIGURATION_TEXT, |this| {
-                this.child(self.using_assistant_description.clone())
-            })
     }
 }
 

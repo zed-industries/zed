@@ -7,16 +7,16 @@ use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderState,
 };
-use client::Client;
+use client::{Client, UserStore};
 use collections::BTreeMap;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
         let mut registry = LanguageModelRegistry::default();
-        register_language_model_providers(&mut registry, client, cx);
+        register_language_model_providers(&mut registry, user_store, client, cx);
         registry
     });
     cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -24,6 +24,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
+    user_store: Model<UserStore>,
     client: Arc<Client>,
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
@@ -48,10 +49,14 @@ fn register_language_model_providers(
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
+        let user_store = user_store.clone();
         let client = client.clone();
         LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
             if enabled {
-                registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
+                registry.register_provider(
+                    CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+                    cx,
+                );
             } else {
                 registry.unregister_provider(
                     LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),

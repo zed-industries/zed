@@ -5,10 +5,12 @@ use crate::{
     LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::Client;
+use client::{Client, UserStore};
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, ModelContext, Subscription, Task};
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FocusHandle, Model, ModelContext, Subscription, Task,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -52,6 +54,7 @@ pub struct CloudLanguageModelProvider {
 
 pub struct State {
     client: Arc<Client>,
+    user_store: Model<UserStore>,
     status: client::Status,
     _subscription: Subscription,
 }
@@ -71,12 +74,13 @@ impl State {
 }
 
 impl CloudLanguageModelProvider {
-    pub fn new(client: Arc<Client>, cx: &mut AppContext) -> Self {
+    pub fn new(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) -> Self {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
         let state = cx.new_model(|cx| State {
             client: client.clone(),
+            user_store,
             status,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -401,8 +405,9 @@ impl Render for ConfigurationView {
         const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/settings";
 
         let is_connected = self.state.read(cx).is_connected();
+        let plan = self.state.read(cx).user_store.read(cx).current_plan();
 
-        let is_pro = false;
+        let is_pro = plan == Some(proto::Plan::ZedPro);
 
         if is_connected {
             v_flex()
@@ -410,7 +415,7 @@ impl Render for ConfigurationView {
                 .max_w_4_5()
                 .child(Label::new(
                     if is_pro {
-                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google through Zed Pro."
+                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
                     } else {
                         "You have basic access to models from Anthropic, OpenAI, Google and more through the Zed AI Free plan."
                     }))
