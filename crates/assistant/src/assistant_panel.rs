@@ -3025,7 +3025,7 @@ impl ConfigurationView {
         ButtonLike::new(button_id)
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Transparent)
-            .selected(is_active.clone())
+            .selected(is_active)
             .on_click(cx.listener({
                 let provider = provider.clone();
                 move |this, _, cx| {
