@@ -2,7 +2,7 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{Client, UserStore};
@@ -146,6 +146,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 models.insert(model.id().to_string(), CloudModel::Google(model));
             }
         }
+        for model in ZedModel::iter() {
+            models.insert(model.id().to_string(), CloudModel::Zed(model));
+        }
 
         // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
@@ -263,6 +266,9 @@ impl LanguageModel for CloudLanguageModel {
                 }
                 .boxed()
             }
+            CloudModel::Zed(_) => {
+                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
+            }
         }
     }
 
@@ -318,6 +324,24 @@ impl LanguageModel for CloudLanguageModel {
                         })
                         .await?;
                     Ok(google_ai::extract_text_from_events(
+                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                    ))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
+            CloudModel::Zed(model) => {
+                let client = self.client.clone();
+                let mut request = request.into_open_ai(model.id().into());
+                request.max_tokens = Some(4000);
+                let future = self.request_limiter.stream(async move {
+                    let request = serde_json::to_string(&request)?;
+                    let stream = client
+                        .request_stream(proto::StreamCompleteWithLanguageModel {
+                            provider: proto::LanguageModelProvider::Zed as i32,
+                            request,
+                        })
+                        .await?;
+                    Ok(open_ai::extract_text_from_events(
                         stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
                     ))
                 });
@@ -381,6 +405,9 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
+            }
+            CloudModel::Zed(_) => {
+                future::ready(Err(anyhow!("tool use not implemented for Zed models"))).boxed()
             }
         }
     }
