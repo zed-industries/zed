@@ -1410,7 +1410,7 @@ impl ProjectPanel {
                                 entry_id,
                             });
                         }
-                        will_delete
+                        if let Some(task) = will_delete
                             .into_iter()
                             .enumerate()
                             .find(|(index, _)| ids.contains(&index))
@@ -1418,9 +1418,11 @@ impl ProjectPanel {
                                 project_panel
                                     .project
                                     .update(cx, |project, cx| project.delete_entry(entry, true, cx))
-                                    .ok_or_else(|| format!("not found"))
+                                    .ok_or_else(|| "not found".to_string())
                             })
-                            .map(|t| t.unwrap().detach_and_log_err(cx));
+                        {
+                            task.unwrap().detach_and_log_err(cx);
+                        }
                     })
                     .ok();
             })
