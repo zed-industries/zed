@@ -1209,6 +1209,17 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
+            if self.pane.read(cx).items_len() == 0 {
+                if LanguageModelRegistry::read_global(cx)
+                    .active_provider()
+                    .is_none()
+                {
+                    self.show_configuration_for_provider(None, cx);
+                } else {
+                    self.new_context(cx);
+                };
+            }
+
             self.ensure_authenticated(cx);
         }
     }
@@ -3207,14 +3218,14 @@ impl Render for ConfigurationView {
                         Headline::new("Get Started with the Assistant").size(HeadlineSize::Medium),
                     )
                     .child(
-                        Label::new("Choose a provider to get started with the assistant.")
+                        Label::new("Configure a provider to get started with the assistant. Then create a new context.")
                             .color(Color::Muted),
                     ),
             )
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Headline::new("Choosing a Provider").size(HeadlineSize::Small))
+                    .child(Headline::new("Configure providers").size(HeadlineSize::Small))
                     .child(tabs)
                     .children(self.render_active_tab_view(cx)),
             )
