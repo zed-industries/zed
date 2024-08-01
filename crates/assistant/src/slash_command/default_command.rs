@@ -44,7 +44,7 @@ impl SlashCommand for DefaultSlashCommand {
         self: Arc<Self>,
         _argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let store = PromptStore::global(cx);
