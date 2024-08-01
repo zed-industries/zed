@@ -34,9 +34,8 @@ use gpui::{
     div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    TextStyleRefinement, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -44,7 +43,6 @@ use language::{
     ToOffset,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
-use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
@@ -60,7 +58,6 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use theme::ThemeSettings;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -3031,7 +3028,7 @@ impl ActiveTab {
 }
 
 impl ConfigurationView {
-    fn new(fallback_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
+    fn new(fallback_handle: FocusHandle, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             fallback_handle,
             active_tab: None,
