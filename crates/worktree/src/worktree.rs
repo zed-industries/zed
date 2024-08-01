@@ -2118,6 +2118,24 @@ impl Snapshot {
         Ok(())
     }
 
+    pub fn entry_count(&self) -> usize {
+        self.entries_by_path.summary().count
+    }
+
+    pub fn visible_entry_count(&self) -> usize {
+        self.entries_by_path.summary().non_ignored_count
+    }
+
+    pub fn dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.count - summary.file_count
+    }
+
+    pub fn visible_dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.non_ignored_count - summary.non_ignored_file_count
+    }
+
     pub fn file_count(&self) -> usize {
         self.entries_by_path.summary().file_count
     }
