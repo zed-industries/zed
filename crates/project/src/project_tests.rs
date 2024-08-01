@@ -4623,9 +4623,8 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         "ESLintServer",
         "NoHoverCapabilitiesServer",
     ];
-    let mut fake_tsx_language_servers = language_registry.register_specific_fake_lsp_adapter(
+    let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
         "tsx",
-        true,
         FakeLspAdapter {
             name: &language_server_names[0],
             capabilities: lsp::ServerCapabilities {
@@ -4635,9 +4634,8 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _a = language_registry.register_specific_fake_lsp_adapter(
+    let _a = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[1],
             capabilities: lsp::ServerCapabilities {
@@ -4647,9 +4645,8 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _b = language_registry.register_specific_fake_lsp_adapter(
+    let _b = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[2],
             capabilities: lsp::ServerCapabilities {
@@ -4659,9 +4656,8 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _c = language_registry.register_specific_fake_lsp_adapter(
+    let _c = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[3],
             capabilities: lsp::ServerCapabilities {
@@ -4847,9 +4843,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         "ESLintServer",
         "NoActionsCapabilitiesServer",
     ];
-    let mut fake_tsx_language_servers = language_registry.register_specific_fake_lsp_adapter(
+    let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
         "tsx",
-        true,
         FakeLspAdapter {
             name: &language_server_names[0],
             capabilities: lsp::ServerCapabilities {
@@ -4859,9 +4854,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _a = language_registry.register_specific_fake_lsp_adapter(
+    let _a = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[1],
             capabilities: lsp::ServerCapabilities {
@@ -4871,9 +4865,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _b = language_registry.register_specific_fake_lsp_adapter(
+    let _b = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[2],
             capabilities: lsp::ServerCapabilities {
@@ -4883,9 +4876,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _c = language_registry.register_specific_fake_lsp_adapter(
+    let _c = language_registry.register_fake_lsp_adapter(
         "tsx",
-        false,
         FakeLspAdapter {
             name: &language_server_names[3],
             capabilities: lsp::ServerCapabilities {

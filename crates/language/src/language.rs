@@ -156,15 +156,11 @@ pub struct CachedLspAdapter {
     language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
-    /// Indicates whether this language server is the primary language server
-    /// for a given language. Currently, most LSP-backed features only work
-    /// with one language server, so one server needs to be primary.
-    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -176,7 +172,6 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
-            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
