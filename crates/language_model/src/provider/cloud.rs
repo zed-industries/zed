@@ -331,7 +331,8 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into());
+                request.max_tokens = Some(4000);
                 let future = self.request_limiter.stream(async move {
                     let request = serde_json::to_string(&request)?;
                     let stream = client
