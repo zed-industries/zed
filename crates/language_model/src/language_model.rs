@@ -14,6 +14,7 @@ use gpui::{
 };
 pub use model::*;
 use project::Fs;
+use proto::Plan;
 pub(crate) use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
@@ -32,12 +33,26 @@ pub fn init(
     registry::init(user_store, client, cx);
 }
 
+/// The availability of a [`LanguageModel`].
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelAvailability {
+    /// The language model is available to the general public.
+    Public,
+    /// The language model is available to users on the indicated plan.
+    RequiresPlan(Plan),
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
+
+    /// Returns the availability of this language model.
+    fn availability(&self) -> LanguageModelAvailability {
+        LanguageModelAvailability::Public
+    }
 
     fn max_token_count(&self) -> usize;
 

@@ -109,6 +109,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let id = available_model.id();
                                 let provider_id = available_model.provider_id();
                                 let model_name = available_model.name().0.clone();
+                                let _availability = available_model.availability();
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
                                 move |_| {
