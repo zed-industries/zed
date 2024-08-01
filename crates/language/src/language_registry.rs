@@ -282,15 +282,6 @@ impl LanguageRegistry {
         language_name: &str,
         adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        self.register_specific_fake_lsp_adapter(language_name, adapter)
-    }
-
-    #[cfg(any(feature = "test-support", test))]
-    pub fn register_specific_fake_lsp_adapter(
-        &self,
-        language_name: &str,
-        adapter: crate::FakeLspAdapter,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         self.state
             .write()
             .lsp_adapters
