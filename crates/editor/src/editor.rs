@@ -572,7 +572,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     /// All the breakpoints that are active within a project
     /// Is shared with editor's active project
-    breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
+    breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, HashSet<Breakpoint>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1640,6 +1640,15 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let path = format!(
+            "Opening a buffer at {:?}",
+            buffer
+                .read(cx)
+                .as_singleton()
+                .and_then(|this| this.read(cx).project_path(cx))
+        );
+        dbg!(path);
+
         Self::new(EditorMode::Full, buffer, project, false, cx)
     }
 
@@ -6012,9 +6021,13 @@ impl Editor {
             return;
         };
 
-        dbg!(buffer.read(cx).project_path(cx));
+        let buffer = buffer.read(cx);
 
-        let buffer_id = buffer.read(cx).remote_id();
+        let Some(file_path) = buffer.project_path(cx) else {
+            return;
+        };
+
+        let snapshot = buffer.snapshot();
 
         let breakpoint = Breakpoint {
             position: breakpoint_position,
@@ -6026,7 +6039,7 @@ impl Editor {
         {
             let mut write_guard = breakpoints.write();
 
-            let breakpoint_set = write_guard.entry(buffer_id).or_default();
+            let breakpoint_set = write_guard.entry(file_path.clone()).or_default();
 
             if !breakpoint_set.remove(&breakpoint) {
                 breakpoint_set.insert(breakpoint);
@@ -6035,7 +6048,7 @@ impl Editor {
 
         project.update(cx, |project, cx| {
             if project.has_active_debugger() {
-                project.update_file_breakpoints(buffer_id, cx);
+                project.update_file_breakpoints(snapshot, file_path, cx);
             }
         });
 

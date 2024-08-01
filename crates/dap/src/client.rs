@@ -14,7 +14,7 @@ use dap_types::{
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
-use language::Buffer;
+use language::{Buffer, BufferSnapshot};
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
@@ -572,6 +572,20 @@ impl Breakpoint {
     pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
         SourceBreakpoint {
             line: (buffer
+                .summary_for_anchor::<Point>(&self.position.text_anchor)
+                .row
+                + 1) as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
+
+    pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: (snapshot
                 .summary_for_anchor::<Point>(&self.position.text_anchor)
                 .row
                 + 1) as u64,

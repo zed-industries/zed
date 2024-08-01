@@ -182,7 +182,7 @@ pub struct Project {
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    pub breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
+    pub breakpoints: Arc<RwLock<BTreeMap<ProjectPath, HashSet<Breakpoint>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -1155,20 +1155,16 @@ impl Project {
         cx.spawn(|project, mut cx| async move {
             let task = project.update(&mut cx, |project, cx| {
                 let mut tasks = Vec::new();
+                let buffer_store = project.buffer_store.read(cx);
 
-                for (buffer_id, breakpoints) in project.breakpoints.read().iter() {
-                    let buffer = maybe!({
-                        let buffer = project.buffer_for_id(*buffer_id, cx)?;
-                        Some(buffer.read(cx))
-                    });
+                for (project_path, breakpoints) in project.breakpoints.read().iter() {
+                    let buffer_id = buffer_store.buffer_id_for_project_path(project_path);
 
-                    if buffer.is_none() {
+                    let Some(buffer_id) = buffer_id else {
                         continue;
-                    }
-                    let buffer = buffer.as_ref().unwrap();
+                    };
 
                     let res = maybe!({
-                        let project_path = buffer.project_path(cx)?;
                         let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
                         let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
@@ -1176,13 +1172,17 @@ impl Project {
                     });
 
                     if let Some((path, breakpoints)) = res {
+                        let Some(buffer) = &project.buffer_for_id(*buffer_id, cx) else {
+                            continue;
+                        };
+
                         tasks.push(
                             client.set_breakpoints(
                                 path.clone(),
                                 Some(
                                     breakpoints
                                         .iter()
-                                        .map(|b| b.to_source_breakpoint(buffer))
+                                        .map(|b| b.source_for_snapshot(&buffer.read(cx).snapshot()))
                                         .collect::<Vec<_>>(),
                                 ),
                             ),
@@ -1288,7 +1288,12 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
-    pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
+    pub fn update_file_breakpoints(
+        &self,
+        snapshot: BufferSnapshot,
+        project_path: ProjectPath,
+        cx: &ModelContext<Self>,
+    ) {
         let clients = self
             .debug_adapters
             .iter()
@@ -1298,14 +1303,7 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
-            return;
-        };
-
-        let buffer = buffer.read(cx);
-
         let file_path = maybe!({
-            let project_path = buffer.project_path(cx)?;
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
 
@@ -1318,13 +1316,13 @@ impl Project {
 
         let read_guard = self.breakpoints.read();
 
-        let breakpoints_locations = read_guard.get(&buffer_id);
+        let breakpoints_locations = read_guard.get(&project_path);
 
         if let Some(breakpoints_locations) = breakpoints_locations {
             let breakpoints_locations = Some(
                 breakpoints_locations
                     .iter()
-                    .map(|bp| bp.to_source_breakpoint(&buffer))
+                    .map(|bp| bp.source_for_snapshot(&snapshot))
                     .collect(),
             );
 

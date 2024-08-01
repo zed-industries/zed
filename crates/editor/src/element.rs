@@ -1584,11 +1584,14 @@ impl EditorElement {
                 return vec![];
             };
 
-            let active_buffer_id = active_buffer.read(cx).remote_id();
+            let Some(project_path) = project::Item::project_path(active_buffer.read(cx), cx) else {
+                return vec![];
+            };
+
             let read_guard = breakpoints.read();
 
             let mut breakpoints_to_render = if let Some(breakpoint_set) =
-                read_guard.get(&active_buffer_id)
+                read_guard.get(&project_path)
             {
                 breakpoint_set
                     .iter()
