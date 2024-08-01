@@ -189,25 +189,13 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         return;
     }
 
-    Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(
-            Operator::FindForward { .. }
-            | Operator::FindBackward { .. }
-            | Operator::Replace
-            | Operator::Digraph { .. }
-            | Operator::AddSurrounds { .. }
-            | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds
-            | Operator::Mark
-            | Operator::Jump { .. }
-            | Operator::Register
-            | Operator::RecordRegister
-            | Operator::ReplayRegister,
-        ) => {}
-        Some(_) => {
-            vim.clear_operator(cx);
+    Vim::update(cx, |vim, cx| {
+        if let Some(operator) = vim.active_operator() {
+            if !operator.is_waiting(vim.state().mode) {
+                vim.clear_operator(cx);
+                vim.stop_recording_immediately(Box::new(ClearOperators))
+            }
         }
-        _ => {}
     });
 }
 

@@ -10,6 +10,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
 
+#[derive(Debug)]
 pub enum MenuPosition {
     /// When the editor is scrolled, the context menu stays on the exact
     /// same position on the screen, never disappearing.
@@ -27,6 +28,15 @@ pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: View<ui::ContextMenu>,
     _subscription: Subscription,
+}
+
+impl std::fmt::Debug for MouseContextMenu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MouseContextMenu")
+            .field("position", &self.position)
+            .field("context_menu", &self.context_menu)
+            .finish()
+    }
 }
 
 impl MouseContextMenu {

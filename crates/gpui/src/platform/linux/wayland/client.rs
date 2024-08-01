@@ -750,6 +750,10 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn compositor_name(&self) -> &'static str {
         "Wayland"
     }

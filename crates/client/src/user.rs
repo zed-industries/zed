@@ -92,6 +92,7 @@ pub struct UserStore {
     by_github_login: HashMap<String, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
+    current_plan: Option<proto::Plan>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
@@ -139,6 +140,7 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
+            client.add_message_handler(cx.weak_model(), Self::handle_update_plan),
             client.add_message_handler(cx.weak_model(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_model(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_model(), Self::handle_show_contacts),
@@ -147,6 +149,7 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
+            current_plan: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -276,6 +279,18 @@ impl UserStore {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
+        })?;
+        Ok(())
+    }
+
+    async fn handle_update_plan(
+        this: Model<Self>,
+        message: TypedEnvelope<proto::UpdateUserPlan>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.current_plan = Some(message.payload.plan());
+            cx.notify();
         })?;
         Ok(())
     }
@@ -655,6 +670,10 @@ impl UserStore {
 
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
+    }
+
+    pub fn current_plan(&self) -> Option<proto::Plan> {
+        self.current_plan
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {

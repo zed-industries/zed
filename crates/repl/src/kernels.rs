@@ -223,8 +223,8 @@ impl RunningKernel {
 
             let process = cmd
                 .current_dir(&working_directory)
-                // .stdout(Stdio::null())
-                // .stderr(Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;

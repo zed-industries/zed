@@ -24,7 +24,6 @@ blake3.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-completion.workspace = true
 fs.workspace = true
 futures.workspace = true
 futures-batch.workspace = true

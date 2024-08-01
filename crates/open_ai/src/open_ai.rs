@@ -116,6 +116,8 @@ pub struct Request {
     pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
     pub stop: Vec<String>,
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,6 +219,13 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ResponseStreamResult {
+    Ok(ResponseStreamEvent),
+    Err { error: String },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
@@ -256,7 +265,10 @@ pub async fn stream_completion(
                             None
                         } else {
                             match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error)))
+                                }
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
                         }

@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
-use completion::LanguageModelCompletionProvider;
 use fs::Fs;
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
@@ -436,7 +435,15 @@ impl SummaryIndex {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
                     .update(|cx| Self::summarize_code(&file.contents, &file.path, cx))?
-                    .await?;
+                    .await
+                    .unwrap_or_else(|err| {
+                        // Log a warning because we'll continue anyway.
+                        // In the future, we may want to try splitting it up into multiple requests and concatenating the summaries,
+                        // but this might give bad summaries due to cutting off source code files in the middle.
+                        log::warn!("Failed to summarize {} - {:?}", file.path.display(), err);
+
+                        String::new()
+                    });
 
                 // Note that the summary could be empty because of an error talking to a cloud provider,
                 // e.g. because the context limit was exceeded. In that case, we return Ok(String::new()).
@@ -496,31 +503,31 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        let stream =
-            LanguageModelCompletionProvider::read_global(cx).complete_bg(request, model, cx);
+        cx.spawn(|cx| {
+            let response = model.stream_completion(request, &cx);
+            cx.background_executor().spawn(async move {
+                let answer = {
+                    let mut chunks = response.await?;
+                    let mut completion = String::new();
 
-        cx.background_executor().spawn(async move {
-            match stream.await {
-                Ok(answer) => {
-                    log::info!(
-                        "It took {:?} to summarize {:?} bytes of code.",
-                        start.elapsed(),
-                        code_len
-                    );
+                    while let Some(chunk) = chunks.next().await {
+                        let chunk = chunk?;
+                        completion.push_str(&chunk);
+                    }
 
-                    log::debug!("Summary was: {:?}", &answer);
+                    completion
+                };
 
-                    Ok(answer)
-                }
-                Err(e) => {
-                    // Log a warning because we'll continue anyway.
-                    // In the future, we may want to try splitting it up into multiple requests and concatenating the summaries,
-                    // but this might give bad summaries due to cutting off source code files in the middle.
-                    log::warn!("Failed to summarize {code_len} bytes of code: {:?}", e);
+                log::info!(
+                    "It took {:?} to summarize {:?} bytes of code.",
+                    start.elapsed(),
+                    code_len
+                );
 
-                    Ok(String::new())
-                }
-            }
+                log::debug!("Summary was: {:?}", &answer);
+
+                Ok(answer)
+            })
         })
     }
 

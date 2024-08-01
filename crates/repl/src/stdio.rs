@@ -96,8 +96,8 @@ impl TerminalOutput {
 }
 
 impl LineHeight for TerminalOutput {
-    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        self.handler.buffer.lines().count().max(1) as u8
+    fn num_lines(&self, _cx: &mut WindowContext) -> usize {
+        self.handler.buffer.lines().count().max(1)
     }
 }
 

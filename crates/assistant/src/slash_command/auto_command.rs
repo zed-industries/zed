@@ -2,10 +2,12 @@ use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::ArgumentCompletion;
-use completion::LanguageModelCompletionProvider;
+use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use semantic_index::{FileSummary, SemanticDb};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
@@ -169,9 +171,7 @@ async fn commands_for_summaries(
         return Ok(Vec::new());
     }
 
-    let Some(model) =
-        cx.update(|cx| LanguageModelCompletionProvider::read_global(cx).active_model())?
-    else {
+    let Some(model) = cx.update(|cx| LanguageModelRegistry::read_global(cx).active_model())? else {
         log::info!("Can't infer context because there's no active model.");
         return Ok(Vec::new());
     };
@@ -210,68 +210,73 @@ async fn commands_for_summaries(
             temperature: 1.0,
         };
 
-        if let Some(token_count_future) = cx.update(|cx| {
-            LanguageModelCompletionProvider::read_global(cx)
-                .count_tokens(make_request(prompt.clone()), cx)
-        })? {
-            let token_count = token_count_future.await?;
+        let model = Arc::clone(&model);
+        let token_count = cx
+            .update(|cx| model.count_tokens(make_request(prompt.clone()), cx))?
+            .await?;
 
-            if token_count < max_token_count {
-                let response = cx
-                    .update(|cx| {
-                        LanguageModelCompletionProvider::read_global(cx)
-                            .complete(make_request(prompt), cx)
-                    })?
-                    .await?;
+        if token_count < max_token_count {
+            let response = {
+                let request = make_request(prompt);
+                cx.spawn(|cx| async move {
+                    let mut chunks = model.stream_completion(request, &cx).await?;
+                    let mut completion = String::new();
 
-                accumulated_response.push_str(&response);
+                    while let Some(chunk) = chunks.next().await {
+                        let chunk = chunk?;
+                        completion.push_str(&chunk);
+                    }
 
-                for line in accumulated_response.split('\n') {
-                    if let Some(first_space) = line.find(' ') {
-                        let command = &line[..first_space].trim();
-                        let arg = &line[first_space..].trim();
+                    anyhow::Ok(completion)
+                })
+            }
+            .await?;
 
-                        // Don't return empty or duplicate or duplicate commands
-                        if !command.is_empty()
-                            && !final_response
-                                .iter()
-                                .any(|cmd: &CommandToRun| cmd.name == *command && cmd.arg == *arg)
+            accumulated_response.push_str(&response);
+
+            for line in accumulated_response.split('\n') {
+                if let Some(first_space) = line.find(' ') {
+                    let command = &line[..first_space].trim();
+                    let arg = &line[first_space..].trim();
+
+                    // Don't return empty or duplicate or duplicate commands
+                    if !command.is_empty()
+                        && !final_response
+                            .iter()
+                            .any(|cmd: &CommandToRun| cmd.name == *command && cmd.arg == *arg)
+                    {
+                        if SUPPORTED_SLASH_COMMANDS
+                            .iter()
+                            .any(|supported| command == supported)
                         {
-                            if SUPPORTED_SLASH_COMMANDS
-                                .iter()
-                                .any(|supported| command == supported)
-                            {
-                                final_response.push(CommandToRun {
-                                    name: command.to_string(),
-                                    arg: arg.to_string(),
-                                });
-                            } else {
-                                log::warn!(
+                            final_response.push(CommandToRun {
+                                name: command.to_string(),
+                                arg: arg.to_string(),
+                            });
+                        } else {
+                            log::warn!(
                                 "Context inference returned an unrecognized slash-commend line: {:?}",
                                 line
                             );
-                            }
                         }
-                    } else if !line.trim().is_empty() {
-                        // All slash-commands currently supported in context inference need a space for the argument.
-                        log::warn!(
+                    }
+                } else if !line.trim().is_empty() {
+                    // All slash-commands currently supported in context inference need a space for the argument.
+                    log::warn!(
                         "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash-command): {:?}",
                         line
                     );
-                    }
                 }
-            } else if current_summaries.len() == 1 {
-                log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
-            } else {
-                log::info!(
+            }
+        } else if current_summaries.len() == 1 {
+            log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
+        } else {
+            log::info!(
                 "Context inference using file summaries resulted in a prompt containing {token_count} tokens, which exceeded the model's max of {max_token_count}. Retrying as two separate prompts, each including half the number of summaries.",
             );
-                let (left, right) = current_summaries.split_at(current_summaries.len() / 2);
-                stack.push((right, accumulated_response.clone()));
-                stack.push((left, accumulated_response));
-            }
-        } else {
-            log::warn!("Inferring context for a single file's summary failed because getting the token count for the prompt returned None (which might have meant there was no global active model).");
+            let (left, right) = current_summaries.split_at(current_summaries.len() / 2);
+            stack.push((right, accumulated_response.clone()));
+            stack.push((left, accumulated_response));
         }
     }
 

@@ -1,3 +1,4 @@
+pub mod billing;
 pub mod contributors;
 pub mod events;
 pub mod extensions;
@@ -31,6 +32,7 @@ pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Rou
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .merge(billing::router())
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
