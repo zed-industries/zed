@@ -7,9 +7,11 @@ mod role;
 pub mod settings;
 
 use anyhow::Result;
-use client::Client;
+use client::{Client, UserStore};
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, SharedString, Task, WindowContext};
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FocusHandle, Model, SharedString, Task, WindowContext,
+};
 pub use model::*;
 use project::Fs;
 pub(crate) use rate_limiter::*;
@@ -20,9 +22,14 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use std::{future::Future, sync::Arc};
 
-pub fn init(client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(
+    user_store: Model<UserStore>,
+    client: Arc<Client>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) {
     settings::init(fs, cx);
-    registry::init(client, cx);
+    registry::init(user_store, client, cx);
 }
 
 pub trait LanguageModel: Send + Sync {

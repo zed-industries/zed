@@ -315,7 +315,7 @@ impl Render for ConfigurationView {
         v_flex()
             .size_full()
             .gap_4()
-            .child(Label::new(ollama_intro)
+            .child(Label::new(ollama_intro))
             .child(if is_authenticated {
                 v_flex().size_full().child(
                     h_flex()
