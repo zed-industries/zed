@@ -91,10 +91,11 @@ impl SlashCommand for ExtensionSlashCommand {
                     let this = self.clone();
                     move |extension, store| {
                         async move {
-                            let delegate = delegate.ok_or_else(|| {
-                                anyhow!("no worktree for extension slash command")
-                            })?;
-                            let resource = store.data_mut().table().push(delegate)?;
+                            let resource = if let Some(delegate) = delegate {
+                                Some(store.data_mut().table().push(delegate)?)
+                            } else {
+                                None
+                            };
                             let output = extension
                                 .call_run_slash_command(
                                     store,
