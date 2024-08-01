@@ -7,7 +7,6 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
-use dap::client::Breakpoint;
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;

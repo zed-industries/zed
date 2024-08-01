@@ -43,7 +43,7 @@ use item::{
     ProjectItem, SerializableItem, SerializableItemHandle,
 };
 use itertools::Itertools;
-use language::{LanguageRegistry, Rope};
+use language::{proto::deserialize_selection, LanguageRegistry, Rope};
 use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;

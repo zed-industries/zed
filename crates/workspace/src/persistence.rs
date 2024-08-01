@@ -1,15 +1,16 @@
 pub mod model;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
+use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
+    statement::{SqlType, Statement},
 };
 
 use ui::px;
@@ -140,6 +141,9 @@ pub struct Breakpoint {
     pub position: u64,
 }
 
+#[derive(Debug)]
+struct Breakpoints(Vec<Breakpoint>);
+
 impl sqlez::bindable::StaticColumnCount for Breakpoint {}
 impl sqlez::bindable::Bind for Breakpoint {
     fn bind(
@@ -158,6 +162,28 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u64;
         Ok((Breakpoint { position }, start_index + 1))
+    }
+}
+
+impl Column for Breakpoints {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let mut breakpoints = Vec::new();
+        let mut index = start_index;
+
+        loop {
+            match statement.column_type(index) {
+                Ok(SqlType::Null) => break,
+                _ => {
+                    let position = statement
+                        .column_int64(index)
+                        .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
+                        as u64;
+                    breakpoints.push(Breakpoint { position });
+                    index += 1;
+                }
+            }
+        }
+        Ok((Breakpoints(breakpoints), index))
     }
 }
 
@@ -454,6 +480,49 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
+        dbg!("About to query breakpoints");
+
+        // Figure out why the below query didn't work
+        // let breakpoints: Result<Vec<(String, Breakpoints)>> = self
+        //     .select_bound(sql! {
+        //     SELECT file_path, GROUP_CONCAT(breakpoint_location) as breakpoint_locations
+        //     FROM breakpoints
+        //     WHERE workspace_id = ?
+        //     GROUP BY file_path})
+        //     .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
+
+        let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
+            .select_bound(sql! {
+                SELECT file_path, breakpoint_location
+                FROM breakpoints
+                WHERE workspace_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
+
+        let breakpoints: Option<Vec<(PathBuf, Vec<u64>)>> = match breakpoints {
+            Ok(bp) => {
+                if bp.is_empty() {
+                    log::error!("Breakpoints are empty");
+                }
+
+                let mut map: HashMap<PathBuf, Vec<u64>> = HashMap::new();
+
+                for (file_path, breakpoint) in bp {
+                    map.entry(file_path).or_default().push(breakpoint.position);
+                }
+
+                Some(
+                    map.into_iter()
+                        .map(|(file_path, breakpoints)| (file_path, breakpoints))
+                        .collect(),
+                )
+            }
+            Err(msg) => {
+                log::error!("{msg}");
+                None
+            }
+        };
+
         let location = if let Some(dev_server_project_id) = dev_server_project_id {
             let dev_server_project: SerializedDevServerProject = self
                 .select_row_bound(sql! {
@@ -490,7 +559,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
-            breakpoints: None,
+            breakpoints,
         })
     }
 
@@ -631,8 +700,6 @@ impl WorkspaceDb {
                             }
                         }
                     }
-
-                    // dbg!(persistence::DB.all_breakpoints(database_id));
                 }
 
                 match workspace.location {
@@ -771,16 +838,18 @@ impl WorkspaceDb {
         }
     }
 
-    query! {
-        pub fn all_breakpoints(id: WorkspaceId) -> Result<Vec<Breakpoint>> {
-            SELECT breakpoint_location
-            FROM breakpoints
-            WHERE workspace_id = ?
-        }
-    }
+    // TODO: Fix this query
+    // query! {
+    //     pub fn all_breakpoints(id: WorkspaceId) -> Result<Vec<(String, Vec<Breakpoint>)>> {
+    //         SELECT local_path, GROUP_CONCAT(breakpoint_location) as breakpoint_locations
+    //         FROM breakpoints
+    //         WHERE workspace_id = ?
+    //         GROUP BY local_path;
+    //     }
+    // }
 
     query! {
-        pub fn breakpoints(id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
+        pub fn breakpoints_for_file(id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
             SELECT breakpoint_location
             FROM breakpoints
             WHERE workspace_id = ?1 AND file_path = ?2
