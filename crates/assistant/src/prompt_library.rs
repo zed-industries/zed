@@ -1163,13 +1163,17 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
-                Ok(PromptStore {
+                let store = PromptStore {
                     executor,
                     env: db_env,
                     metadata_cache: RwLock::new(metadata_cache),
                     metadata,
                     bodies,
-                })
+                };
+
+                store.save_built_in_prompts().log_err();
+
+                Ok(store)
             }
         })
     }
@@ -1371,6 +1375,59 @@ impl PromptStore {
         })
     }
 
+    pub fn save_built_in_prompts(&self) -> Result<()> {
+        self.save_built_in_prompt(
+            PromptId::EditWorkflow,
+            "Built-in: Editing Workflow",
+            "prompts/edit_workflow.md",
+        )?;
+        Ok(())
+    }
+
+    /// Write a built-in prompt to the database, preserving the value of the default field
+    /// if a prompt with this id already exists. This method blocks.
+    pub fn save_built_in_prompt(
+        &self,
+        id: PromptId,
+        title: impl Into<SharedString>,
+        body_path: &str,
+    ) -> Result<()> {
+        dbg!();
+        let metadata_cache = self.metadata_cache.read();
+        let existing_metadata = metadata_cache.metadata_by_id.get(&id).cloned();
+
+        let prompt_metadata = PromptMetadata {
+            id,
+            title: Some(title.into()),
+            default: existing_metadata.map_or(true, |m| m.default),
+            saved_at: Utc::now(),
+            built_in: true,
+        };
+
+        dbg!();
+        self.metadata_cache.write().insert(prompt_metadata.clone());
+        drop(metadata_cache);
+
+        dbg!();
+        let db_connection = self.env.clone();
+        let bodies = self.bodies;
+        let metadata_db = self.metadata;
+
+        dbg!();
+        let mut txn = db_connection.write_txn()?;
+
+        metadata_db.put(&mut txn, &id, &prompt_metadata)?;
+
+        let body = String::from_utf8(Assets.load(body_path)?.unwrap().to_vec())?;
+        bodies.put(&mut txn, &id, &body)?;
+
+        dbg!();
+
+        txn.commit()?;
+
+        Ok(())
+    }
+
     fn save_metadata(
         &self,
         id: PromptId,
@@ -1402,10 +1459,10 @@ impl PromptStore {
         self.metadata_cache.read().metadata.first().cloned()
     }
 
-    pub fn operations_prompt(&self) -> String {
+    pub fn step_resolution_prompt(&self) -> String {
         String::from_utf8(
             Assets
-                .load("prompts/operations.md")
+                .load("prompts/step_resolution.md")
                 .unwrap()
                 .unwrap()
                 .to_vec(),
