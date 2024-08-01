@@ -205,10 +205,6 @@ impl CopilotChat {
         self.oauth_token.is_some()
     }
 
-    pub fn sign_out(&mut self) {
-        self.oauth_token = None;
-    }
-
     pub async fn stream_completion(
         request: Request,
         low_speed_timeout: Option<Duration>,
