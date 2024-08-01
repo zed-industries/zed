@@ -1640,15 +1640,6 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let path = format!(
-            "Opening a buffer at {:?}",
-            buffer
-                .read(cx)
-                .as_singleton()
-                .and_then(|this| this.read(cx).project_path(cx))
-        );
-        dbg!(path);
-
         Self::new(EditorMode::Full, buffer, project, false, cx)
     }
 

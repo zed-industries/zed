@@ -135,8 +135,9 @@ impl Column for SerializedWindowBounds {
     }
 }
 
-struct Breakpoint {
-    position: u64,
+#[derive(Debug)]
+pub struct Breakpoint {
+    pub position: u64,
 }
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {}
@@ -489,6 +490,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
+            breakpoints: None,
         })
     }
 
@@ -583,6 +585,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
+            breakpoints: None,
         })
     }
 
@@ -591,11 +594,46 @@ impl WorkspaceDb {
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
-                // Clear out panes and pane_groups
+                // Clear out panes, pane_groups, and breakpoints
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
+
+                if let Some(breakpoints) = workspace.breakpoints {
+                    for (file_path, rows) in  breakpoints {
+                        let path = file_path.as_path();
+
+                        match conn.exec_bound(sql!(
+                            DELETE FROM breakpoints
+                            WHERE workspace_id = ?1 AND file_path = ?2;))?((workspace.id, path)) {
+                            Err(err) => {
+                                log::error!("{err}");
+                                // continue;
+                            }
+                            Ok(_) => {}
+                        }
+
+                        for row in rows {
+                            match conn.exec_bound(sql!(
+                                INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location)
+                                VALUES (?1, ?2, ?3);))?
+                                ((
+                                workspace.id,
+                                path,
+                                Breakpoint { position: row },
+                            )) {
+                                Err(err) => {
+                                    log::error!("{err}");
+                                    continue;
+                                }
+                                Ok(_) => {}
+                            }
+                        }
+                    }
+
+                    // dbg!(persistence::DB.all_breakpoints(database_id));
+                }
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
@@ -730,6 +768,14 @@ impl WorkspaceDb {
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
+        }
+    }
+
+    query! {
+        pub fn all_breakpoints(id: WorkspaceId) -> Result<Vec<Breakpoint>> {
+            SELECT breakpoint_location
+            FROM breakpoints
+            WHERE workspace_id = ?
         }
     }
 

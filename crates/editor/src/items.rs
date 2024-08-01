@@ -26,10 +26,7 @@ use project::{
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::{
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-    WorkspaceDb,
-};
+use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
 use std::{
     any::TypeId,
@@ -1043,25 +1040,7 @@ impl SerializableItem for Editor {
 
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| {
-                    let _buffer_path = buffer.read(cx).project_path(cx);
-
                     let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-                    let anchor = &editor
-                        .snapshot(cx)
-                        .display_snapshot
-                        .buffer_snapshot
-                        .anchor_before(Point::new(0, 0));
-
-                    if let Some(_buffer_path) = _buffer_path {
-                        if let Some(breakpoints) = editor.breakpoints.clone() {
-                            let mut breakpoints = breakpoints.write();
-                            let vec = breakpoints.entry(_buffer_path).or_default();
-                            vec.insert(Breakpoint {
-                                position: anchor.clone(),
-                            });
-                        }
-                    }
-
                     editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                     editor
                 })

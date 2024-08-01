@@ -4019,6 +4019,10 @@ impl Workspace {
         };
 
         if let Some(location) = location {
+            let breakpoint_lines = self
+                .project
+                .update(cx, |project, cx| project.seralize_breakpoints(cx));
+
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
@@ -4031,6 +4035,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                breakpoints: Some(breakpoint_lines),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }

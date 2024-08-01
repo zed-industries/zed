@@ -119,7 +119,7 @@ use task::{
     TaskVariables, VariableName,
 };
 use terminals::Terminals;
-use text::{Anchor, BufferId, LineEnding};
+use text::{Anchor, BufferId, LineEnding, Point};
 use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
@@ -1286,6 +1286,48 @@ impl Project {
 
         self.debug_adapters
             .insert(id, DebugAdapterClientState::Starting(task));
+    }
+
+    pub fn breakpoint_lines_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &ModelContext<Self>,
+    ) -> Option<Vec<u64>> {
+        let buffer_id = self
+            .buffer_store
+            .read(cx)
+            .buffer_id_for_project_path(project_path)?;
+
+        let buffer = self.buffer_for_id(*buffer_id, cx)?.read(cx);
+
+        let bp_read_guard = self.breakpoints.read();
+
+        Some(
+            bp_read_guard
+                .get(project_path)?
+                .iter()
+                .map(|breakpoint| {
+                    buffer
+                        .summary_for_anchor::<Point>(&breakpoint.position.text_anchor)
+                        .row as u64
+                })
+                .collect(),
+        )
+    }
+
+    pub fn seralize_breakpoints(&self, cx: &ModelContext<Self>) -> Vec<(PathBuf, Vec<u64>)> {
+        let breakpoint_read_guard = self.breakpoints.read();
+        let mut result = Vec::new();
+
+        for project_path in breakpoint_read_guard.keys() {
+            if let Some(breakpoint_lines) =
+                self.breakpoint_lines_for_project_path(&project_path, cx)
+            {
+                result.push((project_path.path.to_path_buf(), breakpoint_lines))
+            }
+        }
+
+        result
     }
 
     pub fn update_file_breakpoints(

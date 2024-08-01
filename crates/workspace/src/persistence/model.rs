@@ -216,6 +216,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) breakpoints: Option<Vec<(PathBuf, Vec<u64>)>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
