@@ -18,7 +18,7 @@ use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
-use crate::LanguageModelProvider;
+use crate::{LanguageModelAvailability, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 
@@ -234,6 +234,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
+    }
+
+    fn availability(&self) -> LanguageModelAvailability {
+        self.model.availability()
     }
 
     fn max_token_count(&self) -> usize {

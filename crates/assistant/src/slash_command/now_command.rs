@@ -44,7 +44,7 @@ impl SlashCommand for NowSlashCommand {
         self: Arc<Self>,
         _argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let now = Local::now();

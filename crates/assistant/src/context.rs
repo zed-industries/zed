@@ -3414,7 +3414,7 @@ mod tests {
             self: Arc<Self>,
             _argument: Option<&str>,
             _workspace: WeakView<Workspace>,
-            _delegate: Arc<dyn LspAdapterDelegate>,
+            _delegate: Option<Arc<dyn LspAdapterDelegate>>,
             _cx: &mut WindowContext,
         ) -> Task<Result<SlashCommandOutput>> {
             Task::ready(Ok(SlashCommandOutput {
