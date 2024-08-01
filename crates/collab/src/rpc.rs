@@ -4706,6 +4706,30 @@ async fn stream_complete_with_language_model(
                 })?;
             }
         }
+        Some(proto::LanguageModelProvider::Zed) => {
+            let api_key = config
+                .qwen2_7b_api_key
+                .as_ref()
+                .context("no Qwen2-7B API key configured on the server")?;
+            let api_url = config
+                .qwen2_7b_api_url
+                .as_ref()
+                .context("no Qwen2-7B URL configured on the server")?;
+            let mut events = open_ai::stream_completion(
+                session.http_client.as_ref(),
+                &api_url,
+                api_key,
+                serde_json::from_str(&request.request)?,
+                None,
+            )
+            .await?;
+            while let Some(event) = events.next().await {
+                let event = event?;
+                response.send(proto::StreamCompleteWithLanguageModelResponse {
+                    event: serde_json::to_string(&event)?,
+                })?;
+            }
+        }
         None => return Err(anyhow!("unknown provider"))?,
     }
 

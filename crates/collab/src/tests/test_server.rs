@@ -672,6 +672,8 @@ impl TestServer {
                 stripe_api_key: None,
                 stripe_price_id: None,
                 supermaven_admin_api_key: None,
+                qwen2_7b_api_key: None,
+                qwen2_7b_api_url: None,
             },
         })
     }

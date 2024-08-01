@@ -2099,6 +2099,7 @@ enum LanguageModelProvider {
     Anthropic = 0;
     OpenAI = 1;
     Google = 2;
+    Zed = 3;
 }
 
 message GetCachedEmbeddings {
