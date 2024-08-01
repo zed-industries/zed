@@ -309,33 +309,25 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
+        let ollama_intro = "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.";
+        let ollama_reqs = "To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.";
+
         v_flex()
             .size_full()
             .gap_4()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(Label::new(
-                        "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.",
-                    )),
-            )
+            .child(Label::new(ollama_intro)
             .child(if is_authenticated {
-                v_flex()
-                    .size_full()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Indicator::dot().color(Color::Success))
-                            .child(
-                                Label::new("Connected").size(LabelSize::Small),
-                            ),
-                    )
+                v_flex().size_full().child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("Connected").size(LabelSize::Small)),
+                )
             } else {
                 v_flex()
                     .size_full()
                     .gap_4()
-                    .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded."))
+                    .child(Label::new(ollama_reqs))
                     .child(
                         h_flex()
                             .w_full()
@@ -352,28 +344,32 @@ impl Render for ConfigurationView {
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::Download)
                                                 .icon_position(IconPosition::Start)
-                                                .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                                .on_click(move |_, cx| {
+                                                    cx.open_url(OLLAMA_DOWNLOAD_URL)
+                                                }),
                                         )
                                     })
                                     .child(
                                         Button::new("view-models", "All Models")
                                             .style(ButtonStyle::Subtle)
-                                            .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL))
+                                            .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                     ),
                             )
-                            .child(
-                                        if is_authenticated {
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Indicator::dot().color(Color::Success))
-                                                .child(Label::new("Connected").size(LabelSize::Small)).into_any_element()
-                                        } else {
-                                            Button::new("retry_ollama_models", "Connect")
-                                                .icon_position(IconPosition::Start)
-                                                .icon(IconName::ArrowCircle)
-                                                .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx))).into_any_element()
-                                        }
-                                    ),
+                            .child(if is_authenticated {
+                                h_flex()
+                                    .gap_2()
+                                    .child(Indicator::dot().color(Color::Success))
+                                    .child(Label::new("Connected").size(LabelSize::Small))
+                                    .into_any_element()
+                            } else {
+                                Button::new("retry_ollama_models", "Connect")
+                                    .icon_position(IconPosition::Start)
+                                    .icon(IconName::ArrowCircle)
+                                    .on_click(
+                                        cx.listener(move |this, _, cx| this.retry_connection(cx)),
+                                    )
+                                    .into_any_element()
+                            }),
                     )
             })
             .into_any()
