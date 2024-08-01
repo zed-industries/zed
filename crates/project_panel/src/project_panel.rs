@@ -1313,39 +1313,52 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
+            let mut rename_tasks = Vec::new();
             let mut tasks = Vec::new();
+            let mut will_delete = Vec::new();
 
-            for clipboard_entry in clipboard_entries.items() {
-                let new_path =
-                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
-                if clipboard_entry.worktree_id != worktree_id {
-                    let relative_path = self.relative_path_for_entry(
+            if clipboard_entries.is_cut() {
+                for clipboard_entry in clipboard_entries.items() {
+                    let new_path = self.create_paste_path(
                         clipboard_entry,
                         self.selected_entry_handle(cx)?,
                         cx,
                     )?;
-                    // TODO current paste not selected, should fix keep same behavior below
-                    self.project
-                        .update(cx, |project, cx| {
+                    if clipboard_entry.worktree_id != worktree_id {
+                        let relative_path = self.relative_path_for_entry(
+                            clipboard_entry,
+                            self.selected_entry_handle(cx)?,
+                            cx,
+                        )?;
+                        let task = self.project.update(cx, |project, cx| {
                             project.copy_entry(entry.id, Some(relative_path), new_path, cx)
-                        })
-                        .detach_and_log_err(cx);
-                    if clipboard_entries.is_cut() {
-                        self.project
-                            .update(cx, |project, cx| {
-                                project
-                                    .delete_entry(clipboard_entry.entry_id, true, cx)
-                                    .unwrap()
-                            })
-                            .detach_and_log_err(cx);
+                        });
+                        will_delete.push(clipboard_entry.entry_id);
+                        tasks.push(task);
+                    } else {
+                        let task = self.project.update(cx, |project, cx| {
+                            project.rename_entry(clipboard_entry.entry_id, new_path, cx)
+                        });
+                        rename_tasks.push(task);
                     }
-                } else {
-                    if clipboard_entries.is_cut() {
-                        self.project
-                            .update(cx, |project, cx| {
-                                project.rename_entry(clipboard_entry.entry_id, new_path, cx)
-                            })
-                            .detach_and_log_err(cx);
+                }
+            } else {
+                for clipboard_entry in clipboard_entries.items() {
+                    let new_path = self.create_paste_path(
+                        clipboard_entry,
+                        self.selected_entry_handle(cx)?,
+                        cx,
+                    )?;
+                    if clipboard_entry.worktree_id != worktree_id {
+                        let relative_path = self.relative_path_for_entry(
+                            clipboard_entry,
+                            self.selected_entry_handle(cx)?,
+                            cx,
+                        )?;
+                        let task = self.project.update(cx, |project, cx| {
+                            project.copy_entry(entry.id, Some(relative_path), new_path, cx)
+                        });
+                        tasks.push(task);
                     } else {
                         let task = self.project.update(cx, |project, cx| {
                             project.copy_entry(
@@ -1361,8 +1374,8 @@ impl ProjectPanel {
             }
 
             cx.spawn(|project_panel, mut cx| async move {
-                let entry_ids = futures::future::join_all(tasks).await;
-                if let Some(Some(entry)) = entry_ids
+                let entry_ids = futures::future::join_all(rename_tasks).await;
+                if let Some(CreatedEntry::Included(entry)) = entry_ids
                     .into_iter()
                     .rev()
                     .find_map(|entry_id| entry_id.ok())
@@ -1376,6 +1389,40 @@ impl ProjectPanel {
                         })
                         .ok();
                 }
+            })
+            .detach();
+
+            cx.spawn(|project_panel, mut cx| async move {
+                let entry_ids = futures::future::join_all(tasks).await;
+                let mut ids = Vec::new();
+                let mut last_succeed = None;
+                for (index, entry) in entry_ids.into_iter().enumerate() {
+                    if let Some(Some(entry)) = entry.ok() {
+                        ids.push(index);
+                        last_succeed = Some(entry.id);
+                    }
+                }
+                project_panel
+                    .update(&mut cx, |project_panel, cx| {
+                        if let Some(entry_id) = last_succeed {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id,
+                            });
+                        }
+                        will_delete
+                            .into_iter()
+                            .enumerate()
+                            .find(|(index, _)| ids.contains(&index))
+                            .map(|(_, entry)| {
+                                project_panel
+                                    .project
+                                    .update(cx, |project, cx| project.delete_entry(entry, true, cx))
+                                    .ok_or_else(|| format!("not found"))
+                            })
+                            .map(|t| t.unwrap().detach_and_log_err(cx));
+                    })
+                    .ok();
             })
             .detach();
 
@@ -3743,8 +3790,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt",
-                "      two.txt  <== selected",
+                "      three.txt  <== selected",
+                "      two.txt",
             ]
         );
 
@@ -3767,12 +3814,12 @@ mod tests {
                 "      one.txt",
                 "      two.txt",
                 "v root2",
-                "    > a",
+                "    > a  <== selected",
                 "    > b",
                 "      four.txt",
                 "      one.txt",
                 "      three.txt",
-                "      two.txt  <== selected",
+                "      two.txt",
             ]
         );
     }
@@ -3842,8 +3889,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt",
-                "      two.txt  <== selected",
+                "      three.txt  <== selected",
+                "      two.txt",
             ]
         );
 
@@ -3871,9 +3918,9 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three copy.txt",
+                "      three copy.txt  <== selected",
                 "      three.txt",
-                "      two.txt  <== selected",
+                "      two.txt",
             ]
         );
 
@@ -3898,13 +3945,13 @@ mod tests {
                 "      three.txt",
                 "      two.txt",
                 "v root2",
-                "    > a",
+                "    > a  <== selected",
                 "    > b",
                 "      four.txt",
                 "      one.txt",
                 "      three copy.txt",
                 "      three.txt",
-                "      two.txt  <== selected",
+                "      two.txt",
             ]
         );
     }
@@ -4594,9 +4641,9 @@ mod tests {
             &[
                 "v project_root",
                 "    v dir_1",
-                "        v nested_dir  <== selected",
+                "        v nested_dir",
                 "              file_1.py  <== marked",
-                "              file_a.py  <== marked",
+                "              file_a.py  <== selected  <== marked",
             ]
         );
         cx.simulate_modifiers_change(modifiers_with_shift);
