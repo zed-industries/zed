@@ -1316,89 +1316,56 @@ impl ProjectPanel {
             let mut rename_tasks = Vec::new();
             let mut tasks = Vec::new();
             let mut will_delete = Vec::new();
-
-            if clipboard_entries.is_cut() {
-                for clipboard_entry in clipboard_entries.items() {
-                    let new_path = self.create_paste_path(
+            for clipboard_entry in clipboard_entries.items() {
+                let new_path =
+                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
+                let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
+                let relative_path = if !is_same_worktree {
+                    self.relative_path_for_entry(
                         clipboard_entry,
                         self.selected_entry_handle(cx)?,
                         cx,
-                    )?;
-                    if clipboard_entry.worktree_id != worktree_id {
-                        let relative_path = self.relative_path_for_entry(
-                            clipboard_entry,
-                            self.selected_entry_handle(cx)?,
-                            cx,
-                        )?;
-                        let task = self.project.update(cx, |project, cx| {
-                            project.copy_entry(entry.id, Some(relative_path), new_path, cx)
-                        });
+                    )
+                } else {
+                    None
+                };
+                if clipboard_entries.is_cut() && is_same_worktree {
+                    let task = self.project.update(cx, |project, cx| {
+                        project.rename_entry(clipboard_entry.entry_id, new_path, cx)
+                    });
+                    rename_tasks.push(task);
+                } else {
+                    let entry_id = if is_same_worktree {
+                        clipboard_entry.entry_id
+                    } else {
+                        entry.id
+                    };
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(entry_id, relative_path, new_path, cx)
+                    });
+                    tasks.push(task);
+                    if !is_same_worktree && clipboard_entries.is_cut() {
                         will_delete.push(clipboard_entry.entry_id);
-                        tasks.push(task);
-                    } else {
-                        let task = self.project.update(cx, |project, cx| {
-                            project.rename_entry(clipboard_entry.entry_id, new_path, cx)
-                        });
-                        rename_tasks.push(task);
-                    }
-                }
-            } else {
-                for clipboard_entry in clipboard_entries.items() {
-                    let new_path = self.create_paste_path(
-                        clipboard_entry,
-                        self.selected_entry_handle(cx)?,
-                        cx,
-                    )?;
-                    if clipboard_entry.worktree_id != worktree_id {
-                        let relative_path = self.relative_path_for_entry(
-                            clipboard_entry,
-                            self.selected_entry_handle(cx)?,
-                            cx,
-                        )?;
-                        let task = self.project.update(cx, |project, cx| {
-                            project.copy_entry(entry.id, Some(relative_path), new_path, cx)
-                        });
-                        tasks.push(task);
-                    } else {
-                        let task = self.project.update(cx, |project, cx| {
-                            project.copy_entry(
-                                clipboard_entry.entry_id,
-                                None::<Arc<Path>>,
-                                new_path,
-                                cx,
-                            )
-                        });
-                        tasks.push(task);
                     }
                 }
             }
 
             cx.spawn(|project_panel, mut cx| async move {
-                let entry_ids = futures::future::join_all(rename_tasks).await;
-                if let Some(CreatedEntry::Included(entry)) = entry_ids
+                let entry_ids = futures::future::join_all(tasks).await;
+                let rename_ids = futures::future::join_all(rename_tasks).await;
+                let mut last_succeed = if let Some(CreatedEntry::Included(entry)) = rename_ids
                     .into_iter()
                     .rev()
                     .find_map(|entry_id| entry_id.ok())
                 {
-                    project_panel
-                        .update(&mut cx, |project_panel, _cx| {
-                            project_panel.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id: entry.id,
-                            });
-                        })
-                        .ok();
-                }
-            })
-            .detach();
-
-            cx.spawn(|project_panel, mut cx| async move {
-                let entry_ids = futures::future::join_all(tasks).await;
-                let mut ids = Vec::new();
-                let mut last_succeed = None;
+                    Some(entry.id)
+                } else {
+                    None
+                };
+                let mut succeed_indexs = Vec::new();
                 for (index, entry) in entry_ids.into_iter().enumerate() {
                     if let Some(Some(entry)) = entry.ok() {
-                        ids.push(index);
+                        succeed_indexs.push(index);
                         last_succeed = Some(entry.id);
                     }
                 }
@@ -1410,18 +1377,15 @@ impl ProjectPanel {
                                 entry_id,
                             });
                         }
-                        if let Some(task) = will_delete
-                            .into_iter()
-                            .enumerate()
-                            .find(|(index, _)| ids.contains(&index))
-                            .map(|(_, entry)| {
+                        for (index, entry) in will_delete.into_iter().enumerate() {
+                            if succeed_indexs.contains(&index) {
                                 project_panel
                                     .project
                                     .update(cx, |project, cx| project.delete_entry(entry, true, cx))
-                                    .ok_or_else(|| "not found".to_string())
-                            })
-                        {
-                            task.unwrap().detach_and_log_err(cx);
+                                    .ok_or_else(|| "")
+                                    .unwrap()
+                                    .detach_and_log_err(cx);
+                            }
                         }
                     })
                     .ok();
