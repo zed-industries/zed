@@ -30,7 +30,6 @@ use rope::Rope;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
-    borrow::Cow,
     cmp::Reverse,
     future::Future,
     path::PathBuf,
@@ -1067,32 +1066,16 @@ pub struct PromptMetadata {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PromptId(Uuid);
+#[serde(tag = "kind")]
+pub enum PromptId {
+    User { uuid: Uuid },
+    EditWorkflow,
+}
 
 impl PromptId {
     pub fn new() -> PromptId {
-        PromptId(Uuid::new_v4())
-    }
-}
-
-impl<'a> heed::BytesEncode<'a> for PromptId {
-    type EItem = PromptId;
-
-    fn bytes_encode(item: &'a Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
-        Ok(Cow::Borrowed(item.0.as_bytes()))
-    }
-}
-
-impl<'a> heed::BytesDecode<'a> for PromptId {
-    type DItem = PromptId;
-
-    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
-        if let Ok(id) = SerdeBincode::<PromptId>::bytes_decode(bytes) {
-            Ok(id)
-        } else if bytes.len() == 16 {
-            Ok(PromptId(Uuid::from_bytes(bytes.try_into().unwrap())))
-        } else {
-            Err("Invalid byte length for PromptId".into())
+        PromptId::User {
+            uuid: Uuid::new_v4(),
         }
     }
 }
@@ -1101,8 +1084,8 @@ pub struct PromptStore {
     executor: BackgroundExecutor,
     env: heed::Env,
     metadata_cache: RwLock<MetadataCache>,
-    metadata: Database<PromptId, SerdeJson<PromptMetadata>>,
-    bodies: Database<PromptId, Str>,
+    metadata: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
+    bodies: Database<SerdeJson<PromptId>, Str>,
 }
 
 #[derive(Default)]
@@ -1112,7 +1095,10 @@ struct MetadataCache {
 }
 
 impl MetadataCache {
-    fn from_db(db: Database<PromptId, SerdeJson<PromptMetadata>>, txn: &RoTxn) -> Result<Self> {
+    fn from_db(
+        db: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
+        txn: &RoTxn,
+    ) -> Result<Self> {
         let mut cache = MetadataCache::default();
         for result in db.iter(txn)? {
             let (prompt_id, metadata) = result?;
@@ -1190,12 +1176,15 @@ impl PromptStore {
 
     fn upgrade_dbs(
         env: &heed::Env,
-        metadata_db: heed::Database<PromptId, SerdeJson<PromptMetadata>>,
-        bodies_db: heed::Database<PromptId, Str>,
+        metadata_db: heed::Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
+        bodies_db: heed::Database<SerdeJson<PromptId>, Str>,
     ) -> Result<()> {
+        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+        pub struct PromptIdV1(Uuid);
+
         #[derive(Clone, Debug, Serialize, Deserialize)]
         pub struct PromptMetadataV1 {
-            pub id: PromptId,
+            pub id: PromptIdV1,
             pub title: Option<SharedString>,
             pub default: bool,
             pub saved_at: DateTime<Utc>,
@@ -1203,7 +1192,10 @@ impl PromptStore {
 
         let mut txn = env.write_txn()?;
         let Some(bodies_v1_db) = env
-            .open_database::<SerdeBincode<PromptId>, SerdeBincode<String>>(&txn, Some("bodies"))?
+            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<String>>(
+                &txn,
+                Some("bodies"),
+            )?
         else {
             return Ok(());
         };
@@ -1212,7 +1204,7 @@ impl PromptStore {
             .collect::<heed::Result<HashMap<_, _>>>()?;
 
         let Some(metadata_v1_db) = env
-            .open_database::<SerdeBincode<PromptId>, SerdeBincode<PromptMetadataV1>>(
+            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<PromptMetadataV1>>(
                 &txn,
                 Some("metadata"),
             )?
@@ -1223,29 +1215,32 @@ impl PromptStore {
             .iter(&txn)?
             .collect::<heed::Result<HashMap<_, _>>>()?;
 
-        for (prompt_id, metadata_v1) in metadata_v1 {
-            let Some(body_v1) = bodies_v1.remove(&prompt_id) else {
+        for (prompt_id_v1, metadata_v1) in metadata_v1 {
+            let prompt_id_v2 = PromptId::User {
+                uuid: prompt_id_v1.0,
+            };
+            let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
                 continue;
             };
 
             if metadata_db
-                .get(&txn, &prompt_id)?
+                .get(&txn, &prompt_id_v2)?
                 .map_or(true, |metadata_v2| {
                     metadata_v1.saved_at > metadata_v2.saved_at
                 })
             {
                 metadata_db.put(
                     &mut txn,
-                    &prompt_id,
+                    &prompt_id_v2,
                     &PromptMetadata {
-                        id: metadata_v1.id,
+                        id: prompt_id_v2,
                         title: metadata_v1.title.clone(),
                         default: metadata_v1.default,
                         saved_at: metadata_v1.saved_at,
                         built_in: false,
                     },
                 )?;
-                bodies_db.put(&mut txn, &prompt_id, &body_v1)?;
+                bodies_db.put(&mut txn, &prompt_id_v2, &body_v1)?;
             }
         }
 
