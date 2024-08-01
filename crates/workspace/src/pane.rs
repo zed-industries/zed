@@ -2017,13 +2017,37 @@ impl Pane {
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                        }
-                        workspace
-                            .open_path(path, Some(to_pane.downgrade()), true, cx)
-                            .detach_and_log_err(cx);
-                    }
+                        let load_path_task = workspace.load_path(path.into(), cx);
+                        cx.spawn(|workspace, mut cx| async move {
+                            match load_path_task.await {
+                                Ok((project_entry_id, build_item)) => {
+                                    _ = workspace.update(&mut cx, |workspace, cx| {
+                                        if let Some(split_direction) = split_direction {
+                                            to_pane =
+                                                workspace.split_pane(to_pane, split_direction, cx);
+                                        }
+                                        to_pane.update(cx, |pane, cx| {
+                                            pane.open_item(
+                                                project_entry_id,
+                                                true,
+                                                false,
+                                                cx,
+                                                build_item,
+                                            )
+                                        })
+                                    });
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    _ = workspace.update(&mut cx, |workspace, cx| {
+                                        workspace.show_error(&e, cx);
+                                    });
+                                    Err(e)
+                                }
+                            }
+                        })
+                        .detach();
+                    };
                 });
             })
             .log_err();
@@ -2094,7 +2118,14 @@ impl Pane {
                         })
                         .ok()
                     {
-                        let _opened_items: Vec<_> = open_task.await;
+                        let opened_items: Vec<_> = open_task.await;
+                        _ = workspace.update(&mut cx, |workspace, cx| {
+                            for item in opened_items {
+                                if let Some(Err(e)) = item {
+                                    workspace.show_error(&e, cx);
+                                }
+                            }
+                        });
                     }
                 })
                 .detach();
