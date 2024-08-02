@@ -3014,7 +3014,6 @@ impl ConfigurationView {
         let focus_handle = cx.focus_handle();
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
-        println!("ConfigurationView::new");
         let configuration_views = providers
             .iter()
             .map(|provider| (provider.id(), provider.configuration_view(cx)))

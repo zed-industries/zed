@@ -19,6 +19,7 @@ use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Indicator};
+use util::ResultExt;
 
 const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
@@ -192,7 +193,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+        let authenticate = self.authenticate(cx);
+        cx.new_view(|cx| ConfigurationView::new(authenticate, self.state.clone(), cx))
             .into()
     }
 
@@ -384,16 +386,32 @@ impl LanguageModel for AnthropicModel {
 struct ConfigurationView {
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
+    load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        authenticate: Task<Result<()>>,
+        state: gpui::Model<State>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
         .detach();
+
+        let load_credentials_task = Some(cx.spawn({
+            |this, mut cx| async move {
+                authenticate.await.log_err();
+                this.update(&mut cx, |this, cx| {
+                    this.load_credentials_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
 
         Self {
             api_key_editor: cx.new_view(|cx| {
@@ -402,6 +420,7 @@ impl ConfigurationView {
                 editor
             }),
             state,
+            load_credentials_task,
         }
     }
 
@@ -478,7 +497,9 @@ impl Render for ConfigurationView {
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
 
-        if self.should_render_editor(cx) {
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))

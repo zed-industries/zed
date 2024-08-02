@@ -186,7 +186,8 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+        let authenticate = self.authenticate(cx);
+        cx.new_view(|cx| ConfigurationView::new(authenticate, self.state.clone(), cx))
             .into()
     }
 
@@ -317,10 +318,15 @@ pub fn count_open_ai_tokens(
 struct ConfigurationView {
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
+    load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        authenticate: Task<Result<()>>,
+        state: gpui::Model<State>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let api_key_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
@@ -332,9 +338,21 @@ impl ConfigurationView {
         })
         .detach();
 
+        let load_credentials_task = Some(cx.spawn({
+            |this, mut cx| async move {
+                authenticate.await.log_err();
+                this.update(&mut cx, |this, cx| {
+                    this.load_credentials_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
+
         Self {
             api_key_editor,
             state,
+            load_credentials_task,
         }
     }
 
@@ -413,7 +431,9 @@ impl Render for ConfigurationView {
             "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
-        if self.should_render_editor(cx) {
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
