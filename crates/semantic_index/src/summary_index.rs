@@ -155,19 +155,19 @@ impl SummaryIndex {
         } else {
             // This feature is only staff-shipped, so make the rest of these no-ops.
             backlogged = Backlogged {
-                paths_to_digest: channel::bounded(0).1,
+                paths_to_digest: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             digest = MightNeedSummaryFiles {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             needs_summary = NeedsSummary {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             summaries = SummarizeFiles {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             persist = Task::ready(Ok(()));
@@ -218,19 +218,19 @@ impl SummaryIndex {
         } else {
             // This feature is only staff-shipped, so make the rest of these no-ops.
             backlogged = Backlogged {
-                paths_to_digest: channel::bounded(0).1,
+                paths_to_digest: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             digest = MightNeedSummaryFiles {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             needs_summary = NeedsSummary {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             summaries = SummarizeFiles {
-                files: channel::bounded(0).1,
+                files: channel::unbounded().1,
                 task: Task::ready(Ok(())),
             };
             persist = Task::ready(Ok(()));
