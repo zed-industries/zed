@@ -3752,7 +3752,6 @@ impl<'a> BufferChunks<'a> {
     /// Seeks to the given byte offset in the buffer.
     pub fn seek(&mut self, range: Range<usize>) {
         let old_range = std::mem::replace(&mut self.range, range.clone());
-        dbg!(&old_range, &self.range);
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start >= self.range.start && old_range.end <= self.range.end {
