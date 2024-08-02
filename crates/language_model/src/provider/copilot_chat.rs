@@ -91,6 +91,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Copilot
+    }
+
     fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
             .map(|model| {

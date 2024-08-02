@@ -776,6 +776,61 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn test_outline_annotations(cx: &mut AppContext) {
+    // Add this new test case
+    let text = r#"
+        /// This is a doc comment
+        /// that spans multiple lines
+        fn annotated_function() {
+            // This is not an annotation
+        }
+
+        // This is a single-line annotation
+        fn another_function() {}
+
+        fn unannotated_function() {}
+
+        // This comment is not an annotation
+
+        fn function_after_blank_line() {}
+    "#
+    .unindent();
+
+    let buffer =
+        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+    let outline = buffer
+        .update(cx, |buffer, _| buffer.snapshot().outline(None))
+        .unwrap();
+
+    assert_eq!(
+        outline
+            .items
+            .into_iter()
+            .map(|item| (
+                item.text,
+                item.depth,
+                item.annotation_range
+                    .map(|range| { buffer.read(cx).text_for_range(range).collect::<String>() })
+            ))
+            .collect::<Vec<_>>(),
+        &[
+            (
+                "fn annotated_function".to_string(),
+                0,
+                Some("/// This is a doc comment\n/// that spans multiple lines".to_string())
+            ),
+            (
+                "fn another_function".to_string(),
+                0,
+                Some("// This is a single-line annotation".to_string())
+            ),
+            ("fn unannotated_function".to_string(), 0, None),
+            ("fn function_after_blank_line".to_string(), 0, None),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl Person {
@@ -2603,6 +2658,8 @@ fn rust_lang() -> Language {
     .unwrap()
     .with_outline_query(
         r#"
+        (line_comment) @annotation
+
         (struct_item
             "struct" @context
             name: (_) @name) @item

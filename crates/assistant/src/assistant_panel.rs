@@ -943,7 +943,7 @@ impl AssistantPanel {
             });
         } else {
             let configuration = cx.new_view(|cx| {
-                let mut view = ConfigurationView::new(self.focus_handle(cx), cx);
+                let mut view = ConfigurationView::new(cx);
                 if let Some(provider) = provider {
                     view.set_active_tab(provider, cx);
                 }
@@ -3044,11 +3044,6 @@ impl Item for ContextHistory {
     }
 }
 
-pub struct ConfigurationView {
-    fallback_handle: FocusHandle,
-    active_tab: Option<ActiveTab>,
-}
-
 struct ActiveTab {
     provider: Arc<dyn LanguageModelProvider>,
     configuration_prompt: AnyView,
@@ -3067,12 +3062,37 @@ impl ActiveTab {
     }
 }
 
+pub struct ConfigurationView {
+    focus_handle: FocusHandle,
+    active_tab: Option<ActiveTab>,
+}
+
 impl ConfigurationView {
-    fn new(fallback_handle: FocusHandle, _cx: &mut ViewContext<Self>) -> Self {
-        Self {
-            fallback_handle,
+    fn new(cx: &mut ViewContext<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        cx.on_focus(&focus_handle, |this, cx| {
+            if let Some(focus_handle) = this
+                .active_tab
+                .as_ref()
+                .and_then(|tab| tab.focus_handle.as_ref())
+            {
+                focus_handle.focus(cx);
+            }
+        })
+        .detach();
+
+        let mut this = Self {
+            focus_handle,
             active_tab: None,
+        };
+
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+        if !providers.is_empty() {
+            this.set_active_tab(providers[0].clone(), cx);
         }
+
+        this
     }
 
     fn set_active_tab(
@@ -3085,7 +3105,7 @@ impl ConfigurationView {
         if let Some(focus_handle) = &focus_handle {
             focus_handle.focus(cx);
         } else {
-            self.fallback_handle.focus(cx);
+            self.focus_handle.focus(cx);
         }
 
         let load_credentials = provider.authenticate(cx);
@@ -3224,11 +3244,6 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
-
-        if self.active_tab.is_none() && !providers.is_empty() {
-            self.set_active_tab(providers[0].clone(), cx);
-        }
-
         let tabs = h_flex().mx_neg_1().gap_3().children(
             providers
                 .iter()
@@ -3237,6 +3252,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .id("assistant-configuration-view")
+            .track_focus(&self.focus_handle)
             .w_full()
             .min_h_full()
             .p(Spacing::XXLarge.rems(cx))
@@ -3258,7 +3274,12 @@ impl Render for ConfigurationView {
                         .color(Color::Muted),
                     )
                     .child(tabs)
-                    .children(self.render_active_tab_view(cx)),
+                    .when(self.active_tab.is_some(), |this| {
+                        this.children(self.render_active_tab_view(cx))
+                    })
+                    .when(self.active_tab.is_none(), |this| {
+                        this.child(Label::new("No providers configured").color(Color::Warning))
+                    }),
             )
     }
 }
@@ -3271,10 +3292,7 @@ impl EventEmitter<ConfigurationViewEvent> for ConfigurationView {}
 
 impl FocusableView for ConfigurationView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.active_tab
-            .as_ref()
-            .and_then(|tab| tab.focus_handle.clone())
-            .unwrap_or(self.fallback_handle.clone())
+        self.focus_handle.clone()
     }
 }
 

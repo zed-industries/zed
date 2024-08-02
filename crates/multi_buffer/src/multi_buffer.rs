@@ -3646,6 +3646,12 @@ impl MultiBufferSnapshot {
                                     ..self.anchor_in_excerpt(*excerpt_id, body_range.end)?,
                             )
                         }),
+                        annotation_range: item.annotation_range.and_then(|annotation_range| {
+                            Some(
+                                self.anchor_in_excerpt(*excerpt_id, annotation_range.start)?
+                                    ..self.anchor_in_excerpt(*excerpt_id, annotation_range.end)?,
+                            )
+                        }),
                     })
                 })
                 .collect(),
@@ -3676,6 +3682,12 @@ impl MultiBufferSnapshot {
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
+                            Some(
+                                self.anchor_in_excerpt(excerpt_id, body_range.start)?
+                                    ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,
+                            )
+                        }),
+                        annotation_range: item.annotation_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(excerpt_id, body_range.start)?
                                     ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,

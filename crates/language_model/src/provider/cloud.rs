@@ -18,12 +18,12 @@ use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
-use crate::LanguageModelProvider;
+use crate::{LanguageModelAvailability, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
-pub const PROVIDER_NAME: &str = "Zed AI";
+pub const PROVIDER_NAME: &str = "Zed";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -126,6 +126,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::AiZed
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
@@ -234,6 +238,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
+    }
+
+    fn availability(&self) -> LanguageModelAvailability {
+        self.model.availability()
     }
 
     fn max_token_count(&self) -> usize {

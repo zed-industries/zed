@@ -277,7 +277,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         argument: Option<&str>,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Option<Resource<Arc<dyn LspAdapterDelegate>>>,
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V007(ext) => {

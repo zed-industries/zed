@@ -8,6 +8,22 @@ use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
+    /// Sets the font family to the buffer font.
+    fn font_buffer(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let buffer_font_family = settings.buffer_font.family.clone();
+
+        self.font_family(buffer_font_family)
+    }
+
+    /// Sets the font family to the UI font.
+    fn font_ui(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let ui_font_family = settings.ui_font.family.clone();
+
+        self.font_family(ui_font_family)
+    }
+
     /// Sets the text size using a [`UiTextSize`].
     fn text_ui_size(self, size: TextSize, cx: &WindowContext) -> Self {
         self.text_size(size.rems(cx))

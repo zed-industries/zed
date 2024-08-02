@@ -864,6 +864,7 @@ pub struct OutlineConfig {
     pub extra_context_capture_ix: Option<u32>,
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
+    pub annotation_capture_ix: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1049,6 +1050,7 @@ impl Language {
         let mut extra_context_capture_ix = None;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
+        let mut annotation_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
@@ -1058,6 +1060,7 @@ impl Language {
                 ("context.extra", &mut extra_context_capture_ix),
                 ("open", &mut open_capture_ix),
                 ("close", &mut close_capture_ix),
+                ("annotation", &mut annotation_capture_ix),
             ],
         );
         if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
@@ -1069,6 +1072,7 @@ impl Language {
                 extra_context_capture_ix,
                 open_capture_ix,
                 close_capture_ix,
+                annotation_capture_ix,
             });
         }
         Ok(self)
