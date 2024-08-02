@@ -1952,22 +1952,24 @@ impl ContextEditor {
         edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
         cx: &mut ViewContext<Self>,
     ) -> Option<(View<Editor>, Vec<InlineAssistId>)> {
+        let assistant_panel = self.assistant_panel.upgrade()?;
         if edit_suggestions.is_empty() {
             return None;
-        } else if edit_suggestions.len() == 1
-            && edit_suggestions.values().next().unwrap().len() == 1
-        {
+        }
+
+        let editor;
+        let mut suggestion_groups = Vec::new();
+        if edit_suggestions.len() == 1 && edit_suggestions.values().next().unwrap().len() == 1 {
             // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, suggestion_groups) = edit_suggestions.into_iter().next().unwrap();
-            let suggestion_group = suggestion_groups.into_iter().next().unwrap();
-            let editor = self
+            let (buffer, groups) = edit_suggestions.into_iter().next().unwrap();
+            let group = groups.into_iter().next().unwrap();
+            editor = self
                 .workspace
                 .update(cx, |workspace, cx| {
                     let active_pane = workspace.active_pane().clone();
                     workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
                 })
                 .log_err()?;
-            let assistant_panel = self.assistant_panel.upgrade()?;
 
             let (&excerpt_id, _, _) = editor
                 .read(cx)
@@ -1976,51 +1978,16 @@ impl ContextEditor {
                 .read(cx)
                 .as_singleton()
                 .unwrap();
-            let mut assist_ids = Vec::new();
-            for suggestion in suggestion_group.suggestions {
-                assist_ids.extend(suggestion.show(
-                    &editor,
-                    excerpt_id,
-                    &self.workspace,
-                    &assistant_panel,
-                    cx,
-                ));
-                // let description = suggestion.description().map_(|| "Delete".into());
-
-                // let range = {
-                //     let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
-                //     let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
-                //     multibuffer
-                //         .anchor_in_excerpt(excerpt_id, suggestion.range.start)
-                //         .unwrap()
-                //         ..multibuffer
-                //             .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-                //             .unwrap()
-                // };
-
-                // InlineAssistant::update_global(cx, |assistant, cx| {
-                //     let suggestion_id = assistant.suggest_assist(
-                //         &editor,
-                //         range,
-                //         description,
-                //         suggestion.initial_insertion,
-                //         Some(workspace.clone()),
-                //         assistant_panel.upgrade().as_ref(),
-                //         cx,
-                //     );
-                //     assist_ids.push(suggestion_id);
-                // });
-            }
 
             // Scroll the editor to the suggested assist
             editor.update(cx, |editor, cx| {
                 let multibuffer = editor.buffer().read(cx).snapshot(cx);
                 let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0 {
+                let anchor = if group.context_range.start.to_offset(buffer) == 0 {
                     Anchor::min()
                 } else {
                     multibuffer
-                        .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
+                        .anchor_in_excerpt(excerpt_id, group.context_range.start)
                         .unwrap()
                 };
 
@@ -2033,77 +2000,50 @@ impl ContextEditor {
                 );
             });
 
-            Some((editor, assist_ids))
+            suggestion_groups.push((excerpt_id, group));
         } else {
-            todo!()
-            // // If there are multiple buffers or suggestion groups, create a multibuffer
-            // let mut inline_assist_suggestions = Vec::new();
-            // let multibuffer = cx.new_model(|cx| {
-            //     let replica_id = project.read(cx).replica_id();
-            //     let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
-            //         .with_title(edit_suggestions.title);
-            //     for (buffer, suggestion_groups) in edit_suggestions {
-            //         let excerpt_ids = multibuffer.push_excerpts(
-            //             buffer,
-            //             suggestion_groups
-            //                 .iter()
-            //                 .map(|suggestion_group| ExcerptRange {
-            //                     context: suggestion_group.context_range.clone(),
-            //                     primary: None,
-            //                 }),
-            //             cx,
-            //         );
+            // If there are multiple buffers or suggestion groups, create a multibuffer
+            let multibuffer = cx.new_model(|cx| {
+                let replica_id = self.project.read(cx).replica_id();
+                let mut multibuffer =
+                    MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
+                for (buffer, groups) in edit_suggestions {
+                    let excerpt_ids = multibuffer.push_excerpts(
+                        buffer,
+                        groups.iter().map(|suggestion_group| ExcerptRange {
+                            context: suggestion_group.context_range.clone(),
+                            primary: None,
+                        }),
+                        cx,
+                    );
+                    suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
+                }
+                multibuffer
+            });
 
-            //         for (excerpt_id, suggestion_group) in
-            //             excerpt_ids.into_iter().zip(suggestion_groups)
-            //         {
-            //             for suggestion in suggestion_group.suggestions {
-            //                 let description =
-            //                     suggestion.description.unwrap_or_else(|| "Delete".into());
-            //                 let range = {
-            //                     let multibuffer = multibuffer.read(cx);
-            //                     multibuffer
-            //                         .anchor_in_excerpt(excerpt_id, suggestion.range.start)
-            //                         .unwrap()
-            //                         ..multibuffer
-            //                             .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-            //                             .unwrap()
-            //                 };
-            //                 inline_assist_suggestions.push((
-            //                     range,
-            //                     description,
-            //                     // suggestion.initial_insertion, todo!()
-            //                 ));
-            //             }
-            //         }
-            //     }
-            //     multibuffer
-            // });
-
-            // let editor = cx.new_view(|cx| {
-            //     Editor::for_multibuffer(multibuffer, Some(self.project.clone()), true, cx)
-            // });
-
-            // InlineAssistant::update_global(cx, |assistant, cx| {
-            //     for (range, description, initial_insertion) in inline_assist_suggestions {
-            //         assist_ids.push(assistant.suggest_assist(
-            //             &editor,
-            //             range,
-            //             description,
-            //             initial_insertion,
-            //             Some(self.workspace.clone()),
-            //             self.assistant_panel.upgrade().as_ref(),
-            //             cx,
-            //         ));
-            //     }
-            // });
-
-            // self.workspace.update(&mut cx, |workspace, cx| {
-            //     workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
-            // })?;
-
-            // Some(editor)
+            editor = cx.new_view(|cx| {
+                Editor::for_multibuffer(multibuffer, Some(self.project.clone()), true, cx)
+            });
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+                })
+                .log_err()?;
         }
+
+        let mut assist_ids = Vec::new();
+        for (excerpt_id, suggestion_group) in suggestion_groups {
+            for suggestion in suggestion_group.suggestions {
+                assist_ids.extend(suggestion.show(
+                    &editor,
+                    excerpt_id,
+                    &self.workspace,
+                    &assistant_panel,
+                    cx,
+                ));
+            }
+        }
+        Some((editor, assist_ids))
     }
 
     fn handle_editor_search_event(

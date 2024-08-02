@@ -9,7 +9,7 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use editor::{Editor, ToPoint};
+use editor::Editor;
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
@@ -20,14 +20,13 @@ use gpui::{
     View, WeakView,
 };
 use language::{
-    AnchorRangeExt, AutoindentMode, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt,
-    ParseStatus, Point, ToOffset,
+    AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
+    Point, ToOffset,
 };
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelTool,
     Role,
 };
-use multi_buffer::MultiBufferRow;
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
