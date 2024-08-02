@@ -1341,7 +1341,7 @@ impl Language {
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
+            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), None) {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {

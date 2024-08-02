@@ -449,6 +449,7 @@ struct BufferChunkHighlights<'a> {
 /// An iterator that yields chunks of a buffer's text, along with their
 /// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
+    buffer_snapshot: Option<&'a BufferSnapshot>,
     range: Range<usize>,
     chunks: text::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
@@ -2475,6 +2476,17 @@ impl BufferSnapshot {
         None
     }
 
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+        let highlight_maps = captures
+            .grammars()
+            .into_iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+        (captures, highlight_maps)
+    }
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
@@ -2483,36 +2495,11 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
-        let mut diagnostic_endpoints = Vec::new();
         if language_aware {
-            let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
-                grammar.highlights_query.as_ref()
-            });
-            let highlight_maps = captures
-                .grammars()
-                .into_iter()
-                .map(|grammar| grammar.highlight_map())
-                .collect();
-            syntax = Some((captures, highlight_maps));
-            for entry in self.diagnostics_in_range::<_, usize>(range.clone(), false) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-            }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+            syntax = Some(self.get_highlights(range.clone()));
         }
 
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
+        BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -2936,7 +2923,7 @@ impl BufferSnapshot {
             }
 
             let mut offset = buffer_range.start;
-            chunks.seek(offset);
+            chunks.seek(buffer_range.clone());
             for mut chunk in chunks.by_ref() {
                 if chunk.text.len() > buffer_range.end - offset {
                     chunk.text = &chunk.text[0..(buffer_range.end - offset)];
@@ -3731,7 +3718,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
-        diagnostic_endpoints: Vec<DiagnosticEndpoint>,
+        buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
         if let Some((captures, highlight_maps)) = syntax {
@@ -3743,11 +3730,12 @@ impl<'a> BufferChunks<'a> {
             })
         }
 
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let diagnostic_endpoints = Vec::new().into_iter().peekable();
         let chunks = text.chunks_in_range(range.clone());
 
-        BufferChunks {
+        let mut this = BufferChunks {
             range,
+            buffer_snapshot,
             chunks,
             diagnostic_endpoints,
             error_depth: 0,
@@ -3756,30 +3744,72 @@ impl<'a> BufferChunks<'a> {
             hint_depth: 0,
             unnecessary_depth: 0,
             highlights,
-        }
+        };
+        this.initialize_diagnostic_endpoints();
+        this
     }
 
     /// Seeks to the given byte offset in the buffer.
-    pub fn seek(&mut self, offset: usize) {
-        self.range.start = offset;
-        self.chunks.seek(self.range.start);
+    pub fn seek(&mut self, range: Range<usize>) {
+        let old_range = std::mem::replace(&mut self.range, range.clone());
+        self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            highlights
-                .stack
-                .retain(|(end_offset, _)| *end_offset > offset);
-            if let Some(capture) = &highlights.next_capture {
-                if offset >= capture.node.start_byte() {
-                    let next_capture_end = capture.node.end_byte();
-                    if offset < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+                // Reuse existing highlights stack, as the new range is a subrange of the old one.
+                highlights
+                    .stack
+                    .retain(|(end_offset, _)| *end_offset > range.start);
+                if let Some(capture) = &highlights.next_capture {
+                    if range.start >= capture.node.start_byte() {
+                        let next_capture_end = capture.node.end_byte();
+                        if range.start < next_capture_end {
+                            highlights.stack.push((
+                                next_capture_end,
+                                highlights.highlight_maps[capture.grammar_index].get(capture.index),
+                            ));
+                        }
+                        highlights.next_capture.take();
                     }
-                    highlights.next_capture.take();
                 }
+            } else if let Some(snapshot) = self.buffer_snapshot {
+                let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
+                *highlights = BufferChunkHighlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    highlight_maps,
+                };
+            } else {
+                // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
+                // Seeking such BufferChunks is not supported.
+                debug_assert!(false, "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot");
             }
+
             highlights.captures.set_byte_range(self.range.clone());
+            self.initialize_diagnostic_endpoints();
+        }
+    }
+
+    fn initialize_diagnostic_endpoints(&mut self) {
+        if let Some(buffer) = self.buffer_snapshot {
+            let mut diagnostic_endpoints = Vec::new();
+            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.start,
+                    is_start: true,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.end,
+                    is_start: false,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                });
+            }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+            self.diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         }
     }
 
