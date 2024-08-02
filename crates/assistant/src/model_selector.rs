@@ -73,9 +73,13 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                     menu = menu.custom_row(move |_| {
                         h_flex()
                             .pb_1()
-                            .gap_2()
+                            .gap_1p5()
                             .w_full()
-                            .child(Icon::new(provider_icon).color(Color::Muted))
+                            .child(
+                                Icon::new(provider_icon)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
                             .child(Label::new(provider_name.clone()))
                             .into_any_element()
                     });
