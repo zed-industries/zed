@@ -3100,14 +3100,11 @@ impl ConfigurationView {
         provider: Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
     ) {
-        println!("set active tab");
         let (view, focus_handle) = provider.configuration_view(cx);
 
         if let Some(focus_handle) = &focus_handle {
-            println!("focusing the active tab");
             focus_handle.focus(cx);
         } else {
-            println!("focusing the assistant panel");
             self.focus_handle.focus(cx);
         }
 
