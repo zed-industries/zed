@@ -1,6 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
+    model_selector2::ModelSelector2,
     prompt_library::open_prompt_library,
     slash_command::{
         default_command::DefaultSlashCommand,
@@ -2880,7 +2881,7 @@ impl Render for ContextEditorToolbarItem {
         let right_side = h_flex()
             .gap_2()
             .child(
-                ModelSelector::new(
+                ModelSelector2::new(
                     self.fs.clone(),
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
@@ -2919,8 +2920,7 @@ impl Render for ContextEditorToolbarItem {
                         .tooltip(move |cx| {
                             Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
                         }),
-                )
-                .with_handle(self.model_selector_menu_handle.clone()),
+                ), // .with_handle(self.model_selector_menu_handle.clone()),
             )
             .children(self.render_remaining_tokens(cx))
             .child(self.render_inject_context_menu(cx));

@@ -4,6 +4,7 @@ mod context;
 pub mod context_store;
 mod inline_assistant;
 mod model_selector;
+mod model_selector2;
 mod prompt_library;
 mod prompts;
 mod slash_command;
