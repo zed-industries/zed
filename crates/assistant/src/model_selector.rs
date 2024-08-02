@@ -64,10 +64,21 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                     .into_iter()
                     .enumerate()
                 {
+                    let provider_icon = provider.icon();
+                    let provider_name = provider.name().0.clone();
+
                     if index > 0 {
                         menu = menu.separator();
                     }
-                    menu = menu.header(provider.name().0);
+                    menu = menu.custom_row(move |_| {
+                        h_flex()
+                            .pb_1()
+                            .gap_2()
+                            .w_full()
+                            .child(Icon::new(provider_icon).color(Color::Muted))
+                            .child(Label::new(provider_name.clone()))
+                            .into_any_element()
+                    });
 
                     let available_models = provider.provided_models(cx);
                     if available_models.is_empty() {
@@ -105,7 +116,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                         .map(|m| m.id());
 
                     for available_model in available_models {
-                        let provider = provider.clone();
                         menu = menu.custom_entry(
                             {
                                 let id = available_model.id();
@@ -115,8 +125,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
                                 move |cx| {
-                                    let provider = provider.clone();
-
                                     h_flex()
                                         .w_full()
                                         .justify_between()
@@ -125,39 +133,32 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                         .child(
                                             h_flex()
                                                 .gap_2()
-                                                .child(
-                                                    Icon::new(provider.icon()).color(Color::Muted),
-                                                )
-                                                .child(
-                                                    Label::new(model_name.clone())
-                                                        .size(LabelSize::Small),
-                                                )
-                                                .when(
-                                                    selected_model.as_ref() == Some(&id)
-                                                        && selected_provider.as_ref()
-                                                            == Some(&provider_id),
-                                                    |this| {
-                                                        this.child(
-                                                            Icon::new(IconName::Check)
-                                                                .color(Color::Accent)
-                                                                .size(IconSize::Small),
-                                                        )
-                                                    },
-                                                ),
+                                                .child(Label::new(model_name.clone()))
+                                                .children(match availability {
+                                                    LanguageModelAvailability::Public => None,
+                                                    LanguageModelAvailability::RequiresPlan(
+                                                        Plan::Free,
+                                                    ) => None,
+                                                    LanguageModelAvailability::RequiresPlan(
+                                                        Plan::ZedPro,
+                                                    ) => Some(
+                                                        Label::new("Pro")
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted),
+                                                    ),
+                                                }),
                                         )
-                                        .children(match availability {
-                                            LanguageModelAvailability::Public => None,
-                                            LanguageModelAvailability::RequiresPlan(Plan::Free) => {
-                                                None
-                                            }
-                                            LanguageModelAvailability::RequiresPlan(
-                                                Plan::ZedPro,
-                                            ) => Some(
-                                                Label::new("Pro")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted),
-                                            ),
-                                        })
+                                        .child(div().when(
+                                            selected_model.as_ref() == Some(&id)
+                                                && selected_provider.as_ref() == Some(&provider_id),
+                                            |this| {
+                                                this.child(
+                                                    Icon::new(IconName::Check)
+                                                        .color(Color::Accent)
+                                                        .size(IconSize::Small),
+                                                )
+                                            },
+                                        ))
                                         .into_any()
                                 }
                             },
