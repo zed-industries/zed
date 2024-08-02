@@ -2658,6 +2658,8 @@ fn rust_lang() -> Language {
     .unwrap()
     .with_outline_query(
         r#"
+        (line_comment) @annotation
+
         (struct_item
             "struct" @context
             name: (_) @name) @item
