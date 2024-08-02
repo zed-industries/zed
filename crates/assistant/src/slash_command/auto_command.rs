@@ -7,7 +7,7 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
@@ -180,7 +180,22 @@ async fn commands_for_summaries(
         return Ok(Vec::new());
     }
 
-    let Some(model) = cx.update(|cx| LanguageModelRegistry::read_global(cx).active_model())? else {
+    let inference_model_id: LanguageModelId = "qwen2-7b-instruct".to_string().into(); // TODO read this from the user's settings.
+    let Ok(model) = cx.update(|cx| {
+        match LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .find(|model| &model.id() == &inference_model_id)
+        {
+            Some(model) => Ok(model),
+            None => match LanguageModelRegistry::read_global(cx).active_model() {
+                Some(model) => Ok(model),
+                None => Err(anyhow::anyhow!(
+                    "Can't infer context because there's no active model."
+                )),
+            },
+        }
+    })?
+    else {
         log::info!("Can't infer context because there's no active model.");
         return Ok(Vec::new());
     };
