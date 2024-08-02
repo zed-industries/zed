@@ -15,7 +15,7 @@ use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Indicator};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
