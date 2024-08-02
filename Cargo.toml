@@ -282,7 +282,6 @@ theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
-tokenizers = "0.19.1"
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 util = { path = "crates/util" }
