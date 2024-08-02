@@ -1237,27 +1237,6 @@ impl ProjectPanel {
             cx.notify();
         }
     }
-    fn relative_path_for_entry(
-        &self,
-        source_entry: &SelectedEntry,
-        (worktree, target_entry): (Model<Worktree>, &Entry),
-        cx: &AppContext,
-    ) -> Option<PathBuf> {
-        let target_path = worktree.read(cx).absolutize(&target_entry.path).ok()?;
-        let target_base_path = target_path.parent().unwrap();
-        let source_worktree = self
-            .project
-            .read(cx)
-            .worktree_for_id(source_entry.worktree_id, cx)?;
-        let source_entry = source_worktree
-            .read(cx)
-            .entry_for_id(source_entry.entry_id)?;
-        let source_path = source_worktree
-            .read(cx)
-            .absolutize(&source_entry.path)
-            .ok()?;
-        Some(relativize_path(target_base_path, source_path.as_path()))
-    }
 
     fn create_paste_path(
         &self,
@@ -1321,11 +1300,19 @@ impl ProjectPanel {
                     self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
                 let relative_path = if !is_same_worktree {
-                    self.relative_path_for_entry(
-                        clipboard_entry,
-                        self.selected_entry_handle(cx)?,
-                        cx,
-                    )
+                    let target_base_path = worktree.read(cx).abs_path();
+                    let clipboard_project_path = self
+                        .project
+                        .read(cx)
+                        .path_for_entry(clipboard_entry.entry_id, cx)?;
+                    let clipboard_abs_path = self
+                        .project
+                        .read(cx)
+                        .absolute_path(&clipboard_project_path, cx)?;
+                    Some(relativize_path(
+                        &target_base_path,
+                        clipboard_abs_path.as_path(),
+                    ))
                 } else {
                     None
                 };
@@ -1369,28 +1356,38 @@ impl ProjectPanel {
                         last_succeed = Some(entry.id);
                     }
                 }
-                project_panel
-                    .update(&mut cx, |project_panel, cx| {
-                        if let Some(entry_id) = last_succeed {
+                // update selection
+                if let Some(entry_id) = last_succeed {
+                    project_panel
+                        .update(&mut cx, |project_panel, _cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
                                 entry_id,
                             });
-                        }
-                        for (index, entry) in will_delete.into_iter().enumerate() {
-                            if succeed_indexs.contains(&index) {
-                                project_panel
-                                    .project
-                                    .update(cx, |project, cx| project.delete_entry(entry, true, cx))
-                                    .ok_or_else(|| "")
-                                    .unwrap()
-                                    .detach_and_log_err(cx);
-                            }
-                        }
-                    })
-                    .ok();
+                        })
+                        .ok();
+                }
+                // remove entry for cut in difference worktree
+                let will_delete_entrys = will_delete
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(idx, _)| succeed_indexs.contains(&idx))
+                    .map(|(_, entry)| entry)
+                    .collect::<Vec<_>>();
+                for entry_id in will_delete_entrys {
+                    project_panel
+                        .update(&mut cx, |project_panel, cx| {
+                            project_panel
+                                .project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
+                                .ok_or_else(|| anyhow!("no such entry"))
+                        })??
+                        .await?;
+                }
+
+                Result::<(), anyhow::Error>::Ok(())
             })
-            .detach();
+            .detach_and_log_err(cx);
 
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())

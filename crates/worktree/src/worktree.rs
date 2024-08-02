@@ -1530,24 +1530,17 @@ impl LocalWorktree {
         };
         let new_path = new_path.into();
         let abs_old_path = if let Some(relative_path) = relative_path {
-            let mut old_path = self
-                .absolutize(&old_path)
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf();
             let relative_path = relative_path.into();
-            old_path.push(relative_path);
-            old_path
+            Ok(self.abs_path().join(relative_path))
         } else {
-            self.absolutize(&old_path).unwrap()
+            self.absolutize(&old_path)
         };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
         let copy = cx.background_executor().spawn(async move {
             copy_recursive(
                 fs.as_ref(),
-                &abs_old_path,
+                &abs_old_path?,
                 &abs_new_path?,
                 Default::default(),
             )
