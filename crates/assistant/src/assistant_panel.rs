@@ -3082,10 +3082,17 @@ impl ConfigurationView {
         })
         .detach();
 
-        Self {
+        let mut this = Self {
             focus_handle,
             active_tab: None,
+        };
+
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+        if !providers.is_empty() {
+            this.set_active_tab(providers[0].clone(), cx);
         }
+
+        this
     }
 
     fn set_active_tab(
@@ -3093,11 +3100,14 @@ impl ConfigurationView {
         provider: Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
     ) {
+        println!("set active tab");
         let (view, focus_handle) = provider.configuration_view(cx);
 
         if let Some(focus_handle) = &focus_handle {
+            println!("focusing the active tab");
             focus_handle.focus(cx);
         } else {
+            println!("focusing the assistant panel");
             self.focus_handle.focus(cx);
         }
 
@@ -3237,11 +3247,6 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
-
-        if self.active_tab.is_none() && !providers.is_empty() {
-            self.set_active_tab(providers[0].clone(), cx);
-        }
-
         let tabs = h_flex().mx_neg_1().gap_3().children(
             providers
                 .iter()
@@ -3272,7 +3277,12 @@ impl Render for ConfigurationView {
                         .color(Color::Muted),
                     )
                     .child(tabs)
-                    .children(self.render_active_tab_view(cx)),
+                    .when(self.active_tab.is_some(), |this| {
+                        this.children(self.render_active_tab_view(cx))
+                    })
+                    .when(self.active_tab.is_none(), |this| {
+                        this.child(Label::new("No providers configured").color(Color::Warning))
+                    }),
             )
     }
 }

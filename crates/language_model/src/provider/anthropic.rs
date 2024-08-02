@@ -383,18 +383,22 @@ impl LanguageModel for AnthropicModel {
 }
 
 struct ConfigurationView {
+    focus_handle: FocusHandle,
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
 }
 
-impl FocusableView for ConfigurationView {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.api_key_editor.read(cx).focus_handle(cx)
-    }
-}
-
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut WindowContext) -> Self {
+    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        cx.on_focus(&focus_handle, |this, cx| {
+            if this.should_render_editor(cx) {
+                this.api_key_editor.read(cx).focus_handle(cx).focus(cx)
+            }
+        })
+        .detach();
+
         Self {
             api_key_editor: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -404,6 +408,7 @@ impl ConfigurationView {
                 );
                 editor
             }),
+            focus_handle,
             state,
         }
     }
@@ -453,6 +458,16 @@ impl ConfigurationView {
             },
         )
     }
+
+    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+        !self.state.read(cx).is_authenticated()
+    }
+}
+
+impl FocusableView for ConfigurationView {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl Render for ConfigurationView {
@@ -464,26 +479,10 @@ impl Render for ConfigurationView {
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
 
-        if self.state.read(cx).is_authenticated() {
-            h_flex()
-                .size_full()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
-                )
-                .child(
-                    Button::new("reset-key", "Reset key")
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
-                )
-                .into_any()
-        } else {
+        if self.should_render_editor(cx) {
             v_flex()
+                .id("anthropic-configuration-view")
+                .track_focus(&self.focus_handle)
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(
@@ -504,6 +503,26 @@ impl Render for ConfigurationView {
                         "You can also assign the ANTHROPIC_API_KEY environment variable and restart Zed.",
                     )
                     .size(LabelSize::Small),
+                )
+                .into_any()
+        } else {
+            h_flex()
+                .id("anthropic-configuration-view")
+                .track_focus(&self.focus_handle)
+                .size_full()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("API Key configured").size(LabelSize::Small)),
+                )
+                .child(
+                    Button::new("reset-key", "Reset key")
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )
                 .into_any()
         }
