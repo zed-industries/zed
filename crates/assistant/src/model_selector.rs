@@ -114,21 +114,24 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 let availability = available_model.availability();
                                 let selected_model = selected_model.clone();
                                 let selected_provider = selected_provider.clone();
-                                move |_| {
+                                move |cx| {
                                     let provider = provider.clone();
 
                                     h_flex()
                                         .w_full()
                                         .justify_between()
+                                        .font_buffer(cx)
+                                        .min_w(px(260.))
                                         .child(
                                             h_flex()
-                                                .gap_1p5()
+                                                .gap_2()
                                                 .child(
-                                                    Icon::new(provider.icon())
-                                                        .size(IconSize::Small)
-                                                        .color(Color::Muted),
+                                                    Icon::new(provider.icon()).color(Color::Muted),
                                                 )
-                                                .child(Label::new(model_name.clone()))
+                                                .child(
+                                                    Label::new(model_name.clone())
+                                                        .size(LabelSize::Small),
+                                                )
                                                 .when(
                                                     selected_model.as_ref() == Some(&id)
                                                         && selected_provider.as_ref()
