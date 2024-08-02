@@ -25,13 +25,12 @@ pub struct ModelPickerDelegate {
     all_models: Vec<ModelInfo>,
     filtered_models: Vec<ModelInfo>,
     selected_index: usize,
-    info_text: Option<SharedString>,
 }
 
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    provider_name: SharedString,
+    _provider_name: SharedString,
     provider_icon: IconName,
     availability: LanguageModelAvailability,
     is_selected: bool,
@@ -145,16 +144,18 @@ impl PickerDelegate for ModelPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .start_slot(
-                    Icon::new(model_info.provider_icon)
-                        .color(Color::Muted)
-                        .size(IconSize::Small),
+                    div().pr_1().child(
+                        Icon::new(model_info.provider_icon)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    ),
                 )
                 .child(
                     h_flex()
                         .w_full()
                         .justify_between()
                         .font_buffer(cx)
-                        .min_w(px(260.))
+                        .min_w(px(180.))
                         .child(
                             h_flex()
                                 .gap_2()
@@ -206,7 +207,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector2<T> {
 
                     ModelInfo {
                         model: model.clone(),
-                        provider_name: provider_name.clone(),
+                        _provider_name: provider_name.clone(),
                         provider_icon,
                         availability: model.availability(),
                         is_selected: selected_model.as_ref() == Some(&model.id())
@@ -221,14 +222,10 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector2<T> {
             all_models: all_models.clone(),
             filtered_models: all_models,
             selected_index: 0,
-            info_text: self.info_text,
         };
 
         let picker_view = cx.new_view(|cx| {
-            let mut picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
-            // if let Some(handle) = self.handle {
-            //     picker = picker.with_handle(handle);
-            // }
+            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
             picker
         });
 
