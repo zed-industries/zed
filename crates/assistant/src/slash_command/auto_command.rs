@@ -12,6 +12,7 @@ use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
+use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct AutoCommand;
@@ -242,59 +243,73 @@ async fn commands_for_summaries(
     let all_start = std::time::Instant::now();
 
     let (tx, rx) = channel::bounded(1024);
-    let futures = prompts
+
+    let completion_streams = prompts
         .into_iter()
         .map(|prompt| {
             let request = make_request(prompt.clone());
             let model = model.clone();
             let tx = tx.clone();
-            eprintln!("kicking off model.stream_completion for prompt of this length: {:?}", prompt.len());
+            eprintln!(
+                "kicking off model.stream_completion for prompt of this length: {:?}",
+                prompt.len()
+            );
             let stream = model.stream_completion(request, &cx);
 
-            cx.background_executor().spawn(async move {
-                let start = std::time::Instant::now();
-                let mut chunks = stream.await?;
-                let duration = start.elapsed();
-                eprintln!("Time taken for awaiting chunk stream: {:?}", duration);
-
-                let mut completion = String::new();
-
-                while let Some(chunk) = chunks.next().await {
-                    let chunk = chunk?;
-                    completion.push_str(&chunk);
-                }
-
-                let duration = start.elapsed();
-                eprintln!("Time taken for all chunks to come back: {:?}", duration);
-
-                for line in completion.split('\n') {
-                    if let Some(first_space) = line.find(' ') {
-                        let command = &line[..first_space].trim();
-                        let arg = &line[first_space..].trim();
-
-                        tx.send(CommandToRun {
-                            name: command.to_string(),
-                            arg: arg.to_string(),
-                        })
-                        .await?;
-                    } else if !line.trim().is_empty() {
-                        // All slash-commands currently supported in context inference need a space for the argument.
-                        log::warn!(
-                            "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash command): {:?}",
-                            line
-                        );
-                    }
-                }
-
-                anyhow::Ok(())
-            })
+            (stream, tx)
         })
         .collect::<Vec<_>>();
 
-    let _ = futures::future::join_all(futures).await;
-    let duration = all_start.elapsed();
+    cx.background_executor()
+        .spawn(async move {
+            let futures = completion_streams
+                .into_iter()
+                .enumerate()
+                .map(|(ix, (stream, tx))| async move {
+                    let start = std::time::Instant::now();
+                    let mut chunks = stream.await?;
+                    eprintln!("Time taken for awaiting chunk stream #{ix}: {:?}", start.elapsed());
 
-    eprintln!("All futures completed in {:?}", duration);
+                    let mut completion = String::new();
+
+                    while let Some(chunk) = chunks.next().await {
+                        eprintln!("got chunk for #{ix} in: {:?}", start.elapsed());
+                        let chunk = chunk?;
+                        completion.push_str(&chunk);
+                    }
+
+                    eprintln!("Time taken for all chunks to come back for #{ix}: {:?}", start.elapsed());
+
+                    for line in completion.split('\n') {
+                        if let Some(first_space) = line.find(' ') {
+                            let command = &line[..first_space].trim();
+                            let arg = &line[first_space..].trim();
+
+                            tx.send(CommandToRun {
+                                name: command.to_string(),
+                                arg: arg.to_string(),
+                            })
+                            .await?;
+                        } else if !line.trim().is_empty() {
+                            // All slash-commands currently supported in context inference need a space for the argument.
+                            log::warn!(
+                                "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash command): {:?}",
+                                line
+                            );
+                        }
+                    }
+
+                    anyhow::Ok(())
+                })
+                .collect::<Vec<_>>();
+
+            let _ = futures::future::try_join_all(futures).await.log_err();
+
+            let duration = all_start.elapsed();
+            eprintln!("All futures completed in {:?}", duration);
+        })
+        .await;
+
     drop(tx); // Close the channel so that rx.collect() won't hang. This is safe because all futures have completed.
     let results = rx.collect::<Vec<_>>().await;
     eprintln!(
