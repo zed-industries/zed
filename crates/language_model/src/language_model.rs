@@ -9,9 +9,7 @@ pub mod settings;
 use anyhow::Result;
 use client::{Client, UserStore};
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, Model, SharedString, Task, WindowContext,
-};
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext};
 pub use model::*;
 use project::Fs;
 use proto::Plan;
@@ -110,7 +108,7 @@ pub trait LanguageModelProvider: 'static {
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>);
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 

@@ -31,7 +31,7 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
@@ -41,12 +41,16 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
-use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
+use language_model::{
+    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry, Role,
+};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
+use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -140,6 +144,8 @@ pub struct AssistantPanel {
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
+    watch_client_status: Option<Task<()>>,
+    nudge_sign_in: bool,
 }
 
 #[derive(Clone)]
@@ -411,6 +417,38 @@ impl AssistantPanel {
             ),
         ];
 
+        let mut status_rx = workspace.client().clone().status();
+
+        let watch_client_status = cx.spawn(|this, mut cx| async move {
+            let mut old_status = None;
+            while let Some(status) = status_rx.next().await {
+                if old_status.is_none()
+                    || old_status.map_or(false, |old_status| old_status != status)
+                {
+                    if status.is_signed_out() {
+                        this.update(&mut cx, |this, cx| {
+                            let active_provider =
+                                LanguageModelRegistry::read_global(cx).active_provider();
+
+                            // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
+                            // the provider, we want to show a nudge to sign in.
+                            if active_provider
+                                .map_or(true, |provider| provider.id().0 == PROVIDER_ID)
+                            {
+                                println!("TODO: Nudge the user to sign in and use Zed AI");
+                                this.nudge_sign_in = true;
+                            }
+                        })
+                        .log_err();
+                    };
+
+                    old_status = Some(status);
+                }
+            }
+            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
+                .log_err();
+        });
+
         let mut this = Self {
             pane,
             workspace: workspace.weak_handle(),
@@ -425,17 +463,11 @@ impl AssistantPanel {
             model_summary_editor,
             authenticate_provider_task: None,
             configuration_subscription: None,
+            watch_client_status: Some(watch_client_status),
+            // TODO: This is unused!
+            nudge_sign_in: false,
         };
-
-        if LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .is_none()
-        {
-            this.show_configuration_for_provider(None, cx);
-        } else {
-            this.new_context(cx);
-        };
-
+        this.new_context(cx);
         this
     }
 
@@ -623,12 +655,7 @@ impl AssistantPanel {
                 provider.id(),
                 cx.spawn(|this, mut cx| async move {
                     let _ = load_credentials.await;
-                    this.update(&mut cx, |this, cx| {
-                        if !provider.is_authenticated(cx) {
-                            this.show_configuration_for_provider(Some(provider), cx)
-                        } else if !this.has_any_context_editors(cx) {
-                            this.new_context(cx);
-                        }
+                    this.update(&mut cx, |this, _cx| {
                         this.authenticate_provider_task = None;
                     })
                     .log_err();
@@ -908,20 +935,11 @@ impl AssistantPanel {
         }
 
         panel.update(cx, |this, cx| {
-            this.show_configuration_for_active_provider(cx);
+            this.show_configuration_tab(cx);
         })
     }
 
-    fn show_configuration_for_active_provider(&mut self, cx: &mut ViewContext<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        self.show_configuration_for_provider(provider, cx);
-    }
-
-    fn show_configuration_for_provider(
-        &mut self,
-        provider: Option<Arc<dyn LanguageModelProvider>>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn show_configuration_tab(&mut self, cx: &mut ViewContext<Self>) {
         let configuration_item_ix = self
             .pane
             .read(cx)
@@ -931,24 +949,9 @@ impl AssistantPanel {
         if let Some(configuration_item_ix) = configuration_item_ix {
             self.pane.update(cx, |pane, cx| {
                 pane.activate_item(configuration_item_ix, true, true, cx);
-                if let Some((item, provider)) =
-                    pane.item_for_index(configuration_item_ix).zip(provider)
-                {
-                    if let Some(view) = item.downcast::<ConfigurationView>() {
-                        view.update(cx, |view, cx| {
-                            view.set_active_tab(provider, cx);
-                        });
-                    }
-                }
             });
         } else {
-            let configuration = cx.new_view(|cx| {
-                let mut view = ConfigurationView::new(cx);
-                if let Some(provider) = provider {
-                    view.set_active_tab(provider, cx);
-                }
-                view
-            });
+            let configuration = cx.new_view(|cx| ConfigurationView::new(cx));
             self.configuration_subscription = Some(cx.subscribe(
                 &configuration,
                 |this, _, event: &ConfigurationViewEvent, cx| match event {
@@ -1016,13 +1019,6 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
-    }
-
-    fn has_any_context_editors(&self, cx: &AppContext) -> bool {
-        self.pane
-            .read(cx)
-            .items()
-            .any(|item| item.downcast::<ContextEditor>().is_some())
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
@@ -1159,9 +1155,9 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(|this, _: &ShowConfiguration, cx| {
-                this.show_configuration_for_active_provider(cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ShowConfiguration, cx| this.show_configuration_tab(cx)),
+            )
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
@@ -1231,14 +1227,7 @@ impl Panel for AssistantPanel {
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
             if self.pane.read(cx).items_len() == 0 {
-                if LanguageModelRegistry::read_global(cx)
-                    .active_provider()
-                    .is_none()
-                {
-                    self.show_configuration_for_provider(None, cx);
-                } else {
-                    self.new_context(cx);
-                };
+                self.new_context(cx);
             }
 
             self.ensure_authenticated(cx);
@@ -3044,211 +3033,122 @@ impl Item for ContextHistory {
     }
 }
 
-struct ActiveTab {
-    provider: Arc<dyn LanguageModelProvider>,
-    configuration_prompt: AnyView,
-    focus_handle: Option<FocusHandle>,
-    load_credentials_task: Option<Task<()>>,
-}
-
-impl ActiveTab {
-    fn is_loading_credentials(&self) -> bool {
-        if let Some(task) = &self.load_credentials_task {
-            if let Task::Spawned(_) = task {
-                return true;
-            }
-        }
-        false
-    }
-}
-
 pub struct ConfigurationView {
     focus_handle: FocusHandle,
-    active_tab: Option<ActiveTab>,
+    configuration_views: HashMap<LanguageModelProviderId, AnyView>,
+    _registry_subscription: Subscription,
 }
 
 impl ConfigurationView {
     fn new(cx: &mut ViewContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        cx.on_focus(&focus_handle, |this, cx| {
-            if let Some(focus_handle) = this
-                .active_tab
-                .as_ref()
-                .and_then(|tab| tab.focus_handle.as_ref())
-            {
-                focus_handle.focus(cx);
-            }
-        })
-        .detach();
+        let registry_subscription = cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this, _, event: &language_model::Event, cx| match event {
+                language_model::Event::AddedProvider(provider_id) => {
+                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
+                    if let Some(provider) = provider {
+                        this.add_configuration_view(&provider, cx);
+                    }
+                }
+                language_model::Event::RemovedProvider(provider_id) => {
+                    this.remove_configuration_view(provider_id);
+                }
+                _ => {}
+            },
+        );
 
         let mut this = Self {
             focus_handle,
-            active_tab: None,
+            configuration_views: HashMap::default(),
+            _registry_subscription: registry_subscription,
         };
-
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-        if !providers.is_empty() {
-            this.set_active_tab(providers[0].clone(), cx);
-        }
-
+        this.build_configuration_views(cx);
         this
     }
 
-    fn set_active_tab(
-        &mut self,
-        provider: Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let (view, focus_handle) = provider.configuration_view(cx);
-
-        if let Some(focus_handle) = &focus_handle {
-            focus_handle.focus(cx);
-        } else {
-            self.focus_handle.focus(cx);
+    fn build_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+        for provider in providers {
+            self.add_configuration_view(&provider, cx);
         }
-
-        let load_credentials = provider.authenticate(cx);
-        let load_credentials_task = cx.spawn(|this, mut cx| async move {
-            let _ = load_credentials.await;
-            this.update(&mut cx, |this, cx| {
-                if let Some(active_tab) = &mut this.active_tab {
-                    active_tab.load_credentials_task = None;
-                    cx.notify();
-                }
-            })
-            .log_err();
-        });
-
-        self.active_tab = Some(ActiveTab {
-            provider,
-            configuration_prompt: view,
-            focus_handle,
-            load_credentials_task: Some(load_credentials_task),
-        });
-        cx.notify();
     }
 
-    fn render_active_tab_view(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
-        let Some(active_tab) = &self.active_tab else {
-            return None;
-        };
-
-        let provider = active_tab.provider.clone();
-        let provider_name = provider.name().0.clone();
-
-        let show_spinner = active_tab.is_loading_credentials();
-
-        let content = if show_spinner {
-            let loading_icon = svg()
-                .size_4()
-                .path(IconName::ArrowCircle.path())
-                .text_color(cx.text_style().color)
-                .with_animation(
-                    "icon_circle_arrow",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                );
-
-            h_flex()
-                .gap_2()
-                .child(loading_icon)
-                .child(Label::new("Loading provider configuration...").size(LabelSize::Small))
-                .into_any_element()
-        } else {
-            active_tab.configuration_prompt.clone().into_any_element()
-        };
-
-        Some(
-            v_flex()
-                .gap_4()
-                .child(
-                    div()
-                        .p(Spacing::Large.rems(cx))
-                        .bg(cx.theme().colors().title_bar_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
-                        .child(content),
-                )
-                .when(
-                    !show_spinner && provider.is_authenticated(cx),
-                    move |this| {
-                        this.child(
-                            h_flex().justify_end().child(
-                                Button::new(
-                                    "new-context",
-                                    format!("Open new context using {}", provider_name),
-                                )
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::Plus)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .on_click(cx.listener(
-                                    move |_, _, cx| {
-                                        cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                                            provider.clone(),
-                                        ))
-                                    },
-                                )),
-                            ),
-                        )
-                    },
-                ),
-        )
+    fn remove_configuration_view(&mut self, provider_id: &LanguageModelProviderId) {
+        self.configuration_views.remove(provider_id);
     }
 
-    fn render_tab(
-        &self,
+    fn add_configuration_view(
+        &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let button_id = SharedString::from(format!("tab-{}", provider.id().0));
-        let is_active = self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
-        ButtonLike::new(button_id)
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Transparent)
-            .selected(is_active)
-            .on_click(cx.listener({
-                let provider = provider.clone();
-                move |this, _, cx| {
-                    this.set_active_tab(provider.clone(), cx);
-                }
-            }))
+    ) {
+        let configuration_view = provider.configuration_view(cx);
+        self.configuration_views
+            .insert(provider.id(), configuration_view);
+    }
+
+    fn render_provider_view(
+        &mut self,
+        provider: &Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) -> Div {
+        let provider_name = provider.name().0.clone();
+        let configuration_view = self.configuration_views.get(&provider.id()).cloned();
+
+        v_flex()
+            .gap_4()
+            .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
             .child(
                 div()
-                    .my_3()
-                    .pb_px()
-                    .border_b_1()
-                    .border_color(if is_active {
-                        cx.theme().colors().text_accent
-                    } else {
-                        cx.theme().colors().border_transparent
+                    .p(Spacing::Large.rems(cx))
+                    .bg(cx.theme().colors().title_bar_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .rounded_md()
+                    .when(configuration_view.is_none(), |this| {
+                        this.child(div().child(Label::new(format!(
+                            "No configuration view for {}",
+                            provider_name
+                        ))))
                     })
-                    .when(!is_active, |this| {
-                        this.group_hover("", |this| {
-                            this.border_color(cx.theme().colors().border_variant)
-                        })
-                    })
-                    .child(Label::new(provider.name().0).size(LabelSize::Small).color(
-                        if is_active {
-                            Color::Accent
-                        } else {
-                            Color::Default
-                        },
-                    )),
+                    .when_some(configuration_view, |this, configuration_view| {
+                        this.child(configuration_view)
+                    }),
             )
+            .when(provider.is_authenticated(cx), move |this| {
+                this.child(
+                    h_flex().justify_end().child(
+                        Button::new(
+                            "new-context",
+                            format!("Open new context using {}", provider_name),
+                        )
+                        .icon_position(IconPosition::Start)
+                        .icon(IconName::Plus)
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(cx.listener({
+                            let provider = provider.clone();
+                            move |_, _, cx| {
+                                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                                    provider.clone(),
+                                ))
+                            }
+                        })),
+                    ),
+                )
+            })
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
-        let tabs = h_flex().mx_neg_1().gap_3().children(
-            providers
-                .iter()
-                .map(|provider| self.render_tab(provider, cx)),
-        );
+        let provider_views = providers
+            .into_iter()
+            .map(|provider| self.render_provider_view(&provider, cx))
+            .collect::<Vec<_>>();
 
         v_flex()
             .id("assistant-configuration-view")
@@ -3266,20 +3166,13 @@ impl Render for ConfigurationView {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Headline::new("Configure providers").size(HeadlineSize::Small))
                     .child(
                         Label::new(
                             "At least one provider must be configured to use the assistant.",
                         )
                         .color(Color::Muted),
                     )
-                    .child(tabs)
-                    .when(self.active_tab.is_some(), |this| {
-                        this.children(self.render_active_tab_view(cx))
-                    })
-                    .when(self.active_tab.is_none(), |this| {
-                        this.child(Label::new("No providers configured").color(Color::Warning))
-                    }),
+                    .child(v_flex().mt_2().gap_4().children(provider_views)),
             )
     }
 }
