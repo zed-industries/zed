@@ -67,7 +67,6 @@ serde_json.workspace = true
 settings.workspace = true
 similar.workspace = true
 smol.workspace = true
-strsim.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
