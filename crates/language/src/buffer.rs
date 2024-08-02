@@ -10,11 +10,11 @@ use crate::{
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
-        SyntaxSnapshot, ToTreeSitterPoint,
+        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
+        SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, RunnableCapture, RunnableTag,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
@@ -2768,135 +2768,63 @@ impl BufferSnapshot {
             .collect::<Vec<_>>();
 
         let mut items = Vec::new();
+        let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
-            let item_node = mat.captures.iter().find_map(|cap| {
-                if cap.index == config.item_capture_ix {
-                    Some(cap.node)
-                } else {
-                    None
-                }
-            })?;
-
-            let item_range = item_node.byte_range();
-            if item_range.end < range.start || item_range.start > range.end {
-                matches.advance();
-                continue;
-            }
-
-            let mut open_index = None;
-            let mut close_index = None;
-
-            let mut buffer_ranges = Vec::new();
-            for capture in mat.captures {
-                let node_is_name;
-                if capture.index == config.name_capture_ix {
-                    node_is_name = true;
-                } else if Some(capture.index) == config.context_capture_ix
-                    || (Some(capture.index) == config.extra_context_capture_ix
-                        && include_extra_context)
+            if let Some(item) =
+                self.next_outline_item(config, &mat, &range, include_extra_context, theme)
+            {
+                items.push(item);
+            } else if let Some(capture) = mat
+                .captures
+                .iter()
+                .find(|capture| Some(capture.index) == config.annotation_capture_ix)
+            {
+                let capture_range = capture.node.start_position()..capture.node.end_position();
+                let mut capture_row_range =
+                    capture_range.start.row as u32..capture_range.end.row as u32;
+                if capture_range.end.row > capture_range.start.row && capture_range.end.column == 0
                 {
-                    node_is_name = false;
-                } else {
-                    if Some(capture.index) == config.open_capture_ix {
-                        open_index = Some(capture.node.end_byte());
-                    } else if Some(capture.index) == config.close_capture_ix {
-                        close_index = Some(capture.node.start_byte());
-                    }
-
-                    continue;
+                    capture_row_range.end -= 1;
                 }
-
-                let mut range = capture.node.start_byte()..capture.node.end_byte();
-                let start = capture.node.start_position();
-                if capture.node.end_position().row > start.row {
-                    range.end =
-                        range.start + self.line_len(start.row as u32) as usize - start.column;
-                }
-
-                if !range.is_empty() {
-                    buffer_ranges.push((range, node_is_name));
-                }
-            }
-
-            if buffer_ranges.is_empty() {
-                matches.advance();
-                continue;
-            }
-
-            let mut text = String::new();
-            let mut highlight_ranges = Vec::new();
-            let mut name_ranges = Vec::new();
-            let mut chunks = self.chunks(
-                buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
-                true,
-            );
-            let mut last_buffer_range_end = 0;
-            for (buffer_range, is_name) in buffer_ranges {
-                if !text.is_empty() && buffer_range.start > last_buffer_range_end {
-                    text.push(' ');
-                }
-                last_buffer_range_end = buffer_range.end;
-                if is_name {
-                    let mut start = text.len();
-                    let end = start + buffer_range.len();
-
-                    // When multiple names are captured, then the matcheable text
-                    // includes the whitespace in between the names.
-                    if !name_ranges.is_empty() {
-                        start -= 1;
-                    }
-
-                    name_ranges.push(start..end);
-                }
-
-                let mut offset = buffer_range.start;
-                chunks.seek(offset);
-                for mut chunk in chunks.by_ref() {
-                    if chunk.text.len() > buffer_range.end - offset {
-                        chunk.text = &chunk.text[0..(buffer_range.end - offset)];
-                        offset = buffer_range.end;
+                if let Some(last_row_range) = annotation_row_ranges.last_mut() {
+                    if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
+                        last_row_range.end = capture_row_range.end;
                     } else {
-                        offset += chunk.text.len();
+                        annotation_row_ranges.push(capture_row_range);
                     }
-                    let style = chunk
-                        .syntax_highlight_id
-                        .zip(theme)
-                        .and_then(|(highlight, theme)| highlight.style(theme));
-                    if let Some(style) = style {
-                        let start = text.len();
-                        let end = start + chunk.text.len();
-                        highlight_ranges.push((start..end, style));
-                    }
-                    text.push_str(chunk.text);
-                    if offset >= buffer_range.end {
-                        break;
-                    }
+                } else {
+                    annotation_row_ranges.push(capture_row_range);
                 }
             }
-
             matches.advance();
-
-            items.push(OutlineItem {
-                depth: 0, // We'll calculate the depth later
-                range: item_range,
-                text,
-                highlight_ranges,
-                name_ranges,
-                body_range: open_index.zip(close_index).map(|(start, end)| start..end),
-            });
         }
 
         items.sort_by_key(|item| (item.range.start, Reverse(item.range.end)));
 
         // Assign depths based on containment relationships and convert to anchors.
-        let mut item_ends_stack = Vec::<usize>::new();
+        let mut item_ends_stack = Vec::<Point>::new();
         let mut anchor_items = Vec::new();
+        let mut annotation_row_ranges = annotation_row_ranges.into_iter().peekable();
         for item in items {
             while let Some(last_end) = item_ends_stack.last().copied() {
                 if last_end < item.range.end {
                     item_ends_stack.pop();
                 } else {
+                    break;
+                }
+            }
+
+            let mut annotation_row_range = None;
+            while let Some(next_annotation_row_range) = annotation_row_ranges.peek() {
+                let row_preceding_item = item.range.start.row.saturating_sub(1);
+                if next_annotation_row_range.end < row_preceding_item {
+                    annotation_row_ranges.next();
+                } else {
+                    if next_annotation_row_range.end == row_preceding_item {
+                        annotation_row_range = Some(next_annotation_row_range.clone());
+                        annotation_row_ranges.next();
+                    }
                     break;
                 }
             }
@@ -2910,11 +2838,137 @@ impl BufferSnapshot {
                 body_range: item.body_range.map(|body_range| {
                     self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
                 }),
+                annotation_range: annotation_row_range.map(|annotation_range| {
+                    self.anchor_after(Point::new(annotation_range.start, 0))
+                        ..self.anchor_before(Point::new(
+                            annotation_range.end,
+                            self.line_len(annotation_range.end),
+                        ))
+                }),
             });
             item_ends_stack.push(item.range.end);
         }
 
         Some(anchor_items)
+    }
+
+    fn next_outline_item(
+        &self,
+        config: &OutlineConfig,
+        mat: &SyntaxMapMatch,
+        range: &Range<usize>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<OutlineItem<Point>> {
+        let item_node = mat.captures.iter().find_map(|cap| {
+            if cap.index == config.item_capture_ix {
+                Some(cap.node)
+            } else {
+                None
+            }
+        })?;
+
+        let item_byte_range = item_node.byte_range();
+        if item_byte_range.end < range.start || item_byte_range.start > range.end {
+            return None;
+        }
+        let item_point_range = Point::from_ts_point(item_node.start_position())
+            ..Point::from_ts_point(item_node.end_position());
+
+        let mut open_point = None;
+        let mut close_point = None;
+        let mut buffer_ranges = Vec::new();
+        for capture in mat.captures {
+            let node_is_name;
+            if capture.index == config.name_capture_ix {
+                node_is_name = true;
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                node_is_name = false;
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
+                }
+
+                continue;
+            }
+
+            let mut range = capture.node.start_byte()..capture.node.end_byte();
+            let start = capture.node.start_position();
+            if capture.node.end_position().row > start.row {
+                range.end = range.start + self.line_len(start.row as u32) as usize - start.column;
+            }
+
+            if !range.is_empty() {
+                buffer_ranges.push((range, node_is_name));
+            }
+        }
+        if buffer_ranges.is_empty() {
+            return None;
+        }
+        let mut text = String::new();
+        let mut highlight_ranges = Vec::new();
+        let mut name_ranges = Vec::new();
+        let mut chunks = self.chunks(
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+            true,
+        );
+        let mut last_buffer_range_end = 0;
+        for (buffer_range, is_name) in buffer_ranges {
+            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+                text.push(' ');
+            }
+            last_buffer_range_end = buffer_range.end;
+            if is_name {
+                let mut start = text.len();
+                let end = start + buffer_range.len();
+
+                // When multiple names are captured, then the matcheable text
+                // includes the whitespace in between the names.
+                if !name_ranges.is_empty() {
+                    start -= 1;
+                }
+
+                name_ranges.push(start..end);
+            }
+
+            let mut offset = buffer_range.start;
+            chunks.seek(offset);
+            for mut chunk in chunks.by_ref() {
+                if chunk.text.len() > buffer_range.end - offset {
+                    chunk.text = &chunk.text[0..(buffer_range.end - offset)];
+                    offset = buffer_range.end;
+                } else {
+                    offset += chunk.text.len();
+                }
+                let style = chunk
+                    .syntax_highlight_id
+                    .zip(theme)
+                    .and_then(|(highlight, theme)| highlight.style(theme));
+                if let Some(style) = style {
+                    let start = text.len();
+                    let end = start + chunk.text.len();
+                    highlight_ranges.push((start..end, style));
+                }
+                text.push_str(chunk.text);
+                if offset >= buffer_range.end {
+                    break;
+                }
+            }
+        }
+
+        Some(OutlineItem {
+            depth: 0, // We'll calculate the depth later
+            range: item_point_range,
+            text,
+            highlight_ranges,
+            name_ranges,
+            body_range: open_point.zip(close_point).map(|(start, end)| start..end),
+            annotation_range: None,
+        })
     }
 
     /// For each grammar in the language, runs the provided
