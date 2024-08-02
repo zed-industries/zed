@@ -2769,49 +2769,38 @@ impl BufferSnapshot {
 
         let mut items = Vec::new();
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
-        let mut chunks = self.chunks(range.clone(), true);
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
-            for capture in mat.captures.iter() {
-                if capture.index == config.item_capture_ix {
-                    if let Some(item) = self.next_outline_item(
-                        &mat,
-                        config,
-                        &range,
-                        include_extra_context,
-                        theme,
-                        &mut chunks,
-                    ) {
-                        items.push(item);
-                    }
-                } else if Some(capture.index) == config.annotation_capture_ix {
-                    let capture_range = capture.node.start_position()..capture.node.end_position();
-                    let mut capture_row_range =
-                        capture_range.start.row as u32..capture_range.end.row as u32;
-                    if capture_range.end.row > capture_range.start.row
-                        && capture_range.end.column == 0
-                    {
-                        capture_row_range.end -= 1;
-                    }
-
-                    if let Some(last_row_range) = annotation_row_ranges.last_mut() {
-                        if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
-                            last_row_range.end = capture_row_range.end;
-                        } else {
-                            annotation_row_ranges.push(capture_row_range);
-                        }
+            if let Some(item) =
+                self.next_outline_item(config, &mat, &range, include_extra_context, theme)
+            {
+                items.push(item);
+            } else if let Some(capture) = mat
+                .captures
+                .iter()
+                .find(|capture| Some(capture.index) == config.annotation_capture_ix)
+            {
+                let capture_range = capture.node.start_position()..capture.node.end_position();
+                let mut capture_row_range =
+                    capture_range.start.row as u32..capture_range.end.row as u32;
+                if capture_range.end.row > capture_range.start.row && capture_range.end.column == 0
+                {
+                    capture_row_range.end -= 1;
+                }
+                if let Some(last_row_range) = annotation_row_ranges.last_mut() {
+                    if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
+                        last_row_range.end = capture_row_range.end;
                     } else {
                         annotation_row_ranges.push(capture_row_range);
                     }
+                } else {
+                    annotation_row_ranges.push(capture_row_range);
                 }
             }
-
             matches.advance();
         }
 
         items.sort_by_key(|item| (item.range.start, Reverse(item.range.end)));
-
-        dbg!(&annotation_row_ranges);
 
         // Assign depths based on containment relationships and convert to anchors.
         let mut item_ends_stack = Vec::<Point>::new();
@@ -2836,7 +2825,6 @@ impl BufferSnapshot {
                         annotation_row_range = Some(next_annotation_row_range.clone());
                         annotation_row_ranges.next();
                     }
-
                     break;
                 }
             }
@@ -2866,12 +2854,11 @@ impl BufferSnapshot {
 
     fn next_outline_item(
         &self,
-        mat: &SyntaxMapMatch,
         config: &OutlineConfig,
+        mat: &SyntaxMapMatch,
         range: &Range<usize>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
-        chunks: &mut BufferChunks,
     ) -> Option<OutlineItem<Point>> {
         let item_node = mat.captures.iter().find_map(|cap| {
             if cap.index == config.item_capture_ix {
@@ -2890,7 +2877,6 @@ impl BufferSnapshot {
 
         let mut open_point = None;
         let mut close_point = None;
-
         let mut buffer_ranges = Vec::new();
         for capture in mat.captures {
             let node_is_name;
@@ -2920,15 +2906,16 @@ impl BufferSnapshot {
                 buffer_ranges.push((range, node_is_name));
             }
         }
-
         if buffer_ranges.is_empty() {
             return None;
         }
-
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        chunks.seek(buffer_ranges.first().unwrap().0.start);
+        let mut chunks = self.chunks(
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+            true,
+        );
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             if !text.is_empty() && buffer_range.start > last_buffer_range_end {

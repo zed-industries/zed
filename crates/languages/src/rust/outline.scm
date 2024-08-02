@@ -1,3 +1,4 @@
+(attribute_item) @annotation
 (line_comment) @annotation
 
 (struct_item

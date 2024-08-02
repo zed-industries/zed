@@ -598,6 +598,10 @@ impl EditOperation {
                 buffer.update(&mut cx, |buffer, _| {
                     let outline_item = &outline.items[candidate.id];
                     let symbol_range = outline_item.range.to_point(buffer);
+                    let annotation_range = outline_item
+                        .annotation_range
+                        .as_ref()
+                        .map(|range| range.to_point(buffer));
                     let body_range = outline_item
                         .body_range
                         .as_ref()
@@ -606,23 +610,28 @@ impl EditOperation {
 
                     match kind {
                         EditOperationKind::PrependChild { .. } => {
-                            let position = buffer.anchor_after(body_range.start);
-                            position..position
+                            let anchor = buffer.anchor_after(body_range.start);
+                            anchor..anchor
                         }
                         EditOperationKind::AppendChild { .. } => {
-                            let position = buffer.anchor_before(body_range.end);
-                            position..position
+                            let anchor = buffer.anchor_before(body_range.end);
+                            anchor..anchor
                         }
                         EditOperationKind::InsertSiblingBefore { .. } => {
-                            let position = buffer.anchor_before(symbol_range.start);
-                            position..position
+                            let anchor = buffer.anchor_before(
+                                annotation_range.map_or(symbol_range.start, |annotation_range| {
+                                    annotation_range.start
+                                }),
+                            );
+                            anchor..anchor
                         }
                         EditOperationKind::InsertSiblingAfter { .. } => {
-                            let position = buffer.anchor_after(symbol_range.end);
-                            position..position
+                            let anchor = buffer.anchor_after(symbol_range.end);
+                            anchor..anchor
                         }
                         EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
-                            let start = Point::new(symbol_range.start.row, 0);
+                            let start = annotation_range.map_or(symbol_range.start, |range| range.start);
+                            let start = Point::new(start.row, 0);
                             let end = Point::new(
                                 symbol_range.end.row,
                                 buffer.line_len(symbol_range.end.row),
