@@ -1,6 +1,10 @@
 # Local Collaboration
 
-First, make sure you've installed Zed's [backend dependencies](../developing-zed.md#backend-dependencies).
+First, make sure you've installed Zed's backend dependencies for your platform:
+
+- [macOS](./macos.md#backend-dependencies)
+- [Linux](./linux.md#backend-dependencies)
+- [Windows](./windows.md#backend-dependencies)
 
 ## Database setup
 
