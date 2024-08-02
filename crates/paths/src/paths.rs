@@ -212,20 +212,6 @@ pub fn copilot_dir() -> &'static PathBuf {
     COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
 }
 
-pub fn copilot_chat_config_path() -> &'static PathBuf {
-    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            home_dir().join("AppData").join("Local")
-        } else {
-            home_dir().join(".config")
-        }
-        .join("github-copilot")
-        .join("hosts.json")
-    })
-}
-
 /// Returns the path to the Supermaven directory.
 pub fn supermaven_dir() -> &'static PathBuf {
     static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
