@@ -21,6 +21,7 @@ pub struct OutlineItem<T> {
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
     pub body_range: Option<Range<T>>,
+    pub annotation_range: Option<Range<T>>,
 }
 
 impl<T> Outline<T> {

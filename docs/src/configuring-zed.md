@@ -1252,7 +1252,7 @@ List of `integer` column numbers
   "font_family": null,
   "font_features": null,
   "font_size": null,
-  "option_as_meta": false,
+  "option_as_meta": true,
   "button": false,
   "shell": {},
   "toolbar": {
@@ -1569,20 +1569,22 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"project_panel": {
-  "button": true,
-  "dock": "left",
-  "git_status": true,
-  "default_width": "N/A - width in pixels",
-  "auto_reveal_entries": true,
-  "auto_fold_dirs": false,
-  "file_icons": true,
-  "folder_icons": true,
-  "indent_size" : 20,
-  "scrollbar": {
-    "show": "always"
+{
+  "project_panel": {
+    "button": true,
+    "default_width": 240,
+    "dock": "left",
+    "file_icons": true,
+    "folder_icons": true,
+    "git_status": true,
+    "indent_size": 20,
+    "auto_reveal_entries": true,
+    "auto_fold_dirs": true,
+    "scrollbar": {
+      "show": "always"
+    }
   }
-},
+}
 ```
 
 ### Dock
@@ -1728,6 +1730,44 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "scrollbar": {
     "show": "never"
   }
+}
+```
+
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "button": true,
+  "default_width": 240,
+  "dock": "left",
+  "file_icons": true,
+  "folder_icons": true,
+  "git_status": true,
+  "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
 }
 ```
 

@@ -3,6 +3,7 @@
 Zed currently supports the following Git features:
 
 - Diff indicators in buffers and editor scrollbars
+- Inline diff toggle and reverts in the editor for unstaged changes
 - Git status in the project panel
 - Branch creating and switching
 - Git blame viewing

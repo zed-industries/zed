@@ -35,17 +35,9 @@ Once a connection is established, Zed will be downloaded and installed to `~/.lo
 If you don't see any output from the Zed command, it is likely that Zed is crashing
 on startup. You can troubleshoot this by switching to manual mode and passing the `--foreground` flag. Please [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
 
-### SSH-like connections
+If you are trying to connect to a platform like GitHub Codespaces or Google Cloud, you may want to first make sure that your SSH configuration is set up correctly. Once you can `ssh X` to connect to the machine, then Zed will be able to connect.
 
-Zed intercepts `ssh` in a way that should make it possible to intercept connections made by most "ssh wrappers". For example you
-can specify:
-
-- `user@host` will assume you meant `ssh user@host`
-- `ssh -J jump target` to connect via a jump-host
-- `gh cs ssh -c example-codespace` to connect to a GitHub codespace
-- `doctl compute ssh example-droplet` to connect to a DigitalOcean Droplet
-- `gcloud compute ssh` for a Google Cloud instance
-- `ssh -i path_to_key_file user@host` to connect to a host using a key file or certificate
+> **Note:** In an earlier version of remoting, we supported typing in `gh cs ssh` or `gcloud compute ssh` directly. This is no longer supported. Instead you should make sure your SSH configuration is up to date with `gcloud compute ssh --config` or `gh cs ssh --config`, or use Manual setup mode if you cannot ssh directly to the machine.
 
 ### zed --dev-server-token isn't connecting
 

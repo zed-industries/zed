@@ -29,7 +29,7 @@ The Ruby extension also provides support for `rubocop` language server for offen
 {
   "languages": {
     "Ruby": {
-      "language_servers": ["rubocop", "ruby-lsp", "!solargraph", "..."]
+      "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
     }
   }
 }

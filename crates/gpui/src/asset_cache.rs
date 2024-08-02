@@ -1,4 +1,4 @@
-use crate::{SharedUri, WindowContext};
+use crate::{SharedString, SharedUri, WindowContext};
 use collections::FxHashMap;
 use futures::Future;
 use parking_lot::Mutex;
@@ -11,6 +11,7 @@ use std::{any::Any, path::PathBuf};
 pub(crate) enum UriOrPath {
     Uri(SharedUri),
     Path(Arc<PathBuf>),
+    Asset(SharedString),
 }
 
 impl From<SharedUri> for UriOrPath {

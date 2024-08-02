@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod digraph;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -188,24 +189,13 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         return;
     }
 
-    Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(
-            Operator::FindForward { .. }
-            | Operator::FindBackward { .. }
-            | Operator::Replace
-            | Operator::AddSurrounds { .. }
-            | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds
-            | Operator::Mark
-            | Operator::Jump { .. }
-            | Operator::Register
-            | Operator::RecordRegister
-            | Operator::ReplayRegister,
-        ) => {}
-        Some(_) => {
-            vim.clear_operator(cx);
+    Vim::update(cx, |vim, cx| {
+        if let Some(operator) = vim.active_operator() {
+            if !operator.is_waiting(vim.state().mode) {
+                vim.clear_operator(cx);
+                vim.stop_recording_immediately(Box::new(ClearOperators))
+            }
         }
-        _ => {}
     });
 }
 
@@ -876,6 +866,19 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Digraph { first_char }) => {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        digraph::insert_digraph(first_char, second_char, cx);
+                    }
+                } else {
+                    let first_char = text.chars().next();
+                    Vim::update(cx, |vim, cx| {
+                        vim.pop_operator(cx);
+                        vim.push_operator(Operator::Digraph { first_char }, cx);
+                    });
+                }
+            }
             Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
                 Mode::Normal => {
                     if let Some(target) = target {
@@ -1060,6 +1063,7 @@ struct VimSettings {
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1067,6 +1071,7 @@ struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {

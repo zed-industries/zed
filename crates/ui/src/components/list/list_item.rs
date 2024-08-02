@@ -260,7 +260,7 @@ impl RenderOnce for ListItem {
                             h_flex()
                                 .h_full()
                                 .absolute()
-                                .right_2()
+                                .right_1p5()
                                 .top_0()
                                 .visible_on_hover("list_item")
                                 .child(end_hover_slot),

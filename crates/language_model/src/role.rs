@@ -15,7 +15,6 @@ impl Role {
             Some(proto::LanguageModelRole::LanguageModelUser) => Role::User,
             Some(proto::LanguageModelRole::LanguageModelAssistant) => Role::Assistant,
             Some(proto::LanguageModelRole::LanguageModelSystem) => Role::System,
-            Some(proto::LanguageModelRole::LanguageModelTool) => Role::System,
             None => Role::User,
         }
     }

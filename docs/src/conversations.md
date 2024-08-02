@@ -10,11 +10,11 @@ Our Zed channel tree is public. You can find us hanging out and writing code acr
 
 ## Twitter
 
-We use Twitter to highlight new Zed features and to share our blog posts. Follow us [here](https://twitter.com/zeddotdev).
+We use Twitter to highlight new Zed features and to share our blog posts. Follow us [@zeddotdev](https://x.com/zeddotdev).
 
 ## YouTube
 
-We have a [YouTube channel](https://www.youtube.com/@zedindustries4498) where we plan to post longer-form videos about Zed.
+We have a [YouTube channel](https://www.youtube.com/@zeddotdev) where we post longer-form videos about Zed.
 
 ## Blog
 

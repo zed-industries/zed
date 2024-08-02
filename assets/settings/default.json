@@ -635,7 +635,7 @@
     //         "option_to_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
     //         "option_to_meta": true,
-    "option_as_meta": false,
+    "option_as_meta": true,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -865,13 +865,18 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
+      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
-    "openai": {
-      "api_url": "https://api.openai.com/v1"
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
       "api_url": "http://localhost:11434"
+    },
+    "openai": {
+      "version": "1",
+      "api_url": "https://api.openai.com/v1"
     }
   },
   // Zed's Prettier integration settings.
@@ -919,7 +924,8 @@
   "vim": {
     "use_system_clipboard": "always",
     "use_multiline_find": false,
-    "use_smartcase_find": false
+    "use_smartcase_find": false,
+    "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

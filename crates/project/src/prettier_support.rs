@@ -515,7 +515,8 @@ impl Project {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<(Option<PathBuf>, PrettierTask)>> {
-        if !self.is_local() {
+        // todo(ssh remote): prettier support
+        if self.is_remote() || self.ssh_session.is_some() {
             return Task::ready(None);
         }
         let buffer = buffer.read(cx);

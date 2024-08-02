@@ -56,6 +56,7 @@ x11rb::atom_manager! {
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
+        _NET_CLIENT_LIST_STACKING,
     }
 }
 
@@ -790,15 +791,6 @@ impl X11WindowStatePtr {
                 state.hidden = true;
             }
         }
-
-        let hovered_window = self
-            .xcb_connection
-            .query_pointer(state.x_root_window)
-            .unwrap()
-            .reply()
-            .unwrap()
-            .child;
-        self.set_hovered(hovered_window == self.x_window);
     }
 
     pub fn close(&self) {

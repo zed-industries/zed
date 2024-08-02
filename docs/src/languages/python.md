@@ -98,9 +98,9 @@ You can also configure this option directly in your `settings.json` file ([pyrig
 
 The Pyright language server does not provide code formatting or linting. If you want to detect lint errors and reformat your Python code upon saving, you'll need to set up.
 
-A common tool for formatting Python code is [Ruff](https://black.readthedocs.io/en/stable/). It is another tool written in Rust, an extremely fast Python linter and code formatter.
+A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/). It is another tool written in Rust, an extremely fast Python linter and code formatter.
 
-It is available through the [Ruff extension](https://docs.astral.sh/ruff/). However, the code formatting through the extension is not yet available. You can set up the formatter to run on save by adding the following configuration to your `settings.json`, assuming that [`Ruff`](https://docs.astral.sh/ruff/) is installed in your Python environment.
+It is available through the [Ruff extension](https://github.com/zed-industries/zed/tree/main/extensions/ruff/). However, the code formatting through the extension is not yet available. You can set up the formatter to run on save by adding the following configuration to your `settings.json`, assuming that [`Ruff`](https://docs.astral.sh/ruff/) is installed in your Python environment.
 
 ```json
 {

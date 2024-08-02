@@ -5,6 +5,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use collab::api::billing::poll_stripe_events_periodically;
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
     rpc::ResultExt, AppState, Config, RateLimiter, Result,
@@ -95,6 +96,7 @@ async fn main() -> Result<()> {
             }
 
             if is_api {
+                poll_stripe_events_periodically(state.clone());
                 fetch_extensions_from_blob_store_periodically(state.clone());
             }
 

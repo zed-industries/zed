@@ -14,7 +14,8 @@ use editor::{
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
-use futures::{FutureExt as _, StreamExt as _};
+use futures::io::BufReader;
+use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
     div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
     WeakView,
@@ -41,12 +42,10 @@ pub struct Session {
 }
 
 struct EditorBlock {
-    editor: WeakView<Editor>,
     code_range: Range<Anchor>,
     invalidation_anchor: Anchor,
     block_id: CustomBlockId,
     execution_view: View<ExecutionView>,
-    on_close: CloseBlockFn,
 }
 
 type CloseBlockFn =
@@ -83,7 +82,7 @@ impl EditorBlock {
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
                 position: code_range.end,
-                height: execution_view.num_lines(cx).saturating_add(1),
+                height: (execution_view.num_lines(cx) + 1) as u32,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
@@ -94,12 +93,10 @@ impl EditorBlock {
         })?;
 
         anyhow::Ok(Self {
-            editor,
             code_range,
             invalidation_anchor,
             block_id,
             execution_view,
-            on_close,
         })
     }
 
@@ -107,24 +104,6 @@ impl EditorBlock {
         self.execution_view.update(cx, |execution_view, cx| {
             execution_view.push_message(&message.content, cx);
         });
-
-        self.editor
-            .update(cx, |editor, cx| {
-                let mut replacements = HashMap::default();
-
-                replacements.insert(
-                    self.block_id,
-                    (
-                        Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                        Self::create_output_area_renderer(
-                            self.execution_view.clone(),
-                            self.on_close.clone(),
-                        ),
-                    ),
-                );
-                editor.replace_blocks(replacements, None, cx);
-            })
-            .ok();
     }
 
     fn create_output_area_renderer(
@@ -242,6 +221,34 @@ impl Session {
                         this.update(&mut cx, |session, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
 
+                            let stderr = kernel.process.stderr.take();
+
+                            cx.spawn(|_session, mut _cx| async move {
+                                if let None = stderr {
+                                    return;
+                                }
+                                let reader = BufReader::new(stderr.unwrap());
+                                let mut lines = reader.lines();
+                                while let Some(Ok(line)) = lines.next().await {
+                                    log::error!("kernel: {}", line);
+                                }
+                            })
+                            .detach();
+
+                            let stdout = kernel.process.stderr.take();
+
+                            cx.spawn(|_session, mut _cx| async move {
+                                if let None = stdout {
+                                    return;
+                                }
+                                let reader = BufReader::new(stdout.unwrap());
+                                let mut lines = reader.lines();
+                                while let Some(Ok(line)) = lines.next().await {
+                                    log::info!("kernel: {}", line);
+                                }
+                            })
+                            .detach();
+
                             let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(kernel), cx);
 
@@ -305,6 +312,18 @@ impl Session {
                                         .ok();
                                 }
                             });
+
+                            // todo!(kyle): send kernelinforequest once our shell channel read/writes are split
+                            // cx.spawn(|this, mut cx| async move {
+                            //     cx.background_executor()
+                            //         .timer(Duration::from_millis(120))
+                            //         .await;
+                            //     this.update(&mut cx, |this, cx| {
+                            //         this.send(KernelInfoRequest {}.into(), cx).ok();
+                            //     })
+                            //     .ok();
+                            // })
+                            // .detach();
                         })
                         .ok();
                     }

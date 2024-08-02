@@ -1,8 +1,8 @@
 use crate::{
     point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
     ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
-    WindowContext,
+    LayoutId, Length, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
+    UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use http_client;
@@ -31,10 +31,16 @@ pub enum ImageSource {
     File(Arc<PathBuf>),
     /// Cached image data
     Data(Arc<ImageData>),
+    /// Image content will be loaded from Asset at render time.
+    Asset(SharedString),
     // TODO: move surface definitions into mac platform module
     /// A CoreVideo image buffer
     #[cfg(target_os = "macos")]
     Surface(CVImageBuffer),
+}
+
+fn is_uri(uri: &str) -> bool {
+    uri.contains("://")
 }
 
 impl From<SharedUri> for ImageSource {
@@ -44,14 +50,32 @@ impl From<SharedUri> for ImageSource {
 }
 
 impl From<&'static str> for ImageSource {
-    fn from(uri: &'static str) -> Self {
-        Self::Uri(uri.into())
+    fn from(s: &'static str) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s.into())
+        }
     }
 }
 
 impl From<String> for ImageSource {
-    fn from(uri: String) -> Self {
-        Self::Uri(uri.into())
+    fn from(s: String) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s.into())
+        }
+    }
+}
+
+impl From<SharedString> for ImageSource {
+    fn from(s: SharedString) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s)
+        }
     }
 }
 
@@ -388,10 +412,11 @@ impl InteractiveElement for Img {
 impl ImageSource {
     fn data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::File(_) => {
+            ImageSource::Uri(_) | ImageSource::Asset(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
                     ImageSource::Uri(uri) => uri.clone().into(),
                     ImageSource::File(path) => path.clone().into(),
+                    ImageSource::Asset(path) => UriOrPath::Asset(path.clone()),
                     _ => unreachable!(),
                 };
 
@@ -419,6 +444,7 @@ impl Asset for Image {
         let client = cx.http_client();
         let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
+        let asset_source = cx.asset_source().clone();
         async move {
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
@@ -434,6 +460,16 @@ impl Asset for Image {
                         });
                     }
                     body
+                }
+                UriOrPath::Asset(path) => {
+                    let data = asset_source.load(&path).ok().flatten();
+                    if let Some(data) = data {
+                        data.to_vec()
+                    } else {
+                        return Err(ImageCacheError::Asset(
+                            format!("not found: {}", path).into(),
+                        ));
+                    }
                 }
             };
 
@@ -502,6 +538,9 @@ pub enum ImageCacheError {
         /// The HTTP response body.
         body: String,
     },
+    /// An error that occurred while processing an asset.
+    #[error("asset error: {0}")]
+    Asset(SharedString),
     /// An error that occurred while processing an image.
     #[error("image error: {0}")]
     Image(Arc<ImageError>),
