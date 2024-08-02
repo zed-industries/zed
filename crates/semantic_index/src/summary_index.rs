@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
@@ -125,18 +126,52 @@ impl SummaryIndex {
         self.summary_db
     }
 
+    fn is_staff(cx: &AppContext) -> bool {
+        // [#auto-staff-ship] TODO After the staff-shipping phase of /auto, delete this function and remove feature_flags dep from Cargo.toml.
+        cx.is_staff()
+    }
+
     pub fn index_entries_changed_on_disk(
         &self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        let is_staff = Self::is_staff(cx);
         let start = Instant::now();
-        let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
-        let backlogged = self.scan_entries(worktree, cx);
-        let digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
-        let needs_summary = self.check_summary_cache(digest.files, cx);
-        let summaries = self.summarize_files(needs_summary.files, cx);
-        let persist = self.persist_summaries(summaries.files, cx);
+        let backlogged;
+        let digest;
+        let needs_summary;
+        let summaries;
+        let persist;
+
+        if is_staff {
+            let worktree = self.worktree.read(cx).snapshot();
+            let worktree_abs_path = worktree.abs_path().clone();
+
+            backlogged = self.scan_entries(worktree, cx);
+            digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
+            needs_summary = self.check_summary_cache(digest.files, cx);
+            summaries = self.summarize_files(needs_summary.files, cx);
+            persist = self.persist_summaries(summaries.files, cx);
+        } else {
+            // This feature is only staff-shipped, so make the rest of these no-ops.
+            backlogged = Backlogged {
+                paths_to_digest: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            digest = MightNeedSummaryFiles {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            needs_summary = NeedsSummary {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            summaries = SummarizeFiles {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            persist = Task::ready(Ok(()));
+        }
 
         async move {
             futures::try_join!(
@@ -147,10 +182,12 @@ impl SummaryIndex {
                 persist
             )?;
 
-            log::info!(
-                "Summarizing everything that changed on disk took {:?}",
-                start.elapsed()
-            );
+            if is_staff {
+                log::info!(
+                    "Summarizing everything that changed on disk took {:?}",
+                    start.elapsed()
+                );
+            }
 
             Ok(())
         }
@@ -161,15 +198,43 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        let is_staff = Self::is_staff(cx);
         let start = Instant::now();
-        let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
-        let backlogged = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+        let backlogged;
+        let digest;
+        let needs_summary;
+        let summaries;
+        let persist;
 
-        let digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
-        let needs_summary = self.check_summary_cache(digest.files, cx);
-        let summaries = self.summarize_files(needs_summary.files, cx);
-        let persist = self.persist_summaries(summaries.files, cx);
+        if is_staff {
+            let worktree = self.worktree.read(cx).snapshot();
+            let worktree_abs_path = worktree.abs_path().clone();
+
+            backlogged = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+            digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
+            needs_summary = self.check_summary_cache(digest.files, cx);
+            summaries = self.summarize_files(needs_summary.files, cx);
+            persist = self.persist_summaries(summaries.files, cx);
+        } else {
+            // This feature is only staff-shipped, so make the rest of these no-ops.
+            backlogged = Backlogged {
+                paths_to_digest: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            digest = MightNeedSummaryFiles {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            needs_summary = NeedsSummary {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            summaries = SummarizeFiles {
+                files: channel::bounded(0).1,
+                task: Task::ready(Ok(())),
+            };
+            persist = Task::ready(Ok(()));
+        }
 
         async move {
             futures::try_join!(

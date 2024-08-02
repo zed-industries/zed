@@ -9463,6 +9463,7 @@ dependencies = [
  "clock",
  "collections",
  "env_logger",
+ "feature_flags",
  "fs",
  "futures 0.3.30",
  "futures-batch",

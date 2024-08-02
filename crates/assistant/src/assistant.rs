@@ -17,6 +17,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
 pub use context_store::*;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
@@ -249,7 +250,12 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 
 fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
-    slash_command_registry.register_command(auto_command::AutoCommand, true);
+
+    if cx.is_staff() {
+        // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
+        slash_command_registry.register_command(auto_command::AutoCommand, true);
+    }
+
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
