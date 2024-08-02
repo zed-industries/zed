@@ -1349,10 +1349,10 @@ impl ProjectPanel {
                 } else {
                     None
                 };
-                let mut succeed_indexs = Vec::new();
+                let mut succeed_indices = Vec::new();
                 for (index, entry) in entry_ids.into_iter().enumerate() {
                     if let Some(Some(entry)) = entry.ok() {
-                        succeed_indexs.push(index);
+                        succeed_indices.push(index);
                         last_succeed = Some(entry.id);
                     }
                 }
@@ -1368,13 +1368,13 @@ impl ProjectPanel {
                         .ok();
                 }
                 // remove entry for cut in difference worktree
-                let will_delete_entrys = will_delete
+                let will_delete_entries = will_delete
                     .into_iter()
                     .enumerate()
-                    .filter(|(idx, _)| succeed_indexs.contains(&idx))
+                    .filter(|(idx, _)| succeed_indices.contains(&idx))
                     .map(|(_, entry)| entry)
                     .collect::<Vec<_>>();
-                for entry_id in will_delete_entrys {
+                for entry_id in will_delete_entries {
                     project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel
