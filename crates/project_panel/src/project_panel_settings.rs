@@ -16,6 +16,7 @@ pub struct ProjectPanelSettings {
     pub button: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
+    pub entry_spacing: EntrySpacing,
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
@@ -23,6 +24,19 @@ pub struct ProjectPanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+}
+
+/// Spacing between worktree entries in the project panel.
+///
+/// Default: comfortable
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntrySpacing {
+    #[default]
+    /// Comfortable spacing of entries.
+    Comfortable,
+    /// Compact spacing of entries.
+    Compact,
 }
 
 /// When to show the scrollbar in the project panel.
@@ -68,6 +82,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: left
     pub dock: Option<ProjectPanelDockPosition>,
+    /// Spacing between worktree entries in the project panel.
+    ///
+    /// Default: comfortable
+    pub entry_spacing: Option<EntrySpacing>,
     /// Whether to show file icons in the project panel.
     ///
     /// Default: true
