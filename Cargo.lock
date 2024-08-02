@@ -3599,7 +3599,6 @@ dependencies = [
  "time",
  "time_format",
  "tree-sitter-html",
- "tree-sitter-md",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",

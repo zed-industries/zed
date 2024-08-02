@@ -3668,63 +3668,6 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         );
     });
 }
-#[gpui::test]
-async fn test_fold_perf(cx: &mut TestAppContext) {
-    use std::fmt::Write;
-    init_test(cx, |_| {});
-    let mut view = EditorTestContext::new(cx).await;
-    let language_registry = view.language_registry();
-    let language_name = Arc::from("Markdown");
-    let md_language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: Arc::clone(&language_name),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["md".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_md::language()),
-        )
-        .with_highlights_query(
-            r#"
-        "#,
-        )
-        .unwrap(),
-    );
-    language_registry.add(md_language.clone());
-
-    let mut text = String::default();
-    writeln!(&mut text, "start").unwrap();
-    writeln!(&mut text, "```").unwrap();
-    const LINE_COUNT: u32 = 10000;
-    for i in 0..LINE_COUNT {
-        writeln!(&mut text, "{i}").unwrap();
-    }
-
-    writeln!(&mut text, "```").unwrap();
-    writeln!(&mut text, "end").unwrap();
-    view.update_buffer(|buffer, cx| {
-        buffer.set_language(Some(md_language), cx);
-    });
-    let t0 = Instant::now();
-    _ = view.update_editor(|view, cx| {
-        eprintln!("Text length: {}", text.len());
-        view.set_text(text, cx);
-        eprintln!(">>");
-        view.fold_ranges(
-            vec![(
-                Point::new(1, 0)..Point::new(LINE_COUNT + 2, 3),
-                FoldPlaceholder::test(),
-            )],
-            false,
-            cx,
-        );
-    });
-    eprintln!("{:?}", t0.elapsed());
-    eprintln!("<<");
-}
 
 #[gpui::test]
 fn test_move_line_up_down(cx: &mut TestAppContext) {
