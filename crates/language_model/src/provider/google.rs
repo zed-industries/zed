@@ -65,6 +65,20 @@ impl State {
             })
         })
     }
+
+    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
+        let write_credentials =
+            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
+
+        cx.spawn(|this, mut cx| async move {
+            write_credentials.await?;
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                cx.notify();
+            })
+        })
+    }
 }
 
 impl GoogleLanguageModelProvider {
@@ -296,6 +310,11 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
         Self {
             api_key_editor: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -312,26 +331,30 @@ impl ConfigurationView {
             return;
         }
 
-        let settings = &AllLanguageModelSettings::get_global(cx).google;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
-            write_credentials.await?;
-            state.update(&mut cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
+            state
+                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
         })
         .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
-        self.state
-            .update(cx, |state, cx| state.reset_api_key(cx))
-            .detach_and_log_err(cx);
+
+        let state = self.state.clone();
+        cx.spawn(|_, mut cx| async move {
+            state
+                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -407,7 +430,7 @@ impl Render for ConfigurationView {
                     h_flex()
                         .gap_2()
                         .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
+                        .child(Label::new("API key configured").size(LabelSize::Small)),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")

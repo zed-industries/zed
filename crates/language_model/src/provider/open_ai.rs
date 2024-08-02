@@ -445,7 +445,7 @@ impl Render for ConfigurationView {
                     h_flex()
                         .gap_2()
                         .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
+                        .child(Label::new("API key configured").size(LabelSize::Small)),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")
