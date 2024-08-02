@@ -1407,7 +1407,7 @@ impl Context {
             async move {
                 let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
 
-                let mut prompt = prompt_store.step_resolution_prompt();
+                let mut prompt = prompt_store.step_resolution_prompt()?;
                 prompt.push_str(&step_text);
 
                 request.messages.push(LanguageModelRequestMessage {

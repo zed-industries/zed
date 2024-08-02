@@ -1505,15 +1505,15 @@ impl PromptStore {
         self.metadata_cache.read().metadata.first().cloned()
     }
 
-    pub fn step_resolution_prompt(&self) -> String {
-        String::from_utf8(
+    pub fn step_resolution_prompt(&self) -> Result<String> {
+        let path = "prompts/step_resolution.md";
+
+        Ok(String::from_utf8(
             Assets
-                .load("prompts/step_resolution.md")
-                .unwrap()
-                .unwrap()
+                .load(path)?
+                .ok_or_else(|| anyhow!("{path} not found"))?
                 .to_vec(),
-        )
-        .unwrap()
+        )?)
     }
 }
 
