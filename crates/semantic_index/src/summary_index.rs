@@ -480,7 +480,7 @@ impl SummaryIndex {
         cx: &AppContext,
     ) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
-        let summary_model_name: LanguageModelName = "gpt-4o-mini".to_string().into(); // TODO read this from the user's settings.
+        let summary_model_name: LanguageModelName = "qwen2:1.5b".to_string().into(); // TODO read this from the user's settings.
         let Some(model) = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
             .find(|model| model.name() == summary_model_name)
