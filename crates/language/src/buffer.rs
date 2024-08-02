@@ -2476,6 +2476,17 @@ impl BufferSnapshot {
         None
     }
 
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+        let highlight_maps = captures
+            .grammars()
+            .into_iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+        (captures, highlight_maps)
+    }
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
@@ -2485,15 +2496,7 @@ impl BufferSnapshot {
 
         let mut syntax = None;
         if language_aware {
-            let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
-                grammar.highlights_query.as_ref()
-            });
-            let highlight_maps = captures
-                .grammars()
-                .into_iter()
-                .map(|grammar| grammar.highlight_map())
-                .collect();
-            syntax = Some((captures, highlight_maps));
+            syntax = Some(self.get_highlights(range.clone()));
         }
 
         BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
@@ -3693,24 +3696,41 @@ impl<'a> BufferChunks<'a> {
 
     /// Seeks to the given byte offset in the buffer.
     pub fn seek(&mut self, range: Range<usize>) {
-        self.range = range.clone();
+        let old_range = std::mem::replace(&mut self.range, range.clone());
+        dbg!(&old_range, &self.range);
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            highlights
-                .stack
-                .retain(|(end_offset, _)| *end_offset > range.start);
-            if let Some(capture) = &highlights.next_capture {
-                if range.start >= capture.node.start_byte() {
-                    let next_capture_end = capture.node.end_byte();
-                    if range.start < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+                // Reuse existing highlights stack, as the new range is a subrange of the old one.
+                highlights
+                    .stack
+                    .retain(|(end_offset, _)| *end_offset > range.start);
+                if let Some(capture) = &highlights.next_capture {
+                    if range.start >= capture.node.start_byte() {
+                        let next_capture_end = capture.node.end_byte();
+                        if range.start < next_capture_end {
+                            highlights.stack.push((
+                                next_capture_end,
+                                highlights.highlight_maps[capture.grammar_index].get(capture.index),
+                            ));
+                        }
+                        highlights.next_capture.take();
                     }
-                    highlights.next_capture.take();
                 }
+            } else if let Some(snapshot) = self.buffer_snapshot {
+                let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
+                *highlights = BufferChunkHighlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    highlight_maps,
+                };
+            } else {
+                // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
+                // Seeking such BufferChunks is not supported.
+                debug_assert!(false, "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot");
             }
+
             highlights.captures.set_byte_range(self.range.clone());
             self.initialize_diagnostic_endpoints();
         }
