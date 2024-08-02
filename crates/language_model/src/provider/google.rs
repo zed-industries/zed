@@ -327,7 +327,8 @@ impl ConfigurationView {
                     .update(&mut cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
-                    task.await.log_err();
+                    // We don't log an error, because "not signed in" is also an error.
+                    let _ = task.await;
                 }
                 this.update(&mut cx, |this, cx| {
                     this.load_credentials_task = None;
