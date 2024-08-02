@@ -22,6 +22,7 @@ pub use role::*;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use std::{future::Future, sync::Arc};
+use ui::IconName;
 
 pub fn init(
     user_store: Model<UserStore>,
@@ -102,6 +103,9 @@ pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
+    fn icon(&self) -> IconName {
+        IconName::ZedAssistant
+    }
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
