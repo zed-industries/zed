@@ -28,6 +28,7 @@ Zed supports running code in multiple languages. To get started, you need to ins
 **Currently supported languages:**
 
 - [Python (ipykernel)](#python)
+- [R (Ark)](#r)
 - [TypeScript (Deno)](#typescript-deno)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
@@ -93,6 +94,14 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
+### R
+
+Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
+
+```
+ark --install
+```
+
 ### Typescript: Deno {#typescript-deno}
 
 [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
@@ -122,7 +131,8 @@ language, you can assign a kernel for any supported language in your `settings.j
     "kernel_selections": {
       "python": "conda-env",
       "typescript": "deno",
-      "javascript": "deno"
+      "javascript": "deno",
+      "r": "ark"
     }
   }
 }
