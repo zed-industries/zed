@@ -1,11 +1,13 @@
+use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use proto::Plan;
+
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::SharedString;
-use gpui::{AsyncWindowContext, Task};
-use language_model::{LanguageModel, LanguageModelRegistry};
+use gpui::Task;
 use picker::{Picker, PickerDelegate};
 use settings::update_settings_file;
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
@@ -18,11 +20,21 @@ pub struct ModelSelector2<T: PopoverTrigger> {
     info_text: Option<SharedString>,
 }
 
-struct ModelPickerDelegate {
+pub struct ModelPickerDelegate {
     fs: Arc<dyn Fs>,
-    models: Vec<Arc<dyn LanguageModel>>,
+    all_models: Vec<ModelInfo>,
+    filtered_models: Vec<ModelInfo>,
     selected_index: usize,
     info_text: Option<SharedString>,
+}
+
+#[derive(Clone)]
+struct ModelInfo {
+    model: Arc<dyn LanguageModel>,
+    provider_name: SharedString,
+    provider_icon: IconName,
+    availability: LanguageModelAvailability,
+    is_selected: bool,
 }
 
 impl<T: PopoverTrigger> ModelSelector2<T> {
@@ -50,7 +62,7 @@ impl PickerDelegate for ModelPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        self.models.len()
+        self.filtered_models.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -58,7 +70,7 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        self.selected_index = ix;
+        self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -66,15 +78,54 @@ impl PickerDelegate for ModelPickerDelegate {
         "Select a model...".into()
     }
 
-    fn update_matches(&mut self, _query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        cx.spawn(|_, _| async {})
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let all_models = self.all_models.clone();
+        cx.spawn(|this, mut cx| async move {
+            let filtered_models = cx
+                .background_executor()
+                .spawn(async move {
+                    if query.is_empty() {
+                        all_models
+                    } else {
+                        all_models
+                            .into_iter()
+                            .filter(|model_info| {
+                                model_info
+                                    .model
+                                    .name()
+                                    .0
+                                    .to_lowercase()
+                                    .contains(&query.to_lowercase())
+                            })
+                            .collect()
+                    }
+                })
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.delegate.filtered_models = filtered_models;
+                this.delegate.set_selected_index(0, cx);
+                cx.notify();
+            })
+            .ok();
+        })
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(model) = self.models.get(self.selected_index).cloned() {
+        if let Some(model_info) = self.filtered_models.get(self.selected_index) {
+            let model = model_info.model.clone();
             update_settings_file::<AssistantSettings>(self.fs.clone(), cx, move |settings, _| {
-                settings.set_model(model)
+                settings.set_model(model.clone())
             });
+
+            // Update the selection status
+            let selected_model_id = model_info.model.id();
+            for model in &mut self.all_models {
+                model.is_selected = model.model.id() == selected_model_id;
+            }
+            for model in &mut self.filtered_models {
+                model.is_selected = model.model.id() == selected_model_id;
+            }
         }
     }
 
@@ -84,31 +135,91 @@ impl PickerDelegate for ModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let model = self.models.get(ix)?;
+        let model_info = self.filtered_models.get(ix)?;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(Label::new(model.name().0.clone())),
+                .start_slot(
+                    Icon::new(model_info.provider_icon)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .font_buffer(cx)
+                        .min_w(px(260.))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Label::new(model_info.model.name().0.clone()))
+                                .children(match model_info.availability {
+                                    LanguageModelAvailability::Public => None,
+                                    LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
+                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => Some(
+                                        Label::new("Pro")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    ),
+                                }),
+                        )
+                        .child(div().when(model_info.is_selected, |this| {
+                            this.child(
+                                Icon::new(IconName::Check)
+                                    .color(Color::Accent)
+                                    .size(IconSize::Small),
+                            )
+                        })),
+                ),
         )
     }
 }
 
 impl<T: PopoverTrigger> RenderOnce for ModelSelector2<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let models = LanguageModelRegistry::global(cx)
+        let selected_provider = LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map(|m| m.id());
+        let selected_model = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .map(|m| m.id());
+
+        let all_models = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
             .iter()
-            .flat_map(|provider| provider.provided_models(cx))
+            .flat_map(|provider| {
+                let provider_name = provider.name().0.clone();
+                let provider_icon = provider.icon();
+                let provider_id = provider.id();
+                let selected_model = selected_model.clone();
+                let selected_provider = selected_provider.clone();
+
+                provider.provided_models(cx).into_iter().map(move |model| {
+                    let model = model.clone();
+
+                    ModelInfo {
+                        model: model.clone(),
+                        provider_name: provider_name.clone(),
+                        provider_icon,
+                        availability: model.availability(),
+                        is_selected: selected_model.as_ref() == Some(&model.id())
+                            && selected_provider.as_ref() == Some(&provider_id),
+                    }
+                })
+            })
             .collect::<Vec<_>>();
 
         let delegate = ModelPickerDelegate {
             fs: self.fs.clone(),
-            models,
+            all_models: all_models.clone(),
+            filtered_models: all_models,
             selected_index: 0,
             info_text: self.info_text,
         };

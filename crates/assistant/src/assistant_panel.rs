@@ -12,7 +12,7 @@ use crate::{
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
     DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepState,
     EditStepSuggestions, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
-    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    MessageStatus, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
