@@ -262,19 +262,6 @@ impl Vim {
             _ => {}
         }));
 
-        let editor = editor.read(cx);
-        let editor_mode = editor.mode();
-        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
-
-        if editor_mode == EditorMode::Full
-                && !newest_selection_empty
-                && self.state().mode == Mode::Normal
-                // When following someone, don't switch vim mode.
-                && editor.leader_peer_id().is_none()
-        {
-            self.switch_mode(Mode::Visual, true, cx);
-        }
-
         self.sync_vim_settings(cx);
     }
 
@@ -462,7 +449,7 @@ impl Vim {
                 }
 
                 s.move_with(|map, selection| {
-                    if last_mode.is_visual() && !mode.is_visual() {
+                    if !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
