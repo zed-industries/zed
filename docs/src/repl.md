@@ -128,7 +128,6 @@ language, you can assign a kernel for any supported language in your `settings.j
 ```json
 {
   "jupyter": {
-    "enabled": true,
     "kernel_selections": {
       "python": "conda-env",
       "typescript": "deno",
