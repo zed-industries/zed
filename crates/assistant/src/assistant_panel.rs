@@ -41,12 +41,16 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
-use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
+use language_model::{
+    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry, Role,
+};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
+use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -140,6 +144,8 @@ pub struct AssistantPanel {
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
+    watch_client_status: Option<Task<()>>,
+    nudge_sign_in: bool,
 }
 
 #[derive(Clone)]
@@ -411,6 +417,38 @@ impl AssistantPanel {
             ),
         ];
 
+        let mut status_rx = workspace.client().clone().status();
+
+        let watch_client_status = cx.spawn(|this, mut cx| async move {
+            let mut old_status = None;
+            while let Some(status) = status_rx.next().await {
+                if old_status.is_none()
+                    || old_status.map_or(false, |old_status| old_status != status)
+                {
+                    if status.is_signed_out() {
+                        this.update(&mut cx, |this, cx| {
+                            let active_provider =
+                                LanguageModelRegistry::read_global(cx).active_provider();
+
+                            // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
+                            // the provider, we want to show a nudge to sign in.
+                            if active_provider
+                                .map_or(true, |provider| provider.id().0 == PROVIDER_ID)
+                            {
+                                println!("TODO: Nudge the user to sign in and use Zed AI");
+                                this.nudge_sign_in = true;
+                            }
+                        })
+                        .log_err();
+                    };
+
+                    old_status = Some(status);
+                }
+            }
+            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
+                .log_err();
+        });
+
         let mut this = Self {
             pane,
             workspace: workspace.weak_handle(),
@@ -425,6 +463,9 @@ impl AssistantPanel {
             model_summary_editor,
             authenticate_provider_task: None,
             configuration_subscription: None,
+            watch_client_status: Some(watch_client_status),
+            // TODO: This is unused!
+            nudge_sign_in: false,
         };
         this.new_context(cx);
         this
@@ -614,12 +655,7 @@ impl AssistantPanel {
                 provider.id(),
                 cx.spawn(|this, mut cx| async move {
                     let _ = load_credentials.await;
-                    this.update(&mut cx, |this, cx| {
-                        if !provider.is_authenticated(cx) {
-                            this.show_configuration_tab(cx)
-                        } else if !this.has_any_context_editors(cx) {
-                            this.new_context(cx);
-                        }
+                    this.update(&mut cx, |this, _cx| {
                         this.authenticate_provider_task = None;
                     })
                     .log_err();
@@ -983,13 +1019,6 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
-    }
-
-    fn has_any_context_editors(&self, cx: &AppContext) -> bool {
-        self.pane
-            .read(cx)
-            .items()
-            .any(|item| item.downcast::<ContextEditor>().is_some())
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {

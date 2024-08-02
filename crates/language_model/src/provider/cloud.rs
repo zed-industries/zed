@@ -58,8 +58,8 @@ pub struct State {
 }
 
 impl State {
-    fn is_connected(&self) -> bool {
-        self.status.is_connected()
+    fn is_signed_out(&self) -> bool {
+        self.status.is_signed_out()
     }
 
     fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -189,7 +189,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.state.read(cx).status.is_connected()
+        !self.state.read(cx).is_signed_out()
     }
 
     fn authenticate(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -435,7 +435,7 @@ impl Render for ConfigurationView {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
         const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
-        let is_connected = self.state.read(cx).is_connected();
+        let is_connected = self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
