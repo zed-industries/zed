@@ -265,8 +265,8 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
-    cx.observe_is_staff(move |is_staff, _cx| {
-        if is_staff {
+    cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>(move |is_enabled, _cx| {
+        if is_enabled {
             // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
             slash_command_registry.register_command(auto_command::AutoCommand, true);
         }

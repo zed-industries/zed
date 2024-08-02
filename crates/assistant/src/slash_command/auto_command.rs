@@ -2,6 +2,7 @@ use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::ArgumentCompletion;
+use feature_flags::FeatureFlag;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
@@ -14,6 +15,12 @@ use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub struct AutoSlashCommandFeatureFlag;
+
+impl FeatureFlag for AutoSlashCommandFeatureFlag {
+    const NAME: &'static str = "auto-slash-command";
+}
 
 pub(crate) struct AutoCommand;
 
@@ -78,7 +85,7 @@ impl SlashCommand for AutoCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {

@@ -75,10 +75,6 @@ pub trait FeatureFlagAppExt {
     fn has_flag<T: FeatureFlag>(&self) -> bool;
     fn is_staff(&self) -> bool;
 
-    fn observe_is_staff<F>(&mut self, callback: F) -> Subscription
-    where
-        F: Fn(bool, &mut AppContext) + 'static;
-
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
         F: Fn(bool, &mut AppContext) + 'static;
@@ -106,15 +102,6 @@ impl FeatureFlagAppExt for AppContext {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.staff)
             .unwrap_or(false)
-    }
-
-    fn observe_is_staff<F>(&mut self, callback: F) -> Subscription
-    where
-        F: Fn(bool, &mut AppContext) + 'static,
-    {
-        self.observe_global::<FeatureFlags>(move |cx| {
-            callback(cx.is_staff(), cx);
-        })
     }
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
