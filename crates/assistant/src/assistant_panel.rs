@@ -1,7 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
-    model_selector2::ModelSelector2,
     prompt_library::open_prompt_library,
     slash_command::{
         default_command::DefaultSlashCommand,
@@ -12,7 +11,7 @@ use crate::{
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
     DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepState,
     EditStepSuggestions, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
-    MessageStatus, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
@@ -2878,7 +2877,7 @@ impl Render for ContextEditorToolbarItem {
             });
         let right_side = h_flex()
             .gap_2()
-            .child(ModelSelector2::new(
+            .child(ModelSelector::new(
                 self.fs.clone(),
                 ButtonLike::new("active-model")
                     .style(ButtonStyle::Subtle)
