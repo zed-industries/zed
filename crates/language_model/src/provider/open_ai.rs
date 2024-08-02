@@ -66,6 +66,20 @@ impl State {
             })
         })
     }
+
+    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let settings = &AllLanguageModelSettings::get_global(cx).openai;
+        let write_credentials =
+            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
+
+        cx.spawn(|this, mut cx| async move {
+            write_credentials.await?;
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                cx.notify();
+            })
+        })
+    }
 }
 
 impl OpenAiLanguageModelProvider {
@@ -330,17 +344,11 @@ impl ConfigurationView {
             return;
         }
 
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
-
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
-            write_credentials.await?;
-            state.update(&mut cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
+            state
+                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
         })
         .detach_and_log_err(cx);
 
