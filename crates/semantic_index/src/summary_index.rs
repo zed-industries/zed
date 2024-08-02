@@ -574,31 +574,33 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        cx.spawn(|cx| {
+        cx.spawn(|cx| async move {
             let response = model.stream_completion(request, &cx);
-            cx.background_executor().spawn(async move {
-                let answer = {
-                    let mut chunks = response.await?;
-                    let mut completion = String::new();
+            cx.background_executor()
+                .spawn(async move {
+                    let answer = {
+                        let mut chunks = response.await?;
+                        let mut completion = String::new();
 
-                    while let Some(chunk) = chunks.next().await {
-                        let chunk = chunk?;
-                        completion.push_str(&chunk);
-                    }
+                        while let Some(chunk) = chunks.next().await {
+                            let chunk = chunk?;
+                            completion.push_str(&chunk);
+                        }
 
-                    completion
-                };
+                        completion
+                    };
 
-                log::info!(
-                    "It took {:?} to summarize {:?} bytes of code.",
-                    start.elapsed(),
-                    code_len
-                );
+                    log::info!(
+                        "It took {:?} to summarize {:?} bytes of code.",
+                        start.elapsed(),
+                        code_len
+                    );
 
-                log::debug!("Summary was: {:?}", &answer);
+                    log::debug!("Summary was: {:?}", &answer);
 
-                Ok(answer)
-            })
+                    Ok(answer)
+                })
+                .await
         })
     }
 
