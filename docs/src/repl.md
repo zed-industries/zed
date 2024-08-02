@@ -94,7 +94,7 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-### R {#r}
+### R
 
 Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
 
@@ -109,8 +109,6 @@ ark --install
 ```
 deno jupyter --install
 ```
-
-
 
 ### Other languages
 
