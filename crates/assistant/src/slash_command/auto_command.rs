@@ -234,13 +234,12 @@ async fn commands_for_summaries(
         );
 
         let prompt = summaries_prompt(&current_summaries, original_prompt);
-
-        let model = Arc::clone(&model);
-
         let start = std::time::Instant::now();
-        let token_count = cx
-            .update(|cx| model.count_tokens(make_request(prompt.clone()), cx))?
-            .await?;
+        // Per OpenAI, 1 token ~= 4 chars in English (we go with 4.5 to overestimate a bit, because failed API requests cost a lot of perf)
+        // Verifying this against an actual model.count_tokens() confirms that it's usually within ~5% of the correct answer, whereas
+        // getting the correct answer from tiktoken takes hundreds of milliseconds (compared to this arithmetic being ~free).
+        // source: https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them
+        let token_estimate = prompt.len() * 2 / 9;
         let duration = start.elapsed();
         eprintln!(
             "Time taken to count tokens for prompt of length {:?}B: {:?}",
@@ -248,13 +247,13 @@ async fn commands_for_summaries(
             duration
         );
 
-        if token_count < max_token_count {
+        if token_estimate < max_token_count {
             prompts.push(prompt);
         } else if current_summaries.len() == 1 {
             log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
         } else {
             log::info!(
-                "Context inference using file summaries resulted in a prompt containing {token_count} tokens, which exceeded the model's max of {max_token_count}. Retrying as two separate prompts, each including half the number of summaries.",
+                "Context inference using file summaries resulted in a prompt containing {token_estimate} tokens, which exceeded the model's max of {max_token_count}. Retrying as two separate prompts, each including half the number of summaries.",
             );
             let (left, right) = current_summaries.split_at(current_summaries.len() / 2);
             stack.push(right);
