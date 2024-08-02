@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, FocusHandle, ModelContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
@@ -149,12 +149,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
         let state = self.state.clone();
-        (
-            cx.new_view(|cx| ConfigurationView::new(state, cx)).into(),
-            None,
-        )
+        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {

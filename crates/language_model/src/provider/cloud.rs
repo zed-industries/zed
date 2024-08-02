@@ -8,9 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{Client, UserStore};
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, Model, ModelContext, Subscription, Task,
-};
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -198,13 +196,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
-        let view = cx
-            .new_view(|_cx| ConfigurationView {
-                state: self.state.clone(),
-            })
-            .into();
-        (view, None)
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|_cx| ConfigurationView {
+            state: self.state.clone(),
+        })
+        .into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {

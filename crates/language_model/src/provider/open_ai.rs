@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, FocusableView, FontStyle, ModelContext,
-    Subscription, Task, TextStyle, View, WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
+    View, WhiteSpace,
 };
 use http_client::HttpClient;
 use open_ai::stream_completion;
@@ -15,7 +15,7 @@ use std::{future, sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Indicator};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
@@ -171,10 +171,9 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         }
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
-        let view = cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx));
-        let focus_handle = view.focus_handle(cx);
-        (view.into(), Some(focus_handle))
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -302,33 +301,26 @@ pub fn count_open_ai_tokens(
 }
 
 struct ConfigurationView {
-    focus_handle: FocusHandle,
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
 }
 
 impl ConfigurationView {
     fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
+        let api_key_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
+            editor
+        });
 
-        cx.on_focus(&focus_handle, |this, cx| {
-            if this.should_render_editor(cx) {
-                this.api_key_editor.read(cx).focus_handle(cx).focus(cx)
-            }
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
         })
         .detach();
 
         Self {
-            api_key_editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(
-                    "sk-000000000000000000000000000000000000000000000000",
-                    cx,
-                );
-                editor
-            }),
+            api_key_editor,
             state,
-            focus_handle,
         }
     }
 
@@ -341,6 +333,7 @@ impl ConfigurationView {
         let settings = &AllLanguageModelSettings::get_global(cx).openai;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
+
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
@@ -350,14 +343,23 @@ impl ConfigurationView {
             })
         })
         .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
-        self.state.update(cx, |state, cx| {
-            state.reset_api_key(cx).detach_and_log_err(cx);
+
+        let state = self.state.clone();
+        cx.spawn(|_, mut cx| async move {
+            state
+                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
+                .await
         })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -392,12 +394,6 @@ impl ConfigurationView {
     }
 }
 
-impl FocusableView for ConfigurationView {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const INSTRUCTIONS: [&str; 6] = [
@@ -411,8 +407,6 @@ impl Render for ConfigurationView {
 
         if self.should_render_editor(cx) {
             v_flex()
-                .id("openai-configuration-view")
-                .track_focus(&self.focus_handle)
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(
@@ -437,8 +431,6 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .id("openai-configuration-view")
-                .track_focus(&self.focus_handle)
                 .size_full()
                 .justify_between()
                 .child(
