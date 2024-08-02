@@ -1612,8 +1612,10 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
+        // On Linux and Windows, closing the last window also exits the entire program.
+        let quitting = cfg!(not(target_os = "macos")) && cx.windows().len() == 1;
+        let prepare = self.prepare_to_close(quitting, cx);
         let window = cx.window_handle();
-        let prepare = self.prepare_to_close(false, cx);
         cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.update(&mut cx, |_, cx| {
