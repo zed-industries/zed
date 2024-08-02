@@ -132,7 +132,6 @@ impl ProjectIndex {
 
         self.worktree_indices
             .retain(|worktree_id, _| worktrees.contains_key(worktree_id));
-        dbg!(worktrees.len());
         for (worktree_id, worktree) in worktrees {
             self.worktree_indices.entry(worktree_id).or_insert_with(|| {
                 let worktree_index = WorktreeIndex::load(

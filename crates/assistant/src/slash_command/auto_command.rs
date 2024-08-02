@@ -9,6 +9,7 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use semantic_index::{FileSummary, SemanticDb};
+use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
 use workspace::Workspace;
@@ -175,14 +176,29 @@ async fn commands_for_summaries(
         log::info!("Can't infer context because there's no active model.");
         return Ok(Vec::new());
     };
-    let max_token_count = model.max_token_count();
+    let max_token_count = (model.max_token_count() * 9) / 10;
 
     // Rather than recursing (which would require this async function use a pinned box),
     // we use an explicit stack of arguments and answers for when we need to "recurse."
-    let mut stack = vec![(summaries, String::new())];
+    let mut stack = vec![summaries];
     let mut final_response = Vec::new();
+    let mut prompts = Vec::new();
 
-    while let Some((current_summaries, mut accumulated_response)) = stack.pop() {
+    // TODO We only need to create multiple Requests becuase we currently
+    // don't have the ability to tell if a CompletionProvider::complete response
+    // was a "too many tokens in this request" error. If we had that, then
+    // we could try the request once, instead of having to make separate requests
+    // to check the token count and then afterwards to run the actual prompt.
+    let make_request = |prompt: String| LanguageModelRequest {
+        messages: vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: prompt.clone(),
+        }],
+        stop: Vec::new(),
+        temperature: 1.0,
+    };
+
+    while let Some(current_summaries) = stack.pop() {
         // The split can result in one slice being empty and the other having one element.
         // Whenever that happens, skip the empty one.
         if current_summaries.is_empty() {
@@ -196,78 +212,21 @@ async fn commands_for_summaries(
 
         let prompt = summaries_prompt(&current_summaries, original_prompt);
 
-        // TODO We only need to create multiple Requests becuase we currently
-        // don't have the ability to tell if a CompletionProvider::complete response
-        // was a "too many tokens in this request" error. If we had that, then
-        // we could try the request once, instead of having to make separate requests
-        // to check the token count and then afterwards to run the actual prompt.
-        let make_request = |prompt: String| LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: prompt.clone(),
-            }],
-            stop: Vec::new(),
-            temperature: 1.0,
-        };
-
         let model = Arc::clone(&model);
+
+        let start = std::time::Instant::now();
         let token_count = cx
             .update(|cx| model.count_tokens(make_request(prompt.clone()), cx))?
             .await?;
+        let duration = start.elapsed();
+        eprintln!(
+            "Time taken to count tokens for prompt of length {:?}B: {:?}",
+            prompt.len(),
+            duration
+        );
 
         if token_count < max_token_count {
-            let response = {
-                let request = make_request(prompt);
-                cx.spawn(|cx| async move {
-                    let mut chunks = model.stream_completion(request, &cx).await?;
-                    let mut completion = String::new();
-
-                    while let Some(chunk) = chunks.next().await {
-                        let chunk = chunk?;
-                        completion.push_str(&chunk);
-                    }
-
-                    anyhow::Ok(completion)
-                })
-            }
-            .await?;
-
-            accumulated_response.push_str(&response);
-
-            for line in accumulated_response.split('\n') {
-                if let Some(first_space) = line.find(' ') {
-                    let command = &line[..first_space].trim();
-                    let arg = &line[first_space..].trim();
-
-                    // Don't return empty or duplicate or duplicate commands
-                    if !command.is_empty()
-                        && !final_response
-                            .iter()
-                            .any(|cmd: &CommandToRun| cmd.name == *command && cmd.arg == *arg)
-                    {
-                        if SUPPORTED_SLASH_COMMANDS
-                            .iter()
-                            .any(|supported| command == supported)
-                        {
-                            final_response.push(CommandToRun {
-                                name: command.to_string(),
-                                arg: arg.to_string(),
-                            });
-                        } else {
-                            log::warn!(
-                                "Context inference returned an unrecognized slash-commend line: {:?}",
-                                line
-                            );
-                        }
-                    }
-                } else if !line.trim().is_empty() {
-                    // All slash-commands currently supported in context inference need a space for the argument.
-                    log::warn!(
-                        "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash-command): {:?}",
-                        line
-                    );
-                }
-            }
+            prompts.push(prompt);
         } else if current_summaries.len() == 1 {
             log::warn!("Inferring context for a single file's summary failed because the prompt's token length exceeded the model's token limit.");
         } else {
@@ -275,8 +234,91 @@ async fn commands_for_summaries(
                 "Context inference using file summaries resulted in a prompt containing {token_count} tokens, which exceeded the model's max of {max_token_count}. Retrying as two separate prompts, each including half the number of summaries.",
             );
             let (left, right) = current_summaries.split_at(current_summaries.len() / 2);
-            stack.push((right, accumulated_response.clone()));
-            stack.push((left, accumulated_response));
+            stack.push(right);
+            stack.push(left);
+        }
+    }
+
+    let all_start = std::time::Instant::now();
+
+    let (tx, rx) = channel::bounded(1024);
+    let futures = prompts
+        .into_iter()
+        .map(|prompt| {
+            let request = make_request(prompt.clone());
+            let model = model.clone();
+            let tx = tx.clone();
+            eprintln!("kicking off model.stream_completion for prompt of this length: {:?}", prompt.len());
+            let stream = model.stream_completion(request, &cx);
+
+            cx.background_executor().spawn(async move {
+                let start = std::time::Instant::now();
+                let mut chunks = stream.await?;
+                let duration = start.elapsed();
+                eprintln!("Time taken for awaiting chunk stream: {:?}", duration);
+
+                let mut completion = String::new();
+
+                while let Some(chunk) = chunks.next().await {
+                    let chunk = chunk?;
+                    completion.push_str(&chunk);
+                }
+
+                let duration = start.elapsed();
+                eprintln!("Time taken for all chunks to come back: {:?}", duration);
+
+                for line in completion.split('\n') {
+                    if let Some(first_space) = line.find(' ') {
+                        let command = &line[..first_space].trim();
+                        let arg = &line[first_space..].trim();
+
+                        tx.send(CommandToRun {
+                            name: command.to_string(),
+                            arg: arg.to_string(),
+                        })
+                        .await?;
+                    } else if !line.trim().is_empty() {
+                        // All slash-commands currently supported in context inference need a space for the argument.
+                        log::warn!(
+                            "Context inference returned a non-blank line that contained no spaces (meaning no argument for the slash command): {:?}",
+                            line
+                        );
+                    }
+                }
+
+                anyhow::Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let _ = futures::future::join_all(futures).await;
+    let duration = all_start.elapsed();
+
+    eprintln!("All futures completed in {:?}", duration);
+    drop(tx); // Close the channel so that rx.collect() won't hang. This is safe because all futures have completed.
+    let results = rx.collect::<Vec<_>>().await;
+    eprintln!(
+        "Finished collecting from the channel with {} results",
+        results.len()
+    );
+    for command in results {
+        // Don't return empty or duplicate commands
+        if !command.name.is_empty()
+            && !final_response
+                .iter()
+                .any(|cmd: &CommandToRun| cmd.name == command.name && cmd.arg == command.arg)
+        {
+            if SUPPORTED_SLASH_COMMANDS
+                .iter()
+                .any(|supported| &command.name == supported)
+            {
+                final_response.push(command);
+            } else {
+                log::warn!(
+                    "Context inference returned an unrecognized slash command: {:?}",
+                    command
+                );
+            }
         }
     }
 

@@ -251,11 +251,6 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
 
-    if cx.is_staff() {
-        // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
-        slash_command_registry.register_command(auto_command::AutoCommand, true);
-    }
-
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
@@ -269,6 +264,14 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    cx.observe_is_staff(move |is_staff, _cx| {
+        if is_staff {
+            // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
+            slash_command_registry.register_command(auto_command::AutoCommand, true);
+        }
+    })
+    .detach();
 }
 
 pub fn humanize_token_count(count: usize) -> String {

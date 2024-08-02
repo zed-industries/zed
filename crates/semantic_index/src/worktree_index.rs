@@ -58,9 +58,7 @@ impl WorktreeIndex {
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
                     let db_connection = db_connection.clone();
                     async move {
-                        dbg!("txn");
                         let mut txn = db_connection.write_txn()?;
-                        dbg!("txn completed");
                         let embedding_index = {
                             let db_name = worktree_abs_path.to_string_lossy();
                             let db = db_connection.create_database(&mut txn, Some(&db_name))?;
@@ -132,11 +130,8 @@ impl WorktreeIndex {
         let (updated_entries_tx, updated_entries_rx) = channel::unbounded();
         let _subscription = cx.subscribe(&worktree, move |_this, _worktree, event, _cx| {
             if let worktree::Event::UpdatedEntries(update) = event {
-                dbg!(&update);
                 log::debug!("Updating entries...");
                 _ = updated_entries_tx.try_send(update.clone());
-            } else {
-                dbg!("non-update event");
             }
         });
 
