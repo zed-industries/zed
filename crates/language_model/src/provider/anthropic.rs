@@ -84,6 +84,34 @@ impl State {
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
+
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.is_authenticated() {
+            Task::ready(Ok(()))
+        } else {
+            let api_url = AllLanguageModelSettings::get_global(cx)
+                .anthropic
+                .api_url
+                .clone();
+
+            cx.spawn(|this, mut cx| async move {
+                let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+                    api_key
+                } else {
+                    let (_, api_key) = cx
+                        .update(|cx| cx.read_credentials(&api_url))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    String::from_utf8(api_key)?
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    this.api_key = Some(api_key);
+                    cx.notify();
+                })
+            })
+        }
+    }
 }
 
 impl AnthropicLanguageModelProvider {
@@ -165,36 +193,11 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        if self.is_authenticated(cx) {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .clone();
-            let state = self.state.clone();
-            cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-                    api_key
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
-                };
-
-                state.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    cx.notify();
-                })
-            })
-        }
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        let authenticate = self.authenticate(cx);
-        cx.new_view(|cx| ConfigurationView::new(authenticate, self.state.clone(), cx))
+        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
             .into()
     }
 
@@ -392,19 +395,21 @@ struct ConfigurationView {
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    fn new(
-        authenticate: Task<Result<()>>,
-        state: gpui::Model<State>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
         .detach();
 
         let load_credentials_task = Some(cx.spawn({
+            let state = state.clone();
             |this, mut cx| async move {
-                authenticate.await.log_err();
+                if let Some(task) = state
+                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
                 this.update(&mut cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
