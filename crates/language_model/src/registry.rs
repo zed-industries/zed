@@ -168,11 +168,8 @@ impl LanguageModelRegistry {
             .flat_map(|provider| provider.provided_models(cx))
     }
 
-    pub fn provider(
-        &self,
-        name: &LanguageModelProviderId,
-    ) -> Option<Arc<dyn LanguageModelProvider>> {
-        self.providers.get(name).cloned()
+    pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.providers.get(id).cloned()
     }
 
     pub fn select_active_model(

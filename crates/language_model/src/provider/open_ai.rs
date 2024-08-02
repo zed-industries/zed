@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, FocusableView, FontStyle, ModelContext,
-    Subscription, Task, TextStyle, View, WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
+    View, WhiteSpace,
 };
 use http_client::HttpClient;
 use open_ai::stream_completion;
@@ -66,6 +66,46 @@ impl State {
             })
         })
     }
+
+    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let settings = &AllLanguageModelSettings::get_global(cx).openai;
+        let write_credentials =
+            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
+
+        cx.spawn(|this, mut cx| async move {
+            write_credentials.await?;
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                cx.notify();
+            })
+        })
+    }
+
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.is_authenticated() {
+            Task::ready(Ok(()))
+        } else {
+            let api_url = AllLanguageModelSettings::get_global(cx)
+                .openai
+                .api_url
+                .clone();
+            cx.spawn(|this, mut cx| async move {
+                let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                    api_key
+                } else {
+                    let (_, api_key) = cx
+                        .update(|cx| cx.read_credentials(&api_url))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    String::from_utf8(api_key)?
+                };
+                this.update(&mut cx, |this, cx| {
+                    this.api_key = Some(api_key);
+                    cx.notify();
+                })
+            })
+        }
+    }
 }
 
 impl OpenAiLanguageModelProvider {
@@ -96,6 +136,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
     fn name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::AiOpenAi
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
@@ -141,36 +185,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        if self.is_authenticated(cx) {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .openai
-                .api_url
-                .clone();
-            let state = self.state.clone();
-            cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-                    api_key
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
-                };
-                state.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    cx.notify();
-                })
-            })
-        }
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
-        let view = cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx));
-        let focus_handle = view.focus_handle(cx);
-        (view.into(), Some(focus_handle))
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -300,20 +320,45 @@ pub fn count_open_ai_tokens(
 struct ConfigurationView {
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
+    load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut WindowContext) -> Self {
+    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+        let api_key_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
+            editor
+        });
+
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        let load_credentials_task = Some(cx.spawn({
+            let state = state.clone();
+            |this, mut cx| async move {
+                if let Some(task) = state
+                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    // We don't log an error, because "not signed in" is also an error.
+                    let _ = task.await;
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    this.load_credentials_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
+
         Self {
-            api_key_editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(
-                    "sk-000000000000000000000000000000000000000000000000",
-                    cx,
-                );
-                editor
-            }),
+            api_key_editor,
             state,
+            load_credentials_task,
         }
     }
 
@@ -323,26 +368,30 @@ impl ConfigurationView {
             return;
         }
 
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
-            write_credentials.await?;
-            state.update(&mut cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
+            state
+                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
         })
         .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
-        self.state.update(cx, |state, cx| {
-            state.reset_api_key(cx).detach_and_log_err(cx);
+
+        let state = self.state.clone();
+        cx.spawn(|_, mut cx| async move {
+            state
+                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
+                .await
         })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -371,11 +420,9 @@ impl ConfigurationView {
             },
         )
     }
-}
 
-impl FocusableView for ConfigurationView {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.api_key_editor.read(cx).focus_handle(cx)
+    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+        !self.state.read(cx).is_authenticated()
     }
 }
 
@@ -390,25 +437,9 @@ impl Render for ConfigurationView {
             "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
-        if self.state.read(cx).is_authenticated() {
-            h_flex()
-                .size_full()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
-                )
-                .child(
-                    Button::new("reset-key", "Reset key")
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
-                )
-                .into_any()
-        } else {
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
@@ -430,6 +461,24 @@ impl Render for ConfigurationView {
                         "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
                     )
                     .size(LabelSize::Small),
+                )
+                .into_any()
+        } else {
+            h_flex()
+                .size_full()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(Label::new("API key configured").size(LabelSize::Small)),
+                )
+                .child(
+                    Button::new("reset-key", "Reset key")
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )
                 .into_any()
         }

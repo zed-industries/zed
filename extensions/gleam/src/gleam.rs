@@ -181,7 +181,7 @@ impl zed::Extension for GleamExtension {
         &self,
         command: SlashCommand,
         argument: Option<String>,
-        worktree: &zed::Worktree,
+        worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
             "gleam-docs" => {
@@ -218,6 +218,8 @@ impl zed::Extension for GleamExtension {
                 })
             }
             "gleam-project" => {
+                let worktree = worktree.ok_or_else(|| "no worktree")?;
+
                 let mut text = String::new();
                 text.push_str("You are in a Gleam project.\n");
 
