@@ -1967,9 +1967,24 @@ impl ContextEditor {
                     workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
                 })
                 .log_err()?;
+            let assistant_panel = self.assistant_panel.upgrade()?;
 
+            let (&excerpt_id, _, _) = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+            let mut assist_ids = Vec::new();
             for suggestion in suggestion_group.suggestions {
-                todo!();
+                assist_ids.extend(suggestion.show(
+                    &editor,
+                    excerpt_id,
+                    &self.workspace,
+                    &assistant_panel,
+                    cx,
+                ));
                 // let description = suggestion.description().map_(|| "Delete".into());
 
                 // let range = {
@@ -2018,7 +2033,7 @@ impl ContextEditor {
                 );
             });
 
-            Some((editor, Vec::new()))
+            Some((editor, assist_ids))
         } else {
             todo!()
             // // If there are multiple buffers or suggestion groups, create a multibuffer

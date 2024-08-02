@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, InitialInsertion, MessageId,
-    MessageStatus,
+    prompt_library::PromptStore, slash_command::SlashCommandLine, AssistantPanel, InitialInsertion,
+    InlineAssistId, InlineAssistant, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -9,20 +9,25 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use editor::{Editor, ToPoint};
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
 };
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
+use gpui::{
+    AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task, UpdateGlobal,
+    View, WeakView,
+};
 use language::{
-    AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
-    Point, ToOffset,
+    AnchorRangeExt, AutoindentMode, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt,
+    ParseStatus, Point, ToOffset,
 };
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelTool,
     Role,
 };
+use multi_buffer::MultiBufferRow;
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
@@ -38,9 +43,10 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
-use ui::SharedString;
+use ui::{SharedString, WindowContext};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::Workspace;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -444,6 +450,169 @@ impl EditSuggestion {
             }
         }
         true
+    }
+
+    pub fn show(
+        &self,
+        editor: &View<Editor>,
+        excerpt_id: editor::ExcerptId,
+        workspace: &WeakView<Workspace>,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistId> {
+        let mut initial_transaction_id = None;
+        let initial_prompt;
+        let suggestion_range;
+        let buffer = editor.read(cx).buffer().clone();
+        let snapshot = buffer.read(cx).snapshot(cx);
+
+        match self {
+            EditSuggestion::Update { range, description } => {
+                initial_prompt = description.clone();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+            EditSuggestion::CreateFile { description } => {
+                initial_prompt = description.clone();
+                suggestion_range = editor::Anchor::min()..editor::Anchor::min();
+            }
+            EditSuggestion::InsertSiblingBefore {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    let mut line_start = position.to_point(&snapshot);
+                    line_start.column = 0;
+
+                    buffer.start_transaction(cx);
+                    buffer.edit(Some((line_start..line_start, "\n\n")), None, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_start = snapshot.anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            EditSuggestion::InsertSiblingAfter {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    let mut line_end = position.to_point(&snapshot);
+                    line_end.column = snapshot.line_len(MultiBufferRow(line_end.row));
+
+                    buffer.start_transaction(cx);
+                    buffer.edit(
+                        Some((line_end..line_end, "\n\n")),
+                        Some(AutoindentMode::EachLine),
+                        cx,
+                    );
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_end = snapshot.anchor_after(line_end);
+                    line_end..line_end
+                });
+            }
+            EditSuggestion::PrependChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    let mut point = position.to_point(&snapshot);
+
+                    if point.is_zero() {
+                        buffer.start_transaction(cx);
+                        buffer.edit(
+                            Some((point..point, "\n")),
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                        initial_transaction_id = buffer.end_transaction(cx);
+                        editor::Anchor::min()..editor::Anchor::min()
+                    } else {
+                        point.column = snapshot.line_len(MultiBufferRow(point.row));
+                        let new_text = if point.row < snapshot.max_point().row
+                            && !snapshot.is_line_blank(MultiBufferRow(point.row + 1))
+                        {
+                            "\n\n"
+                        } else {
+                            "\n"
+                        };
+                        buffer.start_transaction(cx);
+                        buffer.edit(
+                            Some((point..point, new_text)),
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                        initial_transaction_id = buffer.end_transaction(cx);
+
+                        let next_line_start = snapshot.anchor_before(point + Point::new(1, 0));
+                        next_line_start..next_line_start
+                    }
+                });
+            }
+            EditSuggestion::AppendChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    let mut point = position.to_point(&snapshot);
+
+                    if point == snapshot.max_point() {
+                        buffer.start_transaction(cx);
+                        buffer.edit(
+                            Some((point..point, "\n")),
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                        initial_transaction_id = buffer.end_transaction(cx);
+                        editor::Anchor::max()..editor::Anchor::max()
+                    } else {
+                        point.column = 0;
+                        let new_text = if point.row > 0
+                            && !snapshot.is_line_blank(MultiBufferRow(point.row - 1))
+                        {
+                            "\n\n"
+                        } else {
+                            "\n"
+                        };
+                        buffer.start_transaction(cx);
+                        buffer.edit(
+                            Some((point..point, new_text)),
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                        initial_transaction_id = buffer.end_transaction(cx);
+
+                        let next_line_start = snapshot.anchor_before(point + Point::new(1, 0));
+                        next_line_start..next_line_start
+                    }
+                });
+            }
+            EditSuggestion::Delete { range } => {
+                initial_prompt = "Delete".to_string();
+                suggestion_range = todo!();
+            }
+        }
+
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            Some(inline_assistant.suggest_assist(
+                editor,
+                suggestion_range,
+                initial_prompt,
+                initial_transaction_id,
+                Some(workspace.clone()),
+                Some(assistant_panel),
+                cx,
+            ))
+        })
     }
 }
 
