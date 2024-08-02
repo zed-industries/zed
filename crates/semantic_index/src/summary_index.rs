@@ -10,8 +10,7 @@ use heed::{
     RoTxn,
 };
 use language_model::{
-    LanguageModelName, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role,
+    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use log;
 use parking_lot::Mutex;
@@ -545,13 +544,13 @@ impl SummaryIndex {
         cx: &AppContext,
     ) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
-        let summary_model_name: LanguageModelName = "qwen2:1.5b".to_string().into(); // TODO read this from the user's settings.
+        let summary_model_id: LanguageModelId = "qwen2-7b-instruct".to_string().into(); // TODO read this from the user's settings.
         let Some(model) = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
-            .find(|model| model.name() == summary_model_name)
+            .find(|model| &model.id() == &summary_model_id)
         else {
             return cx.background_executor().spawn(async move {
-                Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_name))
+                Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_id))
             });
         };
         let utf8_path = path.to_string_lossy();
