@@ -3007,22 +3007,57 @@ impl Item for ContextHistory {
 pub struct ConfigurationView {
     focus_handle: FocusHandle,
     configuration_views: HashMap<LanguageModelProviderId, AnyView>,
+    _registry_subscription: Subscription,
 }
 
 impl ConfigurationView {
     fn new(cx: &mut ViewContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        let providers = LanguageModelRegistry::read_global(cx).providers();
 
-        let configuration_views = providers
-            .iter()
-            .map(|provider| (provider.id(), provider.configuration_view(cx)))
-            .collect::<HashMap<_, _>>();
+        let registry_subscription = cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this, _, event: &language_model::Event, cx| match event {
+                language_model::Event::AddedProvider(provider_id) => {
+                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
+                    if let Some(provider) = provider {
+                        this.add_configuration_view(&provider, cx);
+                    }
+                }
+                language_model::Event::RemovedProvider(provider_id) => {
+                    this.remove_configuration_view(provider_id);
+                }
+                _ => {}
+            },
+        );
 
-        Self {
+        let mut this = Self {
             focus_handle,
-            configuration_views,
+            configuration_views: HashMap::default(),
+            _registry_subscription: registry_subscription,
+        };
+        this.build_configuration_views(cx);
+        this
+    }
+
+    fn build_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+        for provider in providers {
+            self.add_configuration_view(&provider, cx);
         }
+    }
+
+    fn remove_configuration_view(&mut self, provider_id: &LanguageModelProviderId) {
+        self.configuration_views.remove(provider_id);
+    }
+
+    fn add_configuration_view(
+        &mut self,
+        provider: &Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let configuration_view = provider.configuration_view(cx);
+        self.configuration_views
+            .insert(provider.id(), configuration_view);
     }
 
     fn render_provider_view(
@@ -3031,11 +3066,7 @@ impl ConfigurationView {
         cx: &mut ViewContext<Self>,
     ) -> Div {
         let provider_name = provider.name().0.clone();
-        let configuration_view = self
-            .configuration_views
-            .get(&provider.id())
-            .unwrap()
-            .clone();
+        let configuration_view = self.configuration_views.get(&provider.id()).cloned();
 
         v_flex()
             .gap_4()
@@ -3047,7 +3078,15 @@ impl ConfigurationView {
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
-                    .child(configuration_view),
+                    .when(configuration_view.is_none(), |this| {
+                        this.child(div().child(Label::new(format!(
+                            "No configuration view for {}",
+                            provider_name
+                        ))))
+                    })
+                    .when_some(configuration_view, |this, configuration_view| {
+                        this.child(configuration_view)
+                    }),
             )
             .when(provider.is_authenticated(cx), move |this| {
                 this.child(
