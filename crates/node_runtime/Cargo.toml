@@ -28,10 +28,13 @@ paths.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
+settings.workspace = true
 smol.workspace = true
 tempfile = { workspace = true, optional = true }
 util.workspace = true
 walkdir = "2.5.0"
+gpui.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }

@@ -427,6 +427,7 @@ fn main() {
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
+        node_runtime::init(node_runtime.clone(), cx);
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
