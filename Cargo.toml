@@ -298,7 +298,7 @@ zed_actions = { path = "crates/zed_actions" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = "0.23"
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"

@@ -10167,7 +10167,7 @@ impl Editor {
         blocks
     }
 
-    pub(crate) fn resize_blocks(
+    pub fn resize_blocks(
         &mut self,
         heights: HashMap<CustomBlockId, u32>,
         autoscroll: Option<Autoscroll>,
