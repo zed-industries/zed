@@ -1,6 +1,6 @@
 use crate::outputs::ExecutionView;
 use alacritty_terminal::{term::Config, vte::ansi::Processor};
-use gpui::{canvas, AnyElement, Size};
+use gpui::{canvas, size, AnyElement};
 use std::mem;
 use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
@@ -19,12 +19,40 @@ pub struct TerminalOutput {
     handler: alacritty_terminal::Term<ZedListener>,
 }
 
+pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
+    let text_style = cx.text_style();
+    let text_system = cx.text_system();
+
+    let line_height = cx.line_height();
+
+    let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
+    let font_id = text_system.resolve_font(&text_style.font());
+
+    let cell_width = text_system
+        .advance(font_id, font_pixels, 'w')
+        .unwrap()
+        .width;
+
+    let num_lines = 200;
+    let columns = 120;
+
+    // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
+    let width = columns as f32 * cell_width;
+    let height = num_lines as f32 * cx.line_height();
+
+    terminal::TerminalSize {
+        cell_width,
+        line_height,
+        size: size(width, height),
+    }
+}
+
 impl TerminalOutput {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut WindowContext) -> Self {
         let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
         let term = alacritty_terminal::Term::new(
             Config::default(),
-            &terminal::TerminalSize::default(),
+            &terminal_size(cx),
             terminal::ZedListener(events_tx.clone()),
         );
 
@@ -35,8 +63,8 @@ impl TerminalOutput {
         }
     }
 
-    pub fn from(text: &str) -> Self {
-        let mut output = Self::new();
+    pub fn from(text: &str, cx: &mut WindowContext) -> Self {
+        let mut output = Self::new(cx);
         output.append_text(text);
         output
     }
@@ -46,9 +74,6 @@ impl TerminalOutput {
             self.parser.advance(&mut self.handler, *byte);
         }
     }
-
-    // Fixed width because it's output as an editor block
-    // Max height is u8 lines
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let text_style = cx.text_style();
@@ -64,9 +89,9 @@ impl TerminalOutput {
             });
         let (cells, rects) = TerminalElement::layout_grid(grid, &text_style, text_system, None, cx);
 
-        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0);
         // lines are 0-indexed, so we must add 1 to get the number of lines
-        let height = (num_lines + 1) as f32 * cx.line_height();
+        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0) + 1;
+        let height = num_lines as f32 * cx.line_height();
 
         let line_height = cx.line_height();
 
@@ -75,16 +100,12 @@ impl TerminalOutput {
 
         let cell_width = text_system
             .advance(font_id, font_pixels, 'w')
-            .unwrap()
-            .width;
+            .map(|advance| advance.width)
+            .unwrap_or(Pixels(0.0));
 
         canvas(
             // prepaint
-            move |bounds, _| {
-                let width = bounds.size.width;
-                let size = Size { width, height };
-                size
-            },
+            move |_bounds, _| {},
             // paint
             move |bounds, _, cx| {
                 for rect in rects {
@@ -113,6 +134,7 @@ impl TerminalOutput {
                 }
             },
         )
+        .relative()
         .h(height)
         .into_any_element()
     }

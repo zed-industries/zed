@@ -315,8 +315,8 @@ impl OutputType {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => OutputType::Image(view),
                 Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
@@ -369,7 +369,7 @@ impl ExecutionView {
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new();
+                let mut terminal = TerminalOutput::new(cx);
                 terminal.append_text(&result.traceback.join("\n"));
 
                 OutputType::ErrorOutput(ErrorView {
@@ -468,7 +468,7 @@ impl ExecutionView {
             }
         }
 
-        let mut new_terminal = TerminalOutput::new();
+        let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
         cx.notify();
         Some(OutputType::Stream(new_terminal))
