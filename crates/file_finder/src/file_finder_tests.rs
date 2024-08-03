@@ -2041,27 +2041,27 @@ impl SearchEntries {
 fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries {
     let mut search_entries = SearchEntries::default();
     for m in &picker.delegate.matches.matches {
-        match &m.data {
-            MatchData::History(history_path, path_match) => {
+        match &m {
+            Match::History(entry, _) => {
                 search_entries.history.push(
-                    path_match
+                    entry
+                        .panel_match
                         .as_ref()
                         .map(|path_match| {
                             Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
                         })
                         .unwrap_or_else(|| {
-                            history_path
+                            entry
+                                .path
                                 .absolute
                                 .as_deref()
-                                .unwrap_or_else(|| &history_path.project.path)
+                                .unwrap_or_else(|| &entry.path.project.path)
                                 .to_path_buf()
                         }),
                 );
-                search_entries
-                    .history_found_paths
-                    .push(history_path.clone());
+                search_entries.history_found_paths.push(entry.path.clone());
             }
-            MatchData::Search(path_match) => {
+            Match::Search(path_match) => {
                 search_entries
                     .search
                     .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
@@ -2097,9 +2097,9 @@ fn assert_match_at_position(
         .matches
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
-    let match_file_name = match &match_item.data {
-        MatchData::History(found_path, _) => found_path.absolute.as_deref().unwrap().file_name(),
-        MatchData::Search(path_match) => path_match.0.path.file_name(),
+    let match_file_name = match &match_item {
+        Match::History(entry, _) => entry.path.absolute.as_deref().unwrap().file_name(),
+        Match::Search(path_match) => path_match.0.path.file_name(),
     }
     .unwrap()
     .to_string_lossy();
