@@ -268,7 +268,28 @@ impl ErrorView {
     }
 }
 
-pub enum OutputType {
+pub struct Output {
+    content: OutputContent,
+    display_id: Option<String>,
+}
+
+impl Output {
+    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
+        Self {
+            content: OutputContent::new(data, cx),
+            display_id,
+        }
+    }
+
+    pub fn from(content: OutputContent) -> Self {
+        Self {
+            content,
+            display_id: None,
+        }
+    }
+}
+
+pub enum OutputContent {
     Plain(TerminalOutput),
     Stream(TerminalOutput),
     Image(ImageView),
@@ -278,24 +299,24 @@ pub enum OutputType {
     ClearOutputWaitMarker,
 }
 
-impl std::fmt::Debug for OutputType {
+impl std::fmt::Debug for OutputContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OutputType::Plain(_) => f.debug_struct("OutputType(Plain)"),
-            OutputType::Stream(_) => f.debug_struct("OutputType(Stream)"),
-            OutputType::Image(_) => f.debug_struct("OutputType(Image)"),
-            OutputType::ErrorOutput(_) => f.debug_struct("OutputType(ErrorOutput)"),
-            OutputType::Message(_) => f.debug_struct("OutputType(Message)"),
-            OutputType::Table(_) => f.debug_struct("OutputType(Table)"),
-            OutputType::ClearOutputWaitMarker => {
-                f.debug_struct("OutputType(ClearOutputWaitMarker)")
+            OutputContent::Plain(_) => f.debug_struct("OutputContent(Plain)"),
+            OutputContent::Stream(_) => f.debug_struct("OutputContent(Stream)"),
+            OutputContent::Image(_) => f.debug_struct("OutputContent(Image)"),
+            OutputContent::ErrorOutput(_) => f.debug_struct("OutputContent(ErrorOutput)"),
+            OutputContent::Message(_) => f.debug_struct("OutputContent(Message)"),
+            OutputContent::Table(_) => f.debug_struct("OutputContent(Table)"),
+            OutputContent::ClearOutputWaitMarker => {
+                f.debug_struct("OutputContent(ClearOutputWaitMarker)")
             }
         }
         .finish()
     }
 }
 
-impl OutputType {
+impl OutputContent {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
@@ -315,15 +336,17 @@ impl OutputType {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputType::Image(view),
-                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+                Ok(view) => OutputContent::Image(view),
+                Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => OutputType::Table(TableView::new(data.clone(), cx)),
+            Some(MimeType::DataTable(data)) => {
+                OutputContent::Table(TableView::new(data.clone(), cx))
+            }
             // Any other media types are not supported
-            _ => OutputType::Message("Unsupported media type".to_string()),
+            _ => OutputContent::Message("Unsupported media type".to_string()),
         }
     }
 }
@@ -342,7 +365,7 @@ pub enum ExecutionStatus {
 }
 
 pub struct ExecutionView {
-    pub outputs: Vec<OutputType>,
+    pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
 
@@ -356,13 +379,19 @@ impl ExecutionView {
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        let output: OutputType = match message {
-            JupyterMessageContent::ExecuteResult(result) => OutputType::new(&result.data, cx),
-            JupyterMessageContent::DisplayData(result) => OutputType::new(&result.data, cx),
+        let output: Output = match message {
+            JupyterMessageContent::ExecuteResult(result) => Output::new(
+                &result.data,
+                result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                cx,
+            ),
+            JupyterMessageContent::DisplayData(result) => {
+                Output::new(&result.data, result.transient.display_id.clone(), cx)
+            }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
-                    new_terminal
+                    Output::from(new_terminal)
                 } else {
                     return;
                 }
@@ -371,11 +400,11 @@ impl ExecutionView {
                 let mut terminal = TerminalOutput::new(cx);
                 terminal.append_text(&result.traceback.join("\n"));
 
-                OutputType::ErrorOutput(ErrorView {
+                Output::from(OutputContent::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                })
+                }))
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
@@ -383,7 +412,7 @@ impl ExecutionView {
                         // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
                         // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
-                            let output = OutputType::new(data, cx);
+                            let output = Output::new(data, None, cx);
                             self.outputs.push(output);
                         }
 
@@ -416,7 +445,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                OutputType::ClearOutputWaitMarker
+                Output::from(OutputContent::ClearOutputWaitMarker)
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -434,8 +463,10 @@ impl ExecutionView {
         };
 
         // Check for a clear output marker as the previous output, so we can clear it out
-        if let Some(OutputType::ClearOutputWaitMarker) = self.outputs.last() {
-            self.outputs.clear();
+        if let Some(output) = self.outputs.last() {
+            if let OutputContent::ClearOutputWaitMarker = output.content {
+                self.outputs.clear();
+            }
         }
 
         self.outputs.push(output);
@@ -443,21 +474,43 @@ impl ExecutionView {
         cx.notify();
     }
 
+    pub fn update_display_data(
+        &mut self,
+        data: &MimeBundle,
+        display_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut any = false;
+
+        self.outputs.iter_mut().for_each(|output| {
+            if let Some(other_display_id) = output.display_id.as_ref() {
+                if other_display_id == display_id {
+                    output.content = OutputContent::new(data, cx);
+                    any = true;
+                }
+            }
+        });
+
+        if any {
+            cx.notify();
+        }
+    }
+
     fn apply_terminal_text(
         &mut self,
         text: &str,
         cx: &mut ViewContext<Self>,
-    ) -> Option<OutputType> {
+    ) -> Option<OutputContent> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match last_output {
-                OutputType::Stream(last_stream) => {
+            match &mut last_output.content {
+                OutputContent::Stream(last_stream) => {
                     last_stream.append_text(text);
                     // Don't need to add a new output, we already have a terminal output
                     cx.notify();
                     return None;
                 }
                 // Edge case note: a clear output marker
-                OutputType::ClearOutputWaitMarker => {
+                OutputContent::ClearOutputWaitMarker => {
                     // Edge case note: a clear output marker is handled by the caller
                     // since we will return a new output at the end here as a new terminal output
                 }
@@ -469,7 +522,7 @@ impl ExecutionView {
 
         let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
-        Some(OutputType::Stream(new_terminal))
+        Some(OutputContent::Stream(new_terminal))
     }
 }
 
@@ -523,7 +576,11 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(self.outputs.iter().filter_map(|output| output.render(cx)))
+            .children(
+                self.outputs
+                    .iter()
+                    .filter_map(|output| output.content.render(cx)),
+            )
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],
