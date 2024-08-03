@@ -2855,7 +2855,20 @@ mod tests {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         cx.update(Project::init_settings);
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let fs = FakeFs::new(cx.executor());
+        fs.as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "hello.rs": r#"
+                    fn hello() {
+                        println!("Hello, World!");
+                    }
+                "#.unindent()
+                }),
+            )
+            .await;
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
         cx.update(LanguageModelRegistry::test);
 
         let model = cx.read(|cx| {
@@ -2872,11 +2885,13 @@ mod tests {
 
         // Simulate user input
         let user_message = indoc! {r#"
-            Please refactor this code:
+            Please add unnecessary complexity to this code:
 
+            ```hello.rs
             fn main() {
                 println!("Hello, World!");
             }
+            ```
         "#};
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, user_message)], None, cx);
@@ -2884,7 +2899,7 @@ mod tests {
 
         // Simulate LLM response with edit steps
         let llm_response = indoc! {r#"
-            Sure, I can help you refactor that code. Here's a step-by-step process:
+            Sure, I can help you with that. Here's a step-by-step process:
 
             <step>
             First, let's extract the greeting into a separate function:
@@ -2930,8 +2945,8 @@ mod tests {
         // Simulate the LLM completion
         model
             .as_fake()
-            .send_last_completion_chunk(llm_response.to_string());
-        model.as_fake().finish_last_completion();
+            .stream_last_completion_response(llm_response.to_string());
+        model.as_fake().end_last_completion_stream();
 
         // Wait for the completion to be processed
         cx.run_until_parked();
@@ -2941,19 +2956,83 @@ mod tests {
             assert_eq!(
                 edit_steps(context, cx),
                 vec![
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 14, 7),
-                    Point::new(response_start_row + 16, 0)..Point::new(response_start_row + 28, 7),
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 14, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
+                    (
+                        Point::new(response_start_row + 16, 0)
+                            ..Point::new(response_start_row + 28, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
                 ]
             );
         });
 
-        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
+        model
+            .as_fake()
+            .respond_to_last_tool_use(Ok(serde_json::to_value(
+                tool::WorkflowStepEditSuggestions {
+                    step_title: "Title".into(),
+                    edit_suggestions: vec![tool::EditSuggestion {
+                        path: "/root/hello.rs".into(),
+                        // Simulate a symbol name that's slightly different than our outline query
+                        kind: tool::EditSuggestionKind::Update {
+                            symbol: "fn main()".into(),
+                            description: "Extract a greeting function".into(),
+                        },
+                    }],
+                },
+            )
+            .unwrap()));
+
+        // Wait for tool use to be processed.
+        cx.run_until_parked();
+
+        // Verify that the last edit step is not pending anymore.
+        context.read_with(cx, |context, cx| {
+            assert_eq!(
+                edit_steps(context, cx),
+                vec![
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 14, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
+                    (
+                        Point::new(response_start_row + 16, 0)
+                            ..Point::new(response_start_row + 28, 7),
+                        WorkflowStepEditSuggestionStatus::Resolved
+                    ),
+                ]
+            );
+        });
+
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        enum WorkflowStepEditSuggestionStatus {
+            Pending,
+            Resolved,
+        }
+
+        fn edit_steps(
+            context: &Context,
+            cx: &AppContext,
+        ) -> Vec<(Range<Point>, WorkflowStepEditSuggestionStatus)> {
             context
                 .edit_steps
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    step.tagged_range.to_point(buffer)
+                    let status = match &step.edit_suggestions {
+                        WorkflowStepEditSuggestions::Pending(_) => {
+                            WorkflowStepEditSuggestionStatus::Pending
+                        }
+                        WorkflowStepEditSuggestions::Resolved { .. } => {
+                            WorkflowStepEditSuggestionStatus::Resolved
+                        }
+                    };
+                    (step.tagged_range.to_point(buffer), status)
                 })
                 .collect()
         }
@@ -3354,7 +3433,7 @@ mod tool {
 
     use super::*;
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
     pub struct WorkflowStepEditSuggestions {
         /// An extremely short title for the edit step represented by these operations.
         pub step_title: String,
@@ -3391,7 +3470,7 @@ mod tool {
     /// `EditOperation` is used within a code editor to represent and apply
     /// programmatic changes to source code. It provides a structured way to describe
     /// edits for features like refactoring tools or AI-assisted coding suggestions.
-    #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     pub struct EditSuggestion {
         /// The path to the file containing the relevant operation
         pub path: String,
@@ -3556,7 +3635,7 @@ mod tool {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     #[serde(tag = "kind")]
     pub enum EditSuggestionKind {
         /// Rewrites the specified symbol entirely based on the given description.

@@ -6018,6 +6018,7 @@ dependencies = [
  "menu",
  "ollama",
  "open_ai",
+ "parking_lot",
  "project",
  "proto",
  "rand 0.8.5",
