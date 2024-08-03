@@ -82,30 +82,6 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.6.0",
- "home",
- "libc",
- "log",
- "miow",
- "parking_lot",
- "piper",
- "polling 3.3.2",
- "regex-automata 0.4.5",
- "rustix-openpty",
- "serde",
- "signal-hook",
- "unicode-width",
- "vte",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "alacritty_terminal"
 version = "0.24.1-dev"
 source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
 dependencies = [
@@ -8756,7 +8732,7 @@ dependencies = [
 name = "repl"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal 0.23.0",
+ "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
  "base64 0.22.1",
@@ -8781,6 +8757,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "terminal",
  "terminal_view",
  "theme",
  "tree-sitter-md",
@@ -10875,7 +10852,7 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal 0.24.1-dev",
+ "alacritty_terminal",
  "anyhow",
  "collections",
  "dirs 4.0.0",

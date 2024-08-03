@@ -278,6 +278,23 @@ pub enum OutputType {
     ClearOutputWaitMarker,
 }
 
+impl std::fmt::Debug for OutputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputType::Plain(_) => f.debug_struct("OutputType(Plain)"),
+            OutputType::Stream(_) => f.debug_struct("OutputType(Stream)"),
+            OutputType::Image(_) => f.debug_struct("OutputType(Image)"),
+            OutputType::ErrorOutput(_) => f.debug_struct("OutputType(ErrorOutput)"),
+            OutputType::Message(_) => f.debug_struct("OutputType(Message)"),
+            OutputType::Table(_) => f.debug_struct("OutputType(Table)"),
+            OutputType::ClearOutputWaitMarker => {
+                f.debug_struct("OutputType(ClearOutputWaitMarker)")
+            }
+        }
+        .finish()
+    }
+}
+
 impl OutputType {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
@@ -298,8 +315,8 @@ impl OutputType {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text, cx)),
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => OutputType::Image(view),
                 Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
@@ -344,15 +361,14 @@ impl ExecutionView {
             JupyterMessageContent::DisplayData(result) => OutputType::new(&result.data, cx),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
-                if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
+                if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
                     new_terminal
                 } else {
-                    cx.notify();
                     return;
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new();
+                let mut terminal = TerminalOutput::new(cx);
                 terminal.append_text(&result.traceback.join("\n"));
 
                 OutputType::ErrorOutput(ErrorView {
@@ -427,12 +443,17 @@ impl ExecutionView {
         cx.notify();
     }
 
-    fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
+    fn apply_terminal_text(
+        &mut self,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<OutputType> {
         if let Some(last_output) = self.outputs.last_mut() {
             match last_output {
                 OutputType::Stream(last_stream) => {
                     last_stream.append_text(text);
                     // Don't need to add a new output, we already have a terminal output
+                    cx.notify();
                     return None;
                 }
                 // Edge case note: a clear output marker
@@ -446,7 +467,7 @@ impl ExecutionView {
             }
         }
 
-        let mut new_terminal = TerminalOutput::new();
+        let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
         Some(OutputType::Stream(new_terminal))
     }
