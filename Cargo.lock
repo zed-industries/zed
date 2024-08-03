@@ -8749,6 +8749,7 @@ dependencies = [
  "language",
  "languages",
  "log",
+ "markdown_preview",
  "multi_buffer",
  "project",
  "runtimelib",
