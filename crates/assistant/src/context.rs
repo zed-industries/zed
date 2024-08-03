@@ -2854,6 +2854,8 @@ mod tests {
         cx.update(prompt_library::init);
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
+        cx.update(Project::init_settings);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
 
         let fake_provider = cx.update(language_model::LanguageModelRegistry::test);
 
@@ -2862,7 +2864,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
         // Create a new context
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, None, cx));
+        let context = cx.new_model(|cx| Context::local(registry.clone(), Some(project), None, cx));
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
         // Simulate user input
