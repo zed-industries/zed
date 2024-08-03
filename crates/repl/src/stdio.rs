@@ -1,10 +1,10 @@
 use crate::outputs::ExecutionView;
 use alacritty_terminal::{term::Config, vte::ansi::Processor};
-use gpui::{canvas, AnyElement};
+use gpui::{canvas, AnyElement, Size};
 use std::mem;
 use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
-use ui::{div, prelude::*, IntoElement, ViewContext};
+use ui::{prelude::*, IntoElement, ViewContext};
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
 /// whether:
@@ -64,6 +64,10 @@ impl TerminalOutput {
             });
         let (cells, rects) = TerminalElement::layout_grid(grid, &text_style, text_system, None, cx);
 
+        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0);
+        // lines are 0-indexed, so we must add 1 to get the number of lines
+        let height = (num_lines + 1) as f32 * cx.line_height();
+
         let line_height = cx.line_height();
 
         let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
@@ -74,9 +78,13 @@ impl TerminalOutput {
             .unwrap()
             .width;
 
-        let el = canvas(
+        canvas(
             // prepaint
-            |_, _| {},
+            move |bounds, _| {
+                let width = bounds.size.width;
+                let size = Size { width, height };
+                size
+            },
             // paint
             move |bounds, _, cx| {
                 for rect in rects {
@@ -104,8 +112,8 @@ impl TerminalOutput {
                     );
                 }
             },
-        );
-
-        div().child(el).into_any_element()
+        )
+        .h(height)
+        .into_any_element()
     }
 }
