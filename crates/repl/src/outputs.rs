@@ -364,7 +364,6 @@ impl ExecutionView {
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
                     new_terminal
                 } else {
-                    cx.notify();
                     return;
                 }
             }
@@ -453,8 +452,8 @@ impl ExecutionView {
             match last_output {
                 OutputType::Stream(last_stream) => {
                     last_stream.append_text(text);
-                    cx.notify();
                     // Don't need to add a new output, we already have a terminal output
+                    cx.notify();
                     return None;
                 }
                 // Edge case note: a clear output marker
@@ -470,7 +469,6 @@ impl ExecutionView {
 
         let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
-        cx.notify();
         Some(OutputType::Stream(new_terminal))
     }
 }
