@@ -2419,7 +2419,7 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2551,7 +2551,7 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -2644,7 +2644,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2729,7 +2729,7 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(Project::init_settings);
         cx.update(assistant_panel::init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2856,10 +2856,13 @@ mod tests {
         cx.set_global(settings_store);
         cx.update(Project::init_settings);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        cx.update(LanguageModelRegistry::test);
 
-        let fake_provider = cx.update(language_model::LanguageModelRegistry::test);
-
-        let fake_model = fake_provider.test_model();
+        let model = cx.read(|cx| {
+            LanguageModelRegistry::read_global(cx)
+                .active_model()
+                .unwrap()
+        });
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
@@ -2925,8 +2928,10 @@ mod tests {
         });
 
         // Simulate the LLM completion
-        fake_model.send_last_completion_chunk(llm_response.to_string());
-        fake_model.finish_last_completion();
+        model
+            .as_fake()
+            .send_last_completion_chunk(llm_response.to_string());
+        model.as_fake().finish_last_completion();
 
         // Wait for the completion to be processed
         cx.run_until_parked();
@@ -2958,7 +2963,7 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let context = cx.new_model(|cx| Context::local(registry.clone(), None, None, cx));
@@ -3035,7 +3040,7 @@ mod tests {
 
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
 
         cx.update(assistant_panel::init);
         let slash_commands = cx.update(SlashCommandRegistry::default_global);

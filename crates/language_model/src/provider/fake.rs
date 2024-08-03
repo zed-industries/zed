@@ -31,9 +31,7 @@ pub fn provider_name() -> LanguageModelProviderName {
 }
 
 #[derive(Clone, Default)]
-pub struct FakeLanguageModelProvider {
-    current_completion_txs: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
-}
+pub struct FakeLanguageModelProvider;
 
 impl LanguageModelProviderState for FakeLanguageModelProvider {
     type ObservableEntity = ();
@@ -53,9 +51,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
     }
 
     fn provided_models(&self, _: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        vec![Arc::new(FakeLanguageModel {
-            current_completion_txs: self.current_completion_txs.clone(),
-        })]
+        vec![Arc::new(FakeLanguageModel::default())]
     }
 
     fn is_authenticated(&self, _: &AppContext) -> bool {
@@ -77,14 +73,13 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
 
 impl FakeLanguageModelProvider {
     pub fn test_model(&self) -> FakeLanguageModel {
-        FakeLanguageModel {
-            current_completion_txs: self.current_completion_txs.clone(),
-        }
+        FakeLanguageModel::default()
     }
 }
 
+#[derive(Default)]
 pub struct FakeLanguageModel {
-    current_completion_txs: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    current_completion_txs: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
 }
 
 impl FakeLanguageModel {
@@ -184,5 +179,9 @@ impl LanguageModel for FakeLanguageModel {
         _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
+    }
+
+    fn as_fake(&self) -> &Self {
+        self
     }
 }
