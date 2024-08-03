@@ -142,7 +142,8 @@ impl Keymap {
             }
         }
 
-        true
+        // Return true if binding is other type than NoAction
+        binding.action.as_any().type_id() != (NoAction {}).type_id()
     }
 }
 
