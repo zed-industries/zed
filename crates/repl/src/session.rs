@@ -2,7 +2,7 @@ use crate::components::KernelListItem;
 use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
-    outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
+    outputs::{ExecutionStatus, ExecutionView},
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
@@ -82,7 +82,8 @@ impl EditorBlock {
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
                 position: code_range.end,
-                height: (execution_view.num_lines(cx) + 1) as u32,
+                // Take up at least one height for status, allow the editor to determine the real height based on the content from render
+                height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
