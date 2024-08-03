@@ -185,7 +185,7 @@ pub struct Project {
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     pub open_breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
-    pub closed_breakpoints: Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>,
+    pub closed_breakpoints: Arc<RwLock<BTreeMap<Arc<Path>, Vec<u64>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -216,7 +216,7 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Model<WorktreeStore>,
-    buffer_store: Model<BufferStore>,
+    pub buffer_store: Model<BufferStore>,
     _subscriptions: Vec<gpui::Subscription>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
     #[allow(clippy::type_complexity)]
@@ -2232,17 +2232,13 @@ impl Project {
             })?;
 
             let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx))?;
-            dbg!("Opening a path", path.path.clone());
             project.update(&mut cx, |project, cx| {
-                let breakpoint_rows = { project.closed_breakpoints.write().remove(&path) };
-                dbg!(&project.closed_breakpoints.read());
+                let breakpoint_rows = { project.closed_breakpoints.write().remove(&path.path) };
                 let snapshot = multi_buffer.read(cx).snapshot(cx);
-                dbg!(&breakpoint_rows);
 
                 if let Some(breakpoint_row) = breakpoint_rows {
                     let mut write_guard = project.open_breakpoints.write();
                     let buffer_breakpoints = write_guard.entry(buffer_id).or_default();
-                    dbg!(&buffer_breakpoints);
 
                     for row in breakpoint_row {
                         let position = snapshot.anchor_at(Point::new(row as u32, 0), Bias::Left);
@@ -2252,7 +2248,6 @@ impl Project {
                 }
             })?;
 
-            dbg!("Path open successfully");
             let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
         })

@@ -480,8 +480,7 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        dbg!("About to query breakpoints");
-
+        // dbg!
         // Figure out why the below query didn't work
         // let breakpoints: Result<Vec<(String, Breakpoints)>> = self
         //     .select_bound(sql! {
@@ -509,6 +508,7 @@ impl WorkspaceDb {
 
                 for (file_path, breakpoint) in bp {
                     map.entry(file_path).or_default().push(breakpoint.position);
+                    // We shift breakpoint's position by one because they are zero indexed
                 }
 
                 map

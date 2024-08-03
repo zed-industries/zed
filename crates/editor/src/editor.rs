@@ -573,7 +573,7 @@ pub struct Editor {
     /// All the breakpoints that are contained within open buffers in the editor
     opened_breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
     /// All breakpoints that belong to this project but are in closed files
-    closed_breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>>,
+    closed_breakpoints: Option<Arc<RwLock<BTreeMap<Arc<Path>, Vec<u64>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown

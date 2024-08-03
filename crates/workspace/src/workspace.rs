@@ -4101,8 +4101,21 @@ impl Workspace {
             let mut center_items = None;
 
             // Traverse the splits tree and add to things
-            // Add unopened breakpoints to project before opening any
-            // buffer
+            // Add unopened breakpoints to project before opening any items
+
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.project().update(cx, |project, _cx| {
+                    let mut write_guard = project.closed_breakpoints.write();
+
+                    for (file_path, mut breakpoint_rows) in serialized_workspace.breakpoints {
+                        write_guard
+                            .entry(Arc::from(file_path))
+                            .or_default()
+                            .append(&mut breakpoint_rows);
+                    }
+                })
+            })?;
+
             if let Some((group, active_pane, items)) = serialized_workspace
                 .center_group
                 .deserialize(
@@ -4134,26 +4147,6 @@ impl Workspace {
                     }
                     all_deserialized_items.push(item);
                 }
-            })?;
-
-            dbg!(&serialized_workspace.breakpoints);
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.project().update(cx, |project, _cx| {
-                    let mut write_guard = project.closed_breakpoints.write();
-
-                    for project_path in items_by_project_path.keys() {
-                        write_guard.insert(
-                            project_path.clone(),
-                            serialized_workspace
-                                .breakpoints
-                                .get(&project_path.path.to_path_buf())
-                                .unwrap_or(&vec![1])
-                                .clone(),
-                        );
-                    }
-
-                    dbg!(&write_guard);
-                })
             })?;
 
             let opened_items = paths_to_open
