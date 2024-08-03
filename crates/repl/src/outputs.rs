@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, TextRun,
-    Transformation,
+    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, Task,
+    TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -15,6 +15,11 @@ use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+
+use markdown_preview::{
+    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
+    markdown_renderer::render_markdown_block,
+};
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -268,6 +273,58 @@ impl ErrorView {
     }
 }
 
+pub struct MarkdownView {
+    contents: Option<ParsedMarkdown>,
+    parsing_markdown_task: Option<Task<Result<()>>>,
+}
+
+impl MarkdownView {
+    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
+        let task = cx.spawn(|markdown, mut cx| async move {
+            let text = text.clone();
+            let parsed = cx
+                .background_executor()
+                .spawn(async move { parse_markdown(&text, None, None).await });
+
+            let content = parsed.await;
+
+            markdown.update(&mut cx, |markdown, cx| {
+                markdown.parsing_markdown_task.take();
+                markdown.contents = Some(content);
+                cx.notify();
+            })
+        });
+
+        Self {
+            contents: None,
+            parsing_markdown_task: Some(task),
+        }
+    }
+}
+
+impl Render for MarkdownView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(parsed) = self.contents.as_ref() else {
+            return div().into_any_element();
+        };
+
+        let mut markdown_render_context =
+            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+
+        v_flex()
+            .gap_3()
+            .py_4()
+            .children(parsed.children.iter().map(|child| {
+                div().relative().child(
+                    div()
+                        .relative()
+                        .child(render_markdown_block(child, &mut markdown_render_context)),
+                )
+            }))
+            .into_any_element()
+    }
+}
+
 pub struct Output {
     content: OutputContent,
     display_id: Option<String>,
@@ -296,24 +353,8 @@ pub enum OutputContent {
     ErrorOutput(ErrorView),
     Message(String),
     Table(TableView),
+    Markdown(View<MarkdownView>),
     ClearOutputWaitMarker,
-}
-
-impl std::fmt::Debug for OutputContent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OutputContent::Plain(_) => f.debug_struct("OutputContent(Plain)"),
-            OutputContent::Stream(_) => f.debug_struct("OutputContent(Stream)"),
-            OutputContent::Image(_) => f.debug_struct("OutputContent(Image)"),
-            OutputContent::ErrorOutput(_) => f.debug_struct("OutputContent(ErrorOutput)"),
-            OutputContent::Message(_) => f.debug_struct("OutputContent(Message)"),
-            OutputContent::Table(_) => f.debug_struct("OutputContent(Table)"),
-            OutputContent::ClearOutputWaitMarker => {
-                f.debug_struct("OutputContent(ClearOutputWaitMarker)")
-            }
-        }
-        .finish()
-    }
 }
 
 impl OutputContent {
@@ -322,7 +363,7 @@ impl OutputContent {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Plain(stdio) => Some(stdio.render(cx)),
-            // Self::Markdown(markdown) => Some(markdown.render(theme)),
+            Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
             Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
@@ -337,7 +378,10 @@ impl OutputContent {
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
             Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
-            Some(MimeType::Markdown(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => {
+                let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
+                OutputContent::Markdown(view)
+            }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => OutputContent::Image(view),
                 Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
