@@ -6,7 +6,7 @@ use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
     img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, TextRun,
-    Transformation, View,
+    Transformation,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -15,12 +15,6 @@ use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
-
-/// Given these outputs are destined for the editor with the block decorations API, all of them must report
-/// how many lines they will take up in the editor.
-pub trait LineHeight: Sized {
-    fn num_lines(&self, cx: &mut WindowContext) -> usize;
-}
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -84,13 +78,6 @@ impl ImageView {
             width,
             image: Arc::new(gpui_image_data),
         });
-    }
-}
-
-impl LineHeight for ImageView {
-    fn num_lines(&self, cx: &mut WindowContext) -> usize {
-        let line_height = cx.line_height();
-        (self.height as f32 / line_height.0) as usize
     }
 }
 
@@ -250,21 +237,6 @@ impl TableView {
     }
 }
 
-impl LineHeight for TableView {
-    fn num_lines(&self, _cx: &mut WindowContext) -> usize {
-        let num_rows = match &self.table.data {
-            // Rows + header
-            Some(data) => data.len() + 1,
-            // We don't support Path based data sources, however we
-            // still render the header and padding
-            None => 1 + 1,
-        };
-
-        let num_lines = num_rows as f32 * (1.0 + TABLE_Y_PADDING_MULTIPLE) + 1.0;
-        num_lines.ceil() as usize
-    }
-}
-
 /// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
@@ -293,13 +265,6 @@ impl ErrorView {
                 .child(self.traceback.render(cx))
                 .into_any_element(),
         )
-    }
-}
-
-impl LineHeight for ErrorView {
-    fn num_lines(&self, cx: &mut WindowContext) -> usize {
-        // Start at 1 to account for the y padding
-        1 + self.ename.lines().count() + self.evalue.lines().count() + self.traceback.num_lines(cx)
     }
 }
 
@@ -342,21 +307,6 @@ impl OutputType {
             Some(MimeType::DataTable(data)) => OutputType::Table(TableView::new(data.clone(), cx)),
             // Any other media types are not supported
             _ => OutputType::Message("Unsupported media type".to_string()),
-        }
-    }
-}
-
-impl LineHeight for OutputType {
-    /// Calculates the expected number of lines
-    fn num_lines(&self, cx: &mut WindowContext) -> usize {
-        match self {
-            Self::Plain(stdio) => stdio.num_lines(cx),
-            Self::Stream(stdio) => stdio.num_lines(cx),
-            Self::Image(image) => image.num_lines(cx),
-            Self::Message(message) => message.lines().count(),
-            Self::Table(table) => table.num_lines(cx),
-            Self::ErrorOutput(error_view) => error_view.num_lines(cx),
-            Self::ClearOutputWaitMarker => 0,
         }
     }
 }
@@ -559,34 +509,5 @@ impl Render for ExecutionView {
                 _ => vec![],
             })
             .into_any_element()
-    }
-}
-
-impl LineHeight for ExecutionView {
-    fn num_lines(&self, cx: &mut WindowContext) -> usize {
-        if self.outputs.is_empty() {
-            return 1; // For the status message if outputs are not there
-        }
-
-        let num_lines = self
-            .outputs
-            .iter()
-            .map(|output| output.num_lines(cx))
-            .sum::<usize>()
-            .max(1);
-
-        let num_lines = match self.status {
-            // Account for the status message if the execution is still ongoing
-            ExecutionStatus::Executing => num_lines.saturating_add(1),
-            ExecutionStatus::Queued => num_lines.saturating_add(1),
-            _ => num_lines,
-        };
-        num_lines
-    }
-}
-
-impl LineHeight for View<ExecutionView> {
-    fn num_lines(&self, cx: &mut WindowContext) -> usize {
-        self.update(cx, |execution_view, cx| execution_view.num_lines(cx))
     }
 }

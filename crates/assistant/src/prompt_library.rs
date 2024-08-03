@@ -36,6 +36,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
@@ -1302,10 +1303,12 @@ impl PromptStore {
         let bodies = self.bodies;
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            Ok(bodies
+            let mut prompt = bodies
                 .get(&txn, &id)?
                 .ok_or_else(|| anyhow!("prompt not found"))?
-                .into())
+                .into();
+            LineEnding::normalize(&mut prompt);
+            Ok(prompt)
         })
     }
 
@@ -1505,15 +1508,15 @@ impl PromptStore {
         self.metadata_cache.read().metadata.first().cloned()
     }
 
-    pub fn step_resolution_prompt(&self) -> String {
-        String::from_utf8(
+    pub fn step_resolution_prompt(&self) -> Result<String> {
+        let path = "prompts/step_resolution.md";
+
+        Ok(String::from_utf8(
             Assets
-                .load("prompts/step_resolution.md")
-                .unwrap()
-                .unwrap()
+                .load(path)?
+                .ok_or_else(|| anyhow!("{path} not found"))?
                 .to_vec(),
-        )
-        .unwrap()
+        )?)
     }
 }
 

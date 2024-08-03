@@ -8,9 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{Client, UserStore};
 use collections::BTreeMap;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, Model, ModelContext, Subscription, Task,
-};
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -60,8 +58,8 @@ pub struct State {
 }
 
 impl State {
-    fn is_connected(&self) -> bool {
-        self.status.is_connected()
+    fn is_signed_out(&self) -> bool {
+        self.status.is_signed_out()
     }
 
     fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -191,20 +189,18 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.state.read(cx).status.is_connected()
+        !self.state.read(cx).is_signed_out()
     }
 
     fn authenticate(&self, _cx: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
-        let view = cx
-            .new_view(|_cx| ConfigurationView {
-                state: self.state.clone(),
-            })
-            .into();
-        (view, None)
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|_cx| ConfigurationView {
+            state: self.state.clone(),
+        })
+        .into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -439,7 +435,7 @@ impl Render for ConfigurationView {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
         const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
-        let is_connected = self.state.read(cx).is_connected();
+        let is_connected = self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
 
         let is_pro = plan == Some(proto::Plan::ZedPro);

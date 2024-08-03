@@ -8,8 +8,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FocusHandle, FocusableView, FontStyle, ModelContext,
-    Subscription, Task, TextStyle, View, WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
+    View, WhiteSpace,
 };
 use http_client::HttpClient;
 use schemars::JsonSchema;
@@ -19,6 +19,7 @@ use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Indicator};
+use util::ResultExt;
 
 const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
@@ -82,6 +83,34 @@ impl State {
 
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
+    }
+
+    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.is_authenticated() {
+            Task::ready(Ok(()))
+        } else {
+            let api_url = AllLanguageModelSettings::get_global(cx)
+                .anthropic
+                .api_url
+                .clone();
+
+            cx.spawn(|this, mut cx| async move {
+                let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+                    api_key
+                } else {
+                    let (_, api_key) = cx
+                        .update(|cx| cx.read_credentials(&api_url))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    String::from_utf8(api_key)?
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    this.api_key = Some(api_key);
+                    cx.notify();
+                })
+            })
+        }
     }
 }
 
@@ -164,37 +193,12 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        if self.is_authenticated(cx) {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .clone();
-            let state = self.state.clone();
-            cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-                    api_key
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
-                };
-
-                state.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    cx.notify();
-                })
-            })
-        }
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
-        let view = cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx));
-        let focus_handle = view.focus_handle(cx);
-        (view.into(), Some(focus_handle))
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -383,33 +387,46 @@ impl LanguageModel for AnthropicModel {
 }
 
 struct ConfigurationView {
-    focus_handle: FocusHandle,
     api_key_editor: View<Editor>,
     state: gpui::Model<State>,
+    load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
+    const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-        cx.on_focus(&focus_handle, |this, cx| {
-            if this.should_render_editor(cx) {
-                this.api_key_editor.read(cx).focus_handle(cx).focus(cx)
-            }
+    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
         })
         .detach();
+
+        let load_credentials_task = Some(cx.spawn({
+            let state = state.clone();
+            |this, mut cx| async move {
+                if let Some(task) = state
+                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    // We don't log an error, because "not signed in" is also an error.
+                    let _ = task.await;
+                }
+                this.update(&mut cx, |this, cx| {
+                    this.load_credentials_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
 
         Self {
             api_key_editor: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(
-                    "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                    cx,
-                );
+                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
-            focus_handle,
             state,
+            load_credentials_task,
         }
     }
 
@@ -419,17 +436,30 @@ impl ConfigurationView {
             return;
         }
 
-        self.state
-            .update(cx, |state, cx| state.set_api_key(api_key, cx))
-            .detach_and_log_err(cx);
+        let state = self.state.clone();
+        cx.spawn(|_, mut cx| async move {
+            state
+                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
-        self.state
-            .update(cx, |state, cx| state.reset_api_key(cx))
-            .detach_and_log_err(cx);
+
+        let state = self.state.clone();
+        cx.spawn(|_, mut cx| async move {
+            state
+                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -464,12 +494,6 @@ impl ConfigurationView {
     }
 }
 
-impl FocusableView for ConfigurationView {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const INSTRUCTIONS: [&str; 4] = [
@@ -479,10 +503,10 @@ impl Render for ConfigurationView {
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
 
-        if self.should_render_editor(cx) {
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else if self.should_render_editor(cx) {
             v_flex()
-                .id("anthropic-configuration-view")
-                .track_focus(&self.focus_handle)
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(
@@ -507,15 +531,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .id("anthropic-configuration-view")
-                .track_focus(&self.focus_handle)
                 .size_full()
                 .justify_between()
                 .child(
                     h_flex()
                         .gap_2()
                         .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API Key configured").size(LabelSize::Small)),
+                        .child(Label::new("API key configured").size(LabelSize::Small)),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")

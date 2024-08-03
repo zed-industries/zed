@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -7,6 +9,7 @@ use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, S
 use gpui::{AppContext, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
+use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
@@ -164,6 +167,20 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
+fn copilot_chat_config_path() -> &'static PathBuf {
+    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
+        if cfg!(target_os = "windows") {
+            home_dir().join("AppData").join("Local")
+        } else {
+            home_dir().join(".config")
+        }
+        .join("github-copilot")
+        .join("hosts.json")
+    })
+}
+
 impl CopilotChat {
     pub fn global(cx: &AppContext) -> Option<gpui::Model<Self>> {
         cx.try_global::<GlobalCopilotChat>()
@@ -174,7 +191,7 @@ impl CopilotChat {
         let mut config_file_rx = watch_config_file(
             cx.background_executor(),
             fs,
-            paths::copilot_chat_config_path().clone(),
+            copilot_chat_config_path().clone(),
         );
 
         cx.spawn(|cx| async move {
