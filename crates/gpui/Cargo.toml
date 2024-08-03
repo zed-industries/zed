@@ -108,7 +108,7 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-util.workspace = true
 bytemuck = "1"
-cosmic-text = "0.12.1"
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "6f78d23" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
