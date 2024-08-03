@@ -417,6 +417,7 @@ impl Session {
         code: String,
         anchor_range: Range<Anchor>,
         next_cell: Option<Anchor>,
+        move_down: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(editor) = self.editor.upgrade() else {
@@ -519,12 +520,13 @@ impl Session {
             _ => {}
         }
 
-        // Now move the cursor to after the block
-        editor.update(cx, move |editor, cx| {
-            editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
-                selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+        if move_down {
+            editor.update(cx, move |editor, cx| {
+                editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
+                    selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+                });
             });
-        });
+        }
     }
 
     fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
