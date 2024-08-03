@@ -860,13 +860,20 @@ impl InlineAssistant {
         for assist_id in assist_ids {
             if let Some(assist) = self.assists.get(assist_id) {
                 let codegen = assist.codegen.read(cx);
+                let buffer = codegen.buffer.read(cx).read(cx);
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
 
-                gutter_pending_ranges
-                    .push(codegen.edit_position.unwrap_or(assist.range.start)..assist.range.end);
+                let pending_range =
+                    codegen.edit_position.unwrap_or(assist.range.start)..assist.range.end;
+                if pending_range.end.to_offset(&buffer) > pending_range.start.to_offset(&buffer) {
+                    gutter_pending_ranges.push(pending_range);
+                }
 
                 if let Some(edit_position) = codegen.edit_position {
-                    gutter_transformed_ranges.push(assist.range.start..edit_position);
+                    let edited_range = assist.range.start..edit_position;
+                    if edited_range.end.to_offset(&buffer) > edited_range.start.to_offset(&buffer) {
+                        gutter_transformed_ranges.push(edited_range);
+                    }
                 }
 
                 if assist.decorations.is_some() {
