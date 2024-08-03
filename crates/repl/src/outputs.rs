@@ -474,6 +474,28 @@ impl ExecutionView {
         cx.notify();
     }
 
+    pub fn update_display_data(
+        &mut self,
+        data: &MimeBundle,
+        display_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut any = false;
+
+        self.outputs.iter_mut().for_each(|output| {
+            if let Some(other_display_id) = output.display_id.as_ref() {
+                if other_display_id == display_id {
+                    output.content = OutputContent::new(data, cx);
+                    any = true;
+                }
+            }
+        });
+
+        if any {
+            cx.notify();
+        }
+    }
+
     fn apply_terminal_text(
         &mut self,
         text: &str,
