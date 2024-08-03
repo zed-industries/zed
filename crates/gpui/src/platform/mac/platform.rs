@@ -1,9 +1,9 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
+    ForegroundExecutor, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow,
+    Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
+    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -20,7 +20,7 @@ use cocoa::{
     },
 };
 use core_foundation::{
-    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType as _},
+    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
@@ -855,74 +855,98 @@ impl Platform for MacPlatform {
         unsafe {
             state.pasteboard.clearContents();
 
-            let text_bytes = NSData::dataWithBytes_length_(
-                nil,
-                item.text.as_ptr() as *const c_void,
-                item.text.len() as u64,
-            );
-            state
-                .pasteboard
-                .setData_forType(text_bytes, NSPasteboardTypeString);
+            match item {
+                ClipboardItem::String(string) => {
+                    let text_bytes = NSData::dataWithBytes_length_(
+                        nil,
+                        string.text.as_ptr() as *const c_void,
+                        string.text.len() as u64,
+                    );
+                    state
+                        .pasteboard
+                        .setData_forType(text_bytes, NSPasteboardTypeString);
 
-            if let Some(metadata) = item.metadata.as_ref() {
-                let hash_bytes = ClipboardItem::text_hash(&item.text).to_be_bytes();
-                let hash_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    hash_bytes.as_ptr() as *const c_void,
-                    hash_bytes.len() as u64,
-                );
-                state
-                    .pasteboard
-                    .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
+                    if let Some(metadata) = string.metadata.as_ref() {
+                        let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
+                        let hash_bytes = NSData::dataWithBytes_length_(
+                            nil,
+                            hash_bytes.as_ptr() as *const c_void,
+                            hash_bytes.len() as u64,
+                        );
+                        state
+                            .pasteboard
+                            .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
 
-                let metadata_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    metadata.as_ptr() as *const c_void,
-                    metadata.len() as u64,
-                );
-                state
-                    .pasteboard
-                    .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
+                        let metadata_bytes = NSData::dataWithBytes_length_(
+                            nil,
+                            metadata.as_ptr() as *const c_void,
+                            metadata.len() as u64,
+                        );
+                        state
+                            .pasteboard
+                            .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
+                    }
+                }
+                ClipboardItem::Image { format, bytes } => todo!(),
             }
         }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        unsafe {
-            if let Some(text_bytes) =
-                self.read_from_pasteboard(state.pasteboard, NSPasteboardTypeString)
-            {
-                let text = String::from_utf8_lossy(text_bytes).to_string();
-                let hash_bytes = self
-                    .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
-                    .and_then(|bytes| bytes.try_into().ok())
-                    .map(u64::from_be_bytes);
-                let metadata_bytes = self
-                    .read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)
-                    .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
+        let pasteboard = state.pasteboard;
 
-                if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {
-                    if hash == ClipboardItem::text_hash(&text) {
-                        Some(ClipboardItem {
-                            text,
-                            metadata: Some(metadata),
-                        })
-                    } else {
-                        Some(ClipboardItem {
-                            text,
-                            metadata: None,
-                        })
+        unsafe {
+            let types: id = pasteboard.types();
+
+            // Check to see if the clipboard's types contain the given format string.
+            // If so, return a ClipboardItem::Image representation of its bytes.
+            //
+            // We do this as a macro because we have to allocate a new string each time we check a type,
+            // and we want to avoid allocating those strings unless we're actually going to use them.
+            macro_rules! image_format {
+                ($format_str:expr, $image_format:expr) => {
+                    let format: id = NSString::alloc(nil).init_str($format_str);
+
+                    if msg_send![types, containsObject: format] {
+                        let data = pasteboard.dataForType(format);
+                        if data == nil {
+                            return None;
+                        } else {
+                            let bytes =
+                                Vec::from(slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize));
+
+                            return Some(ClipboardItem::Image { format: $image_format, bytes });
+                        }
                     }
-                } else {
-                    Some(ClipboardItem {
-                        text,
-                        metadata: None,
-                    })
-                }
-            } else {
-                None
+                };
             }
+
+            {
+                let string_type: id = NSString::alloc(nil).init_str("public.utf8-plain-text");
+
+                if msg_send![types, containsObject: string_type] {
+                    let data = pasteboard.dataForType(string_type);
+                    if data == nil {
+                        return None;
+                    } else {
+                        let bytes =
+                            slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
+
+                        return Some(ClipboardItem::String(
+                            self.read_string_from_clipboard(&state, bytes),
+                        ));
+                    }
+                }
+            }
+
+            let todo = (); // TODO add more image formats, plus do this as chained Options instead of macro
+            image_format!("public.png", ImageFormat::Png);
+            image_format!("public.jpeg", ImageFormat::Jpeg);
+            image_format!("public.jpg", ImageFormat::Jpeg);
+            image_format!("public.webp", ImageFormat::Webp);
+
+            None
         }
     }
 
@@ -1035,6 +1059,39 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+}
+
+impl MacPlatform {
+    unsafe fn read_string_from_clipboard(
+        &self,
+        state: &MacPlatformState,
+        text_bytes: &[u8],
+    ) -> ClipboardString {
+        let text = String::from_utf8_lossy(text_bytes).to_string();
+        let hash_bytes = self
+            .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u64::from_be_bytes);
+        let metadata_bytes = self
+            .read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)
+            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
+        let opt_metadata;
+
+        if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {
+            if hash == ClipboardString::text_hash(&text) {
+                opt_metadata = Some(metadata);
+            } else {
+                opt_metadata = None;
+            }
+        } else {
+            opt_metadata = None;
+        }
+
+        ClipboardString {
+            text,
+            metadata: opt_metadata,
+        }
     }
 }
 
@@ -1227,11 +1284,12 @@ mod tests {
         let platform = build_platform();
         assert_eq!(platform.read_from_clipboard(), None);
 
-        let item = ClipboardItem::new("1".to_string());
+        let item = ClipboardItem::String(ClipboardString::new("1".to_string()));
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("2".to_string()).with_metadata(vec![3, 4]);
+        let item =
+            ClipboardItem::String(ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]));
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
@@ -1250,7 +1308,9 @@ mod tests {
         }
         assert_eq!(
             platform.read_from_clipboard(),
-            Some(ClipboardItem::new(text_from_other_app.to_string()))
+            Some(ClipboardItem::String(ClipboardString::new(
+                text_from_other_app.to_string()
+            )))
         );
     }
 

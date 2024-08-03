@@ -968,12 +968,37 @@ impl Default for CursorStyle {
 
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClipboardItem {
+pub enum ClipboardItem {
+    /// The clipboard item is a plaintext string
+    String(ClipboardString),
+    /// The clipboard item is an image
+    Image {
+        /// The image format the bytes represent (e.g. PNG)
+        format: ImageFormat,
+        /// The raw image bytes
+        bytes: Vec<u8>,
+    },
+}
+
+/// One of our supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImageFormat {
+    /// .jpeg or .jpg
+    Jpeg,
+    /// .png
+    Png,
+    /// .webp
+    Webp,
+}
+
+/// A clipboard item that should be copied to the clipboard
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClipboardString {
     pub(crate) text: String,
     pub(crate) metadata: Option<String>,
 }
 
-impl ClipboardItem {
+impl ClipboardString {
     /// Create a new clipboard item with the given text
     pub fn new(text: String) -> Self {
         Self {
