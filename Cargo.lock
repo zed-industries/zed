@@ -8035,6 +8035,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "multi_buffer",
  "node_runtime",
  "parking_lot",
  "pathdiff",

@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use client::DevServerProjectId;
+use collections::HashMap;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -216,7 +217,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
-    pub(crate) breakpoints: Option<Vec<(PathBuf, Vec<u64>)>>,
+    pub(crate) breakpoints: HashMap<PathBuf, Vec<u64>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]

@@ -142,6 +142,8 @@ pub use worktree::{
     FS_WATCH_LATENCY,
 };
 
+pub use multi_buffer::MultiBuffer;
+
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -183,7 +185,7 @@ pub struct Project {
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     pub open_breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
-    closed_breakpoints: Option<Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>>,
+    pub closed_breakpoints: Arc<RwLock<BTreeMap<ProjectPath, Vec<u64>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -1312,15 +1314,13 @@ impl Project {
         ))
     }
 
-    pub fn serialize_breakpoints(&self, cx: &ModelContext<Self>) -> Vec<(PathBuf, Vec<u64>)> {
+    pub fn serialize_breakpoints(&self, cx: &ModelContext<Self>) -> HashMap<PathBuf, Vec<u64>> {
         let breakpoint_read_guard = self.open_breakpoints.read();
-        let mut result = Vec::new();
+        let mut result: HashMap<PathBuf, Vec<u64>> = Default::default();
 
         for buffer_id in breakpoint_read_guard.keys() {
-            if let Some(serialize_breakpoints) =
-                self.serialize_breakpoint_for_buffer_id(&buffer_id, cx)
-            {
-                result.push(serialize_breakpoints)
+            if let Some((key, value)) = self.serialize_breakpoint_for_buffer_id(&buffer_id, cx) {
+                result.insert(key, value);
             }
         }
 
@@ -2222,12 +2222,37 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, AnyModel)>> {
         let task = self.open_buffer(path.clone(), cx);
-        cx.spawn(move |_, cx| async move {
+        cx.spawn(move |project, mut cx| async move {
             let buffer = task.await?;
-            let project_entry_id = buffer.read_with(&cx, |buffer, cx| {
-                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+            let (project_entry_id, buffer_id) = buffer.read_with(&cx, |buffer, cx| {
+                (
+                    File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx)),
+                    buffer.remote_id(),
+                )
             })?;
 
+            let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx))?;
+            dbg!("Opening a path", path.path.clone());
+            project.update(&mut cx, |project, cx| {
+                let breakpoint_rows = { project.closed_breakpoints.write().remove(&path) };
+                dbg!(&project.closed_breakpoints.read());
+                let snapshot = multi_buffer.read(cx).snapshot(cx);
+                dbg!(&breakpoint_rows);
+
+                if let Some(breakpoint_row) = breakpoint_rows {
+                    let mut write_guard = project.open_breakpoints.write();
+                    let buffer_breakpoints = write_guard.entry(buffer_id).or_default();
+                    dbg!(&buffer_breakpoints);
+
+                    for row in breakpoint_row {
+                        let position = snapshot.anchor_at(Point::new(row as u32, 0), Bias::Left);
+
+                        buffer_breakpoints.insert(Breakpoint { position });
+                    }
+                }
+            })?;
+
+            dbg!("Path open successfully");
             let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
         })

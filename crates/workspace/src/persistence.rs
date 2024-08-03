@@ -499,7 +499,7 @@ impl WorkspaceDb {
             })
             .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
 
-        let breakpoints: Option<Vec<(PathBuf, Vec<u64>)>> = match breakpoints {
+        let breakpoints: HashMap<PathBuf, Vec<u64>> = match breakpoints {
             Ok(bp) => {
                 if bp.is_empty() {
                     log::error!("Breakpoints are empty");
@@ -511,15 +511,11 @@ impl WorkspaceDb {
                     map.entry(file_path).or_default().push(breakpoint.position);
                 }
 
-                Some(
-                    map.into_iter()
-                        .map(|(file_path, breakpoints)| (file_path, breakpoints))
-                        .collect(),
-                )
+                map
             }
             Err(msg) => {
                 log::error!("{msg}");
-                None
+                Default::default()
             }
         };
 
@@ -654,7 +650,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::default(),
         })
     }
 
@@ -669,38 +665,38 @@ impl WorkspaceDb {
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
 
-                if let Some(breakpoints) = workspace.breakpoints {
-                    for (file_path, rows) in  breakpoints {
-                        let path = file_path.as_path();
 
+                for (file_path, rows) in  workspace.breakpoints {
+                    let path = file_path.as_path();
+
+                    match conn.exec_bound(sql!(
+                        DELETE FROM breakpoints
+                        WHERE workspace_id = ?1 AND file_path = ?2;))?((workspace.id, path)) {
+                        Err(err) => {
+                            log::error!("{err}");
+                            // continue;
+                        }
+                        Ok(_) => {}
+                    }
+
+                    for row in rows {
                         match conn.exec_bound(sql!(
-                            DELETE FROM breakpoints
-                            WHERE workspace_id = ?1 AND file_path = ?2;))?((workspace.id, path)) {
+                            INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location)
+                            VALUES (?1, ?2, ?3);))?
+                            ((
+                            workspace.id,
+                            path,
+                            Breakpoint { position: row },
+                        )) {
                             Err(err) => {
                                 log::error!("{err}");
-                                // continue;
+                                continue;
                             }
                             Ok(_) => {}
                         }
-
-                        for row in rows {
-                            match conn.exec_bound(sql!(
-                                INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location)
-                                VALUES (?1, ?2, ?3);))?
-                                ((
-                                workspace.id,
-                                path,
-                                Breakpoint { position: row },
-                            )) {
-                                Err(err) => {
-                                    log::error!("{err}");
-                                    continue;
-                                }
-                                Ok(_) => {}
-                            }
-                        }
                     }
                 }
+
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
@@ -1278,7 +1274,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -1290,7 +1286,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1394,7 +1390,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -1428,7 +1424,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -1440,7 +1436,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1482,7 +1478,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -1518,7 +1514,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -1530,7 +1526,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -1542,7 +1538,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-2".to_owned()),
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -1554,7 +1550,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1592,7 +1588,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: None,
+            breakpoints: Default::deafult(),
         }
     }
 
