@@ -1,4 +1,4 @@
-use crate::outputs::{ExecutionView, LineHeight};
+use crate::outputs::ExecutionView;
 use alacritty_terminal::vte::{
     ansi::{Attr, Color, NamedColor, Rgb},
     Params, ParamsIter, Parser, Perform,
@@ -7,7 +7,7 @@ use core::iter;
 use gpui::{font, prelude::*, AnyElement, StyledText, TextRun};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
+use ui::{div, prelude::*, IntoElement, ViewContext};
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
 /// whether:
@@ -92,12 +92,6 @@ impl TerminalOutput {
             .font_family(buffer_font)
             .child(text)
             .into_any_element()
-    }
-}
-
-impl LineHeight for TerminalOutput {
-    fn num_lines(&self, _cx: &mut WindowContext) -> usize {
-        self.handler.buffer.lines().count().max(1)
     }
 }
 
