@@ -239,7 +239,7 @@ mod tests {
         let registry = cx.new_model(|_| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider::default(), cx);
+            registry.register_provider(FakeLanguageModelProvider, cx);
         });
 
         let providers = registry.read(cx).providers();
