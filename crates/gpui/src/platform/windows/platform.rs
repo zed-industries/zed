@@ -615,7 +615,6 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     if let Some(full_path) = directory.canonicalize().log_err() {
         let full_path = full_path.to_string_lossy().to_string();
         if !full_path.is_empty() {
-            // let bind_context = unsafe{CreateBindCtx(0)?};
             let path_item: IShellItem =
                 unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
             unsafe { dialog.SetFolder(&path_item).log_err() };
