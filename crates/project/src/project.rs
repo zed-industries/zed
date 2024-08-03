@@ -69,6 +69,7 @@ use lsp::{
     ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
+use multi_buffer::MultiBufferSnapshot;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
@@ -1312,6 +1313,26 @@ impl Project {
                 })
                 .collect(),
         ))
+    }
+
+    pub fn write_breakpoints(
+        &mut self,
+        path: Arc<Path>,
+        buffer_id: BufferId,
+        snapshot: MultiBufferSnapshot,
+    ) {
+        if let Some(breakpoint_rows) = { self.closed_breakpoints.write().remove(&path) } {
+            let mut write_guard = self.open_breakpoints.write();
+
+            for row in breakpoint_rows {
+                write_guard
+                    .entry(buffer_id)
+                    .or_default()
+                    .insert(Breakpoint {
+                        position: snapshot.anchor_at(Point::new(row as u32, 0), Bias::Left),
+                    });
+            }
+        }
     }
 
     pub fn serialize_breakpoints(&self, cx: &ModelContext<Self>) -> HashMap<PathBuf, Vec<u64>> {

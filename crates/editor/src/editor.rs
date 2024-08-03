@@ -1791,10 +1791,15 @@ impl Editor {
             None
         };
 
-        let breakpoints = if let Some(project) = project.as_ref() {
-            Some(project.update(cx, |project, _cx| project.open_breakpoints.clone()))
+        let (opened_breakpoints, closed_breakpoints) = if let Some(project) = project.as_ref() {
+            project.update(cx, |project, _cx| {
+                (
+                    Some(project.open_breakpoints.clone()),
+                    Some(project.closed_breakpoints.clone()),
+                )
+            })
         } else {
-            None
+            (None, None)
         };
 
         let mut this = Self {
@@ -1899,8 +1904,8 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            opened_breakpoints: breakpoints,
-            closed_breakpoints: None,
+            opened_breakpoints,
+            closed_breakpoints,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1940,6 +1945,19 @@ impl Editor {
             if this.git_blame_inline_enabled {
                 this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, cx);
+            }
+
+            // Check if this buffer should have breakpoints added too it
+            if let Some((path, buffer_id, snapshot)) = buffer.read_with(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot(cx);
+                let buffer = buffer.as_singleton()?.read(cx);
+                Some((buffer.project_path(cx)?.path, buffer.remote_id(), snapshot))
+            }) {
+                if let Some(project) = this.project.as_ref() {
+                    project.update(cx, |project, _cx| {
+                        project.write_breakpoints(path, buffer_id, snapshot)
+                    });
+                }
             }
         }
 
