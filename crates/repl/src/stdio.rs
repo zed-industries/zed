@@ -71,7 +71,15 @@ impl TerminalOutput {
 
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
-            self.parser.advance(&mut self.handler, *byte);
+            if *byte == b'\n' {
+                // Dirty (?) hack to move the cursor down
+                self.parser.advance(&mut self.handler, b'\r');
+                self.parser.advance(&mut self.handler, b'\n');
+            } else {
+                self.parser.advance(&mut self.handler, *byte);
+            }
+
+            // self.parser.advance(&mut self.handler, *byte);
         }
     }
 
@@ -134,7 +142,7 @@ impl TerminalOutput {
                 }
             },
         )
-        .relative()
+        // We must set the height explicitly for the editor block to size itself correctly
         .h(height)
         .into_any_element()
     }
