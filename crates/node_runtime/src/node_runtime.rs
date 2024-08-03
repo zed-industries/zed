@@ -5,13 +5,17 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
+use gpui::AppContext;
 use http_client::HttpClient;
+use schemars::JsonSchema;
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, SettingsStore};
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
 use std::io;
 use std::process::{Output, Stdio};
+use std::sync::mpsc::{Receiver, Sender};
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -55,6 +59,8 @@ pub struct NpmInfoDistTags {
 #[async_trait::async_trait]
 pub trait NodeRuntime: Send + Sync {
     async fn binary_path(&self) -> Result<PathBuf>;
+
+    fn configure(&self, settings: NodeRuntimeSettings);
 
     async fn run_npm_subcommand(
         &self,
@@ -110,19 +116,27 @@ pub trait NodeRuntime: Send + Sync {
 
 pub struct RealNodeRuntime {
     http: Arc<dyn HttpClient>,
-    installation_lock: Mutex<()>,
+    settings: Mutex<(NodeRuntimeSettings, Receiver<NodeRuntimeSettings>)>,
+    pending_settings: Sender<NodeRuntimeSettings>,
 }
 
 impl RealNodeRuntime {
     pub fn new(http: Arc<dyn HttpClient>) -> Arc<dyn NodeRuntime> {
+        let (sender, receiver) = std::sync::mpsc::channel();
         Arc::new(RealNodeRuntime {
             http,
-            installation_lock: Mutex::new(()),
+            settings: Mutex::new((Default::default(), receiver)),
+            pending_settings: sender,
         })
     }
 
-    async fn install_if_needed(&self) -> Result<PathBuf> {
-        let _lock = self.installation_lock.lock().await;
+    async fn install_if_needed(&self) -> Result<NodePaths> {
+        let mut lock = self.settings.lock().await;
+
+        while let Ok(pending) = lock.1.try_recv() {
+            lock.0 = pending;
+        }
+
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -138,24 +152,34 @@ impl RealNodeRuntime {
             other => bail!("Running on unsupported architecture: {other}"),
         };
 
+        let settings = &lock.0;
+        let has_override = settings.npm.is_some() || settings.node.is_some();
+
         let folder_name = format!("node-{VERSION}-{os}-{arch}");
         let node_containing_dir = paths::support_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
-        let node_binary = node_dir.join(NODE_PATH);
-        let npm_file = node_dir.join(NPM_PATH);
+        let paths = NodePaths {
+            node: settings
+                .node
+                .clone()
+                .unwrap_or_else(|| node_dir.join(NODE_PATH)),
+            npm: settings
+                .npm
+                .clone()
+                .unwrap_or_else(|| node_dir.join(NPM_PATH)),
+            cache: settings
+                .cache
+                .clone()
+                .unwrap_or_else(|| node_dir.join("cache")),
+        };
 
-        let mut command = Command::new(&node_binary);
+        let mut command = paths.create_npm_command();
 
         command
-            .env_clear()
-            .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
+            .stderr(Stdio::null());
 
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
@@ -164,6 +188,10 @@ impl RealNodeRuntime {
         let valid = matches!(result, Ok(status) if status.success());
 
         if !valid {
+            if has_override {
+                bail!("node override {:?} could not be executed", paths.node);
+            }
+
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -201,19 +229,23 @@ impl RealNodeRuntime {
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
-        _ = fs::create_dir(node_dir.join("cache")).await;
-        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
-        _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
+        _ = fs::create_dir(&paths.cache).await;
+        _ = fs::write(paths.user_rc(), []).await;
+        _ = fs::write(paths.global_rc(), []).await;
 
-        anyhow::Ok(node_dir)
+        anyhow::Ok(paths)
     }
 }
 
 #[async_trait::async_trait]
 impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
-        let installation_path = self.install_if_needed().await?;
-        Ok(installation_path.join(NODE_PATH))
+        let paths = self.install_if_needed().await?;
+        Ok(paths.node.clone())
+    }
+
+    fn configure(&self, settings: NodeRuntimeSettings) {
+        self.pending_settings.send(settings).ok();
     }
 
     async fn run_npm_subcommand(
@@ -223,14 +255,20 @@ impl NodeRuntime for RealNodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
-            let installation_path = self.install_if_needed().await?;
+            let paths = self.install_if_needed().await?;
 
-            let node_binary = installation_path.join(NODE_PATH);
-            let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = vec![node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
+            let mut env_path = vec![
+                paths
+                    .node
+                    .parent()
+                    .expect("invalid node binary path")
+                    .to_path_buf(),
+                paths
+                    .npm
+                    .parent()
+                    .expect("invalid npm binary path")
+                    .to_path_buf(),
+            ];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
                 let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
@@ -240,27 +278,17 @@ impl NodeRuntime for RealNodeRuntime {
             let env_path =
                 std::env::join_paths(env_path).context("failed to create PATH env variable")?;
 
-            if smol::fs::metadata(&node_binary).await.is_err() {
+            if smol::fs::metadata(&paths.node).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
             }
 
-            if smol::fs::metadata(&npm_file).await.is_err() {
+            if smol::fs::metadata(&paths.npm).await.is_err() {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new(node_binary);
-            command.env_clear();
+            let mut command = paths.create_npm_command();
             command.env("PATH", env_path);
-            command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), installation_path.join("cache")]);
-            command.args([
-                "--userconfig".into(),
-                installation_path.join("blank_user_npmrc"),
-            ]);
-            command.args([
-                "--globalconfig".into(),
-                installation_path.join("blank_global_npmrc"),
-            ]);
+            command.arg(subcommand);
             command.args(args);
 
             if let Some(directory) = directory {
@@ -423,6 +451,8 @@ impl NodeRuntime for FakeNodeRuntime {
         unreachable!()
     }
 
+    fn configure(&self, _settings: NodeRuntimeSettings) {}
+
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
@@ -451,4 +481,75 @@ impl NodeRuntime for FakeNodeRuntime {
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
     }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NodeRuntimeSettings {
+    /// The path to the Node.js binary.
+    #[serde(default)]
+    pub node: Option<PathBuf>,
+
+    /// The path to the npm binary.
+    #[serde(default)]
+    pub npm: Option<PathBuf>,
+
+    /// The path to the cache directory.
+    #[serde(default)]
+    pub cache: Option<PathBuf>,
+}
+
+impl Settings for NodeRuntimeSettings {
+    const KEY: Option<&'static str> = Some("node_runtime");
+
+    type FileContent = Self;
+
+    fn load(
+        sources: SettingsSources<Self::FileContent>,
+        _: &mut AppContext,
+    ) -> anyhow::Result<Self> {
+        sources.json_merge()
+    }
+}
+
+struct NodePaths {
+    pub node: PathBuf,
+    pub npm: PathBuf,
+    pub cache: PathBuf,
+}
+
+impl NodePaths {
+    fn user_rc(&self) -> PathBuf {
+        self.cache.join("blank_user_npmrc")
+    }
+
+    fn global_rc(&self) -> PathBuf {
+        self.cache.join("blank_global_npmrc")
+    }
+
+    fn create_node_command(&self) -> Command {
+        let mut command = Command::new(&self.node);
+        command.env_clear();
+        command
+    }
+
+    fn create_npm_command(&self) -> Command {
+        let mut command = self.create_node_command();
+
+        command
+            .arg(&self.npm)
+            .args(["--cache".into(), self.cache.clone()])
+            .args(["--userconfig".into(), self.user_rc()])
+            .args(["--globalconfig".into(), self.global_rc()]);
+
+        command
+    }
+}
+
+pub fn init(node: Arc<dyn NodeRuntime>, cx: &mut AppContext) {
+    NodeRuntimeSettings::register(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = NodeRuntimeSettings::get_global(cx);
+        node.configure(settings.clone());
+    })
+    .detach();
 }
