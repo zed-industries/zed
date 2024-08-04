@@ -133,64 +133,86 @@ impl PathWithPosition {
             return fallback(s);
         }
 
-        match maybe_file_name_with_row_col.split_once(FILE_ROW_COLUMN_DELIMITER) {
-            Some((file_name, maybe_row_and_col_str)) => {
-                let file_name = file_name.trim();
-                let maybe_row_and_col_str = maybe_row_and_col_str.trim();
-                if file_name.is_empty() {
+        match &path.extension().map(|e| e.to_str()).flatten() {
+            Some(extension) => {
+                // example: rs:1:2:321 => [rs, 1, 2]
+                let ext_row_col: Vec<&str> = extension
+                    .split(":")
+                    // take only extension name, row and column
+                    .take(3)
+                    .collect();
+                if ext_row_col.is_empty() {
                     return fallback(s);
                 }
 
-                let suffix_length = maybe_row_and_col_str.len() + 1;
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
+                let path = {
+                    let mut path = trimmed[0..trimmed.len() - extension.len()].to_string();
+                    path.push_str(&ext_row_col[0]);
 
-                if maybe_row_and_col_str.is_empty() {
-                    fallback(path_without_suffix)
+                    PathBuf::from(path)
+                };
+
+                let row = ext_row_col
+                    .get(1)
+                    .copied()
+                    .unwrap_or_default()
+                    .parse::<u32>()
+                    .ok();
+                let column = if row.is_some() {
+                    ext_row_col
+                        .get(2)
+                        .copied()
+                        .unwrap_or_default()
+                        .parse::<u32>()
+                        .ok()
                 } else {
-                    let (row_parse_result, maybe_col_str) =
-                        match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
-                            Some((maybe_row_str, maybe_col_str)) => {
-                                (maybe_row_str.parse::<u32>(), maybe_col_str.trim())
-                            }
-                            None => (maybe_row_and_col_str.parse::<u32>(), ""),
-                        };
+                    None
+                };
 
-                    let path = Path::new(path_without_suffix).to_path_buf();
-
-                    match row_parse_result {
-                        Ok(row) => {
-                            if maybe_col_str.is_empty() {
-                                Self {
-                                    path,
-                                    row: Some(row),
-                                    column: None,
-                                }
-                            } else {
-                                let (maybe_col_str, _) =
-                                    maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
-                                match maybe_col_str.parse::<u32>() {
-                                    Ok(col) => Self {
-                                        path,
-                                        row: Some(row),
-                                        column: Some(col),
-                                    },
-                                    Err(_) => Self {
-                                        path,
-                                        row: Some(row),
-                                        column: None,
-                                    },
-                                }
-                            }
-                        }
-                        Err(_) => Self {
-                            path,
-                            row: None,
-                            column: None,
-                        },
-                    }
-                }
+                Self { path, row, column }
             }
-            None => fallback(s),
+            None => {
+                let split_name: Vec<&str> = maybe_file_name_with_row_col.split(":").collect();
+                if split_name.is_empty() {
+                    return fallback(s);
+                }
+                let col_row: Vec<Option<u32>> = split_name
+                    .iter()
+                    .rev()
+                    .take(2)
+                    .copied()
+                    .map(|val| val.parse::<u32>().ok())
+                    .collect();
+                let maybe_column = col_row.get(0).copied().unwrap_or_default();
+                let maybe_row = col_row.get(1).copied().unwrap_or_default();
+                let (row, column) = match (maybe_row, maybe_column) {
+                    (None, None) => (None, None),
+                    // example: test:a:1 - assuming column as a row
+                    (None, Some(col)) => (Some(col), None),
+                    // example: test:1a:b
+                    (Some(_), None) => (None, None),
+                    (Some(row), Some(col)) => (Some(row), Some(col)),
+                };
+
+                let path = {
+                    let mut path_without_filename =
+                        trimmed[0..trimmed.len() - maybe_file_name_with_row_col.len()].to_string();
+
+                    let name_parts: Vec<&str> = split_name
+                        .iter()
+                        .rev()
+                        .skip(row.is_some() as usize + column.is_some() as usize)
+                        .rev()
+                        .copied()
+                        .collect();
+                    let new_filename = name_parts.join(":");
+
+                    path_without_filename.push_str(&new_filename);
+                    PathBuf::from(path_without_filename)
+                };
+
+                Self { path, row, column }
+            }
         }
     }
 
@@ -322,21 +344,49 @@ mod tests {
 
     #[test]
     fn path_with_position_parsing_negative() {
-        for (input, row, column) in [
-            ("test_file.rs:a", None, None),
-            ("test_file.rs:a:b", None, None),
-            ("test_file.rs::", None, None),
-            ("test_file.rs::1", None, None),
-            ("test_file.rs:1::", Some(1), None),
-            ("test_file.rs::1:2", None, None),
-            ("test_file.rs:1::2", Some(1), None),
-            ("test_file.rs:1:2:3", Some(1), Some(2)),
+        for (input, expected_file_name, row, column) in [
+            ("/test/test_file.rs:a", "/test/test_file.rs", None, None),
+            ("test_file.:a", "test_file.", None, None),
+            ("test_file.rs:a", "test_file.rs", None, None),
+            ("test_file.rs:a:b", "test_file.rs", None, None),
+            ("test_file.rs::", "test_file.rs", None, None),
+            ("test_file.rs::1", "test_file.rs", None, None),
+            ("test_file.rs:1::", "test_file.rs", Some(1), None),
+            ("test_file.rs:1::2", "test_file.rs", Some(1), None),
+            ("test_file.rs::1:2", "test_file.rs", None, None),
+            ("test_file.rs:1::2", "test_file.rs", Some(1), None),
+            ("test_file.rs:1:2:3", "test_file.rs", Some(1), Some(2)),
+            (
+                "/test/test_file.rs:1:2:3",
+                "/test/test_file.rs",
+                Some(1),
+                Some(2),
+            ),
+            (
+                "test_file:test.rs:1:2:3",
+                "test_file:test.rs",
+                Some(1),
+                Some(2),
+            ),
+            ("test_file:test.rs:a:", "test_file:test.rs", None, None),
+            ("test_file:a", "test_file:a", None, None),
+            ("test_file:a:b", "test_file:a:b", None, None),
+            ("test_file::", "test_file::", None, None),
+            ("test_file::1", "test_file:", Some(1), None),
+            ("test_file:1::", "test_file:1::", None, None),
+            ("test_file::1:2", "test_file:", Some(1), Some(2)),
+            ("test_file:1::2", "test_file:1:", Some(2), None),
+            ("test_file:1:2:3", "test_file:1", Some(2), Some(3)),
+            ("test_file:test:1:2:3", "test_file:test:1", Some(2), Some(3)),
+            ("test_file:test:1:2:3", "test_file:test:1", Some(2), Some(3)),
+            ("test_file:test:a:1::", "test_file:test:a:1::", None, None),
+            ("test_file:test:a:1:a", "test_file:test:a:1:a", None, None),
         ] {
             let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual,
                 PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
+                    path: PathBuf::from(expected_file_name),
                     row,
                     column,
                 },
