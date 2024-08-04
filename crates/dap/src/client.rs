@@ -26,7 +26,7 @@ use smol::{
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -596,4 +596,20 @@ impl Breakpoint {
             mode: None,
         }
     }
+
+    pub fn to_serialized(&self, buffer: &Buffer, path: Arc<Path>) -> SerializedBreakpoint {
+        SerializedBreakpoint {
+            position: buffer
+                .summary_for_anchor::<Point>(&self.position.text_anchor)
+                .row
+                + 1,
+            path,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct SerializedBreakpoint {
+    pub position: u32,
+    pub path: Arc<Path>,
 }

@@ -1940,14 +1940,14 @@ impl Editor {
             }
 
             // Check if this buffer should have breakpoints added too it
-            if let Some((path, buffer_id, snapshot)) = buffer.read_with(cx, |buffer, cx| {
+            if let Some((project_path, buffer_id, snapshot)) = buffer.read_with(cx, |buffer, cx| {
                 let snapshot = buffer.snapshot(cx);
                 let buffer = buffer.as_singleton()?.read(cx);
-                Some((buffer.project_path(cx)?.path, buffer.remote_id(), snapshot))
+                Some((buffer.project_path(cx)?, buffer.remote_id(), snapshot))
             }) {
                 if let Some(project) = this.project.as_ref() {
                     project.update(cx, |project, _cx| {
-                        project.write_breakpoints(path, buffer_id, snapshot)
+                        project.convert_to_open_breakpoints(&project_path, buffer_id, snapshot)
                     });
                 }
             }

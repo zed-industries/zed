@@ -25,7 +25,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dap::{
-    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId},
+    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId, SerializedBreakpoint},
     transport::Payload,
 };
 use debounced_delay::DebouncedDelay;
@@ -187,7 +187,7 @@ pub struct Project {
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     pub open_breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
     /// All breakpoints that belong to this project but are in closed files
-    pub closed_breakpoints: Arc<RwLock<BTreeMap<Arc<Path>, Vec<u64>>>>,
+    pub closed_breakpoints: Arc<RwLock<BTreeMap<ProjectPath, Vec<SerializedBreakpoint>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -1154,11 +1154,75 @@ impl Project {
         })
     }
 
+    pub fn all_breakpoints(
+        &self,
+        as_abs_path: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        for (buffer_id, breakpoints) in self.open_breakpoints.read().iter() {
+            let Some(buffer) = maybe!({
+                let buffer = self.buffer_for_id(*buffer_id, cx)?;
+                Some(buffer.read(cx))
+            }) else {
+                continue;
+            };
+
+            let Some(path) = maybe!({
+                let project_path = buffer.project_path(cx)?;
+
+                if as_abs_path {
+                    let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(Arc::from(
+                        worktree
+                            .read(cx)
+                            .absolutize(&project_path.path)
+                            .ok()?
+                            .as_path(),
+                    ))
+                } else {
+                    Some(project_path.path)
+                }
+            }) else {
+                continue;
+            };
+
+            all_breakpoints.entry(path.clone()).or_default().extend(
+                breakpoints
+                    .into_iter()
+                    .map(|bp| bp.to_serialized(buffer, path.clone())),
+            );
+        }
+
+        for (project_path, serialized_breakpoints) in self.closed_breakpoints.read().iter() {
+            let file_path = maybe!({
+                if as_abs_path {
+                    Some(Arc::from(self.absolute_path(project_path, cx)?))
+                } else {
+                    Some(project_path.path.clone())
+                }
+            });
+
+            if let Some(file_path) = file_path {
+                all_breakpoints
+                    .entry(file_path)
+                    .or_default()
+                    .extend(serialized_breakpoints.iter().map(|bp| bp.clone()));
+            }
+        }
+
+        all_breakpoints
+    }
+
     pub fn send_breakpoints(
         &self,
         client: Arc<DebugAdapterClient>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        println!("All breakpoints {:?}", self.all_breakpoints(true, cx));
+        println!("All breakpoints {:?}", self.all_breakpoints(false, cx));
+
         cx.spawn(|project, mut cx| async move {
             // TODO: Send breakpoints from unopened files as well
             let task = project.update(&mut cx, |project, cx| {
@@ -1293,60 +1357,72 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
+    // TODO Anth: Convert this function to use a serialized breakpoint and return one too
     pub fn serialize_breakpoint_for_buffer_id(
         &self,
         buffer_id: &BufferId,
         cx: &ModelContext<Self>,
-    ) -> Option<(PathBuf, Vec<u64>)> {
+    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
         let buffer = self.buffer_for_id(*buffer_id, cx)?.read(cx);
-        let path = buffer.project_path(cx)?;
+        let project_path = buffer.project_path(cx)?;
+        let worktree_path = self
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
         let bp_read_guard = self.open_breakpoints.read();
 
         Some((
-            path.path.to_path_buf(),
+            worktree_path,
             bp_read_guard
                 .get(buffer_id)?
                 .iter()
-                .map(|breakpoint| {
-                    buffer
-                        .summary_for_anchor::<Point>(&breakpoint.position.text_anchor)
-                        .row as u64
-                })
+                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
                 .collect(),
         ))
     }
 
-    pub fn write_breakpoints(
+    // TODO Anth: Add docs about how this is used when a new editor with breakpoints is init
+    pub fn convert_to_open_breakpoints(
         &mut self,
-        path: Arc<Path>,
+        project_path: &ProjectPath,
         buffer_id: BufferId,
         snapshot: MultiBufferSnapshot,
     ) {
-        if let Some(breakpoint_rows) = { self.closed_breakpoints.write().remove(&path) } {
+        if let Some(serialized_breakpoints) =
+            { self.closed_breakpoints.write().remove(project_path) }
+        {
             let mut write_guard = self.open_breakpoints.write();
 
-            for row in breakpoint_rows {
+            for serialized_bp in serialized_breakpoints {
                 write_guard
                     .entry(buffer_id)
                     .or_default()
                     .insert(Breakpoint {
-                        position: snapshot.anchor_at(Point::new(row as u32, 0), Bias::Left),
+                        position: snapshot
+                            .anchor_at(Point::new(serialized_bp.position, 0), Bias::Left),
                     });
             }
         }
     }
 
-    pub fn serialize_breakpoints(&self, cx: &ModelContext<Self>) -> HashMap<PathBuf, Vec<u64>> {
+    pub fn serialize_breakpoints(
+        &self,
+        cx: &ModelContext<Self>,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
         let breakpoint_read_guard = self.open_breakpoints.read();
-        let mut result: HashMap<PathBuf, Vec<u64>> = Default::default();
+        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
 
         for buffer_id in breakpoint_read_guard.keys() {
-            if let Some((key, value)) = self.serialize_breakpoint_for_buffer_id(&buffer_id, cx) {
-                result.insert(key, value);
+            if let Some((worktree_path, serialized_breakpoint)) =
+                self.serialize_breakpoint_for_buffer_id(&buffer_id, cx)
+            {
+                result.insert(worktree_path, serialized_breakpoint);
             }
         }
 
-        // TODO Add breakpoints that are in closed buffers
+        // TODO Anth: Add breakpoints that are in closed buffers
+        // TODO Anth: Add documentation
+        // TODO Anth: use SerializeBreakpoint Type as value in result hashmap
         result
     }
 
@@ -2255,15 +2331,16 @@ impl Project {
 
             let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx))?;
             project.update(&mut cx, |project, cx| {
-                let breakpoint_rows = { project.closed_breakpoints.write().remove(&path.path) };
+                let serialized_breakpoints = { project.closed_breakpoints.write().remove(&path) };
                 let snapshot = multi_buffer.read(cx).snapshot(cx);
 
-                if let Some(breakpoint_row) = breakpoint_rows {
+                if let Some(serialized_breakpoints) = serialized_breakpoints {
                     let mut write_guard = project.open_breakpoints.write();
                     let buffer_breakpoints = write_guard.entry(buffer_id).or_default();
 
-                    for row in breakpoint_row {
-                        let position = snapshot.anchor_at(Point::new(row as u32, 0), Bias::Left);
+                    for serialized_bp in serialized_breakpoints {
+                        let position =
+                            snapshot.anchor_at(Point::new(serialized_bp.position, 0), Bias::Left);
 
                         buffer_breakpoints.insert(Breakpoint { position });
                     }
@@ -2448,7 +2525,6 @@ impl Project {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        println!("Registering a buffer right now");
         self.request_buffer_diff_recalculation(buffer, cx);
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
@@ -2464,18 +2540,18 @@ impl Project {
         cx.observe_release(buffer, |this, buffer, cx| {
             // Serialize the breakpoints of this buffer and send them
             // Unopened breakpoints to maintain correct state
+            // TODO Anth: Almost done yayyy
             if let Some(breakpoints) = this.open_breakpoints.write().remove(&buffer.remote_id()) {
-                if let Some(file_path) = buffer.project_path(cx) {
-                    let file_path = file_path.path;
+                if let Some(project_path) = buffer.project_path(cx) {
                     this.closed_breakpoints
                         .write()
-                        .entry(file_path)
+                        .entry(project_path.clone())
                         .or_default()
-                        .extend(breakpoints.into_iter().map(|bp| {
-                            buffer
-                                .summary_for_anchor::<Point>(&bp.position.text_anchor)
-                                .row as u64
-                        }));
+                        .extend(
+                            breakpoints
+                                .into_iter()
+                                .map(|bp| bp.to_serialized(buffer, project_path.path.clone())),
+                        );
                 }
             }
 

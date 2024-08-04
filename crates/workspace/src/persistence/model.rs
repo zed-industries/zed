@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use client::DevServerProjectId;
 use collections::HashMap;
+use dap::client::SerializedBreakpoint;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -217,7 +218,8 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
-    pub(crate) breakpoints: HashMap<PathBuf, Vec<u64>>,
+    /// The key of this hashmap is an absolute worktree path that owns the breakpoint
+    pub(crate) breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]

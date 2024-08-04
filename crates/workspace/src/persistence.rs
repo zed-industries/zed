@@ -1,10 +1,14 @@
 pub mod model;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use collections::HashMap;
+use dap::client::SerializedBreakpoint;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds};
 
@@ -138,7 +142,7 @@ impl Column for SerializedWindowBounds {
 
 #[derive(Debug)]
 pub struct Breakpoint {
-    pub position: u64,
+    pub position: u32,
 }
 
 #[derive(Debug)]
@@ -158,9 +162,9 @@ impl sqlez::bindable::Bind for Breakpoint {
 impl Column for Breakpoint {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let position = statement
-            .column_int64(start_index)
+            .column_int(start_index)
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
-            as u64;
+            as u32;
         Ok((Breakpoint { position }, start_index + 1))
     }
 }
@@ -175,9 +179,9 @@ impl Column for Breakpoints {
                 Ok(SqlType::Null) => break,
                 _ => {
                     let position = statement
-                        .column_int64(index)
+                        .column_int(index)
                         .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
-                        as u64;
+                        as u32;
                     breakpoints.push(Breakpoint { position });
                     index += 1;
                 }
@@ -257,9 +261,11 @@ define_connection! {
     // )
     //
     // Anthony is testing database configs below
+    // TODO Anth: Update docs below
     // CREATE TABLE breakpoints(
     //      workspace_id: usize Foreign Key, // References workspace table
-    //      local_path: PathBuf, // References the file that the breakpoints belong too
+    //      worktree_path: PathBuf, // Path of worktree that this breakpoint belong's too. Used to determine the absolute path of a breakpoint
+    //      local_path: PathBuf, // References the file that the breakpoints belong too TODO Anth: rename to rel_path
     //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
     // )
     pub static ref DB: WorkspaceDb<()> =
@@ -409,7 +415,8 @@ define_connection! {
     ),
     sql!(CREATE TABLE breakpoints (
                workspace_id INTEGER NOT NULL,
-               file_path BLOB NOT NULL,
+               worktree_path BLOB NOT NULL,
+               relative_path BLOB NOT NULL,
                breakpoint_location INTEGER NOT NULL,
                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                ON DELETE CASCADE
@@ -490,34 +497,39 @@ impl WorkspaceDb {
         //     GROUP BY file_path})
         //     .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
 
-        let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
+        let breakpoints: Result<Vec<(PathBuf, PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT file_path, breakpoint_location
+                SELECT worktree_path, relative_path, breakpoint_location
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
             .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
 
-        let breakpoints: HashMap<PathBuf, Vec<u64>> = match breakpoints {
-            Ok(bp) => {
-                if bp.is_empty() {
-                    log::error!("Breakpoints are empty");
+        let serialized_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> =
+            match breakpoints {
+                Ok(bp) => {
+                    if bp.is_empty() {
+                        log::error!("Breakpoints are empty");
+                    }
+
+                    let mut map: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+                    for (worktree_path, file_path, breakpoint) in bp {
+                        map.entry(Arc::from(worktree_path.as_path()))
+                            .or_default()
+                            .push(SerializedBreakpoint {
+                                position: breakpoint.position,
+                                path: Arc::from(file_path.as_path()),
+                            });
+                    }
+
+                    map
                 }
-
-                let mut map: HashMap<PathBuf, Vec<u64>> = Default::default();
-
-                for (file_path, breakpoint) in bp {
-                    map.entry(file_path).or_default().push(breakpoint.position);
-                    // We shift breakpoint's position by one because they are zero indexed
+                Err(msg) => {
+                    log::error!("{msg}");
+                    Default::default()
                 }
-
-                map
-            }
-            Err(msg) => {
-                log::error!("{msg}");
-                Default::default()
-            }
-        };
+            };
 
         let location = if let Some(dev_server_project_id) = dev_server_project_id {
             let dev_server_project: SerializedDevServerProject = self
@@ -555,7 +567,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
-            breakpoints,
+            breakpoints: serialized_breakpoints,
         })
     }
 
@@ -665,28 +677,28 @@ impl WorkspaceDb {
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
 
-
-                for (file_path, rows) in  workspace.breakpoints {
-                    let path = file_path.as_path();
-
-                    match conn.exec_bound(sql!(
-                        DELETE FROM breakpoints
-                        WHERE workspace_id = ?1 AND file_path = ?2;))?((workspace.id, path)) {
-                        Err(err) => {
-                            log::error!("{err}");
-                            // continue;
-                        }
-                        Ok(_) => {}
+                // Clear out breakpoints associated with this workspace
+                match conn.exec_bound(sql!(
+                    DELETE FROM breakpoints
+                    WHERE workspace_id = ?1;))?(workspace.id,) {
+                    Err(err) => {
+                        log::error!("Breakpoints failed to clear with error: {err}");
                     }
+                    Ok(_) => {}
+                }
 
-                    for row in rows {
+                for (worktree_path, serialized_breakpoints) in  workspace.breakpoints {
+                    for serialized_breakpoint in serialized_breakpoints {
+                        let relative_path = serialized_breakpoint.path;
+
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location)
-                            VALUES (?1, ?2, ?3);))?
+                            INSERT INTO breakpoints (workspace_id, relative_path, worktree_path, breakpoint_location)
+                            VALUES (?1, ?2, ?3, ?4);))?
                             ((
                             workspace.id,
-                            path,
-                            Breakpoint { position: row },
+                            relative_path,
+                            worktree_path.clone(),
+                            Breakpoint { position: serialized_breakpoint.position },
                         )) {
                             Err(err) => {
                                 log::error!("{err}");

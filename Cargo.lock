@@ -13371,6 +13371,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap",
  "dap-types",
  "db",
  "derive_more",

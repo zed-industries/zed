@@ -4090,7 +4090,7 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        serialized_workspace: SerializedWorkspace,
+        mut serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
@@ -4100,22 +4100,33 @@ impl Workspace {
             let mut center_group = None;
             let mut center_items = None;
 
-            // Traverse the splits tree and add to things
             // Add unopened breakpoints to project before opening any items
-
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.project().update(cx, |project, _cx| {
+                workspace.project().update(cx, |project, cx| {
                     let mut write_guard = project.closed_breakpoints.write();
 
-                    for (file_path, mut breakpoint_rows) in serialized_workspace.breakpoints {
-                        write_guard
-                            .entry(Arc::from(file_path))
-                            .or_default()
-                            .append(&mut breakpoint_rows);
+                    for worktree in project.worktrees(cx) {
+                        let (worktree_id, worktree_path) =
+                            worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
+
+                        if let Some(serialized_breakpoints) =
+                            serialized_workspace.breakpoints.remove(&worktree_path)
+                        {
+                            for serialized_bp in serialized_breakpoints {
+                                write_guard
+                                    .entry(ProjectPath {
+                                        worktree_id,
+                                        path: serialized_bp.path.clone(),
+                                    })
+                                    .or_default()
+                                    .push(serialized_bp);
+                            }
+                        }
                     }
                 })
             })?;
 
+            // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace
                 .center_group
                 .deserialize(

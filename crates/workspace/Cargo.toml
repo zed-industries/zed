@@ -36,6 +36,7 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 dap-types = { git = "https://github.com/zed-industries/dap-types" }
+dap.workspace = true
 db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
