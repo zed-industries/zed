@@ -362,10 +362,9 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
-
         self.foreground_executor()
             .spawn(async move {
-                tx.send(file_open_dialog(options)).log_err();
+                let _ = tx.send(file_open_dialog(options));
             })
             .detach();
 
@@ -377,7 +376,7 @@ impl Platform for WindowsPlatform {
         let (tx, rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                tx.send(file_save_dialog(directory)).log_err();
+                let _ = tx.send(file_save_dialog(directory));
             })
             .detach();
 
