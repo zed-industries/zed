@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    ffi::c_void,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::Rc,
@@ -510,7 +509,7 @@ impl Platform for WindowsPlatform {
                     )
                 };
                 let password = credential_blob.to_vec();
-                unsafe { CredFree(credentials as *const c_void) };
+                unsafe { CredFree(credentials as *const _ as _) };
                 Ok(Some((username, password)))
             }
         })
