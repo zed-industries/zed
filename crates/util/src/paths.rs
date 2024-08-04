@@ -116,66 +116,32 @@ impl PathWithPosition {
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
     pub fn parse_str(s: &str) -> Self {
-        let fallback = |fallback_str| Self {
-            path: Path::new(fallback_str).to_path_buf(),
-            row: None,
-            column: None,
-        };
-
-        let trimmed = s.trim();
-        let path = Path::new(trimmed);
-        let maybe_file_name_with_row_col = path
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default();
-        if maybe_file_name_with_row_col.is_empty() {
-            return fallback(s);
+        let path = Path::new(s.trim());
+        if path.extension().is_some() {
+            Self::parse_extension_or_hidden_file(path)
+        } else {
+            Self::parse_filename(path)
         }
-
-        match &path.extension().map(|e| e.to_str()).flatten() {
-            Some(extension) => {
-                // example: rs:1:2:321 => [rs, 1, 2]
-                let ext_row_col: Vec<&str> = extension
-                    .split(":")
-                    // take only extension name, row and column
-                    .take(3)
-                    .collect();
-                if ext_row_col.is_empty() {
-                    return fallback(s);
-                }
-
-                let path = {
-                    let mut path = trimmed[0..trimmed.len() - extension.len()].to_string();
-                    path.push_str(&ext_row_col[0]);
-
-                    PathBuf::from(path)
-                };
-
-                let row = ext_row_col
-                    .get(1)
-                    .copied()
-                    .unwrap_or_default()
-                    .parse::<u32>()
-                    .ok();
-                let column = if row.is_some() {
-                    ext_row_col
-                        .get(2)
-                        .copied()
-                        .unwrap_or_default()
-                        .parse::<u32>()
-                        .ok()
-                } else {
-                    None
-                };
-
-                Self { path, row, column }
-            }
-            None => {
-                let split_name: Vec<&str> = maybe_file_name_with_row_col.split(":").collect();
+    }
+    /// Parses a filename for row and column.
+    /// Example strings:  test:1:2 => (test, 1, 2)
+    fn parse_filename(path: &Path) -> Self {
+        match path.file_name().map(OsStr::to_str).flatten() {
+            None => Self {
+                path: path.to_path_buf(),
+                row: None,
+                column: None,
+            },
+            Some(filename) => {
+                let split_name: Vec<&str> = filename.split(":").collect();
                 if split_name.is_empty() {
-                    return fallback(s);
+                    return Self {
+                        path: path.to_path_buf(),
+                        row: None,
+                        column: None,
+                    };
                 }
+
                 let col_row: Vec<Option<u32>> = split_name
                     .iter()
                     .rev()
@@ -193,22 +159,90 @@ impl PathWithPosition {
                     (Some(_), None) => (None, None),
                     (Some(row), Some(col)) => (Some(row), Some(col)),
                 };
+                let name_parts: Vec<&str> = split_name
+                    .iter()
+                    .rev()
+                    .skip(row.is_some() as usize + column.is_some() as usize)
+                    .rev()
+                    .copied()
+                    .collect();
+                let new_filename = name_parts.join(":");
 
                 let path = {
-                    let mut path_without_filename =
-                        trimmed[0..trimmed.len() - maybe_file_name_with_row_col.len()].to_string();
+                    let path_str = path.to_str().unwrap_or_default();
+                    let extension = path
+                        .extension()
+                        .map(OsStr::to_str)
+                        .flatten()
+                        .unwrap_or_default();
+                    let extension_len = if extension.len() > 0 {
+                        extension.len() + 1 // plus dot chat
+                    } else {
+                        0
+                    };
+                    let mut new_path =
+                        path_str[0..path_str.len() - filename.len() - extension_len].to_string();
+                    let new_filename = if extension.len() > 0 {
+                        format!("{new_filename}.{extension}")
+                    } else {
+                        new_filename
+                    };
+                    new_path.push_str(&new_filename);
 
-                    let name_parts: Vec<&str> = split_name
-                        .iter()
-                        .rev()
-                        .skip(row.is_some() as usize + column.is_some() as usize)
-                        .rev()
+                    PathBuf::from(new_path)
+                };
+
+                Self { path, row, column }
+            }
+        }
+    }
+
+    fn parse_extension_or_hidden_file(path: &Path) -> Self {
+        match path.extension_or_hidden_file_name() {
+            None => Self {
+                path: path.to_path_buf(),
+                row: None,
+                column: None,
+            },
+            Some(extension) => {
+                // example: rs:1:2:321 => [rs, 1, 2]
+                let ext_row_col: Vec<&str> = extension
+                    .trim()
+                    .split(":")
+                    // take only extension name, row and column
+                    .take(3)
+                    .collect();
+
+                if ext_row_col.len() == 1 {
+                    return Self {
+                        path: path.to_path_buf(),
+                        row: None,
+                        column: None,
+                    };
+                }
+
+                let row = ext_row_col
+                    .get(1)
+                    .copied()
+                    .unwrap_or_default()
+                    .parse::<u32>()
+                    .ok();
+                let column = if row.is_some() {
+                    ext_row_col
+                        .get(2)
                         .copied()
-                        .collect();
-                    let new_filename = name_parts.join(":");
+                        .unwrap_or_default()
+                        .parse::<u32>()
+                        .ok()
+                } else {
+                    None
+                };
+                let path = {
+                    let path_str = path.to_str().unwrap_or_default();
+                    let mut new_path = path_str[0..path_str.len() - extension.len()].to_string();
+                    new_path.push_str(ext_row_col[0]);
 
-                    path_without_filename.push_str(&new_filename);
-                    PathBuf::from(path_without_filename)
+                    PathBuf::from(new_path)
                 };
 
                 Self { path, row, column }
@@ -307,36 +341,24 @@ mod tests {
     #[test]
     fn path_with_position_parsing_positive() {
         let input_and_expected = [
-            (
-                "test_file.rs",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1:2",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: Some(2),
-                },
-            ),
+            (".env", ".env", None, None),
+            (".env:1", ".env", Some(1), None),
+            (".env:1:2", ".env", Some(1), Some(2)),
+            (".env.prod:1:2", ".env.prod", Some(1), Some(2)),
+            ("test_file.rs", "test_file.rs", None, None),
+            ("test_file.rs:1", "test_file.rs", Some(1), None),
+            ("test_file.rs:1:2", "test_file.rs", Some(1), Some(2)),
         ];
 
-        for (input, expected) in input_and_expected {
+        for (input, expected_path, row, column) in input_and_expected {
             let actual = PathWithPosition::parse_str(input);
             assert_eq!(
-                actual, expected,
+                actual,
+                PathWithPosition {
+                    path: PathBuf::from(expected_path),
+                    row,
+                    column
+                },
                 "For positive case input str '{input}', got a parse mismatch"
             );
         }
