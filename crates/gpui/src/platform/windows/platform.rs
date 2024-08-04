@@ -826,15 +826,15 @@ mod tests {
     #[test]
     fn test_clipboard() {
         let platform = WindowsPlatform::new();
-        let item = ClipboardItem::new("你好".to_string());
+        let item = ClipboardItem::new_string("你好".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("12345".to_string());
+        let item = ClipboardItem::new_string("12345".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
+        let item = ClipboardItem::new_string("abcdef".to_string()).with_metadata(vec![3, 4]);
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
     }

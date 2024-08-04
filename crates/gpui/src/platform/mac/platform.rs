@@ -1284,12 +1284,11 @@ mod tests {
         let platform = build_platform();
         assert_eq!(platform.read_from_clipboard(), None);
 
-        let item = ClipboardItem::String(ClipboardString::new("1".to_string()));
+        let item = ClipboardItem::new_string("1".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item =
-            ClipboardItem::String(ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]));
+        let item = ClipboardItem::new_string("2".to_string()).with_metadata(vec![3, 4]);
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
@@ -1308,9 +1307,7 @@ mod tests {
         }
         assert_eq!(
             platform.read_from_clipboard(),
-            Some(ClipboardItem::String(ClipboardString::new(
-                text_from_other_app.to_string()
-            )))
+            Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
     }
 

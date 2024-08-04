@@ -3,11 +3,11 @@ pub mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, ClipboardString,
-    CursorStyle, DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight,
-    GlobalElementId, Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
-    TextRun, TextStyle, TextStyleRefinement, View,
+    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -150,7 +150,7 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::String(ClipboardString::new(text)));
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
@@ -480,7 +480,7 @@ impl MarkdownElement {
                         {
                             let text = rendered_text
                                 .text_for_range(markdown.selection.start..markdown.selection.end);
-                            cx.write_to_primary(ClipboardItem::new(text))
+                            cx.write_to_primary(ClipboardItem::new_string(text))
                         }
                         cx.notify();
                     }

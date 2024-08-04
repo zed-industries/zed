@@ -980,6 +980,21 @@ pub enum ClipboardItem {
     },
 }
 
+impl ClipboardItem {
+    /// Create a new ClipboardItem::String with no associated metadata
+    pub fn new_string(text: String) -> Self {
+        Self::String(ClipboardString::new(text))
+    }
+
+    /// If this is a ClipboardItem::String, return that string's text
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::String(ClipboardString { text, metadata: _ }) => Some(text),
+            _ => None,
+        }
+    }
+}
+
 /// One of our supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImageFormat {
@@ -999,7 +1014,7 @@ pub struct ClipboardString {
 }
 
 impl ClipboardString {
-    /// Create a new clipboard item with the given text
+    /// Create a new clipboard string with the given text
     pub fn new(text: String) -> Self {
         Self {
             text,
@@ -1013,12 +1028,17 @@ impl ClipboardString {
         self
     }
 
-    /// Get the text of the clipboard item
+    /// Get the text of the clipboard string
     pub fn text(&self) -> &String {
         &self.text
     }
 
-    /// Get the metadata of the clipboard item
+    /// Get the owned text of the clipboard string
+    pub fn into_text(self) -> String {
+        self.text
+    }
+
+    /// Get the metadata of the clipboard string
     pub fn metadata<T>(&self) -> Option<T>
     where
         T: for<'a> Deserialize<'a>,

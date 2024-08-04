@@ -2336,7 +2336,7 @@ impl ContextEditor {
             }
 
             if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new(copied_text));
+                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
                 return;
             }
         }

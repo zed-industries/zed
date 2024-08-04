@@ -70,12 +70,12 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
-    FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
-    WeakView, WindowContext,
+    ClipboardString, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
+    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
+    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -2280,7 +2280,7 @@ impl Editor {
             }
 
             if !text.is_empty() {
-                cx.write_to_primary(ClipboardItem::new(text));
+                cx.write_to_primary(ClipboardItem::new_string(text));
             }
         }
 
@@ -6545,7 +6545,9 @@ impl Editor {
                 s.select(selections);
             });
             this.insert("", cx);
-            cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+            cx.write_to_clipboard(ClipboardItem::String(
+                ClipboardString::new(text).with_metadata(clipboard_selections),
+            ));
         });
     }
 
@@ -6584,7 +6586,9 @@ impl Editor {
             }
         }
 
-        cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+        cx.write_to_clipboard(ClipboardItem::String(
+            ClipboardString::new(text).with_metadata(clipboard_selections),
+        ));
     }
 
     pub fn do_paste(
@@ -6667,10 +6671,11 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
+        let todo = (); // TODO support pasting clipboard images, not just strings.
+        if let Some(ClipboardItem::String(clipboard_string)) = cx.read_from_clipboard() {
             self.do_paste(
-                item.text(),
-                item.metadata::<Vec<ClipboardSelection>>(),
+                clipboard_string.text(),
+                clipboard_string.metadata::<Vec<ClipboardSelection>>(),
                 true,
                 cx,
             )
@@ -10474,7 +10479,7 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.abs_path(cx).to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
                 }
             }
         }
@@ -10484,7 +10489,7 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.path().to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
                 }
             }
         }
@@ -10674,7 +10679,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+                cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
             }
             Err(err) => {
                 let message = format!("Failed to copy permalink: {err}");
@@ -11610,7 +11615,7 @@ impl Editor {
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else {
             return;
         };
-        cx.write_to_clipboard(ClipboardItem::new(lines));
+        cx.write_to_clipboard(ClipboardItem::new_string(lines));
     }
 
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
@@ -12877,7 +12882,9 @@ pub fn diagnostic_block_renderer(
                     .visible_on_hover(group_id.clone())
                     .on_click({
                         let message = diagnostic.message.clone();
-                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                        move |_click, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+                        }
                     })
                     .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
             )

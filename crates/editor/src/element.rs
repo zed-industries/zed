@@ -4273,7 +4273,7 @@ fn deploy_blame_entry_context_menu(
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy commit SHA", None, move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),

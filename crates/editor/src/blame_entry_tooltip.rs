@@ -242,9 +242,9 @@ impl Render for BlameEntryTooltip {
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, cx| {
                                                     cx.stop_propagation();
-                                                    cx.write_to_clipboard(ClipboardItem::new(
-                                                        full_sha.clone(),
-                                                    ))
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(full_sha.clone()),
+                                                    )
                                                 }),
                                         ),
                                 ),

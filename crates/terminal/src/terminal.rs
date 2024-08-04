@@ -55,9 +55,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, ClipboardString,
-    EventEmitter, Hsla, Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
+    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -652,9 +652,9 @@ impl Terminal {
                 self.breadcrumb_text = String::new();
                 cx.emit(Event::BreadcrumbsChanged);
             }
-            AlacTermEvent::ClipboardStore(_, data) => cx.write_to_clipboard(ClipboardItem::String(
-                ClipboardString::new(data.to_string()),
-            )),
+            AlacTermEvent::ClipboardStore(_, data) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
+            }
             AlacTermEvent::ClipboardLoad(_, format) => {
                 self.write_to_pty(match &cx.read_from_clipboard() {
                     // The terminal only supports pasting strings
@@ -766,7 +766,7 @@ impl Terminal {
 
                 #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
-                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some((_, head)) = selection {
@@ -787,7 +787,7 @@ impl Terminal {
 
                     #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
-                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -797,7 +797,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::String(ClipboardString::new(txt)))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
