@@ -590,7 +590,10 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
-        folder_dialog.Show(None)?;
+        if folder_dialog.Show(None).is_err() {
+            // User cancelled
+            return Ok(None);
+        }
     }
 
     let results = unsafe { folder_dialog.GetResults()? };
@@ -619,7 +622,12 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
             unsafe { dialog.SetFolder(&path_item).log_err() };
         }
     }
-    unsafe { dialog.Show(None)? };
+    unsafe {
+        if dialog.Show(None).is_err() {
+            // User cancelled
+            return Ok(None);
+        }
+    }
     let shell_item = unsafe { dialog.GetResult()? };
     let file_path_string = unsafe { shell_item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
     Ok(Some(PathBuf::from(file_path_string)))
