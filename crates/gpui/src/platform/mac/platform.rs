@@ -11,7 +11,7 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, BOOL, YES},
     foundation::{
@@ -925,12 +925,12 @@ impl Platform for MacPlatform {
                     ));
                 }
             }
-        }
 
-        // If it wasn't a string, try the various supported image types.
-        for format in ImageFormat::iter() {
-            if let Some(item) = try_clipboard_image(pasteboard, format) {
-                return Some(item);
+            // If it wasn't a string, try the various supported image types.
+            for format in ImageFormat::iter() {
+                if let Some(item) = try_clipboard_image(pasteboard, format) {
+                    return Some(item);
+                }
             }
         }
 
@@ -1287,8 +1287,8 @@ mod security {
 impl From<ImageFormat> for UTType {
     fn from(value: ImageFormat) -> Self {
         match value {
-            ImageFormat::Jpeg => Self::jpeg(),
             ImageFormat::Png => Self::png(),
+            ImageFormat::Jpeg => Self::jpeg(),
             ImageFormat::Tiff => Self::tiff(),
             ImageFormat::Webp => Self::webp(),
             ImageFormat::Gif => Self::gif(),
@@ -1299,54 +1299,42 @@ impl From<ImageFormat> for UTType {
 }
 
 // See https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/
-struct UTType(*const Object);
+struct UTType(id);
 
 impl UTType {
-    fn from_class(func: impl FnOnce(&'static Class) -> *const Object) -> Self {
-        Self(match Class::get("UTType") {
-            Some(class) => func(class),
-            None => unsafe {
-                log::error!("The Cocoa UTType class was not defined. This should never happen!");
-                // This should never happen (the UTType class should always exist in a Mac app),
-                // but if it does somehow happen, better to return an empty UTType than to panic.
-                ns_string("")
-            },
-        })
-    }
-
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/jpeg
-    pub fn jpeg() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, jpeg]) }
-    }
-
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/png
     pub fn png() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, png]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/png
+        Self(unsafe { NSPasteboardTypePNG }) // This is a rare case where there's a built-in NSPasteboardType
     }
 
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/gif
+    pub fn jpeg() -> Self {
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/jpeg
+        Self(unsafe { ns_string("public.jpeg") })
+    }
+
     pub fn gif() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, gif]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/gif
+        Self(unsafe { ns_string("com.compuserve.gif") })
     }
 
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/webp
     pub fn webp() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, webp]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/webp
+        Self(unsafe { ns_string("org.webmproject.webp") })
     }
 
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/bmp
     pub fn bmp() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, bmp]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/bmp
+        Self(unsafe { ns_string("com.microsoft.bmp") })
     }
 
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
     pub fn svg() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, svg]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
+        Self(unsafe { ns_string("public.svg-image") })
     }
 
-    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
     pub fn tiff() -> Self {
-        unsafe { Self::from_class(|class| msg_send![class, tiff]) }
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
+        Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
     }
 
     fn inner(&self) -> *const Object {
