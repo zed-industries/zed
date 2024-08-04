@@ -2447,6 +2447,7 @@ impl Project {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        println!("Registering a buffer right now");
         self.request_buffer_diff_recalculation(buffer, cx);
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
@@ -2460,6 +2461,23 @@ impl Project {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
+            // Serialize the breakpoints of this buffer and send them
+            // Unopened breakpoints to maintain correct state
+            if let Some(breakpoints) = this.open_breakpoints.write().remove(&buffer.remote_id()) {
+                if let Some(file_path) = buffer.project_path(cx) {
+                    let file_path = file_path.path;
+                    this.closed_breakpoints
+                        .write()
+                        .entry(file_path)
+                        .or_default()
+                        .extend(breakpoints.into_iter().map(|bp| {
+                            buffer
+                                .summary_for_anchor::<Point>(&bp.position.text_anchor)
+                                .row as u64
+                        }));
+                }
+            }
+
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
                     let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
