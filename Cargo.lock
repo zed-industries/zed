@@ -4880,6 +4880,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
+ "strum",
  "sum_tree",
  "taffy",
  "thiserror",

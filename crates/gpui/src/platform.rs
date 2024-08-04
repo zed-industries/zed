@@ -43,6 +43,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
@@ -995,15 +996,26 @@ impl ClipboardItem {
     }
 }
 
-/// One of our supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// One of the editor's supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
+#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
 pub enum ImageFormat {
-    /// .jpeg or .jpg
-    Jpeg,
+    // Sorted from most to least likely to be pasted into an editor,
+    // which matters when we iterate through them trying to see if
+    // clipboard content matches them.
     /// .png
     Png,
+    /// .jpeg or .jpg
+    Jpeg,
     /// .webp
     Webp,
+    /// .gif
+    Gif,
+    /// .svg
+    Svg,
+    /// .bmp
+    Bmp,
+    /// .tif or .tiff
+    Tiff,
 }
 
 /// A clipboard item that should be copied to the clipboard

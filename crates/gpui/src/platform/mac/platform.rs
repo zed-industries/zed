@@ -50,6 +50,7 @@ use std::{
     slice, str,
     sync::Arc,
 };
+use strum::IntoEnumIterator;
 
 use super::renderer;
 
@@ -887,7 +888,17 @@ impl Platform for MacPlatform {
                             .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
                     }
                 }
-                ClipboardItem::Image { format, bytes } => todo!(),
+                ClipboardItem::Image { format, bytes } => {
+                    let bytes = NSData::dataWithBytes_length_(
+                        nil,
+                        bytes.as_ptr() as *const c_void,
+                        bytes.len() as u64,
+                    );
+
+                    state
+                        .pasteboard
+                        .setData_forType(bytes, Into::<UTType>::into(format).inner_mut());
+                }
             }
         }
     }
@@ -896,58 +907,35 @@ impl Platform for MacPlatform {
         let state = self.0.lock();
         let pasteboard = state.pasteboard;
 
+        // First, see if it's a string.
         unsafe {
             let types: id = pasteboard.types();
+            let string_type: id = ns_string("public.utf8-plain-text");
 
-            // Check to see if the clipboard's types contain the given format string.
-            // If so, return a ClipboardItem::Image representation of its bytes.
-            //
-            // We do this as a macro because we have to allocate a new string each time we check a type,
-            // and we want to avoid allocating those strings unless we're actually going to use them.
-            macro_rules! image_format {
-                ($format_str:expr, $image_format:expr) => {
-                    let format: id = NSString::alloc(nil).init_str($format_str);
+            if msg_send![types, containsObject: string_type] {
+                let data = pasteboard.dataForType(string_type);
+                if data == nil {
+                    return None;
+                } else {
+                    let bytes =
+                        slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
 
-                    if msg_send![types, containsObject: format] {
-                        let data = pasteboard.dataForType(format);
-                        if data == nil {
-                            return None;
-                        } else {
-                            let bytes =
-                                Vec::from(slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize));
-
-                            return Some(ClipboardItem::Image { format: $image_format, bytes });
-                        }
-                    }
-                };
-            }
-
-            {
-                let string_type: id = NSString::alloc(nil).init_str("public.utf8-plain-text");
-
-                if msg_send![types, containsObject: string_type] {
-                    let data = pasteboard.dataForType(string_type);
-                    if data == nil {
-                        return None;
-                    } else {
-                        let bytes =
-                            slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
-
-                        return Some(ClipboardItem::String(
-                            self.read_string_from_clipboard(&state, bytes),
-                        ));
-                    }
+                    return Some(ClipboardItem::String(
+                        self.read_string_from_clipboard(&state, bytes),
+                    ));
                 }
             }
-
-            let todo = (); // TODO add more image formats, plus do this as chained Options instead of macro
-            image_format!("public.png", ImageFormat::Png);
-            image_format!("public.jpeg", ImageFormat::Jpeg);
-            image_format!("public.jpg", ImageFormat::Jpeg);
-            image_format!("public.webp", ImageFormat::Webp);
-
-            None
         }
+
+        // If it wasn't a string, try the various supported image types.
+        for format in ImageFormat::iter() {
+            if let Some(item) = try_clipboard_image(pasteboard, format) {
+                return Some(item);
+            }
+        }
+
+        // If it wasn't a string or a supported image type, give up.
+        None
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -1091,6 +1079,29 @@ impl MacPlatform {
         ClipboardString {
             text,
             metadata: opt_metadata,
+        }
+    }
+}
+
+fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardItem> {
+    let mut ut_type: UTType = format.into();
+
+    unsafe {
+        let types: id = pasteboard.types();
+        if msg_send![types, containsObject: ut_type.inner()] {
+            let data = pasteboard.dataForType(ut_type.inner_mut());
+            if data == nil {
+                None
+            } else {
+                let bytes = Vec::from(slice::from_raw_parts(
+                    data.bytes() as *mut u8,
+                    data.length() as usize,
+                ));
+
+                Some(ClipboardItem::Image { format, bytes })
+            }
+        } else {
+            None
         }
     }
 }
@@ -1273,6 +1284,80 @@ mod security {
     pub const errSecItemNotFound: OSStatus = -25300;
 }
 
+impl From<ImageFormat> for UTType {
+    fn from(value: ImageFormat) -> Self {
+        match value {
+            ImageFormat::Jpeg => Self::jpeg(),
+            ImageFormat::Png => Self::png(),
+            ImageFormat::Tiff => Self::tiff(),
+            ImageFormat::Webp => Self::webp(),
+            ImageFormat::Gif => Self::gif(),
+            ImageFormat::Bmp => Self::bmp(),
+            ImageFormat::Svg => Self::svg(),
+        }
+    }
+}
+
+// See https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/
+struct UTType(*const Object);
+
+impl UTType {
+    fn from_class(func: impl FnOnce(&'static Class) -> *const Object) -> Self {
+        Self(match Class::get("UTType") {
+            Some(class) => func(class),
+            None => unsafe {
+                log::error!("The Cocoa UTType class was not defined. This should never happen!");
+                // This should never happen (the UTType class should always exist in a Mac app),
+                // but if it does somehow happen, better to return an empty UTType than to panic.
+                ns_string("")
+            },
+        })
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/jpeg
+    pub fn jpeg() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, jpeg]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/png
+    pub fn png() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, png]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/gif
+    pub fn gif() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, gif]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/webp
+    pub fn webp() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, webp]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/bmp
+    pub fn bmp() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, bmp]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
+    pub fn svg() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, svg]) }
+    }
+
+    // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
+    pub fn tiff() -> Self {
+        unsafe { Self::from_class(|class| msg_send![class, tiff]) }
+    }
+
+    fn inner(&self) -> *const Object {
+        self.0
+    }
+
+    fn inner_mut(&mut self) -> *mut Object {
+        self.0 as *mut _
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ClipboardItem;
@@ -1288,7 +1373,8 @@ mod tests {
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new_string("2".to_string()).with_metadata(vec![3, 4]);
+        let item =
+            ClipboardItem::String(ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]));
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
