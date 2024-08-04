@@ -151,6 +151,8 @@ pub struct Config {
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
     pub anthropic_api_key: Option<Arc<str>>,
+    pub qwen2_7b_api_key: Option<Arc<str>>,
+    pub qwen2_7b_api_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
@@ -162,6 +164,15 @@ pub struct Config {
 impl Config {
     pub fn is_development(&self) -> bool {
         self.zed_environment == "development".into()
+    }
+
+    /// Returns the base `zed.dev` URL.
+    pub fn zed_dot_dev_url(&self) -> &str {
+        match self.zed_environment.as_ref() {
+            "development" => "http://localhost:3000",
+            "staging" => "https://staging.zed.dev",
+            _ => "https://zed.dev",
+        }
     }
 }
 

@@ -14,6 +14,7 @@ pub struct UpdateBillingSubscriptionParams {
     pub billing_customer_id: ActiveValue<BillingCustomerId>,
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
+    pub stripe_cancel_at: ActiveValue<Option<DateTime>>,
 }
 
 impl Database {
@@ -49,6 +50,7 @@ impl Database {
                 billing_customer_id: params.billing_customer_id.clone(),
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
+                stripe_cancel_at: params.stripe_cancel_at.clone(),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -110,13 +112,15 @@ impl Database {
         .await
     }
 
-    /// Returns all of the active billing subscriptions for the user with the specified ID.
-    pub async fn get_active_billing_subscriptions(
-        &self,
-        user_id: UserId,
-    ) -> Result<Vec<billing_subscription::Model>> {
+    /// Returns whether the user has an active billing subscription.
+    pub async fn has_active_billing_subscription(&self, user_id: UserId) -> Result<bool> {
+        Ok(self.count_active_billing_subscriptions(user_id).await? > 0)
+    }
+
+    /// Returns the count of the active billing subscriptions for the user with the specified ID.
+    pub async fn count_active_billing_subscriptions(&self, user_id: UserId) -> Result<usize> {
         self.transaction(|tx| async move {
-            let subscriptions = billing_subscription::Entity::find()
+            let count = billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(
                     billing_customer::Column::UserId.eq(user_id).and(
@@ -124,11 +128,10 @@ impl Database {
                             .eq(StripeSubscriptionStatus::Active),
                     ),
                 )
-                .order_by_asc(billing_subscription::Column::Id)
-                .all(&*tx)
+                .count(&*tx)
                 .await?;
 
-            Ok(subscriptions)
+            Ok(count as usize)
         })
         .await
     }

@@ -17,9 +17,12 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
     // A user with no subscription has no active billing subscriptions.
     {
         let user_id = new_test_user(db, "no-subscription-user@example.com").await;
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
+        let subscription_count = db
+            .count_active_billing_subscriptions(user_id)
+            .await
+            .unwrap();
 
-        assert_eq!(subscriptions.len(), 0);
+        assert_eq!(subscription_count, 0);
     }
 
     // A user with an active subscription has one active billing subscription.
@@ -42,7 +45,7 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
         .await
         .unwrap();
 
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
+        let subscriptions = db.get_billing_subscriptions(user_id).await.unwrap();
         assert_eq!(subscriptions.len(), 1);
 
         let subscription = &subscriptions[0];
@@ -76,7 +79,10 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
         .await
         .unwrap();
 
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
-        assert_eq!(subscriptions.len(), 0);
+        let subscription_count = db
+            .count_active_billing_subscriptions(user_id)
+            .await
+            .unwrap();
+        assert_eq!(subscription_count, 0);
     }
 }

@@ -37,6 +37,7 @@ impl LanguageModelRequest {
             stream: true,
             stop: self.stop,
             temperature: self.temperature,
+            max_tokens: None,
             tools: Vec::new(),
             tool_choice: None,
         }

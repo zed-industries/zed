@@ -2108,6 +2108,7 @@ impl ProjectPanel {
                         this.end_slot::<AnyElement>(
                             div()
                                 .id("symlink_icon")
+                                .pr_3()
                                 .tooltip(move |cx| {
                                     Tooltip::text(format!("{path} • Symbolic Link"), cx)
                                 })

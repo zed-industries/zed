@@ -13,7 +13,7 @@ path = "src/terminal.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
+alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 dirs.workspace = true

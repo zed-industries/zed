@@ -30,3 +30,6 @@ DerivedData/
 .wrangler
 .flatpak-builder
 .zed/debug.json
+
+# Don't commit any secrets to the repo.
+.env.secret.toml

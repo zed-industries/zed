@@ -341,7 +341,7 @@ pub struct SlashCommandId(clock::Lamport);
 #[derive(Debug)]
 pub struct EditStep {
     pub source_range: Range<language::Anchor>,
-    pub operations: Option<EditStepOperations>,
+    pub state: Option<EditStepState>,
 }
 
 #[derive(Debug)]
@@ -358,22 +358,29 @@ pub struct EditSuggestion {
     pub initial_insertion: Option<InitialInsertion>,
 }
 
+pub struct EditStepSuggestions {
+    pub title: String,
+    pub suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+}
+
 impl EditStep {
     pub fn edit_suggestions(
         &self,
         project: &Model<Project>,
         cx: &AppContext,
-    ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
-        let Some(EditStepOperations::Ready(operations)) = &self.operations else {
-            return Task::ready(HashMap::default());
+    ) -> Option<Task<EditStepSuggestions>> {
+        let Some(EditStepState::Resolved(resolution)) = &self.state else {
+            return None;
         };
 
-        let suggestion_tasks: Vec<_> = operations
+        let title = resolution.step_title.clone();
+        let suggestion_tasks: Vec<_> = resolution
+            .operations
             .iter()
             .map(|operation| operation.edit_suggestion(project.clone(), cx))
             .collect();
 
-        cx.spawn(|mut cx| async move {
+        Some(cx.spawn(|mut cx| async move {
             let suggestions = future::join_all(suggestion_tasks)
                 .await
                 .into_iter()
@@ -468,25 +475,47 @@ impl EditStep {
                 suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
             }
 
-            suggestion_groups_by_buffer
-        })
+            EditStepSuggestions {
+                title,
+                suggestions: suggestion_groups_by_buffer,
+            }
+        }))
     }
 }
 
-pub enum EditStepOperations {
+pub enum EditStepState {
     Pending(Task<Option<()>>),
-    Ready(Vec<EditOperation>),
+    Resolved(EditStepResolution),
 }
 
-impl Debug for EditStepOperations {
+impl Debug for EditStepState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            EditStepOperations::Ready(operations) => f
+            EditStepState::Pending(_) => write!(f, "EditStepOperations::Pending"),
+            EditStepState::Resolved(operations) => f
                 .debug_struct("EditStepOperations::Parsed")
                 .field("operations", operations)
                 .finish(),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditStepResolution {
+    /// An extremely short title for the edit step represented by these operations.
+    pub step_title: String,
+    /// A sequence of operations to apply to the codebase.
+    /// When multiple operations are required for a step, be sure to include multiple operations in this list.
+    pub operations: Vec<EditOperation>,
+}
+
+impl LanguageModelTool for EditStepResolution {
+    fn name() -> String {
+        "edit".into()
+    }
+
+    fn description() -> String {
+        "suggest edits to one or more locations in the codebase".into()
     }
 }
 
@@ -528,7 +557,7 @@ impl EditOperation {
             let buffer = project
                 .update(&mut cx, |project, cx| {
                     let project_path = project
-                        .project_path_for_full_path(Path::new(&path), cx)
+                        .find_project_path(Path::new(&path), cx)
                         .with_context(|| format!("worktree not found for {:?}", path))?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
@@ -569,6 +598,10 @@ impl EditOperation {
                 buffer.update(&mut cx, |buffer, _| {
                     let outline_item = &outline.items[candidate.id];
                     let symbol_range = outline_item.range.to_point(buffer);
+                    let annotation_range = outline_item
+                        .annotation_range
+                        .as_ref()
+                        .map(|range| range.to_point(buffer));
                     let body_range = outline_item
                         .body_range
                         .as_ref()
@@ -577,23 +610,28 @@ impl EditOperation {
 
                     match kind {
                         EditOperationKind::PrependChild { .. } => {
-                            let position = buffer.anchor_after(body_range.start);
-                            position..position
+                            let anchor = buffer.anchor_after(body_range.start);
+                            anchor..anchor
                         }
                         EditOperationKind::AppendChild { .. } => {
-                            let position = buffer.anchor_before(body_range.end);
-                            position..position
+                            let anchor = buffer.anchor_before(body_range.end);
+                            anchor..anchor
                         }
                         EditOperationKind::InsertSiblingBefore { .. } => {
-                            let position = buffer.anchor_before(symbol_range.start);
-                            position..position
+                            let anchor = buffer.anchor_before(
+                                annotation_range.map_or(symbol_range.start, |annotation_range| {
+                                    annotation_range.start
+                                }),
+                            );
+                            anchor..anchor
                         }
                         EditOperationKind::InsertSiblingAfter { .. } => {
-                            let position = buffer.anchor_after(symbol_range.end);
-                            position..position
+                            let anchor = buffer.anchor_after(symbol_range.end);
+                            anchor..anchor
                         }
                         EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
-                            let start = Point::new(symbol_range.start.row, 0);
+                            let start = annotation_range.map_or(symbol_range.start, |range| range.start);
+                            let start = Point::new(start.row, 0);
                             let end = Point::new(
                                 symbol_range.end.row,
                                 buffer.line_len(symbol_range.end.row),
@@ -1324,7 +1362,7 @@ impl Context {
                                 ix,
                                 EditStep {
                                     source_range,
-                                    operations: None,
+                                    state: None,
                                 },
                             ));
                         }
@@ -1340,7 +1378,7 @@ impl Context {
         // Insert new steps and generate their corresponding tasks
         for (index, mut step) in new_edit_steps.into_iter().rev() {
             let task = self.generate_edit_step_operations(&step, cx);
-            step.operations = Some(EditStepOperations::Pending(task));
+            step.state = Some(EditStepState::Pending(task));
             self.edit_steps.insert(index, step);
         }
 
@@ -1353,23 +1391,6 @@ impl Context {
         edit_step: &EditStep,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<()>> {
-        #[derive(Debug, Deserialize, JsonSchema)]
-        struct EditTool {
-            /// A sequence of operations to apply to the codebase.
-            /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-            operations: Vec<EditOperation>,
-        }
-
-        impl LanguageModelTool for EditTool {
-            fn name() -> String {
-                "edit".into()
-            }
-
-            fn description() -> String {
-                "suggest edits to one or more locations in the codebase".into()
-            }
-        }
-
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return Task::ready(Err(anyhow!("no active model")).log_err());
         };
@@ -1386,7 +1407,7 @@ impl Context {
             async move {
                 let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
 
-                let mut prompt = prompt_store.operations_prompt();
+                let mut prompt = prompt_store.step_resolution_prompt()?;
                 prompt.push_str(&step_text);
 
                 request.messages.push(LanguageModelRequestMessage {
@@ -1394,7 +1415,7 @@ impl Context {
                     content: prompt,
                 });
 
-                let tool_use = model.use_tool::<EditTool>(request, &cx).await?;
+                let resolution = model.use_tool::<EditStepResolution>(request, &cx).await?;
 
                 this.update(&mut cx, |this, cx| {
                     let step_index = this
@@ -1405,7 +1426,7 @@ impl Context {
                         })
                         .map_err(|_| anyhow!("edit step not found"))?;
                     if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                        edit_step.operations = Some(EditStepOperations::Ready(tool_use.operations));
+                        edit_step.state = Some(EditStepState::Resolved(resolution));
                         cx.emit(ContextEvent::EditStepsChanged);
                     }
                     anyhow::Ok(())
@@ -3402,7 +3423,7 @@ mod tests {
             self: Arc<Self>,
             _argument: Option<&str>,
             _workspace: WeakView<Workspace>,
-            _delegate: Arc<dyn LspAdapterDelegate>,
+            _delegate: Option<Arc<dyn LspAdapterDelegate>>,
             _cx: &mut WindowContext,
         ) -> Task<Result<SlashCommandOutput>> {
             Task::ready(Ok(SlashCommandOutput {
