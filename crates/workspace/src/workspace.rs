@@ -4024,8 +4024,6 @@ impl Workspace {
                 .project
                 .update(cx, |project, cx| project.serialize_breakpoints(cx));
 
-            println!("{breakpoint_lines:?}");
-
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));

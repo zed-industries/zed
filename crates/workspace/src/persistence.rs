@@ -526,7 +526,7 @@ impl WorkspaceDb {
                     map
                 }
                 Err(msg) => {
-                    log::error!("{msg}");
+                    log::error!("Breakpoints query failed with msg: {msg}");
                     Default::default()
                 }
             };
