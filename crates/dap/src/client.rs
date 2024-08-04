@@ -534,14 +534,14 @@ impl DebugAdapterClient {
 
     pub async fn set_breakpoints(
         &self,
-        path: PathBuf,
-        breakpoints: Option<Vec<SourceBreakpoint>>,
+        absolute_file_path: Arc<Path>,
+        breakpoints: Vec<SourceBreakpoint>,
     ) -> Result<SetBreakpointsResponse> {
         let adapter_data = self.config.request_args.clone().map(|c| c.args);
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
-                path: Some(String::from(path.to_string_lossy())),
+                path: Some(String::from(absolute_file_path.to_string_lossy())),
                 name: None,
                 source_reference: None,
                 presentation_hint: None,
@@ -550,7 +550,7 @@ impl DebugAdapterClient {
                 adapter_data,
                 checksums: None,
             },
-            breakpoints,
+            breakpoints: Some(breakpoints),
             source_modified: None,
             lines: None,
         })
@@ -612,4 +612,17 @@ impl Breakpoint {
 pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
+}
+
+impl SerializedBreakpoint {
+    pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: self.position as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
 }

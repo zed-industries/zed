@@ -1188,10 +1188,14 @@ impl Project {
                 continue;
             };
 
-            all_breakpoints.entry(path.clone()).or_default().extend(
+            let Some(relative_path) = maybe!({ Some(buffer.project_path(cx)?.path) }) else {
+                continue;
+            };
+
+            all_breakpoints.entry(path).or_default().extend(
                 breakpoints
                     .into_iter()
-                    .map(|bp| bp.to_serialized(buffer, path.clone())),
+                    .map(|bp| bp.to_serialized(buffer, relative_path.clone())),
             );
         }
 
@@ -1220,43 +1224,18 @@ impl Project {
         client: Arc<DebugAdapterClient>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        println!("All breakpoints {:?}", self.all_breakpoints(true, cx));
-        println!("All breakpoints {:?}", self.all_breakpoints(false, cx));
-
         cx.spawn(|project, mut cx| async move {
-            // TODO: Send breakpoints from unopened files as well
             let task = project.update(&mut cx, |project, cx| {
                 let mut tasks = Vec::new();
 
-                for (buffer_id, breakpoints) in project.open_breakpoints.read().iter() {
-                    let Some(buffer) = maybe!({
-                        let buffer = project.buffer_for_id(*buffer_id, cx)?;
-                        Some(buffer.read(cx))
-                    }) else {
-                        continue;
-                    };
+                for (abs_path, serialized_breakpoints) in project.all_breakpoints(true, cx) {
+                    let source_breakpoints = serialized_breakpoints
+                        .iter()
+                        .map(|bp| bp.to_source_breakpoint())
+                        .collect::<Vec<_>>();
 
-                    let res = maybe!({
-                        let project_path = buffer.project_path(cx)?;
-                        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-                        let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
-
-                        Some((path, breakpoints))
-                    });
-
-                    if let Some((path, breakpoints)) = res {
-                        tasks.push(
-                            client.set_breakpoints(
-                                path.clone(),
-                                Some(
-                                    breakpoints
-                                        .iter()
-                                        .map(|b| b.source_for_snapshot(&buffer.snapshot()))
-                                        .collect::<Vec<_>>(),
-                                ),
-                            ),
-                        );
-                    }
+                    tasks
+                        .push(client.set_breakpoints(abs_path.clone(), source_breakpoints.clone()));
                 }
 
                 try_join_all(tasks)
@@ -1399,8 +1378,8 @@ impl Project {
                     .or_default()
                     .insert(Breakpoint {
                         position: snapshot
-                            .anchor_at(Point::new(serialized_bp.position, 0), Bias::Left),
-                    });
+                            .anchor_at(Point::new(serialized_bp.position - 1, 0), Bias::Left),
+                    }); // Serialized breakpoints start at index one so we shift when converting to open breakpoints
             }
         }
     }
@@ -1420,9 +1399,20 @@ impl Project {
             }
         }
 
-        // TODO Anth: Add breakpoints that are in closed buffers
+        for (project_path, serialized_bp) in self.closed_breakpoints.read().iter() {
+            let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
+                continue;
+            };
+
+            let worktree_path = worktree.read(cx).abs_path();
+
+            result
+                .entry(worktree_path)
+                .or_default()
+                .extend(serialized_bp.iter().map(|bp| bp.clone()));
+        }
+
         // TODO Anth: Add documentation
-        // TODO Anth: use SerializeBreakpoint Type as value in result hashmap
         result
     }
 
@@ -1447,7 +1437,7 @@ impl Project {
 
         let buffer = buffer.read(cx);
 
-        let file_path = maybe!({
+        let abs_file_path = maybe!({
             let project_path = buffer.project_path(cx)?;
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
@@ -1455,30 +1445,30 @@ impl Project {
             Some(path)
         });
 
-        let Some(file_path) = file_path else {
+        let Some(file_path) = abs_file_path else {
             return;
         };
 
         let read_guard = self.open_breakpoints.read();
 
-        let breakpoints_locations = read_guard.get(&buffer_id);
+        let breakpoints = read_guard.get(&buffer_id);
         let snapshot = buffer.snapshot();
 
-        if let Some(breakpoints_locations) = breakpoints_locations {
-            let breakpoints_locations = Some(
-                breakpoints_locations
+        if let Some(breakpoints) = breakpoints {
+            // TODO: Send correct value for sourceModified
+
+            for client in clients {
+                let file_path = file_path.clone();
+                let source_breakpoints = breakpoints
                     .iter()
                     .map(|bp| bp.source_for_snapshot(&snapshot))
-                    .collect(),
-            );
+                    .collect::<Vec<_>>();
 
-            // TODO: Send correct value for sourceModified
-            for client in clients {
-                let bps = breakpoints_locations.clone();
-                let file_path = file_path.clone();
                 cx.background_executor()
                     .spawn(async move {
-                        client.set_breakpoints(file_path, bps).await?;
+                        client
+                            .set_breakpoints(Arc::from(file_path), source_breakpoints)
+                            .await?;
 
                         anyhow::Ok(())
                     })
@@ -2339,8 +2329,10 @@ impl Project {
                     let buffer_breakpoints = write_guard.entry(buffer_id).or_default();
 
                     for serialized_bp in serialized_breakpoints {
-                        let position =
-                            snapshot.anchor_at(Point::new(serialized_bp.position, 0), Bias::Left);
+                        // serialized breakpoints are start at index one and need to converted
+                        // to index zero in order to display/work properly with open breakpoints
+                        let position = snapshot
+                            .anchor_at(Point::new(serialized_bp.position - 1, 0), Bias::Left);
 
                         buffer_breakpoints.insert(Breakpoint { position });
                     }

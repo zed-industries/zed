@@ -265,7 +265,7 @@ define_connection! {
     // CREATE TABLE breakpoints(
     //      workspace_id: usize Foreign Key, // References workspace table
     //      worktree_path: PathBuf, // Path of worktree that this breakpoint belong's too. Used to determine the absolute path of a breakpoint
-    //      local_path: PathBuf, // References the file that the breakpoints belong too TODO Anth: rename to rel_path
+    //      relative_path: PathBuf, // References the file that the breakpoints belong too
     //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
     // )
     pub static ref DB: WorkspaceDb<()> =
