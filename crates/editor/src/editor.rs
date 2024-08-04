@@ -572,8 +572,6 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     /// All the breakpoints that are contained within open buffers in the editor
     opened_breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
-    /// All breakpoints that belong to this project but are in closed files
-    closed_breakpoints: Option<Arc<RwLock<BTreeMap<Arc<Path>, Vec<u64>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1791,15 +1789,10 @@ impl Editor {
             None
         };
 
-        let (opened_breakpoints, closed_breakpoints) = if let Some(project) = project.as_ref() {
-            project.update(cx, |project, _cx| {
-                (
-                    Some(project.open_breakpoints.clone()),
-                    Some(project.closed_breakpoints.clone()),
-                )
-            })
+        let opened_breakpoints = if let Some(project) = project.as_ref() {
+            project.update(cx, |project, _cx| Some(project.open_breakpoints.clone()))
         } else {
-            (None, None)
+            None
         };
 
         let mut this = Self {
@@ -1905,7 +1898,6 @@ impl Editor {
             file_header_size,
             tasks: Default::default(),
             opened_breakpoints,
-            closed_breakpoints,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),

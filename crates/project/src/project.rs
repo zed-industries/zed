@@ -186,6 +186,7 @@ pub struct Project {
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     pub open_breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
+    /// All breakpoints that belong to this project but are in closed files
     pub closed_breakpoints: Arc<RwLock<BTreeMap<Arc<Path>, Vec<u64>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
