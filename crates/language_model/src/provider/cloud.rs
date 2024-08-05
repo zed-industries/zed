@@ -309,7 +309,7 @@ impl LanguageModel for CloudLanguageModel {
 
                         let response = http_client
                             .post_json(
-                                http_client.build_zed_api_url("/completion", &[])?.as_ref(),
+                                http_client.build_zed_llm_url("/completion", &[])?.as_ref(),
                                 serde_json::to_string(&PerformCompletionParams {
                                     provider_request: RawValue::from_string(request)?,
                                 })?
