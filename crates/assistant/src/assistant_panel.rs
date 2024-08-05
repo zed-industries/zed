@@ -146,6 +146,7 @@ pub struct AssistantPanel {
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
+    client_status: Option<client::Status>,
     watch_client_status: Option<Task<()>>,
     show_zed_ai_notice: bool,
 }
@@ -435,6 +436,7 @@ impl AssistantPanel {
             model_summary_editor,
             authenticate_provider_task: None,
             configuration_subscription: None,
+            client_status: None,
             watch_client_status: Some(watch_client_status),
             show_zed_ai_notice: false,
         };
@@ -446,18 +448,18 @@ impl AssistantPanel {
         let mut status_rx = client.status();
 
         cx.spawn(|this, mut cx| async move {
-            let mut old_status = None;
             while let Some(status) = status_rx.next().await {
-                if old_status.is_none()
-                    || old_status.map_or(false, |old_status| old_status != status)
-                {
-                    this.update(&mut cx, |this, cx| {
-                        this.handle_client_status_change(status, cx)
-                    })
-                    .log_err();
-
-                    old_status = Some(status);
-                }
+                this.update(&mut cx, |this, cx| {
+                    if this.client_status.is_none()
+                        || this
+                            .client_status
+                            .map_or(false, |old_status| old_status != status)
+                    {
+                        this.update_zed_ai_notice_visibility(status, cx);
+                    }
+                    this.client_status = Some(status);
+                })
+                .log_err();
             }
             this.update(&mut cx, |this, _cx| this.watch_client_status = None)
                 .log_err();
@@ -554,7 +556,11 @@ impl AssistantPanel {
         }
     }
 
-    fn handle_client_status_change(&mut self, client_status: Status, cx: &mut ViewContext<Self>) {
+    fn update_zed_ai_notice_visibility(
+        &mut self,
+        client_status: Status,
+        cx: &mut ViewContext<Self>,
+    ) {
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
 
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
@@ -641,6 +647,10 @@ impl AssistantPanel {
         {
             self.authenticate_provider_task = None;
             self.ensure_authenticated(cx);
+        }
+
+        if let Some(status) = self.client_status {
+            self.update_zed_ai_notice_visibility(status, cx);
         }
     }
 
