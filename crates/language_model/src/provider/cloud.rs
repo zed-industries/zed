@@ -5,13 +5,17 @@ use crate::{
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::{Client, UserStore};
+use client::{Client, PerformCompletionParams, UserStore};
 use collections::BTreeMap;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt};
+use futures::{future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task};
+use http_client::HttpClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
+use smol::io::BufReader;
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -208,6 +212,16 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 }
 
+struct LlmServiceFeatureFlag;
+
+impl FeatureFlag for LlmServiceFeatureFlag {
+    const NAME: &'static str = "llm-service";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct CloudLanguageModel {
     id: LanguageModelId,
     model: CloudModel,
@@ -279,25 +293,63 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _: &AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let client = self.client.clone();
                 let request = request.into_anthropic(model.id().into());
-                let future = self.request_limiter.stream(async move {
-                    let request = serde_json::to_string(&request)?;
-                    let stream = client
-                        .request_stream(proto::StreamCompleteWithLanguageModel {
-                            provider: proto::LanguageModelProvider::Anthropic as i32,
-                            request,
-                        })
-                        .await?;
-                    Ok(anthropic::extract_text_from_events(
-                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    ))
-                });
-                async move { Ok(future.await?.boxed()) }.boxed()
+
+                if cx
+                    .update(|cx| cx.has_flag::<LlmServiceFeatureFlag>())
+                    .unwrap_or(false)
+                {
+                    let http_client = self.client.http_client();
+                    let future = self.request_limiter.stream(async move {
+                        let request = serde_json::to_string(&request)?;
+
+                        let response = http_client
+                            .post_json(
+                                http_client.build_zed_api_url("/completion", &[])?.as_ref(),
+                                serde_json::to_string(&PerformCompletionParams {
+                                    provider_request: RawValue::from_string(request)?,
+                                })?
+                                .into(),
+                            )
+                            .await?;
+                        let body = BufReader::new(response.into_body());
+
+                        let stream =
+                            futures::stream::try_unfold(body, move |mut body| async move {
+                                let mut buffer = String::new();
+                                match body.read_line(&mut buffer).await {
+                                    Ok(0) => Ok(None),
+                                    Ok(_) => {
+                                        let event: anthropic::Event =
+                                            serde_json::from_str(&buffer)?;
+                                        Ok(Some((event, body)))
+                                    }
+                                    Err(e) => Err(e.into()),
+                                }
+                            });
+
+                        Ok(anthropic::extract_text_from_events(stream))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                } else {
+                    let client = self.client.clone();
+                    let future = self.request_limiter.stream(async move {
+                        let request = serde_json::to_string(&request)?;
+                        let stream = client
+                            .request_stream(proto::StreamCompleteWithLanguageModel {
+                                provider: proto::LanguageModelProvider::Anthropic as i32,
+                                request,
+                            })
+                            .await?
+                            .map(|event| Ok(serde_json::from_str(&event?.event)?));
+                        Ok(anthropic::extract_text_from_events(stream))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                }
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();

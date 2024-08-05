@@ -83,7 +83,9 @@ async fn main() -> Result<()> {
             if mode.is_llm() {
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
 
-                app = app.layer(Extension(state.clone()));
+                app = app
+                    .merge(collab::llm::routes())
+                    .layer(Extension(state.clone()));
             }
 
             if mode.is_collab() || mode.is_api() {
