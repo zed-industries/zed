@@ -120,7 +120,7 @@ async fn create_billing_subscription(
         .zip(app.config.stripe_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -201,7 +201,7 @@ async fn manage_billing_subscription(
 
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?

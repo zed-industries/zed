@@ -126,7 +126,7 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
-        UpdateUserPlan update_user_plan = 234; // current max
+        UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
 
         OnTypeFormatting on_type_formatting = 105;
@@ -270,6 +270,9 @@ message Envelope {
 
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
+
+        GetLlmToken get_llm_token = 235;
+        GetLlmTokenResponse get_llm_token_response = 236; // current max
     }
 
     reserved 158 to 161;
@@ -2423,6 +2426,12 @@ message SynchronizeContexts {
 
 message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
+}
+
+message GetLlmToken {}
+
+message GetLlmTokenResponse {
+    string token = 1;
 }
 
 // Remote FS

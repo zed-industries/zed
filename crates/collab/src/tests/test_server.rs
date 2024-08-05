@@ -651,6 +651,7 @@ impl TestServer {
                 live_kit_server: None,
                 live_kit_key: None,
                 live_kit_secret: None,
+                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),

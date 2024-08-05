@@ -1,15 +1,21 @@
-use crate::{executor::Executor, Config, Result};
+mod token;
+
+use crate::{executor::Executor, Config, Error, Result};
 use anyhow::Context as _;
 use axum::{
     body::Body,
+    http::{self, HeaderName, HeaderValue, Request, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
     Extension, Json, Router,
 };
 use futures::StreamExt as _;
 use http_client::IsahcHttpClient;
-use rpc::PerformCompletionParams;
+use rpc::{PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use std::sync::Arc;
+
+pub use token::*;
 
 pub struct LlmState {
     pub config: Config,
@@ -36,11 +42,56 @@ impl LlmState {
 }
 
 pub fn routes() -> Router<(), Body> {
-    Router::new().route("/completion", post(perform_completion))
+    Router::new()
+        .route("/completion", post(perform_completion))
+        .layer(middleware::from_fn(validate_api_token))
+}
+
+async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let token = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .ok_or_else(|| {
+            Error::http(
+                StatusCode::BAD_REQUEST,
+                "missing authorization header".to_string(),
+            )
+        })?
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| {
+            Error::http(
+                StatusCode::BAD_REQUEST,
+                "invalid authorization header".to_string(),
+            )
+        })?;
+
+    let state = req.extensions().get::<Arc<LlmState>>().unwrap();
+    match LlmTokenClaims::validate(&token, &state.config) {
+        Ok(claims) => {
+            req.extensions_mut().insert(claims);
+            Ok::<_, Error>(next.run(req).await.into_response())
+        }
+        Err(ValidateLlmTokenError::Expired) => Err(Error::Http(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized".to_string(),
+            [(
+                HeaderName::from_static(EXPIRED_LLM_TOKEN_HEADER_NAME),
+                HeaderValue::from_static("true"),
+            )]
+            .into_iter()
+            .collect(),
+        )),
+        Err(_err) => Err(Error::http(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized".to_string(),
+        )),
+    }
 }
 
 async fn perform_completion(
     Extension(state): Extension<Arc<LlmState>>,
+    Extension(_claims): Extension<LlmTokenClaims>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
     let api_key = state
