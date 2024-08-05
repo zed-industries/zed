@@ -2071,6 +2071,7 @@ enum LanguageModelRole {
 message CompleteWithLanguageModel {
     LanguageModelProvider provider = 1;
     string request = 2;
+    string model = 3;
 }
 
 message CompleteWithLanguageModelResponse {
@@ -2080,6 +2081,7 @@ message CompleteWithLanguageModelResponse {
 message StreamCompleteWithLanguageModel {
     LanguageModelProvider provider = 1;
     string request = 2;
+    string model = 3;
 }
 
 message StreamCompleteWithLanguageModelResponse {
