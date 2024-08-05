@@ -7,7 +7,9 @@ use gpui::{
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::{stream_completion, FunctionDefinition, ResponseStreamEvent, ToolDefinition};
+use open_ai::{
+    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -293,19 +295,26 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
         let mut request = request.into_open_ai(self.model.id().into());
-        request.tool_choice = Some(tool_name.clone());
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: None,
-            },
-        }];
-        dbg!(&request);
+        let mut function = FunctionDefinition {
+            name: tool_name.clone(),
+            description: None,
+            parameters: None,
+        };
+        let func = ToolDefinition::Function {
+            function: function.clone(),
+        };
+        request.tool_choice = Some(ToolChoice::Other(func.clone()));
+        // Fill in description and params separately, as they're not needed for tool_choice field.
+        function.description = Some(tool_description);
+        function.parameters = Some(schema);
+        request.tools = vec![ToolDefinition::Function { function }];
         let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
                 let mut response = response.await?;
+
+                // Call arguments are gonna be streamed in over multiple chunks.
+                let mut load_state = None;
                 while let Some(Ok(part)) = response.next().await {
                     for choice in part.choices {
                         let Some(tool_calls) = choice.delta.tool_calls else {
@@ -313,21 +322,26 @@ impl LanguageModel for OpenAiLanguageModel {
                         };
 
                         for call in tool_calls {
-                            if let Some(call) = call.function {
-                                if let Some(arguments) = call
-                                    .arguments
-                                    .filter(|_| call.name.as_deref() == Some(tool_name.as_str()))
+                            if let Some(func) = call.function {
+                                if func.name.as_deref() == Some(tool_name.as_str()) {
+                                    load_state = Some((String::default(), call.index));
+                                }
+                                if let Some((arguments, (output, index))) =
+                                    func.arguments.zip(load_state.as_mut())
                                 {
-                                    dbg!(&arguments);
-                                    return Ok(serde_json::from_str::<serde_json::Value>(
-                                        &arguments,
-                                    )?);
+                                    if call.index == *index {
+                                        output.push_str(&arguments);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                bail!("tool not used");
+                if let Some((arguments, _)) = load_state {
+                    return Ok(serde_json::from_str(&arguments)?);
+                } else {
+                    bail!("tool not used");
+                }
             })
             .boxed()
     }
