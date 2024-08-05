@@ -998,9 +998,13 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
-            dev_server_id=field::Empty
+            dev_server_id=field::Empty,
+            geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(country_code) = geoip_country_code.as_ref() {
+            span.record("geoip_country_code", country_code);
+        }
 
         let mut teardown = self.teardown.subscribe();
         async move {
@@ -1014,9 +1018,7 @@ impl Server {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
-            tracing::Span::current()
-                .record("connection_id", format!("{}", connection_id))
-                .record("geoip_country_code", geoip_country_code.clone());
+            tracing::Span::current().record("connection_id", format!("{}", connection_id));
 
             tracing::info!("connection opened");
 
