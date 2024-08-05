@@ -3955,8 +3955,9 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
-        cx.read_from_clipboard().map(|item| item.text().to_owned()),
-        Some("fox jumps over\n".to_owned())
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().map(str::to_string)),
+        Some("fox jumps over\n".to_string())
     );
 
     // Paste with three selections, noticing how the copied full-line selection is inserted
