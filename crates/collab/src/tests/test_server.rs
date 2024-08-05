@@ -244,6 +244,7 @@ impl TestServer {
                                 client_name,
                                 Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
@@ -377,6 +378,7 @@ impl TestServer {
                                 "dev-server".to_string(),
                                 Principal::DevServer(dev_server),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
