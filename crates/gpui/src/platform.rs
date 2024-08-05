@@ -22,19 +22,23 @@ mod windows;
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
     DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
-    Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
-    DEFAULT_WINDOW_SIZE,
+    ImageData, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, SvgSize, Task, TaskLabel,
+    WindowContext, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
+use image::codecs::gif::GifDecoder;
+use image::{AnimationDecoder as _, Frame};
 use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
+use std::io::Cursor;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -1016,6 +1020,85 @@ pub enum ImageFormat {
     Bmp,
     /// .tif or .tiff
     Tiff,
+}
+
+pub struct WasSvg;
+
+impl TryFrom<ImageFormat> for image::ImageFormat {
+    type Error = WasSvg;
+
+    fn try_from(value: ImageFormat) -> std::result::Result<Self, Self::Error> {
+        match value {
+            ImageFormat::Png => Ok(image::ImageFormat::Png),
+            ImageFormat::Jpeg => Ok(image::ImageFormat::Jpeg),
+            ImageFormat::Webp => Ok(image::ImageFormat::WebP),
+            ImageFormat::Gif => Ok(image::ImageFormat::Gif),
+            ImageFormat::Svg => Err(WasSvg),
+            ImageFormat::Bmp => Ok(image::ImageFormat::Bmp),
+            ImageFormat::Tiff => Ok(image::ImageFormat::Tiff),
+        }
+    }
+}
+
+pub struct ClipboardImage {
+    /// The image format the bytes represent (e.g. PNG)
+    format: ImageFormat,
+    /// The raw image bytes
+    bytes: Vec<u8>,
+}
+
+impl ClipboardImage {
+    pub fn to_image_data(&self, cx: &WindowContext) -> Result<ImageData> {
+        fn frames_for_image(
+            bytes: &[u8],
+            format: image::ImageFormat,
+        ) -> Result<SmallVec<[Frame; 1]>> {
+            let mut data = image::load_from_memory_with_format(bytes, format)?.into_rgba8();
+
+            // Convert from RGBA to BGRA.
+            for pixel in data.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+
+            Ok(SmallVec::from_elem(Frame::new(data), 1))
+        }
+
+        let frames = match self.format {
+            ImageFormat::Gif => {
+                let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
+                let mut frames = SmallVec::new();
+
+                for frame in decoder.into_frames() {
+                    let mut frame = frame?;
+                    // Convert from RGBA to BGRA.
+                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                        pixel.swap(0, 2);
+                    }
+                    frames.push(frame);
+                }
+
+                frames
+            }
+            ImageFormat::Png => frames_for_image(&self.bytes, image::ImageFormat::Png)?,
+            ImageFormat::Jpeg => frames_for_image(&self.bytes, image::ImageFormat::Jpeg)?,
+            ImageFormat::Webp => frames_for_image(&self.bytes, image::ImageFormat::WebP)?,
+            ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
+            ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
+            ImageFormat::Svg => {
+                let pixmap = cx
+                    .svg_renderer()
+                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(cx.scale_factor()))?;
+
+                let buffer =
+                    image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
+                        .unwrap();
+
+                SmallVec::from_elem(Frame::new(buffer), 1)
+            }
+        };
+
+        Ok(ImageData::new(frames))
+    }
 }
 
 /// A clipboard item that should be copied to the clipboard
