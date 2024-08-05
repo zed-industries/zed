@@ -435,7 +435,7 @@ impl Render for ConfigurationView {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
         const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
-        let is_connected = self.state.read(cx).is_signed_out();
+        let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
