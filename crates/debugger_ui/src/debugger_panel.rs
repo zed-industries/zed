@@ -21,11 +21,11 @@ use std::{collections::HashMap, sync::Arc};
 use task::DebugRequestType;
 use ui::prelude::*;
 use util::{merge_json_value_into, ResultExt};
-use workspace::Pane;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
+use workspace::{pane, Pane};
 
 enum DebugCurrentRowHighlight {}
 
@@ -67,44 +67,49 @@ impl DebugPanel {
 
             let project = workspace.project().clone();
 
-            let _subscriptions = vec![cx.subscribe(&project, {
-                move |this: &mut Self, _, event, cx| match event {
-                    project::Event::DebugClientEvent { payload, client_id } => {
-                        let client = this.debug_client_by_id(*client_id, cx);
+            let _subscriptions = vec![
+                cx.subscribe(&pane, Self::handle_pane_event),
+                cx.subscribe(&project, {
+                    move |this: &mut Self, _, event, cx| match event {
+                        project::Event::DebugClientEvent { payload, client_id } => {
+                            let client = this.debug_client_by_id(*client_id, cx);
 
-                        match payload {
-                            Payload::Event(event) => {
-                                Self::handle_debug_client_events(this, client, event, cx);
-                            }
-                            Payload::Request(request) => {
-                                if StartDebugging::COMMAND == request.command {
-                                    Self::handle_start_debugging_request(this, client, request, cx)
+                            match payload {
+                                Payload::Event(event) => {
+                                    Self::handle_debug_client_events(this, client, event, cx);
+                                }
+                                Payload::Request(request) => {
+                                    if StartDebugging::COMMAND == request.command {
+                                        Self::handle_start_debugging_request(
+                                            this, client, request, cx,
+                                        )
                                         .log_err();
+                                    }
                                 }
+                                _ => unreachable!(),
                             }
-                            _ => unreachable!(),
                         }
-                    }
-                    project::Event::DebugClientStarted(client_id) => {
-                        let client = this.debug_client_by_id(*client_id, cx);
-                        cx.spawn(|_, _| async move {
-                            client.initialize().await?;
+                        project::Event::DebugClientStarted(client_id) => {
+                            let client = this.debug_client_by_id(*client_id, cx);
+                            cx.spawn(|_, _| async move {
+                                client.initialize().await?;
 
-                            // send correct request based on adapter config
-                            match client.config().request {
-                                DebugRequestType::Launch => {
-                                    client.launch(client.request_args()).await
+                                // send correct request based on adapter config
+                                match client.config().request {
+                                    DebugRequestType::Launch => {
+                                        client.launch(client.request_args()).await
+                                    }
+                                    DebugRequestType::Attach => {
+                                        client.attach(client.request_args()).await
+                                    }
                                 }
-                                DebugRequestType::Attach => {
-                                    client.attach(client.request_args()).await
-                                }
-                            }
-                        })
-                        .detach_and_log_err(cx);
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            })];
+                }),
+            ];
 
             Self {
                 pane,
@@ -138,6 +143,26 @@ impl DebugPanel {
                     .unwrap()
             })
             .unwrap()
+    }
+
+    fn handle_pane_event(
+        &mut self,
+        _: View<Pane>,
+        event: &pane::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let pane::Event::RemovedItem { item } = event {
+            let thread_panel = item.downcast::<DebugPanelItem>().unwrap();
+
+            thread_panel.update(cx, |pane, cx| {
+                let thread_id = pane.thread_id();
+                let client = pane.client().clone();
+                cx.spawn(
+                    |_, _| async move { client.terminate_threads(Some(vec![thread_id; 1])).await },
+                )
+                .detach_and_log_err(cx);
+            });
+        };
     }
 
     fn handle_start_debugging_request(
