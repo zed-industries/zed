@@ -169,6 +169,7 @@ pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
+    RemoveItem { idx: usize },
     RemovedItem { item: Box<dyn ItemHandle> },
     Split(SplitDirection),
     ChangeItemTitle,
@@ -189,6 +190,7 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove => f.write_str("Remove"),
+            Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item } => f
                 .debug_struct("RemovedItem")
                 .field("item", &item.item_id())

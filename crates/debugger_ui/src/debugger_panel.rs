@@ -68,6 +68,7 @@ impl DebugPanel {
             let project = workspace.project().clone();
 
             let _subscriptions = vec![
+                cx.observe(&pane, |_, _, cx| cx.notify()),
                 cx.subscribe(&pane, Self::handle_pane_event),
                 cx.subscribe(&project, {
                     move |this: &mut Self, _, event, cx| match event {

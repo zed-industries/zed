@@ -2904,6 +2904,7 @@ impl Workspace {
                 }
                 self.update_window_edited(cx);
             }
+            pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
