@@ -22,7 +22,6 @@ use smol::{
 use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
-use util::ResultExt;
 
 use crate::{LanguageModelAvailability, LanguageModelProvider};
 

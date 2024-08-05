@@ -8,9 +8,9 @@ use ollama::{
 };
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
-use std::{future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
-use util::{maybe, ResultExt};
+use util::ResultExt;
 
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
