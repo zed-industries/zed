@@ -542,7 +542,17 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .children(match plan {
+                                            None | Some(proto::Plan::Free) => None,
+                                            Some(proto::Plan::ZedPro) => {
+                                                Some(Label::new("Pro").size(LabelSize::Small))
+                                            }
+                                        })
+                                        .child(Avatar::new(user.avatar_uri.clone())),
+                                )
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)
