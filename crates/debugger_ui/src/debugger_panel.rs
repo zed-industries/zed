@@ -5,9 +5,9 @@ use dap::requests::{Disconnect, Request, Scopes, StackTrace, StartDebugging, Var
 use dap::transport::Payload;
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, Scope, ScopesArguments,
-    StackFrame, StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent, TerminatedEvent,
-    ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
+    Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, OutputEvent, Scope,
+    ScopesArguments, StackFrame, StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent,
+    TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -29,10 +29,10 @@ use workspace::{pane, Pane};
 
 enum DebugCurrentRowHighlight {}
 
-#[derive(Debug)]
 pub enum DebugPanelEvent {
     Stopped((DebugAdapterClientId, StoppedEvent)),
     Thread((DebugAdapterClientId, ThreadEvent)),
+    Output((DebugAdapterClientId, OutputEvent)),
 }
 
 actions!(debug_panel, [ToggleFocus]);
@@ -212,7 +212,7 @@ impl DebugPanel {
             Events::Exited(event) => Self::handle_exited_event(client, event, cx),
             Events::Terminated(event) => Self::handle_terminated_event(this, client, event, cx),
             Events::Thread(event) => Self::handle_thread_event(client, event, cx),
-            Events::Output(_) => {}
+            Events::Output(event) => Self::handle_output_event(client, event, cx),
             Events::Breakpoint(_) => {}
             Events::Module(_) => {}
             Events::LoadedSource(_) => {}
@@ -503,6 +503,8 @@ impl DebugPanel {
 
                     cx.emit(DebugPanelEvent::Stopped((client_id, event)));
 
+                    cx.notify();
+
                     if let Some(item) = this.pane.read(cx).active_item() {
                         if let Some(pane) = item.downcast::<DebugPanelItem>() {
                             let pane = pane.read(cx);
@@ -545,6 +547,8 @@ impl DebugPanel {
         } else {
             client.update_thread_state_status(thread_id, ThreadStatus::Ended);
 
+            cx.notify();
+
             // TODO: we want to figure out for witch clients/threads we should remove the highlights
             cx.spawn({
                 let client = client.clone();
@@ -567,12 +571,14 @@ impl DebugPanel {
         _: &ExitedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        cx.spawn(|_, _| async move {
+        cx.spawn(|this, mut cx| async move {
             for thread_state in client.thread_states().values_mut() {
                 thread_state.status = ThreadStatus::Exited;
             }
+
+            this.update(&mut cx, |_, cx| cx.notify())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn handle_terminated_event(
@@ -607,6 +613,14 @@ impl DebugPanel {
             }
         })
         .detach_and_log_err(cx);
+    }
+
+    fn handle_output_event(
+        client: Arc<DebugAdapterClient>,
+        event: &OutputEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(DebugPanelEvent::Output((client.id(), event.clone())));
     }
 }
 
