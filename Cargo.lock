@@ -420,7 +420,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "similar",
  "smol",
  "telemetry_events",
  "terminal",
