@@ -478,6 +478,7 @@ impl PromptLibrary {
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
+            let is_built_in = prompt_id.is_built_in();
             self.pending_load = cx.spawn(|this, mut cx| async move {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
@@ -487,7 +488,7 @@ impl PromptLibrary {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
-                            editor.set_read_only(true);
+                            editor.set_read_only(is_built_in);
                             editor
                         });
                         let body_editor = cx.new_view(|cx| {
@@ -499,7 +500,7 @@ impl PromptLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, cx);
-                            editor.set_read_only(true);
+                            editor.set_read_only(is_built_in);
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
