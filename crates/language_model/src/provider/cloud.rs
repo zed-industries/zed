@@ -653,7 +653,6 @@ impl LanguageModel for CloudLanguageModel {
                 self.request_limiter
                     .run(async move {
                         let request = serde_json::to_string(&request)?;
-                        dbg!(&request);
                         let response = client
                             .request_stream(proto::StreamCompleteWithLanguageModel {
                                 provider: proto::LanguageModelProvider::OpenAi as i32,
