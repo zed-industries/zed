@@ -2344,6 +2344,42 @@ impl ContextEditor {
         cx.propagate();
     }
 
+    fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+        if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
+            self.editor.update(cx, |editor, cx| {
+                let mut anchors = Vec::new();
+                editor.transact(cx, |editor, cx| {
+                    let mut edits = Vec::new();
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    for selection in editor.selections.all::<usize>(cx) {
+                        let insert_newline = snapshot.chars_at(selection.end) != Some('\n');
+                        if selection.is_empty() {
+                            if insert_newline {
+                                edits.push((selection.start..selection.start, "\n"));
+                            }
+                        } else {
+                            let new_text = if insert_newline { "\n" } else { "" };
+                            edits.push((selection.start..selection.end, new_text));
+                        }
+                    }
+
+                    editor.edit(edits, cx);
+                });
+            });
+
+            // self.context.update(cx, |context, cx| {
+            //     for anchor in anchors {
+            //         context.insert_image(anchor, )
+
+            //     }
+            // })
+
+            // dbg!(format, bytes.len());
+        } else {
+            cx.propagate();
+        }
+    }
+
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
         self.context.update(cx, |context, cx| {
             let selections = self.editor.read(cx).selections.disjoint_anchors();
@@ -2459,6 +2495,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::cancel_last_assist))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
+            .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
             .on_action(cx.listener(ContextEditor::assist))
