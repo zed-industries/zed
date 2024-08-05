@@ -18,7 +18,7 @@ use crate::{
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
-use client::proto;
+use client::{proto, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -147,7 +147,7 @@ pub struct AssistantPanel {
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
     watch_client_status: Option<Task<()>>,
-    nudge_sign_in: bool,
+    show_zed_ai_notice: bool,
 }
 
 #[derive(Clone)]
@@ -419,37 +419,7 @@ impl AssistantPanel {
             ),
         ];
 
-        let mut status_rx = workspace.client().clone().status();
-
-        let watch_client_status = cx.spawn(|this, mut cx| async move {
-            let mut old_status = None;
-            while let Some(status) = status_rx.next().await {
-                if old_status.is_none()
-                    || old_status.map_or(false, |old_status| old_status != status)
-                {
-                    if status.is_signed_out() {
-                        this.update(&mut cx, |this, cx| {
-                            let active_provider =
-                                LanguageModelRegistry::read_global(cx).active_provider();
-
-                            // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
-                            // the provider, we want to show a nudge to sign in.
-                            if active_provider
-                                .map_or(true, |provider| provider.id().0 == PROVIDER_ID)
-                            {
-                                println!("TODO: Nudge the user to sign in and use Zed AI");
-                                this.nudge_sign_in = true;
-                            }
-                        })
-                        .log_err();
-                    };
-
-                    old_status = Some(status);
-                }
-            }
-            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
-                .log_err();
-        });
+        let watch_client_status = Self::watch_client_status(workspace.client().clone(), cx);
 
         let mut this = Self {
             pane,
@@ -466,11 +436,32 @@ impl AssistantPanel {
             authenticate_provider_task: None,
             configuration_subscription: None,
             watch_client_status: Some(watch_client_status),
-            // TODO: This is unused!
-            nudge_sign_in: false,
+            show_zed_ai_notice: false,
         };
         this.new_context(cx);
         this
+    }
+
+    fn watch_client_status(client: Arc<Client>, cx: &mut ViewContext<Self>) -> Task<()> {
+        let mut status_rx = client.status();
+
+        cx.spawn(|this, mut cx| async move {
+            let mut old_status = None;
+            while let Some(status) = status_rx.next().await {
+                if old_status.is_none()
+                    || old_status.map_or(false, |old_status| old_status != status)
+                {
+                    this.update(&mut cx, |this, cx| {
+                        this.handle_client_status_change(status, cx)
+                    })
+                    .log_err();
+
+                    old_status = Some(status);
+                }
+            }
+            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
+                .log_err();
+        })
     }
 
     fn handle_pane_event(
@@ -561,6 +552,18 @@ impl AssistantPanel {
                 });
             }
         }
+    }
+
+    fn handle_client_status_change(&mut self, client_status: Status, cx: &mut ViewContext<Self>) {
+        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
+        // the provider, we want to show a nudge to sign in.
+        let show_zed_ai_notice = client_status.is_signed_out()
+            && active_provider.map_or(true, |provider| provider.id().0 == PROVIDER_ID);
+
+        self.show_zed_ai_notice = show_zed_ai_notice;
+        cx.notify();
     }
 
     fn handle_toolbar_event(
@@ -2314,6 +2317,69 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        let nudge = self
+            .assistant_panel
+            .upgrade()
+            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
+
+        if nudge.unwrap_or(false) {
+            Some(
+                v_flex()
+                    .elevation_3(cx)
+                    .p_4()
+                    .gap_2()
+                    .child(Label::new("Use Zed AI"))
+                    .child(
+                        div()
+                            .id("sign-in")
+                            .child(Label::new("Sign in to use Zed AI"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, cx| {
+                                let client = this
+                                    .workspace
+                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .log_err();
+
+                                if let Some(client) = client {
+                                    cx.spawn(|this, mut cx| async move {
+                                        client.authenticate_and_connect(true, &mut cx).await?;
+                                        this.update(&mut cx, |_, cx| cx.notify())
+                                    })
+                                    .detach_and_log_err(cx)
+                                }
+                            })),
+                    ),
+            )
+        } else if let Some(configuration_error) = configuration_error(cx) {
+            let label = match configuration_error {
+                ConfigurationError::NoProvider => "No provider configured",
+                ConfigurationError::ProviderNotAuthenticated => "Provider is not configured",
+            };
+            Some(
+                v_flex()
+                    .elevation_3(cx)
+                    .p_4()
+                    .gap_2()
+                    .child(Label::new(label))
+                    .child(
+                        div()
+                            .id("open-configuration")
+                            .child(Label::new("Open configuration"))
+                            .cursor_pointer()
+                            .on_click({
+                                let focus_handle = self.focus_handle(cx).clone();
+                                move |_event, cx| {
+                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                }
+                            }),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
         let button_text = match self.workflow_step_for_cursor(cx) {
@@ -2419,7 +2485,15 @@ impl Render for ContextEditor {
                             .bottom_0()
                             .p_4()
                             .justify_end()
-                            .child(self.render_send_button(cx)),
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .items_end()
+                                    .when_some(self.render_notice(cx), |this, notice| {
+                                        this.child(notice)
+                                    })
+                                    .child(self.render_send_button(cx)),
+                            ),
                     ),
             )
     }
@@ -3304,4 +3378,30 @@ fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> 
         }
     };
     Some(token_state)
+}
+
+enum ConfigurationError {
+    NoProvider,
+    ProviderNotAuthenticated,
+}
+
+fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
+    let provider = LanguageModelRegistry::read_global(cx).active_provider();
+    let is_authenticated = provider
+        .as_ref()
+        .map_or(false, |provider| provider.is_authenticated(cx));
+
+    if provider.is_some() && is_authenticated {
+        return None;
+    }
+
+    if provider.is_none() {
+        return Some(ConfigurationError::NoProvider);
+    }
+
+    if !is_authenticated {
+        return Some(ConfigurationError::ProviderNotAuthenticated);
+    }
+
+    None
 }
