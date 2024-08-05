@@ -2,7 +2,7 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{Client, UserStore};
@@ -14,6 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
+use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use crate::{LanguageModelAvailability, LanguageModelProvider};
@@ -133,28 +134,32 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Free/Trial/Pro
-        models.insert(
-            anthropic::Model::Claude3_5Sonnet.id().to_string(),
-            CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
-        );
-        // Pro
-        models.insert(
-            anthropic::Model::Claude3Haiku.id().to_string(),
-            CloudModel::Anthropic(anthropic::Model::Claude3Haiku),
-        );
-        // Pro
-        models.insert(
-            open_ai::Model::FourOmni.id().to_string(),
-            CloudModel::OpenAi(open_ai::Model::FourOmni),
-        );
-        // Pro
-        models.insert(
-            open_ai::Model::FourOmniMini.id().to_string(),
-            CloudModel::OpenAi(open_ai::Model::FourOmniMini),
-        );
+        let is_user = !cx.has_flag::<LanguageModels>();
+        if is_user {
+            models.insert(
+                anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
+            );
+        } else {
+            for model in anthropic::Model::iter() {
+                if !matches!(model, anthropic::Model::Custom { .. }) {
+                    models.insert(model.id().to_string(), CloudModel::Anthropic(model));
+                }
+            }
+            for model in open_ai::Model::iter() {
+                if !matches!(model, open_ai::Model::Custom { .. }) {
+                    models.insert(model.id().to_string(), CloudModel::OpenAi(model));
+                }
+            }
+            for model in google_ai::Model::iter() {
+                if !matches!(model, google_ai::Model::Custom { .. }) {
+                    models.insert(model.id().to_string(), CloudModel::Google(model));
+                }
+            }
+            for model in ZedModel::iter() {
+                models.insert(model.id().to_string(), CloudModel::Zed(model));
+            }
 
-        if cx.has_flag::<LanguageModels>() {
             // Override with available models from settings
             for model in &AllLanguageModelSettings::get_global(cx)
                 .zed_dot_dev
@@ -287,6 +292,7 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let model_id = self.model.id().to_string();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
@@ -296,6 +302,7 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Anthropic as i32,
+                            model: model_id,
                             request,
                         })
                         .await?;
@@ -313,6 +320,7 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::OpenAi as i32,
+                            model: model_id,
                             request,
                         })
                         .await?;
@@ -330,6 +338,7 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Google as i32,
+                            model: model_id,
                             request,
                         })
                         .await?;
@@ -348,6 +357,7 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Zed as i32,
+                            model: model_id,
                             request,
                         })
                         .await?;
@@ -371,6 +381,7 @@ impl LanguageModel for CloudLanguageModel {
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
+                let model_id = model.id().to_string();
                 let mut request = request.into_anthropic(model.tool_model_id().into());
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
@@ -387,6 +398,7 @@ impl LanguageModel for CloudLanguageModel {
                         let response = client
                             .request(proto::CompleteWithLanguageModel {
                                 provider: proto::LanguageModelProvider::Anthropic as i32,
+                                model: model_id,
                                 request,
                             })
                             .await?;
