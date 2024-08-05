@@ -3,6 +3,7 @@ pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
+pub mod llm;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
@@ -124,7 +125,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
@@ -173,6 +174,29 @@ impl Config {
             "staging" => "https://staging.zed.dev",
             _ => "https://zed.dev",
         }
+    }
+}
+
+/// The service mode that collab should run in.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ServiceMode {
+    Api,
+    Collab,
+    Llm,
+    All,
+}
+
+impl ServiceMode {
+    pub fn is_collab(&self) -> bool {
+        matches!(self, Self::Collab | Self::All)
+    }
+
+    pub fn is_api(&self) -> bool {
+        matches!(self, Self::Api | Self::All)
+    }
+
+    pub fn is_llm(&self) -> bool {
+        matches!(self, Self::Llm | Self::All)
     }
 }
 

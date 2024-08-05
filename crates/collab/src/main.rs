@@ -5,7 +5,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use collab::api::billing::poll_stripe_events_periodically;
+use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
     rpc::ResultExt, AppState, Config, RateLimiter, Result,
@@ -56,88 +56,99 @@ async fn main() -> Result<()> {
             collab::seed::seed(&config, &db, true).await?;
         }
         Some("serve") => {
-            let (is_api, is_collab) = if let Some(next) = args.next() {
-                (next == "api", next == "collab")
-            } else {
-                (true, true)
+            let mode = match args.next().as_deref() {
+                Some("collab") => ServiceMode::Collab,
+                Some("api") => ServiceMode::Api,
+                Some("llm") => ServiceMode::Llm,
+                Some("all") => ServiceMode::All,
+                _ => {
+                    return Err(anyhow!(
+                        "usage: collab <version | migrate | seed | serve <api|collab|llm|all>>"
+                    ))?;
+                }
             };
-            if !is_api && !is_collab {
-                Err(anyhow!(
-                    "usage: collab <version | migrate | seed | serve [api|collab]>"
-                ))?;
-            }
 
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
+            let mut app = Router::new()
+                .route("/", get(handle_root))
+                .route("/healthz", get(handle_liveness_probe))
+                .layer(Extension(mode));
 
-            run_migrations(&config).await?;
-
-            let state = AppState::new(config, Executor::Production).await?;
-
-            let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
+            let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = if is_collab {
-                let epoch = state
-                    .db
-                    .create_server(&state.config.zed_environment)
-                    .await?;
-                let rpc_server = collab::rpc::Server::new(epoch, state.clone());
-                rpc_server.start().await?;
+            let mut on_shutdown = None;
 
-                Some(rpc_server)
-            } else {
-                None
-            };
+            if mode.is_llm() {
+                let state = LlmState::new(config.clone(), Executor::Production).await?;
 
-            if is_collab {
-                state.db.purge_old_embeddings().await.trace_err();
-                RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
+                app = app.layer(Extension(state.clone()));
             }
 
-            if is_api {
-                poll_stripe_events_periodically(state.clone());
-                fetch_extensions_from_blob_store_periodically(state.clone());
-            }
+            if mode.is_collab() || mode.is_api() {
+                run_migrations(&config).await?;
 
-            let mut app = collab::api::routes(rpc_server.clone(), state.clone());
-            if let Some(rpc_server) = rpc_server.clone() {
-                app = app.merge(collab::rpc::routes(rpc_server))
-            }
-            app = app
-                .merge(
-                    Router::new()
-                        .route("/", get(handle_root))
-                        .route("/healthz", get(handle_liveness_probe))
-                        .merge(collab::api::extensions::router())
+                let state = AppState::new(config, Executor::Production).await?;
+
+                if mode.is_collab() {
+                    state.db.purge_old_embeddings().await.trace_err();
+                    RateLimiter::save_periodically(
+                        state.rate_limiter.clone(),
+                        state.executor.clone(),
+                    );
+
+                    let epoch = state
+                        .db
+                        .create_server(&state.config.zed_environment)
+                        .await?;
+                    let rpc_server = collab::rpc::Server::new(epoch, state.clone());
+                    rpc_server.start().await?;
+
+                    app = app
+                        .merge(collab::api::routes(rpc_server.clone()))
+                        .merge(collab::rpc::routes(rpc_server.clone()));
+
+                    on_shutdown = Some(Box::new(move || rpc_server.teardown()));
+                }
+
+                if mode.is_api() {
+                    poll_stripe_events_periodically(state.clone());
+                    fetch_extensions_from_blob_store_periodically(state.clone());
+
+                    app = app
                         .merge(collab::api::events::router())
-                        .layer(Extension(state.clone())),
-                )
-                .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(|request: &Request<_>| {
-                            let matched_path = request
-                                .extensions()
-                                .get::<MatchedPath>()
-                                .map(MatchedPath::as_str);
+                        .merge(collab::api::extensions::router())
+                }
 
-                            tracing::info_span!(
-                                "http_request",
-                                method = ?request.method(),
-                                matched_path,
-                            )
-                        })
-                        .on_response(
-                            |response: &Response<_>, latency: Duration, _: &tracing::Span| {
-                                let duration_ms = latency.as_micros() as f64 / 1000.;
-                                tracing::info!(
-                                    duration_ms,
-                                    status = response.status().as_u16(),
-                                    "finished processing request"
-                                );
-                            },
-                        ),
-                );
+                app = app.layer(Extension(state.clone()));
+            }
+
+            app = app.layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(|request: &Request<_>| {
+                        let matched_path = request
+                            .extensions()
+                            .get::<MatchedPath>()
+                            .map(MatchedPath::as_str);
+
+                        tracing::info_span!(
+                            "http_request",
+                            method = ?request.method(),
+                            matched_path,
+                        )
+                    })
+                    .on_response(
+                        |response: &Response<_>, latency: Duration, _: &tracing::Span| {
+                            let duration_ms = latency.as_micros() as f64 / 1000.;
+                            tracing::info!(
+                                duration_ms,
+                                status = response.status().as_u16(),
+                                "finished processing request"
+                            );
+                        },
+                    ),
+            );
 
             #[cfg(unix)]
             let signal = async move {
@@ -174,8 +185,8 @@ async fn main() -> Result<()> {
                     signal.await;
                     tracing::info!("Received interrupt signal");
 
-                    if let Some(rpc_server) = rpc_server {
-                        rpc_server.teardown();
+                    if let Some(on_shutdown) = on_shutdown {
+                        on_shutdown();
                     }
                 })
                 .await
@@ -183,7 +194,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             Err(anyhow!(
-                "usage: collab <version | migrate | seed | serve [api|collab]>"
+                "usage: collab <version | migrate | seed | serve <api|collab|llm|all>>"
             ))?;
         }
     }
@@ -222,12 +233,23 @@ async fn run_migrations(config: &Config) -> Result<()> {
     return Ok(());
 }
 
-async fn handle_root() -> String {
-    format!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"))
+async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
+    format!(
+        "collab {mode:?} v{VERSION} ({})",
+        REVISION.unwrap_or("unknown")
+    )
 }
 
-async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Result<String> {
-    state.db.get_all_users(0, 1).await?;
+async fn handle_liveness_probe(
+    app_state: Option<Extension<Arc<AppState>>>,
+    llm_state: Option<Extension<Arc<LlmState>>>,
+) -> Result<String> {
+    if let Some(state) = app_state {
+        state.db.get_all_users(0, 1).await?;
+    }
+
+    if let Some(_llm_state) = llm_state {}
+
     Ok("ok".to_string())
 }
 

@@ -61,7 +61,7 @@ impl std::fmt::Display for CloudflareIpCountryHeader {
     }
 }
 
-pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<(), Body> {
+pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -70,7 +70,6 @@ pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Rou
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
-                .layer(Extension(state))
                 .layer(Extension(rpc_server))
                 .layer(middleware::from_fn(validate_api_token)),
         )
@@ -152,12 +151,8 @@ struct CreateUserParams {
 }
 
 async fn get_rpc_server_snapshot(
-    Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
-    let Some(rpc_server) = rpc_server else {
-        return Err(Error::Internal(anyhow!("rpc server is not available")));
-    };
-
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
