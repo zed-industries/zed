@@ -5158,6 +5158,10 @@ async fn get_llm_api_token(
     response: Response<proto::GetLlmToken>,
     session: UserSession,
 ) -> Result<()> {
+    if !session.is_staff() {
+        Err(anyhow!("permission denied"))?
+    }
+
     let token = LlmTokenClaims::create(
         session.user_id(),
         session.current_plan().await?,
