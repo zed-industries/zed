@@ -1,16 +1,13 @@
 use crate::{
-    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
-    ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
-    UriOrPath, WindowContext,
+    px, AbsoluteLength, Asset, Bounds, DefiniteLength, Element, ElementId, GlobalElementId, Hitbox,
+    ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
+    SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use http_client;
 use image::{
     codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
 };
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 use std::{
     fs,
@@ -23,7 +20,7 @@ use thiserror::Error;
 use util::ResultExt;
 
 /// A source of image content.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedUri),
@@ -33,10 +30,6 @@ pub enum ImageSource {
     Data(Arc<ImageData>),
     /// Image content will be loaded from Asset at render time.
     Asset(SharedString),
-    // TODO: move surface definitions into mac platform module
-    /// A CoreVideo image buffer
-    #[cfg(target_os = "macos")]
-    Surface(CVImageBuffer),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -97,13 +90,6 @@ impl From<Arc<ImageData>> for ImageSource {
     }
 }
 
-#[cfg(target_os = "macos")]
-impl From<CVImageBuffer> for ImageSource {
-    fn from(value: CVImageBuffer) -> Self {
-        Self::Surface(value)
-    }
-}
-
 /// An image element.
 pub struct Img {
     interactivity: Interactivity,
@@ -119,121 +105,6 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         source: source.into(),
         grayscale: false,
         object_fit: ObjectFit::Contain,
-    }
-}
-
-/// How to fit the image into the bounds of the element.
-pub enum ObjectFit {
-    /// The image will be stretched to fill the bounds of the element.
-    Fill,
-    /// The image will be scaled to fit within the bounds of the element.
-    Contain,
-    /// The image will be scaled to cover the bounds of the element.
-    Cover,
-    /// The image will be scaled down to fit within the bounds of the element.
-    ScaleDown,
-    /// The image will maintain its original size.
-    None,
-}
-
-impl ObjectFit {
-    /// Get the bounds of the image within the given bounds.
-    pub fn get_bounds(
-        &self,
-        bounds: Bounds<Pixels>,
-        image_size: Size<DevicePixels>,
-    ) -> Bounds<Pixels> {
-        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
-        let image_ratio = image_size.width / image_size.height;
-        let bounds_ratio = bounds.size.width / bounds.size.height;
-
-        let result_bounds = match self {
-            ObjectFit::Fill => bounds,
-            ObjectFit::Contain => {
-                let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
-                } else {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
-                };
-
-                Bounds {
-                    origin: point(
-                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                    ),
-                    size: new_size,
-                }
-            }
-            ObjectFit::ScaleDown => {
-                // Check if the image is larger than the bounds in either dimension.
-                if image_size.width > bounds.size.width || image_size.height > bounds.size.height {
-                    // If the image is larger, use the same logic as Contain to scale it down.
-                    let new_size = if bounds_ratio > image_ratio {
-                        size(
-                            image_size.width * (bounds.size.height / image_size.height),
-                            bounds.size.height,
-                        )
-                    } else {
-                        size(
-                            bounds.size.width,
-                            image_size.height * (bounds.size.width / image_size.width),
-                        )
-                    };
-
-                    Bounds {
-                        origin: point(
-                            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                        ),
-                        size: new_size,
-                    }
-                } else {
-                    // If the image is smaller than or equal to the container, display it at its original size,
-                    // centered within the container.
-                    let original_size = size(image_size.width, image_size.height);
-                    Bounds {
-                        origin: point(
-                            bounds.origin.x + (bounds.size.width - original_size.width) / 2.0,
-                            bounds.origin.y + (bounds.size.height - original_size.height) / 2.0,
-                        ),
-                        size: original_size,
-                    }
-                }
-            }
-            ObjectFit::Cover => {
-                let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
-                } else {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
-                };
-
-                Bounds {
-                    origin: point(
-                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                    ),
-                    size: new_size,
-                }
-            }
-            ObjectFit::None => Bounds {
-                origin: bounds.origin,
-                size: image_size,
-            },
-        };
-
-        result_bounds
     }
 }
 
@@ -374,17 +245,6 @@ impl Element for Img {
                     )
                     .log_err();
                 }
-
-                match source {
-                    #[cfg(target_os = "macos")]
-                    ImageSource::Surface(surface) => {
-                        let size = size(surface.width().into(), surface.height().into());
-                        let new_bounds = self.object_fit.get_bounds(bounds, size);
-                        // TODO: Add support for corner_radii and grayscale.
-                        cx.paint_surface(new_bounds, surface);
-                    }
-                    _ => {}
-                }
             })
     }
 }
@@ -424,8 +284,6 @@ impl ImageSource {
             }
 
             ImageSource::Data(data) => Some(data.to_owned()),
-            #[cfg(target_os = "macos")]
-            ImageSource::Surface(_) => None,
         }
     }
 }

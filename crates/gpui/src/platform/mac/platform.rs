@@ -1,8 +1,8 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle, ClipboardImage,
-    ForegroundExecutor, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow,
-    Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardImage, ClipboardItem, ClipboardString,
+    CursorStyle, ForegroundExecutor, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
@@ -916,6 +916,12 @@ impl Platform for MacPlatform {
                 let data = pasteboard.dataForType(string_type);
                 if data == nil {
                     return None;
+                } else if data.bytes().is_null() {
+                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+                    // "If the length of the NSData object is 0, this property returns nil."
+                    return Some(ClipboardItem::String(
+                        self.read_string_from_clipboard(&state, &[]),
+                    ));
                 } else {
                     let bytes =
                         slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
@@ -1098,7 +1104,7 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
                     data.length() as usize,
                 ));
 
-                Some(ClipboardItem::Image(ClipboardImage { format, bytes } ))
+                Some(ClipboardItem::Image(ClipboardImage { format, bytes }))
             }
         } else {
             None

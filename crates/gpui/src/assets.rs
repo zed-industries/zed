@@ -45,6 +45,14 @@ pub struct ImageData {
     data: SmallVec<[Frame; 1]>,
 }
 
+impl PartialEq for ImageData {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ImageData {}
+
 impl ImageData {
     /// Create a new image from the given data.
     pub fn new(data: impl Into<SmallVec<[Frame; 1]>>) -> Self {

@@ -14,7 +14,10 @@ use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
 };
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
+use gpui::{
+    AppContext, ClipboardImage, Context as _, EventEmitter, ImageData, ImageSource, Model,
+    ModelContext, Subscription, Task,
+};
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
 };
@@ -328,6 +331,12 @@ impl Message {
             content: buffer.text_for_range(self.offset_range.clone()).collect(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageAnchor {
+    pub anchor: language::Anchor,
+    pub data: ImageSource,
 }
 
 struct PendingCompletion {
@@ -776,6 +785,7 @@ pub struct Context {
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
+    image_anchors: Vec<ImageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
@@ -836,6 +846,7 @@ impl Context {
             pending_ops: Vec::new(),
             operations: Vec::new(),
             message_anchors: Default::default(),
+            image_anchors: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
@@ -1809,6 +1820,39 @@ impl Context {
         } else {
             None
         }
+    }
+
+    pub fn insert_image(
+        &mut self,
+        anchor: language::Anchor,
+        image: ImageSource,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(ContextEvent::MessagesEdited);
+
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .image_anchors
+            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
+        {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+
+        self.image_anchors.insert(
+            insertion_ix,
+            ImageAnchor {
+                anchor,
+                data: image,
+            },
+        )
+    }
+
+    pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
+        self.image_anchors.iter().map(|image| ImageAnchor {
+            anchor: image.anchor.clone(),
+            data: image.data.clone(),
+        })
     }
 
     pub fn split_message(

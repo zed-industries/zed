@@ -2663,6 +2663,8 @@ impl<'a> WindowContext<'a> {
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        use crate::PaintSurface;
+
         debug_assert_eq!(
             self.window.draw_phase,
             DrawPhase::Paint,
@@ -2672,15 +2674,12 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        self.window
-            .next_frame
-            .scene
-            .insert_primitive(crate::Surface {
-                order: 0,
-                bounds,
-                content_mask,
-                image_buffer,
-            });
+        self.window.next_frame.scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds,
+            content_mask,
+            image_buffer,
+        });
     }
 
     #[must_use]

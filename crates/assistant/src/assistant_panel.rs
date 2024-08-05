@@ -31,11 +31,12 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, img, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    AsyncWindowContext, ClipboardImage, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
+    EventEmitter, FocusHandle, FocusableView, ImageData, ImageSource, InteractiveElement,
+    IntoElement, Model, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement,
+    Styled, Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -1295,6 +1296,7 @@ pub struct ContextEditor {
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
     blocks: HashSet<CustomBlockId>,
+    image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
@@ -1349,6 +1351,7 @@ impl ContextEditor {
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
+            image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
             fs,
@@ -1361,6 +1364,7 @@ impl ContextEditor {
             assistant_panel,
         };
         this.update_message_headers(cx);
+        this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, cx);
         this
     }
@@ -1609,6 +1613,7 @@ impl ContextEditor {
         match event {
             ContextEvent::MessagesEdited => {
                 self.update_message_headers(cx);
+                self.update_image_blocks(cx);
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
@@ -2346,13 +2351,18 @@ impl ContextEditor {
 
     fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
         if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
+            let mut anchors = Vec::new();
             self.editor.update(cx, |editor, cx| {
-                let mut anchors = Vec::new();
                 editor.transact(cx, |editor, cx| {
                     let mut edits = Vec::new();
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     for selection in editor.selections.all::<usize>(cx) {
-                        let insert_newline = snapshot.chars_at(selection.end) != Some('\n');
+                        let insert_newline = snapshot
+                            .chars_at(selection.end)
+                            .take(1)
+                            .collect::<Vec<_>>()
+                            .get(0)
+                            != Some(&'\n');
                         if selection.is_empty() {
                             if insert_newline {
                                 edits.push((selection.start..selection.start, "\n"));
@@ -2367,22 +2377,51 @@ impl ContextEditor {
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     for selection in editor.selections.all::<usize>(cx) {
-                        anchors.push(snapshot.anchor_before(selection.end + 1));
+                        // TODO: +1
+                        anchors.push(snapshot.anchor_before(selection.end));
                     }
                 });
             });
 
-            // self.context.update(cx, |context, cx| {
-            //     for anchor in anchors {
-            //         context.insert_image(anchor, )
-
-            //     }
-            // })
-
-            // dbg!(format, bytes.len());
+            let image_source = ImageSource::Data(data.to_image_data(cx).expect("TODO").into());
+            self.context.update(cx, |context, cx| {
+                for anchor in anchors {
+                    context.insert_image(anchor.text_anchor, image_source.clone(), cx);
+                }
+            });
         } else {
             cx.propagate();
         }
+    }
+
+    fn update_image_blocks(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let old_blocks = std::mem::take(&mut self.image_blocks);
+            let new_blocks = self
+                .context
+                .read(cx)
+                .images(cx)
+                .filter_map(|image| {
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
+                    anchor.is_valid(&buffer).then(|| BlockProperties {
+                        position: anchor,
+                        height: 10,
+                        style: BlockStyle::Sticky,
+                        render: Box::new({
+                            let context = self.context.clone();
+                            move |cx| img(image.data.clone()).into_any_element()
+                        }),
+                        disposition: BlockDisposition::Above,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            editor.remove_blocks(old_blocks, None, cx);
+            let ids = editor.insert_blocks(new_blocks, None, cx);
+            self.image_blocks = HashSet::from_iter(ids);
+        });
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
