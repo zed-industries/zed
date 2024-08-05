@@ -34,9 +34,9 @@ use fs::Fs;
 use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement,
+    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -1316,6 +1316,7 @@ pub struct ContextEditor {
     _subscriptions: Vec<Subscription>,
     active_edit_step: Option<ActiveEditStep>,
     assistant_panel: WeakView<AssistantPanel>,
+    error_message: Option<SharedString>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1373,6 +1374,7 @@ impl ContextEditor {
             _subscriptions,
             active_edit_step: None,
             assistant_panel,
+            error_message: None,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -1406,7 +1408,9 @@ impl ContextEditor {
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
         if !self.apply_edit_step(cx) {
+            self.error_message = None;
             self.send_to_model(cx);
+            cx.notify();
         }
     }
 
@@ -1804,6 +1808,9 @@ impl ContextEditor {
                 }
             }
             ContextEvent::Operation(_) => {}
+            ContextEvent::AssistError(error_message) => {
+                self.error_message = Some(SharedString::from(error_message.clone()));
+            }
         }
     }
 
@@ -2142,7 +2149,10 @@ impl ContextEditor {
                                             div()
                                                 .id("error")
                                                 .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(Icon::new(IconName::XCircle)),
+                                                .child(
+                                                    Icon::new(IconName::ExclamationTriangle)
+                                                        .color(Color::Error),
+                                                ),
                                         )
                                     } else {
                                         None
@@ -2327,25 +2337,33 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    fn dismiss_error_message(&mut self, cx: &mut ViewContext<Self>) {
+        self.error_message = None;
+        cx.notify();
+    }
+
+    fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let nudge = self
             .assistant_panel
             .upgrade()
             .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
 
-        if nudge.unwrap_or(false) {
+        if let Some(error) = self.error_message.clone() {
+            Some(Self::render_error_popover(error, cx).into_any_element())
+        } else if nudge.unwrap_or(false) {
             Some(
                 v_flex()
                     .elevation_3(cx)
-                    .p_4()
+                    .p_2()
                     .gap_2()
-                    .child(Label::new("Use Zed AI"))
                     .child(
-                        div()
-                            .id("sign-in")
-                            .child(Label::new("Sign in to use Zed AI"))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _event, cx| {
+                        Label::new("Use Zed AI")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(h_flex().justify_end().child(
+                        Button::new("sign-in", "Sign in to use Zed AI").on_click(cx.listener(
+                            |this, _event, cx| {
                                 let client = this
                                     .workspace
                                     .update(cx, |workspace, _| workspace.client().clone())
@@ -2358,8 +2376,10 @@ impl ContextEditor {
                                     })
                                     .detach_and_log_err(cx)
                                 }
-                            })),
-                    ),
+                            },
+                        )),
+                    ))
+                    .into_any_element(),
             )
         } else if let Some(configuration_error) = configuration_error(cx) {
             let label = match configuration_error {
@@ -2369,25 +2389,49 @@ impl ContextEditor {
             Some(
                 v_flex()
                     .elevation_3(cx)
-                    .p_4()
+                    .p_2()
                     .gap_2()
-                    .child(Label::new(label))
+                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
                     .child(
-                        div()
-                            .id("open-configuration")
-                            .child(Label::new("Open configuration"))
-                            .cursor_pointer()
-                            .on_click({
-                                let focus_handle = self.focus_handle(cx).clone();
-                                move |_event, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
-                                }
-                            }),
-                    ),
+                        h_flex().justify_end().child(
+                            Button::new("open-configuration", "Open configuration")
+                                .icon(IconName::Settings)
+                                .icon_size(IconSize::Small)
+                                .on_click({
+                                    let focus_handle = self.focus_handle(cx).clone();
+                                    move |_event, cx| {
+                                        focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                    }
+                                }),
+                        ),
+                    )
+                    .into_any_element(),
             )
         } else {
             None
         }
+    }
+
+    fn render_error_popover(error: SharedString, cx: &mut ViewContext<Self>) -> Div {
+        v_flex()
+            .p_2()
+            .elevation_2(cx)
+            .bg(cx.theme().colors().surface_background)
+            .min_w_24()
+            .occlude()
+            .child(
+                Label::new("Error interacting with language model")
+                    .size(LabelSize::Small)
+                    .weight(FontWeight::BOLD)
+                    .color(Color::Muted),
+            )
+            .child(Label::new(error).size(LabelSize::Small))
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("dismiss", "Dismiss")
+                        .on_click(cx.listener(|this, _, cx| this.dismiss_error_message(cx))),
+                ),
+            )
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2487,23 +2531,32 @@ impl Render for ContextEditor {
                 div()
                     .flex_grow()
                     .bg(cx.theme().colors().editor_background)
-                    .child(self.editor.clone())
+                    .child(self.editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .flex_none()
+                    .relative()
+                    .when_some(self.render_notice(cx), |this, notice| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .w_3_4()
+                                .min_w_24()
+                                .max_w_128()
+                                .right_4()
+                                .bottom_9()
+                                .child(notice),
+                        )
+                    })
                     .child(
                         h_flex()
                             .w_full()
                             .absolute()
-                            .bottom_0()
-                            .p_4()
+                            .right_4()
+                            .bottom_2()
                             .justify_end()
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .items_end()
-                                    .when_some(self.render_notice(cx), |this, notice| {
-                                        this.child(notice)
-                                    })
-                                    .child(self.render_send_button(cx)),
-                            ),
+                            .child(self.render_send_button(cx)),
                     ),
             )
     }

@@ -281,6 +281,7 @@ impl ContextOperation {
 
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
+    AssistError(String),
     MessagesEdited,
     SummaryChanged,
     EditStepsChanged,
@@ -1579,6 +1580,10 @@ impl Context {
                     let error_message = result
                         .err()
                         .map(|error| error.to_string().trim().to_string());
+
+                    if let Some(error_message) = error_message.as_ref() {
+                        cx.emit(ContextEvent::AssistError(error_message.to_string()));
+                    }
 
                     this.update_metadata(assistant_message_id, cx, |metadata| {
                         if let Some(error_message) = error_message.as_ref() {
