@@ -1586,6 +1586,7 @@ impl EditorElement {
 
             let buffer_id = active_buffer.read(cx).remote_id();
             let read_guard = breakpoints.read();
+            let mut has_placed_cursor_breakpoint = false;
 
             let mut breakpoints_to_render = if let Some(breakpoint_set) = read_guard.get(&buffer_id)
             {
@@ -1602,7 +1603,17 @@ impl EditorElement {
                             return None;
                         }
 
-                        let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
+                        let mut button =
+                            editor.render_breakpoint(breakpoint.position, point.row(), cx);
+
+                        if editor
+                            .gutter_breakpoint_indicator
+                            .and_then(|p| Some(p.row()))
+                            == Some(point.row())
+                        {
+                            button = button.icon_color(Color::Conflict);
+                            has_placed_cursor_breakpoint = true;
+                        }
 
                         let button = prepaint_gutter_button(
                             button,
@@ -1625,22 +1636,15 @@ impl EditorElement {
 
             // See if a user is hovered over a gutter line & if they are display
             // a breakpoint indicator that they can click to add a breakpoint
-            // TODO: We should figure out a way to display this side by side with
+            // TODO Anth: We should figure out a way to display this side by side with
             // the code action button. They currently overlap
             if let Some(gutter_breakpoint) = editor.gutter_breakpoint_indicator {
                 let gutter_anchor = snapshot.display_point_to_anchor(gutter_breakpoint, Bias::Left);
 
-                let button = IconButton::new("gutter_breakpoint_indicator", ui::IconName::Play)
-                    .icon_size(IconSize::XSmall)
-                    .size(ui::ButtonSize::None)
-                    .icon_color(Color::Hint)
-                    .on_click(cx.listener(move |editor, _e, cx| {
-                        editor.focus(cx);
-                        editor.toggle_breakpoint_at_row(gutter_anchor, cx) //TODO handle folded
-                    }));
+                let button = editor.render_breakpoint(gutter_anchor, gutter_breakpoint.row(), cx);
 
                 let button = prepaint_gutter_button(
-                    button,
+                    button.icon_color(Color::Hint),
                     gutter_breakpoint.row(),
                     line_height,
                     gutter_dimensions,
@@ -1650,7 +1654,9 @@ impl EditorElement {
                     cx,
                 );
 
-                breakpoints_to_render.push(button);
+                if !has_placed_cursor_breakpoint {
+                    breakpoints_to_render.push(button);
+                }
             }
 
             breakpoints_to_render
@@ -4206,6 +4212,7 @@ fn prepaint_gutter_button(
     cx: &mut WindowContext<'_>,
 ) -> AnyElement {
     let mut button = button.into_any_element();
+
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),

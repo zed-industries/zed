@@ -5998,11 +5998,15 @@ impl Editor {
     pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
         let cursor_position: Point = self.selections.newest(cx).head();
 
+        // We Set the column position to zero so this function interacts correctly
+        // between calls by clicking on the gutter & using an action to toggle a
+        // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
+        // untoggle a breakpoint that was added through clicking on the gutter
         let breakpoint_position = self
             .snapshot(cx)
             .display_snapshot
             .buffer_snapshot
-            .anchor_before(cursor_position);
+            .anchor_before(Point::new(cursor_position.row, 0));
 
         self.toggle_breakpoint_at_row(breakpoint_position, cx);
     }
