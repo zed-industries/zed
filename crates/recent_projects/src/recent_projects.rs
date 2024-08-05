@@ -32,7 +32,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
+    WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -311,7 +312,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
                                             .update(&mut cx, |workspace, cx| {
-                                                workspace.prepare_to_close(true, cx)
+                                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                                             })?
                                             .await?;
                                         if continue_replacing {
@@ -570,7 +571,7 @@ fn open_dev_server_project(
             cx.spawn(move |workspace, mut cx| async move {
                 let continue_replacing = workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.prepare_to_close(true, cx)
+                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                     })?
                     .await?;
                 if continue_replacing {

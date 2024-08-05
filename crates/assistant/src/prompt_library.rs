@@ -36,6 +36,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
@@ -486,7 +487,7 @@ impl PromptLibrary {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
-                            editor.set_read_only(true);
+                            editor.set_read_only(prompt_id.is_built_in());
                             editor
                         });
                         let body_editor = cx.new_view(|cx| {
@@ -498,7 +499,7 @@ impl PromptLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, cx);
-                            editor.set_read_only(true);
+                            editor.set_read_only(prompt_id.is_built_in());
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
@@ -1302,10 +1303,12 @@ impl PromptStore {
         let bodies = self.bodies;
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            Ok(bodies
+            let mut prompt = bodies
                 .get(&txn, &id)?
                 .ok_or_else(|| anyhow!("prompt not found"))?
-                .into())
+                .into();
+            LineEnding::normalize(&mut prompt);
+            Ok(prompt)
         })
     }
 
@@ -1505,15 +1508,15 @@ impl PromptStore {
         self.metadata_cache.read().metadata.first().cloned()
     }
 
-    pub fn step_resolution_prompt(&self) -> String {
-        String::from_utf8(
+    pub fn step_resolution_prompt(&self) -> Result<String> {
+        let path = "prompts/step_resolution.md";
+
+        Ok(String::from_utf8(
             Assets
-                .load("prompts/step_resolution.md")
-                .unwrap()
-                .unwrap()
+                .load(path)?
+                .ok_or_else(|| anyhow!("{path} not found"))?
                 .to_vec(),
-        )
-        .unwrap()
+        )?)
     }
 }
 

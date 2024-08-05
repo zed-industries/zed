@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::assistant_settings::AssistantSettings;
+use crate::{assistant_settings::AssistantSettings, ShowConfiguration};
 use fs::Fs;
-use gpui::SharedString;
+use gpui::{Action, SharedString};
 use language_model::{LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 use settings::update_settings_file;
@@ -98,15 +98,8 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
                                 }
                             },
                             {
-                                let provider = provider.clone();
-                                move |cx| {
-                                    LanguageModelRegistry::global(cx).update(
-                                        cx,
-                                        |completion_provider, cx| {
-                                            completion_provider
-                                                .set_active_provider(Some(provider.clone()), cx);
-                                        },
-                                    );
+                                |cx| {
+                                    cx.dispatch_action(ShowConfiguration.boxed_clone());
                                 }
                             },
                         );

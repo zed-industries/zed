@@ -10,15 +10,16 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditStep, EditStepState,
-    EditStepSuggestions, InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor,
-    MessageStatus, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup, InlineAssist,
+    InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStep,
+    WorkflowStepEditSuggestions,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
-use client::proto;
+use client::{proto, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -32,7 +33,7 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, svg, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
     AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
@@ -40,14 +41,19 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
+    language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
+    ToOffset,
 };
-use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role};
+use language_model::{
+    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry, Role,
+};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
+use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -141,6 +147,9 @@ pub struct AssistantPanel {
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
+    client_status: Option<client::Status>,
+    watch_client_status: Option<Task<()>>,
+    show_zed_ai_notice: bool,
 }
 
 #[derive(Clone)]
@@ -412,6 +421,8 @@ impl AssistantPanel {
             ),
         ];
 
+        let watch_client_status = Self::watch_client_status(workspace.client().clone(), cx);
+
         let mut this = Self {
             pane,
             workspace: workspace.weak_handle(),
@@ -426,18 +437,34 @@ impl AssistantPanel {
             model_summary_editor,
             authenticate_provider_task: None,
             configuration_subscription: None,
+            client_status: None,
+            watch_client_status: Some(watch_client_status),
+            show_zed_ai_notice: false,
         };
-
-        if LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .is_none()
-        {
-            this.show_configuration_for_provider(None, cx);
-        } else {
-            this.new_context(cx);
-        };
-
+        this.new_context(cx);
         this
+    }
+
+    fn watch_client_status(client: Arc<Client>, cx: &mut ViewContext<Self>) -> Task<()> {
+        let mut status_rx = client.status();
+
+        cx.spawn(|this, mut cx| async move {
+            while let Some(status) = status_rx.next().await {
+                this.update(&mut cx, |this, cx| {
+                    if this.client_status.is_none()
+                        || this
+                            .client_status
+                            .map_or(false, |old_status| old_status != status)
+                    {
+                        this.update_zed_ai_notice_visibility(status, cx);
+                    }
+                    this.client_status = Some(status);
+                })
+                .log_err();
+            }
+            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
+                .log_err();
+        })
     }
 
     fn handle_pane_event(
@@ -530,6 +557,22 @@ impl AssistantPanel {
         }
     }
 
+    fn update_zed_ai_notice_visibility(
+        &mut self,
+        client_status: Status,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
+        // the provider, we want to show a nudge to sign in.
+        let show_zed_ai_notice = client_status.is_signed_out()
+            && active_provider.map_or(true, |provider| provider.id().0 == PROVIDER_ID);
+
+        self.show_zed_ai_notice = show_zed_ai_notice;
+        cx.notify();
+    }
+
     fn handle_toolbar_event(
         &mut self,
         _: View<ContextEditorToolbarItem>,
@@ -606,6 +649,10 @@ impl AssistantPanel {
             self.authenticate_provider_task = None;
             self.ensure_authenticated(cx);
         }
+
+        if let Some(status) = self.client_status {
+            self.update_zed_ai_notice_visibility(status, cx);
+        }
     }
 
     fn ensure_authenticated(&mut self, cx: &mut ViewContext<Self>) {
@@ -624,12 +671,7 @@ impl AssistantPanel {
                 provider.id(),
                 cx.spawn(|this, mut cx| async move {
                     let _ = load_credentials.await;
-                    this.update(&mut cx, |this, cx| {
-                        if !provider.is_authenticated(cx) {
-                            this.show_configuration_for_provider(Some(provider), cx)
-                        } else if !this.has_any_context_editors(cx) {
-                            this.new_context(cx);
-                        }
+                    this.update(&mut cx, |this, _cx| {
                         this.authenticate_provider_task = None;
                     })
                     .log_err();
@@ -909,20 +951,11 @@ impl AssistantPanel {
         }
 
         panel.update(cx, |this, cx| {
-            this.show_configuration_for_active_provider(cx);
+            this.show_configuration_tab(cx);
         })
     }
 
-    fn show_configuration_for_active_provider(&mut self, cx: &mut ViewContext<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        self.show_configuration_for_provider(provider, cx);
-    }
-
-    fn show_configuration_for_provider(
-        &mut self,
-        provider: Option<Arc<dyn LanguageModelProvider>>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn show_configuration_tab(&mut self, cx: &mut ViewContext<Self>) {
         let configuration_item_ix = self
             .pane
             .read(cx)
@@ -932,24 +965,9 @@ impl AssistantPanel {
         if let Some(configuration_item_ix) = configuration_item_ix {
             self.pane.update(cx, |pane, cx| {
                 pane.activate_item(configuration_item_ix, true, true, cx);
-                if let Some((item, provider)) =
-                    pane.item_for_index(configuration_item_ix).zip(provider)
-                {
-                    if let Some(view) = item.downcast::<ConfigurationView>() {
-                        view.update(cx, |view, cx| {
-                            view.set_active_tab(provider, cx);
-                        });
-                    }
-                }
             });
         } else {
-            let configuration = cx.new_view(|cx| {
-                let mut view = ConfigurationView::new(cx);
-                if let Some(provider) = provider {
-                    view.set_active_tab(provider, cx);
-                }
-                view
-            });
+            let configuration = cx.new_view(|cx| ConfigurationView::new(cx));
             self.configuration_subscription = Some(cx.subscribe(
                 &configuration,
                 |this, _, event: &ConfigurationViewEvent, cx| match event {
@@ -1017,13 +1035,6 @@ impl AssistantPanel {
             .read(cx)
             .active_item()?
             .downcast::<ContextEditor>()
-    }
-
-    fn has_any_context_editors(&self, cx: &AppContext) -> bool {
-        self.pane
-            .read(cx)
-            .items()
-            .any(|item| item.downcast::<ContextEditor>().is_some())
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
@@ -1160,9 +1171,9 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(|this, _: &ShowConfiguration, cx| {
-                this.show_configuration_for_active_provider(cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ShowConfiguration, cx| this.show_configuration_tab(cx)),
+            )
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
@@ -1232,14 +1243,7 @@ impl Panel for AssistantPanel {
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
             if self.pane.read(cx).items_len() == 0 {
-                if LanguageModelRegistry::read_global(cx)
-                    .active_provider()
-                    .is_none()
-                {
-                    self.show_configuration_for_provider(None, cx);
-                } else {
-                    self.new_context(cx);
-                };
+                self.new_context(cx);
             }
 
             self.ensure_authenticated(cx);
@@ -1296,7 +1300,6 @@ struct ActiveEditStep {
     start: language::Anchor,
     assist_ids: Vec<InlineAssistId>,
     editor: Option<WeakView<Editor>>,
-    _open_editor: Task<Result<()>>,
 }
 
 pub struct ContextEditor {
@@ -1464,22 +1467,20 @@ impl ContextEditor {
                     .read(cx)
                     .buffer()
                     .read(cx)
-                    .text_for_range(step.source_range.clone())
+                    .text_for_range(step.tagged_range.clone())
                     .collect::<String>()
             ));
-            match &step.state {
-                Some(EditStepState::Resolved(resolution)) => {
+            match &step.edit_suggestions {
+                WorkflowStepEditSuggestions::Resolved {
+                    title,
+                    edit_suggestions,
+                } => {
                     output.push_str("Resolution:\n");
-                    output.push_str(&format!("  {:?}\n", resolution.step_title));
-                    for op in &resolution.operations {
-                        output.push_str(&format!("  {:?}\n", op));
-                    }
+                    output.push_str(&format!("  {:?}\n", title));
+                    output.push_str(&format!("  {:?}\n", edit_suggestions));
                 }
-                Some(EditStepState::Pending(_)) => {
+                WorkflowStepEditSuggestions::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
-                }
-                None => {
-                    output.push_str("Resolution: None\n");
                 }
             }
             output.push('\n');
@@ -1887,222 +1888,165 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                if self
-                    .edit_step_for_cursor(cx)
-                    .map(|step| step.source_range.start)
-                    != self.active_edit_step.as_ref().map(|step| step.start)
-                {
-                    if let Some(old_active_edit_step) = self.active_edit_step.take() {
-                        if let Some(editor) = old_active_edit_step
-                            .editor
-                            .and_then(|editor| editor.upgrade())
-                        {
-                            self.workspace
-                                .update(cx, |workspace, cx| {
-                                    if let Some(pane) = workspace.pane_for(&editor) {
-                                        pane.update(cx, |pane, cx| {
-                                            let item_id = editor.entity_id();
-                                            if pane.is_active_preview_item(item_id) {
-                                                pane.close_item_by_id(
-                                                    item_id,
-                                                    SaveIntent::Skip,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                            }
-                                        });
-                                    }
-                                })
-                                .ok();
-                        }
-                    }
-
-                    if let Some(new_active_step) = self.edit_step_for_cursor(cx) {
-                        let start = new_active_step.source_range.start;
-                        let open_editor = new_active_step
-                            .edit_suggestions(&self.project, cx)
-                            .map(|suggestions| {
-                                self.open_editor_for_edit_suggestions(suggestions, cx)
-                            })
-                            .unwrap_or_else(|| Task::ready(Ok(())));
-                        self.active_edit_step = Some(ActiveEditStep {
-                            start,
-                            assist_ids: Vec::new(),
-                            editor: None,
-                            _open_editor: open_editor,
-                        });
-                    }
-                }
+                self.update_active_workflow_step(cx);
             }
             _ => {}
         }
         cx.emit(event.clone());
     }
 
-    fn open_editor_for_edit_suggestions(
-        &mut self,
-        edit_step_suggestions: Task<EditStepSuggestions>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        let workspace = self.workspace.clone();
-        let project = self.project.clone();
-        let assistant_panel = self.assistant_panel.clone();
-        cx.spawn(|this, mut cx| async move {
-            let edit_step_suggestions = edit_step_suggestions.await;
+    fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
+        if self
+            .workflow_step_for_cursor(cx)
+            .map(|step| step.tagged_range.start)
+            != self.active_edit_step.as_ref().map(|step| step.start)
+        {
+            if let Some(old_active_edit_step) = self.active_edit_step.take() {
+                if let Some(editor) = old_active_edit_step
+                    .editor
+                    .and_then(|editor| editor.upgrade())
+                {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            if let Some(pane) = workspace.pane_for(&editor) {
+                                pane.update(cx, |pane, cx| {
+                                    let item_id = editor.entity_id();
+                                    if pane.is_active_preview_item(item_id) {
+                                        pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
+                                            .detach_and_log_err(cx);
+                                    }
+                                });
+                            }
+                        })
+                        .ok();
+                }
+            }
 
-            let mut assist_ids = Vec::new();
-            let editor = if edit_step_suggestions.suggestions.is_empty() {
-                return Ok(());
-            } else if edit_step_suggestions.suggestions.len() == 1
-                && edit_step_suggestions
-                    .suggestions
-                    .values()
-                    .next()
-                    .unwrap()
-                    .len()
-                    == 1
-            {
-                // If there's only one buffer and one suggestion group, open it directly
-                let (buffer, suggestion_groups) = edit_step_suggestions
-                    .suggestions
-                    .into_iter()
-                    .next()
-                    .unwrap();
-                let suggestion_group = suggestion_groups.into_iter().next().unwrap();
-                let editor = workspace.update(&mut cx, |workspace, cx| {
+            if let Some(new_active_step) = self.workflow_step_for_cursor(cx) {
+                let start = new_active_step.tagged_range.start;
+
+                let mut editor = None;
+                let mut assist_ids = Vec::new();
+                if let WorkflowStepEditSuggestions::Resolved {
+                    title,
+                    edit_suggestions,
+                } = &new_active_step.edit_suggestions
+                {
+                    if let Some((opened_editor, inline_assist_ids)) =
+                        self.suggest_edits(title.clone(), edit_suggestions.clone(), cx)
+                    {
+                        editor = Some(opened_editor.downgrade());
+                        assist_ids = inline_assist_ids;
+                    }
+                }
+
+                self.active_edit_step = Some(ActiveEditStep {
+                    start,
+                    assist_ids,
+                    editor,
+                });
+            }
+        }
+    }
+
+    fn suggest_edits(
+        &mut self,
+        title: String,
+        edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(View<Editor>, Vec<InlineAssistId>)> {
+        let assistant_panel = self.assistant_panel.upgrade()?;
+        if edit_suggestions.is_empty() {
+            return None;
+        }
+
+        let editor;
+        let mut suggestion_groups = Vec::new();
+        if edit_suggestions.len() == 1 && edit_suggestions.values().next().unwrap().len() == 1 {
+            // If there's only one buffer and one suggestion group, open it directly
+            let (buffer, groups) = edit_suggestions.into_iter().next().unwrap();
+            let group = groups.into_iter().next().unwrap();
+            editor = self
+                .workspace
+                .update(cx, |workspace, cx| {
                     let active_pane = workspace.active_pane().clone();
                     workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
-                })?;
+                })
+                .log_err()?;
 
-                cx.update(|cx| {
-                    for suggestion in suggestion_group.suggestions {
-                        let description = suggestion.description.unwrap_or_else(|| "Delete".into());
+            let (&excerpt_id, _, _) = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .as_singleton()
+                .unwrap();
 
-                        let range = {
-                            let multibuffer = editor.read(cx).buffer().read(cx).read(cx);
-                            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
-                            multibuffer
-                                .anchor_in_excerpt(excerpt_id, suggestion.range.start)
-                                .unwrap()
-                                ..multibuffer
-                                    .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-                                    .unwrap()
-                        };
-
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            let suggestion_id = assistant.suggest_assist(
-                                &editor,
-                                range,
-                                description,
-                                suggestion.initial_insertion,
-                                Some(workspace.clone()),
-                                assistant_panel.upgrade().as_ref(),
-                                cx,
-                            );
-                            assist_ids.push(suggestion_id);
-                        });
-                    }
-
-                    // Scroll the editor to the suggested assist
-                    editor.update(cx, |editor, cx| {
-                        let multibuffer = editor.buffer().read(cx).snapshot(cx);
-                        let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                        let anchor = if suggestion_group.context_range.start.to_offset(buffer) == 0
-                        {
-                            Anchor::min()
-                        } else {
-                            multibuffer
-                                .anchor_in_excerpt(excerpt_id, suggestion_group.context_range.start)
-                                .unwrap()
-                        };
-
-                        editor.set_scroll_anchor(
-                            ScrollAnchor {
-                                offset: gpui::Point::default(),
-                                anchor,
-                            },
-                            cx,
-                        );
-                    });
-                })?;
-
-                editor
-            } else {
-                // If there are multiple buffers or suggestion groups, create a multibuffer
-                let mut inline_assist_suggestions = Vec::new();
-                let multibuffer = cx.new_model(|cx| {
-                    let replica_id = project.read(cx).replica_id();
-                    let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
-                        .with_title(edit_step_suggestions.title);
-                    for (buffer, suggestion_groups) in edit_step_suggestions.suggestions {
-                        let excerpt_ids = multibuffer.push_excerpts(
-                            buffer,
-                            suggestion_groups
-                                .iter()
-                                .map(|suggestion_group| ExcerptRange {
-                                    context: suggestion_group.context_range.clone(),
-                                    primary: None,
-                                }),
-                            cx,
-                        );
-
-                        for (excerpt_id, suggestion_group) in
-                            excerpt_ids.into_iter().zip(suggestion_groups)
-                        {
-                            for suggestion in suggestion_group.suggestions {
-                                let description =
-                                    suggestion.description.unwrap_or_else(|| "Delete".into());
-                                let range = {
-                                    let multibuffer = multibuffer.read(cx);
-                                    multibuffer
-                                        .anchor_in_excerpt(excerpt_id, suggestion.range.start)
-                                        .unwrap()
-                                        ..multibuffer
-                                            .anchor_in_excerpt(excerpt_id, suggestion.range.end)
-                                            .unwrap()
-                                };
-                                inline_assist_suggestions.push((
-                                    range,
-                                    description,
-                                    suggestion.initial_insertion,
-                                ));
-                            }
-                        }
-                    }
+            // Scroll the editor to the suggested assist
+            editor.update(cx, |editor, cx| {
+                let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                let anchor = if group.context_range.start.to_offset(buffer) == 0 {
+                    Anchor::min()
+                } else {
                     multibuffer
-                })?;
+                        .anchor_in_excerpt(excerpt_id, group.context_range.start)
+                        .unwrap()
+                };
 
-                let editor = cx
-                    .new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
-                cx.update(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for (range, description, initial_insertion) in inline_assist_suggestions {
-                            assist_ids.push(assistant.suggest_assist(
-                                &editor,
-                                range,
-                                description,
-                                initial_insertion,
-                                Some(workspace.clone()),
-                                assistant_panel.upgrade().as_ref(),
-                                cx,
-                            ));
-                        }
-                    })
-                })?;
-                workspace.update(&mut cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
-                })?;
+                editor.set_scroll_anchor(
+                    ScrollAnchor {
+                        offset: gpui::Point::default(),
+                        anchor,
+                    },
+                    cx,
+                );
+            });
 
-                editor
-            };
-
-            this.update(&mut cx, |this, _cx| {
-                if let Some(step) = this.active_edit_step.as_mut() {
-                    step.assist_ids = assist_ids;
-                    step.editor = Some(editor.downgrade());
+            suggestion_groups.push((excerpt_id, group));
+        } else {
+            // If there are multiple buffers or suggestion groups, create a multibuffer
+            let multibuffer = cx.new_model(|cx| {
+                let replica_id = self.project.read(cx).replica_id();
+                let mut multibuffer =
+                    MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
+                for (buffer, groups) in edit_suggestions {
+                    let excerpt_ids = multibuffer.push_excerpts(
+                        buffer,
+                        groups.iter().map(|suggestion_group| ExcerptRange {
+                            context: suggestion_group.context_range.clone(),
+                            primary: None,
+                        }),
+                        cx,
+                    );
+                    suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
                 }
-            })
-        })
+                multibuffer
+            });
+
+            editor = cx.new_view(|cx| {
+                Editor::for_multibuffer(multibuffer, Some(self.project.clone()), true, cx)
+            });
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+                })
+                .log_err()?;
+        }
+
+        let mut assist_ids = Vec::new();
+        for (excerpt_id, suggestion_group) in suggestion_groups {
+            for suggestion in suggestion_group.suggestions {
+                assist_ids.extend(suggestion.show(
+                    &editor,
+                    excerpt_id,
+                    &self.workspace,
+                    &assistant_panel,
+                    cx,
+                ));
+            }
+        }
+        Some((editor, assist_ids))
     }
 
     fn handle_editor_search_event(
@@ -2384,13 +2328,75 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        let nudge = self
+            .assistant_panel
+            .upgrade()
+            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
+
+        if nudge.unwrap_or(false) {
+            Some(
+                v_flex()
+                    .elevation_3(cx)
+                    .p_4()
+                    .gap_2()
+                    .child(Label::new("Use Zed AI"))
+                    .child(
+                        div()
+                            .id("sign-in")
+                            .child(Label::new("Sign in to use Zed AI"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, cx| {
+                                let client = this
+                                    .workspace
+                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .log_err();
+
+                                if let Some(client) = client {
+                                    cx.spawn(|this, mut cx| async move {
+                                        client.authenticate_and_connect(true, &mut cx).await?;
+                                        this.update(&mut cx, |_, cx| cx.notify())
+                                    })
+                                    .detach_and_log_err(cx)
+                                }
+                            })),
+                    ),
+            )
+        } else if let Some(configuration_error) = configuration_error(cx) {
+            let label = match configuration_error {
+                ConfigurationError::NoProvider => "No provider configured",
+                ConfigurationError::ProviderNotAuthenticated => "Provider is not configured",
+            };
+            Some(
+                v_flex()
+                    .elevation_3(cx)
+                    .p_4()
+                    .gap_2()
+                    .child(Label::new(label))
+                    .child(
+                        div()
+                            .id("open-configuration")
+                            .child(Label::new("Open configuration"))
+                            .cursor_pointer()
+                            .on_click({
+                                let focus_handle = self.focus_handle(cx).clone();
+                                move |_event, cx| {
+                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                }
+                            }),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let button_text = match self.edit_step_for_cursor(cx) {
-            Some(edit_step) => match &edit_step.state {
-                Some(EditStepState::Pending(_)) => "Computing Changes...",
-                Some(EditStepState::Resolved(_)) => "Apply Changes",
-                None => "Send",
+        let button_text = match self.workflow_step_for_cursor(cx) {
+            Some(edit_step) => match &edit_step.edit_suggestions {
+                WorkflowStepEditSuggestions::Pending(_) => "Computing Changes...",
+                WorkflowStepEditSuggestions::Resolved { .. } => "Apply Changes",
             },
             None => "Send",
         };
@@ -2433,7 +2439,7 @@ impl ContextEditor {
             })
     }
 
-    fn edit_step_for_cursor<'a>(&'a self, cx: &'a AppContext) -> Option<&'a EditStep> {
+    fn workflow_step_for_cursor<'a>(&'a self, cx: &'a AppContext) -> Option<&'a WorkflowStep> {
         let newest_cursor = self
             .editor
             .read(cx)
@@ -2447,7 +2453,7 @@ impl ContextEditor {
         let edit_steps = context.edit_steps();
         edit_steps
             .binary_search_by(|step| {
-                let step_range = step.source_range.clone();
+                let step_range = step.tagged_range.clone();
                 if newest_cursor.cmp(&step_range.start, buffer).is_lt() {
                     Ordering::Greater
                 } else if newest_cursor.cmp(&step_range.end, buffer).is_gt() {
@@ -2490,7 +2496,15 @@ impl Render for ContextEditor {
                             .bottom_0()
                             .p_4()
                             .justify_end()
-                            .child(self.render_send_button(cx)),
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .items_end()
+                                    .when_some(self.render_notice(cx), |this, notice| {
+                                        this.child(notice)
+                                    })
+                                    .child(self.render_send_button(cx)),
+                            ),
                     ),
             )
     }
@@ -3040,211 +3054,122 @@ impl Item for ContextHistory {
     }
 }
 
-struct ActiveTab {
-    provider: Arc<dyn LanguageModelProvider>,
-    configuration_prompt: AnyView,
-    focus_handle: Option<FocusHandle>,
-    load_credentials_task: Option<Task<()>>,
-}
-
-impl ActiveTab {
-    fn is_loading_credentials(&self) -> bool {
-        if let Some(task) = &self.load_credentials_task {
-            if let Task::Spawned(_) = task {
-                return true;
-            }
-        }
-        false
-    }
-}
-
 pub struct ConfigurationView {
     focus_handle: FocusHandle,
-    active_tab: Option<ActiveTab>,
+    configuration_views: HashMap<LanguageModelProviderId, AnyView>,
+    _registry_subscription: Subscription,
 }
 
 impl ConfigurationView {
     fn new(cx: &mut ViewContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        cx.on_focus(&focus_handle, |this, cx| {
-            if let Some(focus_handle) = this
-                .active_tab
-                .as_ref()
-                .and_then(|tab| tab.focus_handle.as_ref())
-            {
-                focus_handle.focus(cx);
-            }
-        })
-        .detach();
+        let registry_subscription = cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this, _, event: &language_model::Event, cx| match event {
+                language_model::Event::AddedProvider(provider_id) => {
+                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
+                    if let Some(provider) = provider {
+                        this.add_configuration_view(&provider, cx);
+                    }
+                }
+                language_model::Event::RemovedProvider(provider_id) => {
+                    this.remove_configuration_view(provider_id);
+                }
+                _ => {}
+            },
+        );
 
         let mut this = Self {
             focus_handle,
-            active_tab: None,
+            configuration_views: HashMap::default(),
+            _registry_subscription: registry_subscription,
         };
-
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-        if !providers.is_empty() {
-            this.set_active_tab(providers[0].clone(), cx);
-        }
-
+        this.build_configuration_views(cx);
         this
     }
 
-    fn set_active_tab(
-        &mut self,
-        provider: Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let (view, focus_handle) = provider.configuration_view(cx);
-
-        if let Some(focus_handle) = &focus_handle {
-            focus_handle.focus(cx);
-        } else {
-            self.focus_handle.focus(cx);
+    fn build_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+        for provider in providers {
+            self.add_configuration_view(&provider, cx);
         }
-
-        let load_credentials = provider.authenticate(cx);
-        let load_credentials_task = cx.spawn(|this, mut cx| async move {
-            let _ = load_credentials.await;
-            this.update(&mut cx, |this, cx| {
-                if let Some(active_tab) = &mut this.active_tab {
-                    active_tab.load_credentials_task = None;
-                    cx.notify();
-                }
-            })
-            .log_err();
-        });
-
-        self.active_tab = Some(ActiveTab {
-            provider,
-            configuration_prompt: view,
-            focus_handle,
-            load_credentials_task: Some(load_credentials_task),
-        });
-        cx.notify();
     }
 
-    fn render_active_tab_view(&mut self, cx: &mut ViewContext<Self>) -> Option<Div> {
-        let Some(active_tab) = &self.active_tab else {
-            return None;
-        };
-
-        let provider = active_tab.provider.clone();
-        let provider_name = provider.name().0.clone();
-
-        let show_spinner = active_tab.is_loading_credentials();
-
-        let content = if show_spinner {
-            let loading_icon = svg()
-                .size_4()
-                .path(IconName::ArrowCircle.path())
-                .text_color(cx.text_style().color)
-                .with_animation(
-                    "icon_circle_arrow",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                );
-
-            h_flex()
-                .gap_2()
-                .child(loading_icon)
-                .child(Label::new("Loading provider configuration...").size(LabelSize::Small))
-                .into_any_element()
-        } else {
-            active_tab.configuration_prompt.clone().into_any_element()
-        };
-
-        Some(
-            v_flex()
-                .gap_4()
-                .child(
-                    div()
-                        .p(Spacing::Large.rems(cx))
-                        .bg(cx.theme().colors().title_bar_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
-                        .child(content),
-                )
-                .when(
-                    !show_spinner && provider.is_authenticated(cx),
-                    move |this| {
-                        this.child(
-                            h_flex().justify_end().child(
-                                Button::new(
-                                    "new-context",
-                                    format!("Open new context using {}", provider_name),
-                                )
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::Plus)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .on_click(cx.listener(
-                                    move |_, _, cx| {
-                                        cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                                            provider.clone(),
-                                        ))
-                                    },
-                                )),
-                            ),
-                        )
-                    },
-                ),
-        )
+    fn remove_configuration_view(&mut self, provider_id: &LanguageModelProviderId) {
+        self.configuration_views.remove(provider_id);
     }
 
-    fn render_tab(
-        &self,
+    fn add_configuration_view(
+        &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let button_id = SharedString::from(format!("tab-{}", provider.id().0));
-        let is_active = self.active_tab.as_ref().map(|t| t.provider.id()) == Some(provider.id());
-        ButtonLike::new(button_id)
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Transparent)
-            .selected(is_active)
-            .on_click(cx.listener({
-                let provider = provider.clone();
-                move |this, _, cx| {
-                    this.set_active_tab(provider.clone(), cx);
-                }
-            }))
+    ) {
+        let configuration_view = provider.configuration_view(cx);
+        self.configuration_views
+            .insert(provider.id(), configuration_view);
+    }
+
+    fn render_provider_view(
+        &mut self,
+        provider: &Arc<dyn LanguageModelProvider>,
+        cx: &mut ViewContext<Self>,
+    ) -> Div {
+        let provider_name = provider.name().0.clone();
+        let configuration_view = self.configuration_views.get(&provider.id()).cloned();
+
+        v_flex()
+            .gap_4()
+            .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
             .child(
                 div()
-                    .my_3()
-                    .pb_px()
-                    .border_b_1()
-                    .border_color(if is_active {
-                        cx.theme().colors().text_accent
-                    } else {
-                        cx.theme().colors().border_transparent
+                    .p(Spacing::Large.rems(cx))
+                    .bg(cx.theme().colors().title_bar_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .rounded_md()
+                    .when(configuration_view.is_none(), |this| {
+                        this.child(div().child(Label::new(format!(
+                            "No configuration view for {}",
+                            provider_name
+                        ))))
                     })
-                    .when(!is_active, |this| {
-                        this.group_hover("", |this| {
-                            this.border_color(cx.theme().colors().border_variant)
-                        })
-                    })
-                    .child(Label::new(provider.name().0).size(LabelSize::Small).color(
-                        if is_active {
-                            Color::Accent
-                        } else {
-                            Color::Default
-                        },
-                    )),
+                    .when_some(configuration_view, |this, configuration_view| {
+                        this.child(configuration_view)
+                    }),
             )
+            .when(provider.is_authenticated(cx), move |this| {
+                this.child(
+                    h_flex().justify_end().child(
+                        Button::new(
+                            "new-context",
+                            format!("Open new context using {}", provider_name),
+                        )
+                        .icon_position(IconPosition::Start)
+                        .icon(IconName::Plus)
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(cx.listener({
+                            let provider = provider.clone();
+                            move |_, _, cx| {
+                                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                                    provider.clone(),
+                                ))
+                            }
+                        })),
+                    ),
+                )
+            })
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
-        let tabs = h_flex().mx_neg_1().gap_3().children(
-            providers
-                .iter()
-                .map(|provider| self.render_tab(provider, cx)),
-        );
+        let provider_views = providers
+            .into_iter()
+            .map(|provider| self.render_provider_view(&provider, cx))
+            .collect::<Vec<_>>();
 
         v_flex()
             .id("assistant-configuration-view")
@@ -3262,20 +3187,13 @@ impl Render for ConfigurationView {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Headline::new("Configure providers").size(HeadlineSize::Small))
                     .child(
                         Label::new(
                             "At least one provider must be configured to use the assistant.",
                         )
                         .color(Color::Muted),
                     )
-                    .child(tabs)
-                    .when(self.active_tab.is_some(), |this| {
-                        this.children(self.render_active_tab_view(cx))
-                    })
-                    .when(self.active_tab.is_none(), |this| {
-                        this.child(Label::new("No providers configured").color(Color::Warning))
-                    }),
+                    .child(v_flex().mt_2().gap_4().children(provider_views)),
             )
     }
 }
@@ -3466,4 +3384,30 @@ fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> 
         }
     };
     Some(token_state)
+}
+
+enum ConfigurationError {
+    NoProvider,
+    ProviderNotAuthenticated,
+}
+
+fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
+    let provider = LanguageModelRegistry::read_global(cx).active_provider();
+    let is_authenticated = provider
+        .as_ref()
+        .map_or(false, |provider| provider.is_authenticated(cx));
+
+    if provider.is_some() && is_authenticated {
+        return None;
+    }
+
+    if provider.is_none() {
+        return Some(ConfigurationError::NoProvider);
+    }
+
+    if !is_authenticated {
+        return Some(ConfigurationError::ProviderNotAuthenticated);
+    }
+
+    None
 }
