@@ -2139,7 +2139,10 @@ impl ContextEditor {
                                             div()
                                                 .id("error")
                                                 .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(Icon::new(IconName::XCircle)),
+                                                .child(
+                                                    Icon::new(IconName::ExclamationTriangle)
+                                                        .color(Color::Error),
+                                                ),
                                         )
                                     } else {
                                         None
