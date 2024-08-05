@@ -2,18 +2,18 @@ use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{Client, UserStore};
 use collections::BTreeMap;
+use feature_flags::{FeatureFlagAppExt, LanguageModels};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{future, sync::Arc};
-use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use crate::{LanguageModelAvailability, LanguageModelProvider};
@@ -133,46 +133,52 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        for model in anthropic::Model::iter() {
-            if !matches!(model, anthropic::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), CloudModel::Anthropic(model));
-            }
-        }
-        for model in open_ai::Model::iter() {
-            if !matches!(model, open_ai::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), CloudModel::OpenAi(model));
-            }
-        }
-        for model in google_ai::Model::iter() {
-            if !matches!(model, google_ai::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), CloudModel::Google(model));
-            }
-        }
-        for model in ZedModel::iter() {
-            models.insert(model.id().to_string(), CloudModel::Zed(model));
-        }
+        // Free/Trial/Pro
+        models.insert(
+            anthropic::Model::Claude3_5Sonnet.id().to_string(),
+            CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
+        );
+        // Pro
+        models.insert(
+            anthropic::Model::Claude3Haiku.id().to_string(),
+            CloudModel::Anthropic(anthropic::Model::Claude3Haiku),
+        );
+        // Pro
+        models.insert(
+            open_ai::Model::FourOmni.id().to_string(),
+            CloudModel::OpenAi(open_ai::Model::FourOmni),
+        );
+        // Pro
+        models.insert(
+            open_ai::Model::FourOmniMini.id().to_string(),
+            CloudModel::OpenAi(open_ai::Model::FourOmniMini),
+        );
 
-        // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .zed_dot_dev
-            .available_models
-        {
-            let model = match model.provider {
-                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
-                    name: model.name.clone(),
-                    max_tokens: model.max_tokens,
-                    tool_override: model.tool_override.clone(),
-                }),
-                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
-                    name: model.name.clone(),
-                    max_tokens: model.max_tokens,
-                }),
-                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
-                    name: model.name.clone(),
-                    max_tokens: model.max_tokens,
-                }),
-            };
-            models.insert(model.id().to_string(), model.clone());
+        if cx.has_flag::<LanguageModels>() {
+            // Override with available models from settings
+            for model in &AllLanguageModelSettings::get_global(cx)
+                .zed_dot_dev
+                .available_models
+            {
+                let model = match model.provider {
+                    AvailableProvider::Anthropic => {
+                        CloudModel::Anthropic(anthropic::Model::Custom {
+                            name: model.name.clone(),
+                            max_tokens: model.max_tokens,
+                            tool_override: model.tool_override.clone(),
+                        })
+                    }
+                    AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                        name: model.name.clone(),
+                        max_tokens: model.max_tokens,
+                    }),
+                    AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                        name: model.name.clone(),
+                        max_tokens: model.max_tokens,
+                    }),
+                };
+                models.insert(model.id().to_string(), model.clone());
+            }
         }
 
         models
