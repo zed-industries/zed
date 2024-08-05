@@ -75,6 +75,11 @@ pub trait LanguageModel: Send + Sync {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
+        unimplemented!()
+    }
 }
 
 impl dyn LanguageModel {
