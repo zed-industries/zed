@@ -7,7 +7,7 @@ use gpui::{
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::{stream_completion, FunctionDefinition, ToolDefinition};
+use open_ai::{stream_completion, FunctionDefinition, ResponseStreamEvent, ToolDefinition};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -211,7 +211,8 @@ impl OpenAiLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
@@ -234,7 +235,7 @@ impl OpenAiLanguageModel {
                 low_speed_timeout,
             );
             let response = request.await?;
-            Ok(open_ai::extract_text_from_events(response).boxed())
+            Ok(response)
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -279,7 +280,8 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = request.into_open_ai(self.model.id().into());
-        self.stream_completion(request, cx)
+        let completions = self.stream_completion(request, cx);
+        async move { Ok(open_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
     }
 
     fn use_any_tool(
@@ -299,28 +301,33 @@ impl LanguageModel for OpenAiLanguageModel {
                 parameters: None,
             },
         }];
-
+        dbg!(&request);
         let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
                 let mut response = response.await?;
-                while let Some(part) = response.next().await {}
+                while let Some(Ok(part)) = response.next().await {
+                    for choice in part.choices {
+                        let Some(tool_calls) = choice.delta.tool_calls else {
+                            continue;
+                        };
+
+                        for call in tool_calls {
+                            if let Some(call) = call.function {
+                                if let Some(arguments) = call
+                                    .arguments
+                                    .filter(|_| call.name.as_deref() == Some(tool_name.as_str()))
+                                {
+                                    dbg!(&arguments);
+                                    return Ok(serde_json::from_str::<serde_json::Value>(
+                                        &arguments,
+                                    )?);
+                                }
+                            }
+                        }
+                    }
+                }
                 bail!("tool not used");
-                // response
-                //     .content
-                //     .into_iter()
-                //     .find_map(|content| {
-                //         if let anthropic::Content::ToolUse { name, input, .. } = content {
-                //             if name == tool_name {
-                //                 Some(input)
-                //             } else {
-                //                 None
-                //             }
-                //         } else {
-                //             None
-                //         }
-                //     })
-                //     .context("tool not used")
             })
             .boxed()
     }
