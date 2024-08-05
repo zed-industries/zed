@@ -6671,20 +6671,14 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
-            match item {
-                ClipboardItem::String(clipboard_string) => self.do_paste(
-                    clipboard_string.text(),
-                    clipboard_string.metadata::<Vec<ClipboardSelection>>(),
-                    true,
-                    cx,
-                ),
-                ClipboardItem::Image { format, bytes } => {
-                    // TODO: actually render the image
-                    let todo = eprintln!("Pasting {}B image with format {:?}", bytes.len(), format);
-                }
-            }
-        };
+        if let Some(ClipboardItem::String(clipboard_string)) = cx.read_from_clipboard() {
+            self.do_paste(
+                clipboard_string.text(),
+                clipboard_string.metadata::<Vec<ClipboardSelection>>(),
+                true,
+                cx,
+            )
+        }
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {

@@ -1,6 +1,6 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle, ClipboardImage,
     ForegroundExecutor, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow,
     Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
@@ -888,16 +888,16 @@ impl Platform for MacPlatform {
                             .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
                     }
                 }
-                ClipboardItem::Image { format, bytes } => {
+                ClipboardItem::Image(image) => {
                     let bytes = NSData::dataWithBytes_length_(
                         nil,
-                        bytes.as_ptr() as *const c_void,
-                        bytes.len() as u64,
+                        image.bytes.as_ptr() as *const c_void,
+                        image.bytes.len() as u64,
                     );
 
                     state
                         .pasteboard
-                        .setData_forType(bytes, Into::<UTType>::into(format).inner_mut());
+                        .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
                 }
             }
         }
@@ -1098,7 +1098,7 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
                     data.length() as usize,
                 ));
 
-                Some(ClipboardItem::Image { format, bytes })
+                Some(ClipboardItem::Image(ClipboardImage { format, bytes } ))
             }
         } else {
             None

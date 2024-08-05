@@ -977,12 +977,7 @@ pub enum ClipboardItem {
     /// The clipboard item is a plaintext string
     String(ClipboardString),
     /// The clipboard item is an image
-    Image {
-        /// The image format the bytes represent (e.g. PNG)
-        format: ImageFormat,
-        /// The raw image bytes
-        bytes: Vec<u8>,
-    },
+    Image(ClipboardImage),
 }
 
 impl ClipboardItem {
@@ -1022,24 +1017,8 @@ pub enum ImageFormat {
     Tiff,
 }
 
-pub struct WasSvg;
-
-impl TryFrom<ImageFormat> for image::ImageFormat {
-    type Error = WasSvg;
-
-    fn try_from(value: ImageFormat) -> std::result::Result<Self, Self::Error> {
-        match value {
-            ImageFormat::Png => Ok(image::ImageFormat::Png),
-            ImageFormat::Jpeg => Ok(image::ImageFormat::Jpeg),
-            ImageFormat::Webp => Ok(image::ImageFormat::WebP),
-            ImageFormat::Gif => Ok(image::ImageFormat::Gif),
-            ImageFormat::Svg => Err(WasSvg),
-            ImageFormat::Bmp => Ok(image::ImageFormat::Bmp),
-            ImageFormat::Tiff => Ok(image::ImageFormat::Tiff),
-        }
-    }
-}
-
+/// A clipboard item that represents an image.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClipboardImage {
     /// The image format the bytes represent (e.g. PNG)
     format: ImageFormat,
@@ -1048,6 +1027,7 @@ pub struct ClipboardImage {
 }
 
 impl ClipboardImage {
+    /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, cx: &WindowContext) -> Result<ImageData> {
         fn frames_for_image(
             bytes: &[u8],

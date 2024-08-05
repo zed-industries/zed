@@ -2364,6 +2364,11 @@ impl ContextEditor {
                     }
 
                     editor.edit(edits, cx);
+
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    for selection in editor.selections.all::<usize>(cx) {
+                        anchors.push(snapshot.anchor_before(selection.end + 1));
+                    }
                 });
             });
 
