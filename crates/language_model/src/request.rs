@@ -69,6 +69,8 @@ impl LanguageModelRequest {
                 top_k: None,
             }),
             safety_settings: None,
+            tools: vec![],
+            tool_config: None,
         }
     }
 

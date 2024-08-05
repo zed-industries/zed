@@ -1,8 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use google_ai::stream_generate_content;
+use google_ai::{
+    stream_generate_content, FunctionCallingConfig, FunctionDeclaration, GenerateContentRequest,
+    GenerateContentResponse, Mode, Tool, ToolConfig,
+};
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
@@ -216,6 +219,34 @@ pub struct GoogleLanguageModel {
     rate_limiter: RateLimiter,
 }
 
+impl GoogleLanguageModel {
+    fn stream_completion(
+        &self,
+        request: GenerateContentRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<GenerateContentResponse>>>,
+    > {
+        let http_client = self.http_client.clone();
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).google;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.rate_limiter.stream(async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let response =
+                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
+            let events = response.await?;
+            Ok(events)
+        });
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
 impl LanguageModel for GoogleLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -276,34 +307,66 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = request.into_google(self.model.id().to_string());
-
-        let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.rate_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let response =
-                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
-            let events = response.await?;
-            Ok(google_ai::extract_text_from_events(events).boxed())
-        });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        let completions = self.stream_completion(request, cx);
+        async move { Ok(google_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
     }
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        let mut request = request.into_google(self.model.id().into());
+        let function = FunctionDeclaration {
+            name: tool_name.clone(),
+            description: Some(tool_description),
+            parameters: schema,
+        };
+        request.tool_config = Some(ToolConfig::FunctionCallingConfig(FunctionCallingConfig {
+            mode: Mode::Any,
+            allowed_function_names: vec![tool_name],
+        }));
+
+        request.tools = vec![Tool::FunctionDeclarations(vec![function])];
+        let response = self.stream_completion(request, cx);
+        self.rate_limiter
+            .run(async move {
+                let mut response = response.await?;
+
+                // Call arguments are gonna be streamed in over multiple chunks.
+                let mut load_state = None;
+                while let Some(Ok(part)) = response.next().await {
+                    for choice in part.choices {
+                        let Some(tool_calls) = choice.delta.tool_calls else {
+                            continue;
+                        };
+
+                        for call in tool_calls {
+                            if let Some(func) = call.function {
+                                if func.name.as_deref() == Some(tool_name.as_str()) {
+                                    load_state = Some((String::default(), call.index));
+                                }
+                                if let Some((arguments, (output, index))) =
+                                    func.arguments.zip(load_state.as_mut())
+                                {
+                                    if call.index == *index {
+                                        output.push_str(&arguments);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some((arguments, _)) = load_state {
+                    return Ok(serde_json::from_str(&arguments)?);
+                } else {
+                    bail!("tool not used");
+                }
+            })
+            .boxed()
     }
 }
 

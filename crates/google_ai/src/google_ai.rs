@@ -88,6 +88,34 @@ pub enum Task {
     #[serde(rename = "batchEmbedContents")]
     BatchEmbedContents,
 }
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Tool {
+    FunctionDeclarations(Vec<FunctionDeclaration>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Mode {
+    Auto,
+    Any,
+    None,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionCallingConfig {
+    pub mode: Mode,
+    pub allowed_function_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ToolConfig {
+    FunctionCallingConfig(FunctionCallingConfig),
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +123,9 @@ pub struct GenerateContentRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     pub contents: Vec<Content>,
+    #[serde(default)]
+    pub tools: Vec<Tool>,
+    pub tool_config: Option<ToolConfig>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
 }
@@ -130,12 +161,18 @@ pub enum Role {
     User,
     Model,
 }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionCall {
+    name: String,
+    args: serde_json::Value,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Part {
     TextPart(TextPart),
     InlineDataPart(InlineDataPart),
+    FunctionCall(FunctionCall),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
