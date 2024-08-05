@@ -649,7 +649,7 @@ impl AssistantPanel {
             self.ensure_authenticated(cx);
         }
 
-        if let Some(status) = self.client_status.clone() {
+        if let Some(status) = self.client_status {
             self.update_zed_ai_notice_visibility(status, cx);
         }
     }
