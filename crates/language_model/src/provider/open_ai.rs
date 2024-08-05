@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -7,7 +7,7 @@ use gpui::{
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::stream_completion;
+use open_ai::{stream_completion, FunctionDefinition, ToolDefinition};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -206,6 +206,40 @@ pub struct OpenAiLanguageModel {
     request_limiter: RateLimiter,
 }
 
+impl OpenAiLanguageModel {
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
+        let http_client = self.http_client.clone();
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).openai;
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let request = stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
+            let response = request.await?;
+            Ok(open_ai::extract_text_from_events(response).boxed())
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
 impl LanguageModel for OpenAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -245,44 +279,50 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let request = request.into_open_ai(self.model.id().into());
-
-        let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
-            let response = request.await?;
-            Ok(open_ai::extract_text_from_events(response).boxed())
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+        self.stream_completion(request, cx)
     }
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        let mut request = request.into_open_ai(self.model.id().into());
+        request.tool_choice = Some(tool_name.clone());
+        request.tools = vec![ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool_name.clone(),
+                description: Some(tool_description),
+                parameters: None,
+            },
+        }];
+
+        let response = self.stream_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let mut response = response.await?;
+                while let Some(part) = response.next().await {}
+                bail!("tool not used");
+                // response
+                //     .content
+                //     .into_iter()
+                //     .find_map(|content| {
+                //         if let anthropic::Content::ToolUse { name, input, .. } = content {
+                //             if name == tool_name {
+                //                 Some(input)
+                //             } else {
+                //                 None
+                //             }
+                //         } else {
+                //             None
+                //         }
+                //     })
+                //     .context("tool not used")
+            })
+            .boxed()
     }
 }
 
