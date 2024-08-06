@@ -7,7 +7,6 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
-use language::Language;
 use project::Fs;
 use settings::{Settings, SettingsStore};
 

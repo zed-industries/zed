@@ -4,8 +4,7 @@ use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Subscription, View,
 };
-use settings::Settings as _;
-use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator, KeyBinding, ListItem, Tooltip};
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
