@@ -130,7 +130,7 @@ impl zed::Extension for RuffExtension {
 
     fn language_server_command(
         &mut self,
-        server_id: &LanguageServerId,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let ruff_binary = self.language_server_binary(language_server_id, worktree)?;
