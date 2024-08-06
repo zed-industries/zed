@@ -20,11 +20,19 @@ pub enum Relation {
         to = "super::provider::Column::Id"
     )]
     Provider,
+    #[sea_orm(has_many = "super::usage::Entity")]
+    Usages,
 }
 
 impl Related<super::provider::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Provider.def()
+    }
+}
+
+impl Related<super::usage::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Usages.def()
     }
 }
 
