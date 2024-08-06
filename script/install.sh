@@ -55,16 +55,12 @@ main() {
         echo "Run:"
 
         case "$SHELL" in
-            *zsh)
-                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.zshrc"
-                echo "   source ~/.zshrc"
-                ;;
             *fish)
                 echo "   fish_add_path -U $HOME/.local/bin"
                 ;;
             *)
-                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
-                echo "   source ~/.bashrc"
+                echo "alias zed=\"~/.local/bin/zed\"" >> ~/."$(basename "$SHELL")"rc
+                echo "   source ~/."$(basename "$SHELL")"rc"
                 ;;
         esac
 
