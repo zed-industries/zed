@@ -9,7 +9,10 @@ Current shell is '{{shell}}'.
 Current working directory is '{{working_directory}}'.
 {{/if}}
 {{#if latest_output}}
-Latest non-empty {{latest_output.length}} lines of the terminal output: {{latest_output}}
+Latest non-empty terminal output:
+{{#each latest_output as |line|}}
+{{line}}
+{{/each}}
 {{/if}}
 Here is the description of the command:
 {{{user_prompt}}}
