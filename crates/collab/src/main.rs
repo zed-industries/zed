@@ -220,7 +220,7 @@ async fn setup_app_database(config: &Config) -> Result<()> {
         Path::new(default_migrations)
     });
 
-    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
+    let migrations = run_database_migrations(db.options(), migrations_path).await?;
     for (migration, duration) in migrations {
         log::info!(
             "Migrated {} {} {:?}",
@@ -265,7 +265,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
             Path::new(default_migrations)
         });
 
-    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
+    let migrations = run_database_migrations(db.options(), migrations_path).await?;
     for (migration, duration) in migrations {
         log::info!(
             "Migrated {} {} {:?}",

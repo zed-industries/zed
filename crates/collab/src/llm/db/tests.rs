@@ -81,7 +81,7 @@ impl TestLlmDb {
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm");
-            run_database_migrations(db.options(), migrations_path, false)
+            run_database_migrations(db.options(), migrations_path)
                 .await
                 .unwrap();
             db
