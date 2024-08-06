@@ -972,11 +972,21 @@ impl BlockSnapshot {
 
     pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
         let mut cursor = self.transforms.cursor::<BlockRow>();
-        cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+        cursor.seek(&BlockRow(rows.start), Bias::Left, &());
+        while cursor.start().0 < rows.start && cursor.end(&()).0 <= rows.start {
+            cursor.next(&());
+        }
+
         std::iter::from_fn(move || {
             while let Some(transform) = cursor.item() {
                 let start_row = cursor.start().0;
-                if start_row >= rows.end {
+                if start_row > rows.end
+                    || (start_row == rows.end
+                        && transform
+                            .block
+                            .as_ref()
+                            .map_or(false, |block| block.height() > 0))
+                {
                     break;
                 }
                 if let Some(block) = &transform.block {
@@ -1188,6 +1198,23 @@ impl Transform {
     }
 }
 
+impl<'a> BlockChunks<'a> {
+    fn advance(&mut self) {
+        self.transforms.next(&());
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 impl<'a> Iterator for BlockChunks<'a> {
     type Item = Chunk<'a>;
 
@@ -1200,7 +1227,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         if transform.block.is_some() {
             let block_start = self.transforms.start().0 .0;
             let mut block_end = self.transforms.end(&()).0 .0;
-            self.transforms.next(&());
+            self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
             }
@@ -1222,7 +1249,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             } else {
                 self.output_row += 1;
                 if self.output_row < self.max_output_row {
-                    self.transforms.next(&());
+                    self.advance();
                     return Some(Chunk {
                         text: "\n",
                         ..Default::default()
@@ -1240,7 +1267,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
         if self.output_row == transform_end {
-            self.transforms.next(&());
+            self.advance();
         }
 
         if self.masked {
@@ -1270,6 +1297,18 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 
         if self.output_row.0 >= self.transforms.end(&()).0 .0 {
             self.transforms.next(&());
+        }
+
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
         }
 
         let transform = self.transforms.item()?;
@@ -1872,7 +1911,7 @@ mod tests {
                             } else {
                                 BlockDisposition::Below
                             };
-                            let height = rng.gen_range(1..5);
+                            let height = rng.gen_range(0..5);
                             log::info!(
                                 "inserting block {:?} {:?} with height {}",
                                 disposition,
@@ -2083,7 +2122,9 @@ mod tests {
                     .blocks_in_range(0..(expected_row_count as u32))
                     .map(|(row, block)| (row, block.clone().into()))
                     .collect::<Vec<_>>(),
-                expected_block_positions
+                expected_block_positions,
+                "invalid blocks_in_range({:?})",
+                0..expected_row_count
             );
 
             for (_, expected_block) in
