@@ -6,6 +6,12 @@ extend-exclude = [
     # File suffixes aren't typos
     "assets/icons/file_icons/file_types.json",
     "crates/extensions_ui/src/extension_suggest.rs",
+
+    # Some countries codes are flagged as typos.
+    "crates/anthropic/src/supported_countries.rs",
+    "crates/google_ai/src/supported_countries.rs",
+    "crates/open_ai/src/supported_countries.rs",
+
     # Stripe IDs are flagged as typos.
     "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
     # Not our typos

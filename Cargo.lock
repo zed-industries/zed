@@ -2464,6 +2464,7 @@ dependencies = [
  "headless",
  "hex",
  "http_client",
+ "hyper",
  "indoc",
  "jsonwebtoken",
  "language",

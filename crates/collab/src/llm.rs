@@ -1,7 +1,11 @@
+mod authorization;
 mod token;
 
+use crate::api::CloudflareIpCountryHeader;
+use crate::llm::authorization::authorize_access_to_language_model;
 use crate::{executor::Executor, Config, Error, Result};
 use anyhow::Context as _;
+use axum::TypedHeader;
 use axum::{
     body::Body,
     http::{self, HeaderName, HeaderValue, Request, StatusCode},
@@ -91,9 +95,18 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
 
 async fn perform_completion(
     Extension(state): Extension<Arc<LlmState>>,
-    Extension(_claims): Extension<LlmTokenClaims>,
+    Extension(claims): Extension<LlmTokenClaims>,
+    country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
+    authorize_access_to_language_model(
+        &state.config,
+        &claims,
+        country_code_header.map(|header| header.to_string()),
+        params.provider,
+        &params.model,
+    )?;
+
     match params.provider {
         LanguageModelProvider::Anthropic => {
             let api_key = state
