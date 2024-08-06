@@ -27,6 +27,7 @@ pub async fn stream_generate_content(
                 match line {
                     Ok(line) => {
                         if let Some(line) = line.strip_prefix("data: ") {
+                            dbg!(&line);
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(error))),
@@ -89,6 +90,7 @@ pub enum Task {
     BatchEmbedContents,
 }
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Tool {
     FunctionDeclarations(Vec<FunctionDeclaration>),
 }
@@ -107,12 +109,14 @@ pub enum Mode {
     None,
 }
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct FunctionCallingConfig {
     pub mode: Mode,
     pub allowed_function_names: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolConfig {
     FunctionCallingConfig(FunctionCallingConfig),
 }
@@ -162,17 +166,22 @@ pub enum Role {
     Model,
 }
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionCall {
-    name: String,
-    args: serde_json::Value,
+    pub name: String,
+    pub args: serde_json::Value,
 }
-
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallPart {
+    pub function_call: FunctionCall,
+}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Part {
     TextPart(TextPart),
     InlineDataPart(InlineDataPart),
-    FunctionCall(FunctionCall),
+    FunctionCall(FunctionCallPart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

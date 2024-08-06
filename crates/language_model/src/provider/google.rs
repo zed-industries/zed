@@ -3,16 +3,17 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use google_ai::{
-    stream_generate_content, FunctionCallingConfig, FunctionDeclaration, GenerateContentRequest,
-    GenerateContentResponse, Mode, Tool, ToolConfig,
+    stream_generate_content, FunctionCallPart, FunctionCallingConfig, FunctionDeclaration,
+    GenerateContentRequest, GenerateContentResponse, Mode, Part, Tool, ToolConfig,
 };
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use schemars::JsonSchema;
+use schemars::{r#gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
@@ -311,15 +312,24 @@ impl LanguageModel for GoogleLanguageModel {
         async move { Ok(google_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
     }
 
+    fn schema_settings(&self) -> schemars::r#gen::SchemaSettings {
+        let mut schema = SchemaSettings::openapi3();
+        schema.inline_subschemas = true;
+        schema.meta_schema.take();
+        schema
+    }
     fn use_any_tool(
         &self,
         request: LanguageModelRequest,
         tool_name: String,
         tool_description: String,
-        schema: serde_json::Value,
+        mut schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
         let mut request = request.into_google(self.model.id().into());
+        if let Some(schema) = schema.as_object_mut() {
+            schema.remove("title");
+        }
         let function = FunctionDeclaration {
             name: tool_name.clone(),
             description: Some(tool_description),
@@ -327,44 +337,35 @@ impl LanguageModel for GoogleLanguageModel {
         };
         request.tool_config = Some(ToolConfig::FunctionCallingConfig(FunctionCallingConfig {
             mode: Mode::Any,
-            allowed_function_names: vec![tool_name],
+            allowed_function_names: vec![tool_name.clone()],
         }));
 
         request.tools = vec![Tool::FunctionDeclarations(vec![function])];
+        dbg!(&serde_json::to_string(&request).unwrap());
         let response = self.stream_completion(request, cx);
         self.rate_limiter
             .run(async move {
                 let mut response = response.await?;
 
-                // Call arguments are gonna be streamed in over multiple chunks.
-                let mut load_state = None;
-                while let Some(Ok(part)) = response.next().await {
-                    for choice in part.choices {
-                        let Some(tool_calls) = choice.delta.tool_calls else {
-                            continue;
-                        };
-
-                        for call in tool_calls {
-                            if let Some(func) = call.function {
-                                if func.name.as_deref() == Some(tool_name.as_str()) {
-                                    load_state = Some((String::default(), call.index));
-                                }
-                                if let Some((arguments, (output, index))) =
-                                    func.arguments.zip(load_state.as_mut())
-                                {
-                                    if call.index == *index {
-                                        output.push_str(&arguments);
-                                    }
+                while let Some(part) = response.next().await {
+                    let Some(part) = part.log_err() else {
+                        continue;
+                    };
+                    let Some(candidates) = part.candidates else {
+                        continue;
+                    };
+                    for choice in candidates {
+                        for part in choice.content.parts {
+                            if let Part::FunctionCall(FunctionCallPart { function_call }) = part {
+                                if function_call.name == tool_name.as_str() {
+                                    return Ok(function_call.args);
                                 }
                             }
                         }
                     }
                 }
-                if let Some((arguments, _)) = load_state {
-                    return Ok(serde_json::from_str(&arguments)?);
-                } else {
-                    bail!("tool not used");
-                }
+
+                bail!("tool not used");
             })
             .boxed()
     }

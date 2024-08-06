@@ -17,7 +17,10 @@ pub(crate) use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
-use schemars::JsonSchema;
+use schemars::{
+    r#gen::{SchemaGenerator, SchemaSettings},
+    schema_for, JsonSchema,
+};
 use serde::de::DeserializeOwned;
 use std::{future::Future, sync::Arc};
 use ui::IconName;
@@ -76,6 +79,11 @@ pub trait LanguageModel: Send + Sync {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>>;
 
+    /// Specify how a schema should be generated for tool calling.
+    fn schema_settings(&self) -> SchemaSettings {
+        SchemaSettings::draft07()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
         unimplemented!()
@@ -88,7 +96,9 @@ impl dyn LanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> impl 'static + Future<Output = Result<T>> {
-        let schema = schemars::schema_for!(T);
+        let mut settings = self.schema_settings();
+
+        let schema = schemars::gen::SchemaGenerator::new(settings).into_root_schema_for::<T>();
         let schema_json = serde_json::to_value(&schema).unwrap();
         let request = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
         async move {
