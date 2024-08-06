@@ -1,10 +1,14 @@
 use zed_extension_api::{
+    self as zed,
     lsp::{Completion, CompletionKind, Symbol, SymbolKind},
     settings::LspSettings,
-    CodeLabel, CodeLabelSpan, Result, Worktree,
+    CodeLabel, CodeLabelSpan, LanguageServerId, Result,
 };
 
-use crate::RubyLanguageServerCommand;
+pub struct RubyLspBinary {
+    pub path: String,
+    pub args: Option<Vec<String>>,
+}
 
 pub struct RubyLsp {}
 
@@ -16,34 +20,46 @@ impl RubyLsp {
     }
 
     pub fn language_server_command(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        let binary = self.language_server_binary(language_server_id, worktree)?;
+
+        Ok(zed::Command {
+            command: binary.path,
+            args: binary.args.unwrap_or_default(),
+            env: worktree.shell_env(),
+        })
+    }
+
+    fn language_server_binary(
         &self,
-        worktree: &Worktree,
-    ) -> Result<RubyLanguageServerCommand> {
-        let mut binary = None;
-        let mut args = None;
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<RubyLspBinary> {
+        let binary_settings = LspSettings::for_worktree("ruby-lsp", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.binary);
+        let binary_args = binary_settings
+            .as_ref()
+            .and_then(|binary_settings| binary_settings.arguments.clone());
 
-        if let Some(binary_settings) =
-            LspSettings::for_worktree(RubyLsp::LANGUAGE_SERVER_ID, worktree)
-                .ok()
-                .and_then(|lsp_settings| lsp_settings.binary)
-        {
-            if let Some(bin_path) = binary_settings.path {
-                binary = Some(bin_path);
-            }
-            if let Some(bin_args) = binary_settings.arguments {
-                args = Some(bin_args);
-            }
+        if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
+            return Ok(RubyLspBinary {
+                path,
+                args: binary_args,
+            });
         }
-        let command = if let Some(binary) = binary {
-            binary
-        } else {
-            worktree
-                .which("ruby-lsp")
-                .ok_or_else(|| "ruby-lsp must be installed manually".to_string())?
-        };
-        let args = args.unwrap_or_else(|| vec![]);
 
-        Ok(RubyLanguageServerCommand { command, args })
+        if let Some(path) = worktree.which("ruby-lsp") {
+            return Ok(RubyLspBinary {
+                path,
+                args: binary_args,
+            });
+        }
+
+        Err("ruby-lsp must be installed manually".to_string())
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
