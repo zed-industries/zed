@@ -2351,29 +2351,34 @@ impl ContextEditor {
 
     fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
         if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
-            let mut image_positions = Vec::new();
-            self.editor.update(cx, |editor, cx| {
-                editor.transact(cx, |editor, cx| {
-                    let edits = editor
-                        .selections
-                        .all::<usize>(cx)
-                        .into_iter()
-                        .map(|selection| (selection.start..selection.end, "\n"));
-                    editor.edit(edits, cx);
+            if let Ok(image_data) = data.to_image_data(cx) {
+                let mut image_positions = Vec::new();
+                self.editor.update(cx, |editor, cx| {
+                    editor.transact(cx, |editor, cx| {
+                        let edits = editor
+                            .selections
+                            .all::<usize>(cx)
+                            .into_iter()
+                            .map(|selection| (selection.start..selection.end, "\n"));
+                        editor.edit(edits, cx);
 
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor.selections.all::<usize>(cx) {
-                        image_positions.push(snapshot.anchor_before(selection.end));
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        for selection in editor.selections.all::<usize>(cx) {
+                            image_positions.push(snapshot.anchor_before(selection.end));
+                        }
+                    });
+                });
+
+                let image_data = Arc::new(image_data);
+
+                self.context.update(cx, |context, cx| {
+                    for image_position in image_positions {
+                        context.insert_image(image_position.text_anchor, image_data.clone(), cx);
                     }
                 });
-            });
-
-            let image_data = Arc::new(data.to_image_data(cx).expect("TODO"));
-            self.context.update(cx, |context, cx| {
-                for image_position in image_positions {
-                    context.insert_image(image_position.text_anchor, image_data.clone(), cx);
-                }
-            });
+            } else {
+                log::warn!("Tried to paste {} bytes of {:?} image data, but it could not be successfully converted to RGBA." data.bytes.len(), data.format);
+            }
         } else {
             cx.propagate();
         }
