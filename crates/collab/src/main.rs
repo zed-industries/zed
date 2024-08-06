@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         }
         Some("migrate") => {
             let config = envy::from_env::<Config>().expect("error loading config");
-            run_migrations(&config).await?;
+            setup_app_database(&config).await?;
         }
         Some("seed") => {
             let config = envy::from_env::<Config>().expect("error loading config");
@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
             }
 
             if mode.is_collab() || mode.is_api() {
-                run_migrations(&config).await?;
+                setup_app_database(&config).await?;
 
                 let state = AppState::new(config, Executor::Production).await?;
 
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_migrations(config: &Config) -> Result<()> {
+async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
     let mut db = Database::new(db_options, Executor::Production).await?;
 
