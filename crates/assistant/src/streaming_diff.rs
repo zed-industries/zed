@@ -274,12 +274,14 @@ impl LineDiff {
                     }
                 } else {
                     self.buffered_insert.push_str(&text);
-                    self.flush_insert(old_text);
+                    if !text.ends_with('\n') {
+                        self.flush_insert(old_text);
+                    }
                 }
             }
             CharOperation::Delete { bytes } => {
-                self.flush_insert(old_text);
                 self.buffered_delete += bytes;
+                self.flush_insert(old_text);
                 if !is_line_end(self.old_end, old_text) {
                     self.flush_delete(old_text);
                 }
@@ -298,6 +300,8 @@ impl LineDiff {
     }
 
     fn flush_insert(&mut self, old_text: &Rope) {
+        self.truncate_common_suffix(old_text);
+
         if self.buffered_insert.is_empty() {
             return;
         }
@@ -333,6 +337,8 @@ impl LineDiff {
     }
 
     fn flush_delete(&mut self, old_text: &Rope) {
+        self.truncate_common_suffix(old_text);
+
         if self.buffered_delete == 0 {
             return;
         }
@@ -356,6 +362,29 @@ impl LineDiff {
 
         self.inserted_newline_at_end = false;
         self.buffered_delete = 0;
+    }
+
+    fn truncate_common_suffix(&mut self, old_text: &Rope) {
+        let old_start_offset = old_text.point_to_offset(self.old_end);
+        let old_end_offset = old_start_offset + self.buffered_delete;
+
+        let new_chars = self.buffered_insert.chars().rev();
+        let old_chars = old_text
+            .chunks_in_range(old_start_offset..old_end_offset)
+            .flat_map(|chunk| chunk.chars().rev());
+
+        let mut common_suffix_len = 0;
+        for (new_ch, old_ch) in new_chars.zip(old_chars) {
+            if new_ch == old_ch {
+                common_suffix_len += new_ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        self.buffered_delete -= common_suffix_len;
+        self.buffered_insert
+            .truncate(self.buffered_insert.len() - common_suffix_len);
     }
 
     pub fn finish(&mut self, old_text: &Rope) {
@@ -760,6 +789,73 @@ mod tests {
         assert_eq!(
             apply_line_operations(old_text, &new_text, &line_ops),
             new_text,
+        );
+    }
+
+    #[test]
+    fn test_cleaning_up_common_suffix() {
+        let old_text = concat!(
+            "        for y in 0..size.y() {\n",
+            "            let a = 10;\n",
+            "            let b = 20;\n",
+            "        }",
+        );
+        let char_ops = [
+            CharOperation::Keep { bytes: 8 },
+            CharOperation::Insert { text: "let".into() },
+            CharOperation::Insert {
+                text: " mut".into(),
+            },
+            CharOperation::Insert { text: " y".into() },
+            CharOperation::Insert { text: " =".into() },
+            CharOperation::Insert { text: " 0".into() },
+            CharOperation::Insert { text: ";".into() },
+            CharOperation::Insert { text: "\n".into() },
+            CharOperation::Insert {
+                text: "        while".into(),
+            },
+            CharOperation::Insert { text: " y".into() },
+            CharOperation::Insert {
+                text: " < size".into(),
+            },
+            CharOperation::Insert { text: ".".into() },
+            CharOperation::Insert { text: "y".into() },
+            CharOperation::Insert { text: "()".into() },
+            CharOperation::Insert { text: " {".into() },
+            CharOperation::Insert { text: "\n".into() },
+            CharOperation::Delete { bytes: 23 },
+            CharOperation::Keep { bytes: 23 },
+            CharOperation::Keep { bytes: 1 },
+            CharOperation::Keep { bytes: 23 },
+            CharOperation::Keep { bytes: 1 },
+            CharOperation::Keep { bytes: 8 },
+            CharOperation::Insert {
+                text: "    y".into(),
+            },
+            CharOperation::Insert { text: " +=".into() },
+            CharOperation::Insert { text: " 1".into() },
+            CharOperation::Insert { text: ";".into() },
+            CharOperation::Insert { text: "\n".into() },
+            CharOperation::Insert {
+                text: "        ".into(),
+            },
+            CharOperation::Keep { bytes: 1 },
+        ];
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
+        assert_eq!(
+            line_ops,
+            vec![
+                LineOperation::Delete { lines: 1 },
+                LineOperation::Insert { lines: 2 },
+                LineOperation::Keep { lines: 2 },
+                LineOperation::Delete { lines: 1 },
+                LineOperation::Insert { lines: 2 },
+            ]
+        );
+        let new_text = apply_char_operations(old_text, &char_ops);
+        assert_eq!(
+            new_text,
+            apply_line_operations(old_text, &new_text, &line_ops)
         );
     }
 
