@@ -13857,7 +13857,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
