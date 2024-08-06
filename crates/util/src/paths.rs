@@ -126,7 +126,7 @@ impl PathWithPosition {
     /// Parses a filename for row and column.
     /// Example strings:  test:1:2 => (test, 1, 2)
     fn parse_filename(path: &Path) -> Self {
-        match path.file_name().map(OsStr::to_str).flatten() {
+        match path.file_name().and_then(OsStr::to_str) {
             None => Self {
                 path: path.to_path_buf(),
                 row: None,
@@ -134,7 +134,7 @@ impl PathWithPosition {
             },
             Some(filename) => {
                 let split_name: Vec<&str> = filename.split(":").collect();
-                if split_name.is_empty() {
+                if split_name.len() < 1 {
                     return Self {
                         path: path.to_path_buf(),
                         row: None,
@@ -170,13 +170,10 @@ impl PathWithPosition {
 
                 let path = {
                     let path_str = path.to_str().unwrap_or_default();
-                    let extension = path
-                        .extension()
-                        .map(OsStr::to_str)
-                        .flatten()
-                        .unwrap_or_default();
+                    let extension = path.extension().and_then(OsStr::to_str).unwrap_or_default();
                     let extension_len = if extension.len() > 0 {
-                        extension.len() + 1 // plus dot chat
+                        // plus dot char
+                        extension.len() + 1
                     } else {
                         0
                     };
@@ -198,7 +195,7 @@ impl PathWithPosition {
     }
 
     fn parse_extension_or_hidden_file(path: &Path) -> Self {
-        match path.extension_or_hidden_file_name() {
+        match path.extension().and_then(OsStr::to_str) {
             None => Self {
                 path: path.to_path_buf(),
                 row: None,
