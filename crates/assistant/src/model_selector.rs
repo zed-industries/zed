@@ -1,3 +1,4 @@
+use feature_flags::LanguageModels;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 
@@ -188,6 +189,11 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        use feature_flags::FeatureFlagAppExt;
+        if !cx.has_flag::<LanguageModels>() {
+            return None;
+        }
+
         let plan = proto::Plan::ZedPro;
         let is_trial = false;
 
