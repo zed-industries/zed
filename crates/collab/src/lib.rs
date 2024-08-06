@@ -4,6 +4,7 @@ pub mod db;
 pub mod env;
 pub mod executor;
 pub mod llm;
+pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
@@ -150,6 +151,9 @@ pub struct Config {
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
     pub live_kit_secret: Option<String>,
+    pub llm_database_url: Option<String>,
+    pub llm_database_max_connections: Option<u32>,
+    pub llm_database_migrations_path: Option<PathBuf>,
     pub llm_api_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
@@ -197,6 +201,9 @@ impl Config {
             live_kit_server: None,
             live_kit_key: None,
             live_kit_secret: None,
+            llm_database_url: None,
+            llm_database_max_connections: None,
+            llm_database_migrations_path: None,
             llm_api_secret: None,
             rust_log: None,
             log_json: None,

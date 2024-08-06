@@ -5,6 +5,8 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use collab::llm::db::LlmDatabase;
+use collab::migrations::run_database_migrations;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
@@ -45,7 +47,7 @@ async fn main() -> Result<()> {
         }
         Some("migrate") => {
             let config = envy::from_env::<Config>().expect("error loading config");
-            run_migrations(&config).await?;
+            setup_app_database(&config).await?;
         }
         Some("seed") => {
             let config = envy::from_env::<Config>().expect("error loading config");
@@ -81,6 +83,8 @@ async fn main() -> Result<()> {
             let mut on_shutdown = None;
 
             if mode.is_llm() {
+                setup_llm_database(&config).await?;
+
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
 
                 app = app
@@ -89,7 +93,7 @@ async fn main() -> Result<()> {
             }
 
             if mode.is_collab() || mode.is_api() {
-                run_migrations(&config).await?;
+                setup_app_database(&config).await?;
 
                 let state = AppState::new(config, Executor::Production).await?;
 
@@ -203,7 +207,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_migrations(config: &Config) -> Result<()> {
+async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
     let mut db = Database::new(db_options, Executor::Production).await?;
 
@@ -216,7 +220,7 @@ async fn run_migrations(config: &Config) -> Result<()> {
         Path::new(default_migrations)
     });
 
-    let migrations = db.migrate(&migrations_path, false).await?;
+    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
     for (migration, duration) in migrations {
         log::info!(
             "Migrated {} {} {:?}",
@@ -232,7 +236,46 @@ async fn run_migrations(config: &Config) -> Result<()> {
         collab::seed::seed(&config, &db, false).await?;
     }
 
-    return Ok(());
+    Ok(())
+}
+
+async fn setup_llm_database(config: &Config) -> Result<()> {
+    // TODO: This is temporary until we have the LLM database stood up.
+    if !config.is_development() {
+        return Ok(());
+    }
+
+    let database_url = config
+        .llm_database_url
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+
+    let db_options = db::ConnectOptions::new(database_url.clone());
+    let db = LlmDatabase::new(db_options, Executor::Production).await?;
+
+    let migrations_path = config
+        .llm_database_migrations_path
+        .as_deref()
+        .unwrap_or_else(|| {
+            #[cfg(feature = "sqlite")]
+            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm.sqlite");
+            #[cfg(not(feature = "sqlite"))]
+            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm");
+
+            Path::new(default_migrations)
+        });
+
+    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
+    for (migration, duration) in migrations {
+        log::info!(
+            "Migrated {} {} {:?}",
+            migration.version,
+            migration.description,
+            duration
+        );
+    }
+
+    Ok(())
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
