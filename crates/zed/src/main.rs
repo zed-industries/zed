@@ -19,7 +19,8 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
+    UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
 use language::LanguageRegistry;
@@ -43,10 +44,14 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use ui::SharedString;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    AppState, WorkspaceSettings, WorkspaceStore,
+};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
@@ -425,7 +430,33 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, |error, cx| {
+            let error_message = SharedString::from(error.to_string());
+            for workspace in workspace::local_workspace_windows(cx) {
+                struct SettingsParseErrorNotification;
+
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_notification(
+                            NotificationId::unique::<SettingsParseErrorNotification>(),
+                            cx,
+                            |cx| {
+                                cx.new_view(|_| {
+                                    MessageNotification::new(format!(
+                                        "Invalid settings file\n{error_message}"
+                                    ))
+                                    .with_click_message("Open settings file")
+                                    .on_click(|cx| {
+                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                        cx.emit(DismissEvent);
+                                    })
+                                })
+                            },
+                        );
+                    })
+                    .log_err();
+            }
+        });
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         client::init_settings(cx);

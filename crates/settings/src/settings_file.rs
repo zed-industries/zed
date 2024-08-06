@@ -66,6 +66,7 @@ pub fn watch_config_file(
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
+    on_error: impl Fn(anyhow::Error, &mut AppContext) + 'static,
 ) {
     let user_settings_content = cx
         .background_executor()
@@ -79,9 +80,10 @@ pub fn handle_settings_file_changes(
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                store
-                    .set_user_settings(&user_settings_content, cx)
-                    .log_err();
+                if let Err(err) = store.set_user_settings(&user_settings_content, cx) {
+                    log::error!("Failed to load user settings: {err}");
+                    on_error(err, cx);
+                }
                 cx.refresh();
             });
             if result.is_err() {
