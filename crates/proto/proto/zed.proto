@@ -48,8 +48,8 @@ message Envelope {
 
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
-        GetDeclaration get_declaration = 235;
-        GetDeclarationResponse get_declaration_response = 236; // current max
+        GetDeclaration get_declaration = 237;
+        GetDeclarationResponse get_declaration_response = 238; // current max
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
