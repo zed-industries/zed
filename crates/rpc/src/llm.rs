@@ -7,6 +7,7 @@ pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
+    Google,
 }
 
 #[derive(Serialize, Deserialize)]

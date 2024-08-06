@@ -149,5 +149,31 @@ async fn perform_completion(
 
             Ok(Response::new(Body::wrap_stream(stream)))
         }
+        LanguageModelProvider::Google => {
+            let api_key = state
+                .config
+                .google_ai_api_key
+                .as_ref()
+                .context("no Google AI API key configured on the server")?;
+            let chunks = google_ai::stream_generate_content(
+                &state.http_client,
+                google_ai::API_URL,
+                api_key,
+                serde_json::from_str(&params.provider_request.get())?,
+            )
+            .await?;
+
+            let stream = chunks.map(|event| {
+                let mut buffer = Vec::new();
+                event.map(|chunk| {
+                    buffer.clear();
+                    serde_json::to_writer(&mut buffer, &chunk).unwrap();
+                    buffer.push(b'\n');
+                    buffer
+                })
+            });
+
+            Ok(Response::new(Body::wrap_stream(stream)))
+        }
     }
 }
