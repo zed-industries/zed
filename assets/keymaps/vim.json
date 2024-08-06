@@ -91,6 +91,7 @@
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
       "g cmd-d": "editor::GoToImplementation",
+      "1 g shift-d": "editor::GoToDeclaration",
       "g x": "editor::OpenUrl",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",
