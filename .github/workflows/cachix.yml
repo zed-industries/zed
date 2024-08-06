@@ -17,9 +17,9 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
       - uses: cachix/cachix-action@v14
-        if: github.event_name != 'pull_request'
         with:
           name: "${{ vars.CACHIX_OWNER || github.repository_owner }}"
+          skipPush: "${{ github.event_name == 'pull_request' }}"
           authToken: "${{ secrets.CACHIX_TOKEN }}"
       - run: nix build --no-update-lock-file --no-link -L .#zed-editor
       - run: nix shell .#zed-editor nixpkgs#bash --command echo Ok
