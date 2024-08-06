@@ -6,7 +6,7 @@ Our Zed channel tree is public. You can find us hanging out and writing code acr
 
 ## Discord Channel
 
-[Zed Community](https://discord.gg/qSDQ8VWc7k) is our official Discord channel. We drop in pretty regularly to answer questions and chat with the community.
+[Zed Community](https://discord.gg/zed-community) is our official Discord channel. We drop in pretty regularly to answer questions and chat with the community.
 
 ## Twitter
 
