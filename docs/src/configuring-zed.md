@@ -1316,6 +1316,54 @@ List of `integer` column numbers
 "blinking": "on",
 ```
 
+### Cursor Style
+
+- Description: Set the cursor style in the terminal.
+- Setting: `cursor_style`
+- Default: `block`
+
+**Options**
+
+1. Cursor is a block like `█`.
+
+```json
+{
+  "cursor_style": "block"
+}
+```
+
+2. Cursor is an underscore like `_`.
+
+```json
+{
+  "cursor_style": "underline"
+}
+```
+
+3. Cursor is a vertical bar like `⎸`.
+
+```json
+{
+  "cursor_style": "beam"
+}
+```
+
+4. Cursor is a box like `▯`.
+
+```json
+{
+  "cursor_style": "hollow_block"
+}
+```
+
+5. Invisible cursor.
+
+```json
+{
+  "cursor_style": "hidden"
+}
+```
+
 ### Copy On Select
 
 - Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.

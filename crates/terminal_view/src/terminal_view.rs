@@ -19,7 +19,7 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorStyle, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
     TerminalSize,
@@ -102,6 +102,7 @@ pub struct TerminalView {
     blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
+    cursor_style: CursorStyle,
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
     show_title: bool,
@@ -178,6 +179,7 @@ impl TerminalView {
             blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
+            cursor_style: CursorStyle::Block,
             can_navigate_to_selected_word: false,
             workspace_id,
             show_title: TerminalSettings::get_global(cx).toolbar.title,
@@ -239,6 +241,12 @@ impl TerminalView {
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
         self.show_title = settings.toolbar.title;
+        self.cursor_style = settings.cursor_style;
+
+        self.terminal.update(cx, |term, _| {
+            term.set_cursor_style(self.cursor_style);
+        });
+
         cx.notify();
     }
 
@@ -859,7 +867,10 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).focus_in();
+        self.terminal.update(cx, |terminal, _| {
+            terminal.set_cursor_style(self.cursor_style);
+            terminal.focus_in();
+        });
         self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
     }
@@ -867,6 +878,7 @@ impl TerminalView {
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
+            terminal.set_cursor_style(CursorStyle::HollowBlock);
         });
         cx.notify();
     }
