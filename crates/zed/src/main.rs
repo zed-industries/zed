@@ -480,13 +480,11 @@ fn main() {
         let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
-        println!("==> Args: {:?}", args);
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
             .filter_map(|arg| parse_url_arg(arg, cx).log_err())
             .collect();
-        println!("==> Urls: {:?}", urls);
 
         if !urls.is_empty() {
             open_listener.open_urls(urls)
