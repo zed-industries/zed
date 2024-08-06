@@ -518,19 +518,58 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let mut request = request.into_open_ai(model.id().into());
                 request.max_tokens = Some(4000);
-                let future = self.request_limiter.stream(async move {
-                    let request = serde_json::to_string(&request)?;
-                    let stream = client
-                        .request_stream(proto::StreamCompleteWithLanguageModel {
-                            provider: proto::LanguageModelProvider::Zed as i32,
-                            request,
-                        })
+
+                if cx
+                    .update(|cx| cx.has_flag::<LlmServiceFeatureFlag>())
+                    .unwrap_or(false)
+                {
+                    let llm_api_token = self.llm_api_token.clone();
+                    let future = self.request_limiter.stream(async move {
+                        let response = Self::perform_llm_completion(
+                            client.clone(),
+                            llm_api_token,
+                            PerformCompletionParams {
+                                provider: client::LanguageModelProvider::Zed,
+                                model: request.model.clone(),
+                                provider_request: RawValue::from_string(serde_json::to_string(
+                                    &request,
+                                )?)?,
+                            },
+                        )
                         .await?;
-                    Ok(open_ai::extract_text_from_events(
-                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    ))
-                });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                        let body = BufReader::new(response.into_body());
+                        let stream =
+                            futures::stream::try_unfold(body, move |mut body| async move {
+                                let mut buffer = String::new();
+                                match body.read_line(&mut buffer).await {
+                                    Ok(0) => Ok(None),
+                                    Ok(_) => {
+                                        let event: open_ai::ResponseStreamEvent =
+                                            serde_json::from_str(&buffer)?;
+                                        Ok(Some((event, body)))
+                                    }
+                                    Err(e) => Err(e.into()),
+                                }
+                            });
+
+                        Ok(open_ai::extract_text_from_events(stream))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                } else {
+                    let future = self.request_limiter.stream(async move {
+                        let request = serde_json::to_string(&request)?;
+                        let stream = client
+                            .request_stream(proto::StreamCompleteWithLanguageModel {
+                                provider: proto::LanguageModelProvider::Zed as i32,
+                                request,
+                            })
+                            .await?;
+                        Ok(open_ai::extract_text_from_events(
+                            stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                        ))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                }
             }
         }
     }

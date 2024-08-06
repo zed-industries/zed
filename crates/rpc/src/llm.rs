@@ -8,6 +8,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    Zed,
 }
 
 #[derive(Serialize, Deserialize)]
