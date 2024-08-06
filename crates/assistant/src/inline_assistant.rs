@@ -604,7 +604,7 @@ impl InlineAssistant {
         }
     }
 
-    fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
+    pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
         if let Some(assist) = self.assists.get(&assist_id) {
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
@@ -715,8 +715,7 @@ impl InlineAssistant {
     }
 
     fn focus_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
-        let assist = &self.assists[&assist_id];
-        let Some(editor) = assist.editor.upgrade() else {
+        let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
 
@@ -728,6 +727,17 @@ impl InlineAssistant {
                 })
             });
         }
+
+        self.scroll_to_assist(assist_id, cx);
+    }
+
+    pub fn scroll_to_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(assist) = self.assists.get(&assist_id) else {
+            return;
+        };
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
 
         let position = assist.range.start;
         editor.update(cx, |editor, cx| {
@@ -842,6 +852,20 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
+    }
+
+    pub fn status_for_assist(
+        &self,
+        assist_id: InlineAssistId,
+        cx: &WindowContext,
+    ) -> Option<CodegenStatus> {
+        let assist = self.assists.get(&assist_id)?;
+        match &assist.codegen.read(cx).status {
+            CodegenStatus::Idle => Some(CodegenStatus::Idle),
+            CodegenStatus::Pending => Some(CodegenStatus::Pending),
+            CodegenStatus::Done => Some(CodegenStatus::Done),
+            CodegenStatus::Error(error) => Some(CodegenStatus::Error(anyhow!("{:?}", error))),
+        }
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -2000,7 +2024,7 @@ pub struct Codegen {
     _subscription: gpui::Subscription,
 }
 
-enum CodegenStatus {
+pub enum CodegenStatus {
     Idle,
     Pending,
     Done,
