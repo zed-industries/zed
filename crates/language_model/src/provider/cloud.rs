@@ -292,7 +292,6 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         _: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let model_id = self.model.id().to_string();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
@@ -302,7 +301,6 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Anthropic as i32,
-                            model: model_id,
                             request,
                         })
                         .await?;
@@ -320,7 +318,6 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::OpenAi as i32,
-                            model: model_id,
                             request,
                         })
                         .await?;
@@ -338,7 +335,6 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Google as i32,
-                            model: model_id,
                             request,
                         })
                         .await?;
@@ -357,7 +353,6 @@ impl LanguageModel for CloudLanguageModel {
                     let stream = client
                         .request_stream(proto::StreamCompleteWithLanguageModel {
                             provider: proto::LanguageModelProvider::Zed as i32,
-                            model: model_id,
                             request,
                         })
                         .await?;
@@ -381,7 +376,6 @@ impl LanguageModel for CloudLanguageModel {
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let client = self.client.clone();
-                let model_id = model.id().to_string();
                 let mut request = request.into_anthropic(model.tool_model_id().into());
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
@@ -398,7 +392,6 @@ impl LanguageModel for CloudLanguageModel {
                         let response = client
                             .request(proto::CompleteWithLanguageModel {
                                 provider: proto::LanguageModelProvider::Anthropic as i32,
-                                model: model_id,
                                 request,
                             })
                             .await?;
