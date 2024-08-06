@@ -5,7 +5,7 @@ use gpui::{
     FontWeight, Subscription, View,
 };
 use settings::Settings as _;
-use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator, KeyBinding, ListItem};
+use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
@@ -225,30 +225,6 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        // Show all the available kernels by their name and language
-        // Show which kernels are set as the default for that language
-
-        //
-        // conda-base (Python) *default*
-        // deno
-        // deno-debug (TypeScript) *default*
-        //
-
-        //
-        // Kernels Available
-        //
-        // TypeScript
-        //   deno-debug *
-        //   deno-debug-unstable
-        //   deno-unstable
-        //   deno
-        //
-        // Python
-        //   conda-base *
-        //   conda-forge
-        //   system
-        //
-
         let mut kernels_by_language: HashMap<String, Vec<KernelSpecification>> = HashMap::default();
         for spec in kernel_specifications {
             kernels_by_language
@@ -261,36 +237,32 @@ impl Render for ReplSessionsPage {
             .child(Label::new("Kernels available").size(LabelSize::Large))
             .gap_2()
             .children(kernels_by_language.into_iter().map(|(language, specs)| {
-                let settings = JupyterSettings::get_global(cx);
-                let default_kernel_for_language = settings.kernel_selections.get(&language);
-
-                let chosen_kernel = store
-                    .read(cx)
-                    .kernelspec(&language, cx)
-                    .map(|spec| spec.name.clone());
+                let chosen_kernel = store.read(cx).kernelspec(&language, cx);
 
                 v_flex()
                     .gap_1()
                     .child(Label::new(language.clone()).weight(FontWeight::BOLD))
                     .children(specs.into_iter().map(|spec| {
                         let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
-                            chosen_kernel.to_lowercase() == spec.name.to_lowercase()
+                            chosen_kernel.name.to_lowercase() == spec.name.to_lowercase()
+                                && chosen_kernel.path == spec.path
                         } else {
-                            // if it was the first, then this is true, otherwise false
                             false
                         };
 
-                        ListItem::new(SharedString::from(spec.name.clone()))
-                            .inset(true)
-                            .selected(false)
+                        let path = SharedString::from(spec.path.to_string_lossy().to_string());
+
+                        // Ok I can make this div be a interactive instead
+                        let button = ButtonLike::new(ElementId::Name(path.clone()))
+                            .tooltip(move |cx| Tooltip::text(path.clone(), cx))
                             .child(
                                 h_flex()
                                     .gap_1()
                                     .child(Label::new(spec.name.clone()))
-                                    .when(is_choice, |el| {
-                                        el.child(Label::new("*").color(Color::Muted))
-                                    }),
-                            )
+                                    .when(is_choice, |el| el.child(Icon::new(IconName::Check))),
+                            );
+
+                        button
                     }))
             }));
 
@@ -304,7 +276,7 @@ impl Render for ReplSessionsPage {
                         .child(Label::new(instructions))
                         .children(KeyBinding::for_action(&Run, cx)),
                 )
-                .child(kernels_available);
+                .child(div().pt_3().child(kernels_available));
         }
 
         ReplSessionsContainer::new("Jupyter Kernel Sessions")
