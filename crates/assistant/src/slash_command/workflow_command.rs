@@ -63,7 +63,7 @@ impl SlashCommand for WorkflowSlashCommand {
             sections: vec![SlashCommandOutputSection {
                 range,
                 icon: IconName::Route,
-                label: "Workflow: Edit Steps".into(),
+                label: "Workflow".into(),
             }],
             run_commands_in_text: false,
         }))
