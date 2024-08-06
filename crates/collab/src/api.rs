@@ -61,7 +61,7 @@ impl std::fmt::Display for CloudflareIpCountryHeader {
     }
 }
 
-pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<(), Body> {
+pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -70,7 +70,6 @@ pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Rou
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
-                .layer(Extension(state))
                 .layer(Extension(rpc_server))
                 .layer(middleware::from_fn(validate_api_token)),
         )
@@ -82,14 +81,14 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "missing authorization header".to_string(),
             )
         })?
         .strip_prefix("token ")
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "invalid authorization header".to_string(),
             )
@@ -98,7 +97,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
     if token != state.config.api_token {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),
         ))?
@@ -152,12 +151,8 @@ struct CreateUserParams {
 }
 
 async fn get_rpc_server_snapshot(
-    Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
-    let Some(rpc_server) = rpc_server else {
-        return Err(Error::Internal(anyhow!("rpc server is not available")));
-    };
-
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
@@ -190,13 +185,13 @@ async fn create_access_token(
             if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
                 impersonated_user_id = Some(impersonated_user.id);
             } else {
-                return Err(Error::Http(
+                return Err(Error::http(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     format!("user {impersonate} does not exist"),
                 ));
             }
         } else {
-            return Err(Error::Http(
+            return Err(Error::http(
                 StatusCode::UNAUTHORIZED,
                 "you do not have permission to impersonate other users".to_string(),
             ));
