@@ -18,7 +18,6 @@ TBD: Explain Git Hunks
 - Expanding hunks
 - Reverting hunks
 
-
 ## Git Integrations
 
 Zed integrates with popular Git hosting services to ensure that git commit hashes

@@ -14,4 +14,5 @@ TBD: Document JSON Schema features of Zed
 ## JSONC
 
 TBD: Document JSONC (JSON with comments)
-  - How to add additional files to be recognized as JSONC
+
+- How to add additional files to be recognized as JSONC

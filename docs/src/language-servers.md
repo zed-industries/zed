@@ -8,6 +8,7 @@ TBD: Explain how Language servers are used in zed
   - https://zed.dev/docs/configuring-zed#direnv-integration
 
 TBD: Explain how to choose between multiple language servers
+
 ```json
 {
   "languages": {

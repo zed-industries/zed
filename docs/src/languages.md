@@ -52,4 +52,4 @@ Pick top 6 or 8 for grid:
 
 ## Extension Provided Language Support
 
-TBD Enumerate Extension Provided Languages
+TBD: Enumerate Extension Provided Languages

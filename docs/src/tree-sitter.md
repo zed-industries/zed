@@ -9,6 +9,7 @@ TBD: Tree Sitter documentation
 - Differentiate between tree-sitter and language servers
 
 Document Queries:
+
 - highlights.scm (20)
 - brackets.scm (15)
 - outline.scm (14)
