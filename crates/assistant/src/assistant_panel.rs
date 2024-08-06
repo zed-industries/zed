@@ -31,11 +31,12 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, img, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
-    FocusHandle, FocusableView, ImageSource, InteractiveElement, IntoElement, Model, ParentElement,
-    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, img, percentage, point, size, Action, Animation, AnimationExt, AnyElement, AnyView,
+    AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
+    EventEmitter, FocusHandle, FocusableView, ImageData, InteractiveElement, IntoElement, Model,
+    ParentElement, Pixels, Render, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -2367,10 +2368,10 @@ impl ContextEditor {
                 });
             });
 
-            let image_source = ImageSource::Data(data.to_image_data(cx).expect("TODO").into());
+            let image_data = Arc::new(data.to_image_data(cx).expect("TODO"));
             self.context.update(cx, |context, cx| {
                 for image_position in image_positions {
-                    context.insert_image(image_position.text_anchor, image_source.clone(), cx);
+                    context.insert_image(image_position.text_anchor, image_data.clone(), cx);
                 }
             });
         } else {
@@ -2388,12 +2389,30 @@ impl ContextEditor {
                 .read(cx)
                 .images(cx)
                 .filter_map(|image| {
+                    const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
-                        height: 10, // TODO: make this auto height
+                        height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
-                        render: Box::new(move |_cx| img(image.data.clone()).into_any_element()),
+                        render: Box::new(move |cx| {
+                            let image_size = size_for_image(
+                                &image.data,
+                                size(
+                                    cx.max_width - cx.gutter_dimensions.full_width(),
+                                    MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
+                                ),
+                            );
+                            h_flex()
+                                .pl(cx.gutter_dimensions.full_width())
+                                .child(
+                                    img(image.data.clone())
+                                        .object_fit(gpui::ObjectFit::ScaleDown)
+                                        .w(image_size.width)
+                                        .h(image_size.height),
+                                )
+                                .into_any_element()
+                        }),
                         disposition: BlockDisposition::Above,
                     })
                 })
@@ -3425,4 +3444,28 @@ fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> 
         }
     };
     Some(token_state)
+}
+
+fn size_for_image(data: &ImageData, max_size: Size<Pixels>) -> Size<Pixels> {
+    let image_size = data
+        .size(0)
+        .map(|dimension| Pixels::from(u32::from(dimension)));
+    let image_ratio = image_size.width / image_size.height;
+    let bounds_ratio = max_size.width / max_size.height;
+
+    if image_size.width > max_size.width || image_size.height > max_size.height {
+        if bounds_ratio > image_ratio {
+            size(
+                image_size.width * (max_size.height / image_size.height),
+                max_size.height,
+            )
+        } else {
+            size(
+                max_size.width,
+                image_size.height * (max_size.width / image_size.width),
+            )
+        }
+    } else {
+        size(image_size.width, image_size.height)
+    }
 }

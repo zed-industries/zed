@@ -15,7 +15,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, ImageSource, Model, ModelContext, Subscription, Task,
+    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, Subscription, Task,
 };
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
@@ -338,7 +338,7 @@ impl Message {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageAnchor {
     pub anchor: language::Anchor,
-    pub data: ImageSource,
+    pub data: Arc<ImageData>,
 }
 
 struct PendingCompletion {
@@ -1827,7 +1827,7 @@ impl Context {
     pub fn insert_image(
         &mut self,
         anchor: language::Anchor,
-        image: ImageSource,
+        image: Arc<ImageData>,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(ContextEvent::MessagesEdited);
