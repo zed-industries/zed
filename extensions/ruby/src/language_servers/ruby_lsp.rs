@@ -59,7 +59,10 @@ impl RubyLsp {
             });
         }
 
-        Err("ruby-lsp must be installed manually".to_string())
+        Err(
+            "ruby-lsp must be installed manually. Install it with `gem install ruby-lsp`."
+                .to_string(),
+        )
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
