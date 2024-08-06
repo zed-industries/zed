@@ -225,6 +225,7 @@ impl RunningKernel {
                 .current_dir(&working_directory)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
+                .stdin(std::process::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;
@@ -329,8 +330,8 @@ impl RunningKernel {
 impl Drop for RunningKernel {
     fn drop(&mut self) {
         std::fs::remove_file(&self.connection_path).ok();
-
         self.request_tx.close_channel();
+        self.process.kill().ok();
     }
 }
 

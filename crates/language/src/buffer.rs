@@ -1876,6 +1876,63 @@ impl Buffer {
         cx.notify();
     }
 
+    // Inserts newlines at the given position to create an empty line, returning the start of the new line.
+    // You can also request the insertion of empty lines above and below the line starting at the returned point.
+    pub fn insert_empty_line(
+        &mut self,
+        position: impl ToPoint,
+        space_above: bool,
+        space_below: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Point {
+        let mut position = position.to_point(self);
+
+        self.start_transaction();
+
+        self.edit(
+            [(position..position, "\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+
+        if position.column > 0 {
+            position += Point::new(1, 0);
+        }
+
+        if !self.is_line_blank(position.row) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+        }
+
+        if space_above {
+            if position.row > 0 && !self.is_line_blank(position.row - 1) {
+                self.edit(
+                    [(position..position, "\n")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+                position.row += 1;
+            }
+        }
+
+        if space_below {
+            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
+                self.edit(
+                    [(position..position, "\n")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            }
+        }
+
+        self.end_transaction(cx);
+
+        position
+    }
+
     /// Applies the given remote operations to the buffer.
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,

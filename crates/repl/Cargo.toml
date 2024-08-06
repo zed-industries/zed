@@ -26,6 +26,7 @@ gpui.workspace = true
 image.workspace = true
 language.workspace = true
 log.workspace = true
+markdown_preview.workspace = true
 multi_buffer.workspace = true
 project.workspace = true
 runtimelib.workspace = true

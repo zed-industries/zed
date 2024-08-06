@@ -330,7 +330,12 @@ impl ContextStore {
 
     pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
         let context = cx.new_model(|cx| {
-            Context::local(self.languages.clone(), Some(self.telemetry.clone()), cx)
+            Context::local(
+                self.languages.clone(),
+                Some(self.project.clone()),
+                Some(self.telemetry.clone()),
+                cx,
+            )
         });
         self.register_context(&context, cx);
         context
@@ -351,6 +356,7 @@ impl ContextStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(|this, mut cx| async move {
@@ -363,6 +369,7 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    Some(project),
                     Some(telemetry),
                     cx,
                 )
@@ -401,6 +408,7 @@ impl ContextStore {
 
         let fs = self.fs.clone();
         let languages = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let load = cx.background_executor().spawn({
             let path = path.clone();
@@ -413,7 +421,14 @@ impl ContextStore {
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
             let context = cx.new_model(|cx| {
-                Context::deserialize(saved_context, path.clone(), languages, Some(telemetry), cx)
+                Context::deserialize(
+                    saved_context,
+                    path.clone(),
+                    languages,
+                    Some(project),
+                    Some(telemetry),
+                    cx,
+                )
             })?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
@@ -472,6 +487,7 @@ impl ContextStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
@@ -486,6 +502,7 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    Some(project),
                     Some(telemetry),
                     cx,
                 )
