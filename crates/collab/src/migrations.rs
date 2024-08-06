@@ -11,7 +11,6 @@ use sqlx::Connection;
 pub async fn run_database_migrations(
     database_options: &ConnectOptions,
     migrations_path: impl AsRef<Path>,
-    ignore_checksum_mismatch: bool,
 ) -> Result<Vec<(Migration, Duration)>> {
     let migrations = MigrationSource::resolve(migrations_path.as_ref())
         .await
@@ -31,7 +30,7 @@ pub async fn run_database_migrations(
     for migration in migrations {
         match applied_migrations.get(&migration.version) {
             Some(applied_migration) => {
-                if migration.checksum != applied_migration.checksum && !ignore_checksum_mismatch {
+                if migration.checksum != applied_migration.checksum {
                     Err(anyhow!(
                         "checksum mismatch for applied migration {}",
                         migration.description

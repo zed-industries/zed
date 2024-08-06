@@ -93,7 +93,7 @@ impl TestDb {
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
-            run_database_migrations(db.options(), migrations_path, false)
+            run_database_migrations(db.options(), migrations_path)
                 .await
                 .unwrap();
             db.initialize_notification_kinds().await.unwrap();
