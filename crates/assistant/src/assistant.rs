@@ -197,8 +197,16 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
-    inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+
+    let prompt_builder =
+        Arc::new(prompts::PromptBuilder::new().expect("Failed to create PromptBuilder"));
+    inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
     IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
