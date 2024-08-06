@@ -2350,42 +2350,27 @@ impl ContextEditor {
 
     fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
         if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
-            let mut anchors = Vec::new();
+            let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
-                    let mut edits = Vec::new();
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor.selections.all::<usize>(cx) {
-                        let insert_newline = snapshot
-                            .chars_at(selection.end)
-                            .take(1)
-                            .collect::<Vec<_>>()
-                            .get(0)
-                            != Some(&'\n');
-                        if selection.is_empty() {
-                            if insert_newline {
-                                edits.push((selection.start..selection.start, "\n"));
-                            }
-                        } else {
-                            let new_text = if insert_newline { "\n" } else { "" };
-                            edits.push((selection.start..selection.end, new_text));
-                        }
-                    }
-
+                    let edits = editor
+                        .selections
+                        .all::<usize>(cx)
+                        .into_iter()
+                        .map(|selection| (selection.start..selection.end, "\n"));
                     editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     for selection in editor.selections.all::<usize>(cx) {
-                        // TODO: +1
-                        anchors.push(snapshot.anchor_before(selection.end));
+                        image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });
             });
 
             let image_source = ImageSource::Data(data.to_image_data(cx).expect("TODO").into());
             self.context.update(cx, |context, cx| {
-                for anchor in anchors {
-                    context.insert_image(anchor.text_anchor, image_source.clone(), cx);
+                for image_position in image_positions {
+                    context.insert_image(image_position.text_anchor, image_source.clone(), cx);
                 }
             });
         } else {
