@@ -43,7 +43,7 @@ fn authorize_access_for_country(
     }
 
     let is_country_supported_by_provider = match provider {
-        LanguageModelProvider::Anthropic => is_country_supported_by_anthropic(&country_code),
+        LanguageModelProvider::Anthropic => anthropic::is_supported_country(&country_code),
         LanguageModelProvider::OpenAi => is_country_supported_by_open_ai(&country_code),
         LanguageModelProvider::Google => is_country_supported_by_google(&country_code),
         LanguageModelProvider::Zed => true,
@@ -56,11 +56,6 @@ fn authorize_access_for_country(
     }
 
     Ok(())
-}
-
-/// https://www.anthropic.com/supported-countries
-fn is_country_supported_by_anthropic(country_code: &str) -> bool {
-    false
 }
 
 /// https://platform.openai.com/docs/supported-countries
