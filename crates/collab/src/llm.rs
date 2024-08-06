@@ -1,10 +1,12 @@
 mod authorization;
+mod db;
 mod token;
 
 use crate::api::CloudflareIpCountryHeader;
 use crate::llm::authorization::authorize_access_to_language_model;
+use crate::llm::db::LlmDatabase;
 use crate::{executor::Executor, Config, Error, Result};
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use axum::TypedHeader;
 use axum::{
     body::Body,
@@ -24,11 +26,24 @@ pub use token::*;
 pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
+    pub db: Arc<LlmDatabase>,
     pub http_client: IsahcHttpClient,
 }
 
 impl LlmState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
+        let database_url = config
+            .llm_database_url
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+        let max_connections = config
+            .llm_database_max_connections
+            .ok_or_else(|| anyhow!("missing LLM_DATABASE_MAX_CONNECTIONS"))?;
+
+        let mut db_options = db::ConnectOptions::new(database_url);
+        db_options.max_connections(max_connections);
+        let db = LlmDatabase::new(db_options).await?;
+
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
         let http_client = IsahcHttpClient::builder()
             .default_header("User-Agent", user_agent)
@@ -38,6 +53,7 @@ impl LlmState {
         let this = Self {
             config,
             executor,
+            db: Arc::new(db),
             http_client,
         };
 
