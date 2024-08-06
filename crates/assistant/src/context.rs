@@ -15,8 +15,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, SmallVec, Subscription,
-    Task,
+    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, Subscription, Task,
 };
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
@@ -30,6 +29,7 @@ use paths::contexts_dir;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
     cmp,
     fmt::Debug,
@@ -2217,44 +2217,48 @@ impl Context {
 
     pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
-        let mut image_anchors = self.image_anchors.iter().peekable();
+        let messages = self.message_anchors.iter().enumerate();
+        let images = self.image_anchors.iter();
 
-        Self::messages_from_iters(buffer, self.messages_metadata, messages, images)
+        Self::messages_from_iters(buffer, &self.messages_metadata, messages, images)
     }
 
     pub fn messages_from_iters<'a>(
-        buffer: &Buffer,
-        metadata: HashMap<MessageId, MessageMetadata>,
-        messages: impl Iterator<Item = MessageAnchor>,
-        images: impl Iterator<Item = ImageAnchor>,
+        buffer: &'a Buffer,
+        metadata: &'a HashMap<MessageId, MessageMetadata>,
+        messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
+        images: impl Iterator<Item = &'a ImageAnchor> + 'a,
     ) -> impl 'a + Iterator<Item = Message> {
+        let mut messages = messages.peekable();
+        let mut images = images.peekable();
+
         iter::from_fn(move || {
-            if let Some((start_ix, message_anchor)) = message_anchors.next() {
+            if let Some((start_ix, message_anchor)) = messages.next() {
                 let metadata = metadata.get(&message_anchor.id)?;
 
-                let message_start_anchor = message_anchor.start;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
                 let mut end_ix = start_ix;
-                while let Some((_, next_message)) = message_anchors.peek() {
+                while let Some((_, next_message)) = messages.peek() {
                     if next_message.start.is_valid(buffer) {
                         message_end = Some(next_message.start);
                         break;
                     } else {
                         end_ix += 1;
-                        message_anchors.next();
+                        messages.next();
                     }
                 }
                 let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
-                let message_end = message_anchor.to_offset(buffer);
+                let message_end = message_anchor.start.to_offset(buffer);
 
-                let image_offsets = SmallVec::new();
-                while let Some(image_anchor) = image_anchors.peek() {
-                    if image_anchor.anchor < message_end_anchor {
-                        image_anchors.next();
-                        image_offsets
-                            .push((image_anchor.anchor.to_offset(buffer), image_anchor.data))
+                let mut image_offsets = SmallVec::new();
+                while let Some(image_anchor) = images.peek() {
+                    if image_anchor.anchor.offset < message_end_anchor.offset {
+                        image_offsets.push((
+                            image_anchor.anchor.to_offset(buffer),
+                            image_anchor.data.clone(),
+                        ));
+                        images.next();
                     } else {
                         break;
                     }

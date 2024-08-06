@@ -2377,7 +2377,7 @@ impl ContextEditor {
                     }
                 });
             } else {
-                log::warn!("Tried to paste {} bytes of {:?} image data, but it could not be successfully converted to RGBA." data.bytes.len(), data.format);
+                log::warn!("Tried to paste {} bytes of {:?} image data, but it could not be successfully converted to RGBA.", data.bytes().len(), data.format());
             }
         } else {
             cx.propagate();

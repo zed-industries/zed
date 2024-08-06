@@ -421,6 +421,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "similar",
+ "smallvec",
  "smol",
  "strsim 0.11.1",
  "telemetry_events",

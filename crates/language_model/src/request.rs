@@ -1,13 +1,9 @@
-use std::io::{BufWriter, Cursor};
+use std::io::{Cursor, Write};
 
 use crate::role::Role;
-use base64::{write::EncoderWriter, Engine};
+use base64::write::EncoderWriter;
 use gpui::{point, size, AppContext, DevicePixels, ImageSource, ObjectFit, Size};
-use image::{
-    codecs::png::{PngDecoder, PngEncoder},
-    imageops::resize,
-    ImageEncoder,
-};
+use image::{codecs::png::PngEncoder, imageops::resize};
 use serde::{Deserialize, Serialize};
 use ui::px;
 use util::ResultExt;
@@ -26,7 +22,7 @@ impl LanguageModelImage {
 
         let image_size = data.size(0);
 
-        let bytes = data.as_bytes(0).unwrap_or(&[]).to_vec();
+        let mut bytes = data.as_bytes(0).unwrap_or(&[]).to_vec();
         // Convert from BGRA to RGBA.
         for pixel in bytes.chunks_exact_mut(4) {
             pixel.swap(2, 0);
@@ -60,15 +56,22 @@ impl LanguageModelImage {
             );
         }
 
-        let base64_image = Vec::new();
-        let base64_writer = BufWriter::new(EncoderWriter::new(
-            Cursor::new(base64_image),
-            &base64::engine::general_purpose::STANDARD,
-        ));
+        let mut png = Vec::new();
 
         image
-            .write_to(&mut Cursor::new(base64_writer), image::ImageFormat::Png)
+            .write_with_encoder(PngEncoder::new(&mut png))
             .log_err()?;
+
+        let mut base64_image = Vec::new();
+
+        {
+            let mut base64_encoder = EncoderWriter::new(
+                Cursor::new(&mut base64_image),
+                &base64::engine::general_purpose::STANDARD,
+            );
+
+            base64_encoder.write_all(png.as_slice()).log_err()?;
+        }
 
         Some(LanguageModelImage {
             source: base64_image,

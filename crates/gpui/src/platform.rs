@@ -1079,6 +1079,16 @@ impl ClipboardImage {
 
         Ok(ImageData::new(frames))
     }
+
+    /// Get the format of the clipboard image
+    pub fn format(&self) -> ImageFormat {
+        self.format
+    }
+
+    /// Get the raw bytes of the clipboard image
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
 }
 
 /// A clipboard item that should be copied to the clipboard
