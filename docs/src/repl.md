@@ -120,7 +120,7 @@ deno jupyter --install
 
 TBD: Add Julia REPL instructions
 
-- [/docs/languages/julia](/docs/languages/julia)
+- [/docs/languages/julia](languages/julia.md)
 
 ### Scala
 

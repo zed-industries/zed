@@ -59,6 +59,8 @@ The remote machine must be able to run Zed. The following platforms should work,
 
 > **Note:** This may change as the alpha program continues.
 
+TBD: Remote user settings need a name. Perhaps `zed: remote user settings`?
+
 You can edit the settings file on the remote instance. To do so, add a new project to your server in the directory `~/.config/zed`. You can create a file called `settings.json` if it does not yet exist.
 
 Note that this is most useful for configuring language servers, as any UI related settings do not apply.

@@ -1,9 +1,7 @@
 # Adding New Languages to Zed
 
-TBD: Explain all the steps necessary to add a language to Zed:
-
-- Link to explanation of how extensions download and install
-- Link to tree sitter in Zed
+TBD: Explain all the steps necessary to add a language extensions to Zed
+TBD: Document extension.toml syntax
 
 ## LSP
 
@@ -13,7 +11,7 @@ TBD: Document what LSP is, ho
 
 ## Syntax Highlighting
 
-TBD: Explain how syntax highlighting works in Zed.
+TBD: Explain how syntax highlighting works in Zed. [tree-sitter docs](./tree-sitter.md)
 
 ### Defining syntax highlighting rules
 

@@ -23,4 +23,4 @@ TBD: Document Scala configuration https://scalameta.org/metals/docs/editors/user
 
 ## REPL
 
-See also: [Julia REPL Setup Instructions](/docs/repl/#julia)
+See also: [Julia REPL Setup Instructions](../repl.md#julia)

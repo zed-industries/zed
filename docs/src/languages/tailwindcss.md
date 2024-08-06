@@ -11,13 +11,13 @@ TBD: Document Tailwind CSS
 
 Languages which can be used with Tailwind CSS in Zed
 
-- [Astro](/docs/languages/astro)
-- [CSS](/docs/languages/css)
-- [ERB](/docs/languages/ruby#ERB)
-- [HEEx](/docs/languages/elixir#HEEx)
-- [HTML](/docs/languages/html)
-- [TypeScript](/docs/languages/typescript)
-- [JavaScript](/docs/languages/javascript)
-- [PHP](/docs/languages/php)
-- [Svelte](/docs/languages/svelte)
-- [Vue](/docs/languages/vue)
+- [Astro](./astro.md)
+- [CSS](./css.md)
+- [ERB](./ruby#ERB.md)
+- [HEEx](./elixir#HEEx.md)
+- [HTML](./html.md)
+- [TypeScript](./typescript.md)
+- [JavaScript](./javascript.md)
+- [PHP](./php.md)
+- [Svelte](./svelte.md)
+- [Vue](./vue.md)

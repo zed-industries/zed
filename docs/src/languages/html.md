@@ -19,6 +19,6 @@ If you do not want to use the HTML extension, you can add the following to your 
 
 ## See also:
 
-- [CSS](/docs/languages/css)
-- [JavaScript](/docs/languages/javascript)
-- [TypeScript](/docs/languages/typescript)
+- [CSS](./css.md)
+- [JavaScript](./javascript.md)
+- [TypeScript](./typescript.md)

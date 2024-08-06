@@ -49,5 +49,5 @@ See [typescript-language-server inlayhints documentation](https://github.com/typ
 
 ## See also
 
-- [Zed Yarn documentation](/docs/languages/yarn) for a walkthrough of configuring your project to use Yarn.
-- [Zed Deno documentation](/docs/languages/deno)
+- [Zed Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [Zed Deno documentation](./deno.md)

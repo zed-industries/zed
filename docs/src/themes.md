@@ -25,3 +25,22 @@ By default, Zed maintains two themes: one for light mode and one for dark mode. 
   }
 }
 ```
+
+## Theme Overides
+
+TBD: Document `experimental.theme_overrides`
+
+```json
+"experimental.theme_overrides": {
+    "syntax": {
+      "comment": {
+        "font_style": "italic"
+      }
+    }
+  },
+```
+
+## Theme Development
+
+TBD: Document theme development
+https://zed.dev/schema/themes/v0.1.0.json

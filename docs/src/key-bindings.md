@@ -74,6 +74,11 @@ The `alt-` modifier can be used on many layouts to generate a different key. For
 
 It is possible to match against typing a modifier key on its own. For example `shift shift` can be used to implement JetBrains search everywhere shortcut. In this case the binding happens on key release instead of key press.
 
+### Contexts
+
+TBD: Add keybinding contexts https://github.com/zed-industries/zed/issues/14718
+See also: [vim context docs](/docs/vim#contexts)
+
 ### Remapping keys
 
 A common request is to be able to map from one sequence of keys to another. As of Zed 0.124.0 you can do this with the `workspace::SendKeystrokes` action.
@@ -130,6 +135,9 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 ### All key bindings
 
 #### Global
+
+TBD: Update these to reflect current bindings
+TBD: Add Column with Linux shortcuts
 
 | **Command**               | **Target**   | **Default Shortcut**    |
 | ------------------------- | ------------ | ----------------------- |

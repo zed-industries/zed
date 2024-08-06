@@ -7,5 +7,5 @@ Erlang support is available through the [Erlang extension](https://github.com/ze
 
 ## See also:
 
-- [Elixir](/docs/languages/elixir)
-- [Gleam](/docs/languages/gleam)
+- [Elixir](./elixir.md)
+- [Gleam](./gleam.md)

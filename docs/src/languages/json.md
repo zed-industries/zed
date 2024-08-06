@@ -13,6 +13,7 @@ TBD: Document JSON Schema features of Zed
 
 ## JSONC
 
-TBD: Document JSONC (JSON with comments)
+Zed also supports a super-set of JSON called JSONC, which allows single line comments (`//`) in JSON files.
+While editing these files you can use `cmd-/` (MacOS) or `ctrl-/` (Linux) to toggle comments on the current line or selection.
 
-- How to add additional files to be recognized as JSONC
+TBD: JSONC Example for how to use `file_types` so

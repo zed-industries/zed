@@ -29,6 +29,8 @@
 
 # Language Support
 
+TBD: Replace language support list with a top-8 and a link to /docs/languages
+
 - [Astro](./languages/astro.md)
 - [C](./languages/c.md)
 - [C++](./languages/cpp.md)
@@ -72,7 +74,7 @@
 # Developing Zed
 
 - [Adding New Languages](./adding-new-languages.md)
-- [Developing Zed](./developing-zed.md)
+- [Developing Zed](./development.md)
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)

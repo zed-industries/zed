@@ -155,5 +155,5 @@ You can configure ESLint's `rulesCustomizations` setting:
 
 ## See also
 
-- [Yarn documentation](/docs/languages/yarn) for a walkthrough of configuring your project to use Yarn.
-- [TypeScript documentation](/docs/languages/typescript)
+- [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [TypeScript documentation](./typescript.md)
