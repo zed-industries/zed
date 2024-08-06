@@ -334,7 +334,7 @@ impl InlineAssistant {
             BlockProperties {
                 style: BlockStyle::Sticky,
                 position: range.end,
-                height: 1,
+                height: 0,
                 render: Box::new(|cx| {
                     v_flex()
                         .h_full()
