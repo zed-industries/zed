@@ -1,10 +1,21 @@
 # Adding New Languages to Zed
 
+TBD: Explain all the steps necessary to add a language to Zed:
+
+- Link to explanation of how extensions download and install
+- Link to tree sitter in Zed
+
+
 ## LSP
 
 Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide language support. This means, in theory, we can support any language that has an LSP server.
 
+- TBD: Document what LSP is, ho
+
 ## Syntax Highlighting
+
+TBD: Explain how syntax highlighting works in Zed.
+
 
 ### Defining syntax highlighting rules
 
