@@ -1,7 +1,6 @@
 use gpui::*;
 
-struct Shadow {
-}
+struct Shadow {}
 
 impl Render for Shadow {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -23,10 +22,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| {
-                cx.new_view(|_cx| Shadow {
-                })
-            },
+            |cx| cx.new_view(|_cx| Shadow {}),
         )
         .unwrap();
     });
