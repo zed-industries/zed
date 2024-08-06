@@ -48,6 +48,8 @@ message Envelope {
 
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
+        GetDeclaration get_declaration = 237;
+        GetDeclarationResponse get_declaration_response = 238; // current max
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
@@ -696,9 +698,20 @@ message GetDefinition {
      uint64 buffer_id = 2;
      Anchor position = 3;
      repeated VectorClockEntry version = 4;
- }
+}
 
 message GetDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetDeclaration {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDeclarationResponse {
     repeated LocationLink links = 1;
 }
 

@@ -301,6 +301,12 @@ impl EditorElement {
             editor.go_to_definition_split(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
+            editor.go_to_declaration(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_declaration_split(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
             editor.go_to_implementation(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
