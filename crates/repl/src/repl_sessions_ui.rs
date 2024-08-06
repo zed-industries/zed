@@ -1,17 +1,19 @@
+use collections::HashMap;
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, View,
+    FontWeight, Subscription, View,
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use settings::Settings as _;
+use ui::{prelude::*, ButtonLike, ElevationIndex, Indicator, KeyBinding, ListItem};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
-use crate::components::KernelListItem;
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
+use crate::KernelSpecification;
 
 actions!(
     repl,
@@ -223,6 +225,75 @@ impl Render for ReplSessionsPage {
                 );
         }
 
+        // Show all the available kernels by their name and language
+        // Show which kernels are set as the default for that language
+
+        //
+        // conda-base (Python) *default*
+        // deno
+        // deno-debug (TypeScript) *default*
+        //
+
+        //
+        // Kernels Available
+        //
+        // TypeScript
+        //   deno-debug *
+        //   deno-debug-unstable
+        //   deno-unstable
+        //   deno
+        //
+        // Python
+        //   conda-base *
+        //   conda-forge
+        //   system
+        //
+
+        let mut kernels_by_language: HashMap<String, Vec<KernelSpecification>> = HashMap::default();
+        for spec in kernel_specifications {
+            kernels_by_language
+                .entry(spec.kernelspec.language.clone())
+                .or_insert_with(Vec::new)
+                .push(spec);
+        }
+
+        let kernels_available = v_flex()
+            .child(Label::new("Kernels available").size(LabelSize::Large))
+            .gap_2()
+            .children(kernels_by_language.into_iter().map(|(language, specs)| {
+                let settings = JupyterSettings::get_global(cx);
+                let default_kernel_for_language = settings.kernel_selections.get(&language);
+
+                let chosen_kernel = store
+                    .read(cx)
+                    .kernelspec(&language, cx)
+                    .map(|spec| spec.name.clone());
+
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(language.clone()).weight(FontWeight::BOLD))
+                    .children(specs.into_iter().map(|spec| {
+                        let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
+                            chosen_kernel.to_lowercase() == spec.name.to_lowercase()
+                        } else {
+                            // if it was the first, then this is true, otherwise false
+                            false
+                        };
+
+                        ListItem::new(SharedString::from(spec.name.clone()))
+                            .inset(true)
+                            .selected(false)
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(Label::new(spec.name.clone()))
+                                    .when(is_choice, |el| {
+                                        el.child(Label::new("*").color(Color::Muted))
+                                    }),
+                            )
+                    }))
+            }));
+
         // When there are no sessions, show the command to run code in an editor
         if sessions.is_empty() {
             let instructions = "To run code in a Jupyter kernel, select some code and use the 'repl::Run' command.";
@@ -233,18 +304,12 @@ impl Render for ReplSessionsPage {
                         .child(Label::new(instructions))
                         .children(KeyBinding::for_action(&Run, cx)),
                 )
-                .child(Label::new("Kernels available").size(LabelSize::Large))
-                .children(kernel_specifications.into_iter().map(|spec| {
-                    KernelListItem::new(spec.clone()).child(
-                        h_flex()
-                            .gap_2()
-                            .child(Label::new(spec.name))
-                            .child(Label::new(spec.kernelspec.language).color(Color::Muted)),
-                    )
-                }));
+                .child(kernels_available);
         }
 
-        ReplSessionsContainer::new("Jupyter Kernel Sessions").children(sessions)
+        ReplSessionsContainer::new("Jupyter Kernel Sessions")
+            .children(sessions)
+            .child(kernels_available)
     }
 }
 
