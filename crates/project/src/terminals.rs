@@ -350,7 +350,15 @@ pub fn wrap_for_ssh(
     if command.is_none() {
         args.push("-t".to_string())
     }
-    args.push(shell_invocation);
+
+    if cfg!(target_os = "windows") {
+        // On Windows, alacritty joins arguments into a single string instead of using std::process::Command
+        // Probably because of CVE-2024-24576.
+        args.push(shlex::try_quote(&shell_invocation).unwrap().into_owned());
+    } else {
+        args.push(shell_invocation);
+    }
+
     (program, args)
 }
 
