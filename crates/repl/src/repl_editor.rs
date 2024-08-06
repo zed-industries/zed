@@ -12,7 +12,7 @@ use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
-pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
+pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -89,7 +89,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         }
 
         session.update(cx, |session, cx| {
-            session.execute(selected_text, anchor_range, next_cursor, cx);
+            session.execute(selected_text, anchor_range, next_cursor, move_down, cx);
         });
     }
 

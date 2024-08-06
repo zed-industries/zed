@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::GoToDeclaration;
 use crate::{
     selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
     DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
@@ -163,6 +164,7 @@ pub fn deploy_context_menu(
                 .on_blur_subscription(Subscription::new(|| {}))
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))

@@ -1,12 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
+    ChatResponseDelta, OllamaToolCall,
 };
+use serde_json::Value;
 use settings::{Settings, SettingsStore};
-use std::{future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
@@ -184,6 +186,7 @@ impl OllamaLanguageModel {
                     },
                     Role::Assistant => ChatMessage::Assistant {
                         content: msg.content,
+                        tool_calls: None,
                     },
                     Role::System => ChatMessage::System {
                         content: msg.content,
@@ -198,7 +201,24 @@ impl OllamaLanguageModel {
                 temperature: Some(request.temperature),
                 ..Default::default()
             }),
+            tools: vec![],
         }
+    }
+    fn request_completion(
+        &self,
+        request: ChatRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
+        let http_client = self.http_client.clone();
+
+        let Ok(api_url) = cx.update(|cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            settings.api_url.clone()
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move { ollama::complete(http_client.as_ref(), &api_url, request).await }.boxed()
     }
 }
 
@@ -269,7 +289,7 @@ impl LanguageModel for OllamaLanguageModel {
                         Ok(delta) => {
                             let content = match delta.message {
                                 ChatMessage::User { content } => content,
-                                ChatMessage::Assistant { content } => content,
+                                ChatMessage::Assistant { content, .. } => content,
                                 ChatMessage::System { content } => content,
                             };
                             Some(Ok(content))
@@ -286,13 +306,48 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        use ollama::{OllamaFunctionTool, OllamaTool};
+        let function = OllamaFunctionTool {
+            name: tool_name.clone(),
+            description: Some(tool_description),
+            parameters: Some(schema),
+        };
+        let tools = vec![OllamaTool::Function { function }];
+        let request = self.to_ollama_request(request).with_tools(tools);
+        let response = self.request_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let response = response.await?;
+                let ChatMessage::Assistant {
+                    tool_calls,
+                    content,
+                } = response.message
+                else {
+                    bail!("message does not have an assistant role");
+                };
+                if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
+                    for call in tool_calls {
+                        let OllamaToolCall::Function(function) = call;
+                        if function.name == tool_name {
+                            return Ok(function.arguments);
+                        }
+                    }
+                } else if let Ok(args) = serde_json::from_str::<Value>(&content) {
+                    // Parse content as arguments.
+                    return Ok(args);
+                } else {
+                    bail!("assistant message does not have any tool calls");
+                };
+
+                bail!("tool not used")
+            })
+            .boxed()
     }
 }
 

@@ -17,6 +17,7 @@ actions!(
     repl,
     [
         Run,
+        RunInPlace,
         ClearOutputs,
         Sessions,
         Interrupt,
@@ -68,7 +69,20 @@ pub fn init(cx: &mut AppContext) {
                         return;
                     }
 
-                    crate::run(editor_handle.clone(), cx).log_err();
+                    crate::run(editor_handle.clone(), true, cx).log_err();
+                }
+            })
+            .detach();
+
+        editor
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &RunInPlace, cx| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+
+                    crate::run(editor_handle.clone(), false, cx).log_err();
                 }
             })
             .detach();
