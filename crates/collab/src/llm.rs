@@ -101,7 +101,7 @@ async fn perform_completion(
 ) -> Result<impl IntoResponse> {
     authorize_access_to_language_model(
         &state.config,
-        claims,
+        &claims,
         country_code_header.map(|header| header.to_string()),
         params.provider,
         &params.model,

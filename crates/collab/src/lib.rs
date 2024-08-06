@@ -185,6 +185,46 @@ impl Config {
             _ => "https://zed.dev",
         }
     }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self {
+            http_port: 0,
+            database_url: "".into(),
+            database_max_connections: 0,
+            api_token: "".into(),
+            invite_link_prefix: "".into(),
+            live_kit_server: None,
+            live_kit_key: None,
+            live_kit_secret: None,
+            llm_api_secret: None,
+            rust_log: None,
+            log_json: None,
+            zed_environment: "test".into(),
+            blob_store_url: None,
+            blob_store_region: None,
+            blob_store_access_key: None,
+            blob_store_secret_key: None,
+            blob_store_bucket: None,
+            openai_api_key: None,
+            google_ai_api_key: None,
+            anthropic_api_key: None,
+            clickhouse_url: None,
+            clickhouse_user: None,
+            clickhouse_password: None,
+            clickhouse_database: None,
+            zed_client_checksum_seed: None,
+            slack_panics_webhook: None,
+            auto_join_channel_id: None,
+            migrations_path: None,
+            seed_path: None,
+            stripe_api_key: None,
+            stripe_price_id: None,
+            supermaven_admin_api_key: None,
+            qwen2_7b_api_key: None,
+            qwen2_7b_api_url: None,
+        }
+    }
 }
 
 /// The service mode that collab should run in.
