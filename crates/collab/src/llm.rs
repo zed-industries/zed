@@ -12,7 +12,7 @@ use axum::{
 };
 use futures::StreamExt as _;
 use http_client::IsahcHttpClient;
-use rpc::{PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use rpc::{LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use std::sync::Arc;
 
 pub use token::*;
@@ -94,29 +94,33 @@ async fn perform_completion(
     Extension(_claims): Extension<LlmTokenClaims>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
-    let api_key = state
-        .config
-        .anthropic_api_key
-        .as_ref()
-        .context("no Anthropic AI API key configured on the server")?;
-    let chunks = anthropic::stream_completion(
-        &state.http_client,
-        anthropic::ANTHROPIC_API_URL,
-        api_key,
-        serde_json::from_str(&params.provider_request.get())?,
-        None,
-    )
-    .await?;
+    match params.provider {
+        LanguageModelProvider::Anthropic => {
+            let api_key = state
+                .config
+                .anthropic_api_key
+                .as_ref()
+                .context("no Anthropic AI API key configured on the server")?;
+            let chunks = anthropic::stream_completion(
+                &state.http_client,
+                anthropic::ANTHROPIC_API_URL,
+                api_key,
+                serde_json::from_str(&params.provider_request.get())?,
+                None,
+            )
+            .await?;
 
-    let stream = chunks.map(|event| {
-        let mut buffer = Vec::new();
-        event.map(|chunk| {
-            buffer.clear();
-            serde_json::to_writer(&mut buffer, &chunk).unwrap();
-            buffer.push(b'\n');
-            buffer
-        })
-    });
+            let stream = chunks.map(|event| {
+                let mut buffer = Vec::new();
+                event.map(|chunk| {
+                    buffer.clear();
+                    serde_json::to_writer(&mut buffer, &chunk).unwrap();
+                    buffer.push(b'\n');
+                    buffer
+                })
+            });
 
-    Ok(Response::new(Body::wrap_stream(stream)))
+            Ok(Response::new(Body::wrap_stream(stream)))
+        }
+    }
 }

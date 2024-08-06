@@ -317,7 +317,6 @@ impl LanguageModel for CloudLanguageModel {
                     let http_client = self.client.http_client();
                     let llm_api_token = self.llm_api_token.clone();
                     let future = self.request_limiter.stream(async move {
-                        let request = serde_json::to_string(&request)?;
                         let mut token = llm_api_token.acquire(&client).await?;
                         let mut did_retry = false;
 
@@ -329,7 +328,11 @@ impl LanguageModel for CloudLanguageModel {
                                 .header("Authorization", format!("Bearer {token}"))
                                 .body(
                                     serde_json::to_string(&PerformCompletionParams {
-                                        provider_request: RawValue::from_string(request.clone())?,
+                                        provider: client::LanguageModelProvider::Anthropic,
+                                        model: request.model.clone(),
+                                        provider_request: RawValue::from_string(
+                                            serde_json::to_string(&request)?,
+                                        )?,
                                     })?
                                     .into(),
                                 )?;
