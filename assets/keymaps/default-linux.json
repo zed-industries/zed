@@ -32,7 +32,7 @@
     }
   },
   {
-    "context": "menu",
+    "context": "Picker || menu",
     "bindings": {
       "up": "menu::SelectPrev",
       "down": "menu::SelectNext"
