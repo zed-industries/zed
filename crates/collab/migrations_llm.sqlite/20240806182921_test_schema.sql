@@ -1,12 +1,12 @@
 create table providers (
-    id serial primary key,
+    id integer primary key autoincrement,
     name text not null
 );
 
 create unique index uix_providers_on_name on providers (name);
 
 create table models (
-    id serial primary key,
+    id integer primary key autoincrement,
     provider_id integer not null references providers (id) on delete cascade,
     name text not null
 );

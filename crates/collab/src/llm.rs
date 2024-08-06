@@ -42,7 +42,7 @@ impl LlmState {
 
         let mut db_options = db::ConnectOptions::new(database_url);
         db_options.max_connections(max_connections);
-        let db = LlmDatabase::new(db_options).await?;
+        let db = LlmDatabase::new(db_options, executor.clone()).await?;
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
         let http_client = IsahcHttpClient::builder()

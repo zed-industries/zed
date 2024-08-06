@@ -2,6 +2,7 @@ use sea_orm::entity::prelude::*;
 
 use crate::llm::db::{ModelId, ProviderId};
 
+/// An LLM model.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "models")]
 pub struct Model {

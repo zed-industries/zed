@@ -246,7 +246,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
         .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
 
     let db_options = db::ConnectOptions::new(database_url.clone());
-    let db = LlmDatabase::new(db_options).await?;
+    let db = LlmDatabase::new(db_options, Executor::Production).await?;
 
     let migrations_path = config
         .llm_database_migrations_path

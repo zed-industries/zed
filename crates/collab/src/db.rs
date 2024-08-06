@@ -410,7 +410,7 @@ fn is_serialization_error(error: &Error) -> bool {
 }
 
 /// A handle to a [`DatabaseTransaction`].
-pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
+pub struct TransactionHandle(pub(crate) Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
     type Target = DatabaseTransaction;
