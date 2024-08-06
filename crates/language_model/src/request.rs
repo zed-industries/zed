@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 
 use crate::role::Role;
 use base64::write::EncoderWriter;
-use gpui::{point, size, AppContext, DevicePixels, ImageSource, ObjectFit, Size};
+use gpui::{point, size, AppContext, DevicePixels, ImageData, ImageSource, ObjectFit, Size};
 use image::{codecs::png::PngEncoder, imageops::resize};
 use serde::{Deserialize, Serialize};
 use ui::px;
@@ -10,16 +10,14 @@ use util::ResultExt;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct LanguageModelImage {
-    // Abase64 encoded PNG image
-    source: Vec<u8>,
+    // A base64 encoded PNG image
+    source: String,
     size: Size<DevicePixels>,
 }
 
 impl LanguageModelImage {
-    /// Resolves an image source into an LLM-ready format (base64)
-    pub async fn resolve_source(source: ImageSource, cx: &mut AppContext) -> Option<Self> {
-        let data = source.data(cx).await?; // BGRA
-
+    /// Resolves image into an LLM-ready format (base64)
+    pub fn from_image(data: &ImageData) -> Option<Self> {
         let image_size = data.size(0);
 
         let mut bytes = data.as_bytes(0).unwrap_or(&[]).to_vec();
@@ -73,9 +71,12 @@ impl LanguageModelImage {
             base64_encoder.write_all(png.as_slice()).log_err()?;
         }
 
+        // SAFETY: The base64 encoder should not produce non-UTF8
+        let source = unsafe { String::from_utf8_unchecked(base64_image) };
+
         Some(LanguageModelImage {
-            source: base64_image,
             size: image_size,
+            source,
         })
     }
 
@@ -87,49 +88,73 @@ impl LanguageModelImage {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub enum LanguageModelRequestMessageContent {
-    String(String),
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
+pub enum MessageContent {
+    Text(String),
     Image(LanguageModelImage),
 }
 
-impl LanguageModelRequestMessageContent {
-    pub fn as_string(&self) -> &str {
+impl std::fmt::Debug for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LanguageModelRequestMessageContent::String(s) => s.as_str(),
-            LanguageModelRequestMessageContent::Image(_) => "",
+            MessageContent::Text(t) => f.debug_struct("MessageContent").field("text", t).finish(),
+            MessageContent::Image(i) => f
+                .debug_struct("MessageContent")
+                .field("image", &i.source.len())
+                .finish(),
         }
     }
 }
 
-impl From<String> for LanguageModelRequestMessageContent {
-    fn from(value: String) -> Self {
-        LanguageModelRequestMessageContent::String(value)
+impl MessageContent {
+    pub fn as_string(&self) -> &str {
+        match self {
+            MessageContent::Text(s) => s.as_str(),
+            MessageContent::Image(_) => "",
+        }
     }
 }
 
-impl From<&str> for LanguageModelRequestMessageContent {
+impl From<String> for MessageContent {
+    fn from(value: String) -> Self {
+        MessageContent::Text(value)
+    }
+}
+
+impl From<&str> for MessageContent {
     fn from(value: &str) -> Self {
-        LanguageModelRequestMessageContent::String(value.to_string())
+        MessageContent::Text(value.to_string())
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct LanguageModelRequestMessage {
     pub role: Role,
-    pub content: Vec<LanguageModelRequestMessageContent>,
+    pub content: Vec<MessageContent>,
 }
 
 impl LanguageModelRequestMessage {
     pub fn string_contents(&self) -> String {
         let mut string_buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
-            LanguageModelRequestMessageContent::String(s) => Some(s),
-            LanguageModelRequestMessageContent::Image(_) => None,
+            MessageContent::Text(s) => Some(s),
+            MessageContent::Image(_) => None,
         }) {
             string_buffer.push_str(string.as_str())
         }
         string_buffer
+    }
+
+    pub fn contents_empty(&self) -> bool {
+        self.content.is_empty()
+            || self
+                .content
+                .get(0)
+                .map(|content| match content {
+                    MessageContent::Text(s) => s.is_empty(),
+                    MessageContent::Image(_) => true,
+                })
+                .unwrap_or(false)
     }
 }
 
@@ -203,7 +228,7 @@ impl LanguageModelRequest {
         let mut system_message = String::new();
 
         for message in self.messages {
-            if message.content.is_empty() {
+            if message.contents_empty() {
                 continue;
             }
 
@@ -212,12 +237,10 @@ impl LanguageModelRequest {
                     if let Some(last_message) = new_messages.last_mut() {
                         if last_message.role == message.role {
                             // TODO: is this append done properly?
-                            last_message
-                                .content
-                                .push(LanguageModelRequestMessageContent::String(format!(
-                                    "\n\n{}",
-                                    message.string_contents()
-                                )));
+                            last_message.content.push(MessageContent::Text(format!(
+                                "\n\n{}",
+                                message.string_contents()
+                            )));
                             continue;
                         }
                     }
@@ -244,9 +267,24 @@ impl LanguageModelRequest {
                             Role::Assistant => anthropic::Role::Assistant,
                             Role::System => return None,
                         },
-                        content: vec![anthropic::Content::Text {
-                            text: message.string_contents(),
-                        }],
+                        content: message
+                            .content
+                            .into_iter()
+                            // TODO: filter out the empty messages in the message construction step
+                            .filter_map(|content| match content {
+                                MessageContent::Text(t) if !t.is_empty() => {
+                                    Some(anthropic::Content::Text { text: t })
+                                }
+                                MessageContent::Image(i) => Some(anthropic::Content::Image {
+                                    source: anthropic::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: "image/png".to_string(),
+                                        data: i.source,
+                                    },
+                                }),
+                                _ => None,
+                            })
+                            .collect(),
                     })
                 })
                 .collect(),

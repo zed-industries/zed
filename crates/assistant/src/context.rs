@@ -21,8 +21,8 @@ use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
 };
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelTool,
-    Role,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelTool, Role,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -327,12 +327,37 @@ pub struct Message {
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
+        let mut content = Vec::new();
+
+        let mut range_start = self.offset_range.start;
+        for (image_offset, image) in self.image_offsets.iter() {
+            if *image_offset != range_start {
+                content.push(
+                    buffer
+                        .text_for_range(range_start..*image_offset)
+                        .collect::<String>()
+                        .into(),
+                )
+            }
+            if let Some(image) = LanguageModelImage::from_image(image.as_ref()) {
+                // TODO: Cache the results of this image encoding. Currently, we re-encode from BRGA to png every time.
+                content.push(language_model::MessageContent::Image(image));
+            }
+
+            range_start = *image_offset;
+        }
+        if range_start != self.offset_range.end {
+            content.push(
+                buffer
+                    .text_for_range(range_start..self.offset_range.end)
+                    .collect::<String>()
+                    .into(),
+            )
+        }
+
         LanguageModelRequestMessage {
             role: self.role,
-            content: vec![buffer
-                .text_for_range(self.offset_range.clone())
-                .collect::<String>()
-                .into()],
+            content,
         }
     }
 }
@@ -1728,98 +1753,6 @@ impl Context {
             .filter(|message| message.status == MessageStatus::Done)
             .map(|message| message.to_request_message(&buffer))
             .collect();
-        // Goal: Augment this with image data
-        // For each message, determine a role
-        //
-        // Within each message, split the upload into:
-        // {
-        //  "role": User,
-        //  "content": [
-        //    { "type": "text", ...},
-        //    { "type": "image", ...}
-        //   ]
-        // }
-        //
-        // What we have:
-        // editor: ['a', 'a', 'a', 'a'....]
-        // messages: [1..4, 4..7],
-        // images: [3, 5]
-        //
-        //
-        //
-        // let i, j = 0 (ix into messages and images)
-        // messages: [1..4, 4..7],
-        //            i
-        // images: [3, 5]
-        //          j
-
-        // let images = self.images(cx).peekable();
-        // let messages = self.messages(cx).peekable();
-
-        // // {"role": "user", "content": "Hello, Claude"}
-
-        // // {"role": "user", "content": [{"type": "text", "text": "Hello, Claude"}]}
-
-        // let text_iter: impl Iterator<Item=&str> // what we have right now
-        // let image_iter: impl Iterator<Item=Image> // what we have right now
-        // let mut next_text = text_iter.next();
-        // let mut next_image = image_iter.next();
-
-        // while next_text.is_some() || next_image.is_some() {
-        //     let text_range_start = next_text.unwrap_or(-1);
-        //     let image_range_start = next_text.unwrap_or(-1);
-
-        // }
-
-        // // ///
-
-        // // for message_range in message_iter {
-        // //     let images = self.images_anchors.get_intersecting(text_range);
-        // //     return (text_range, intersecting_images)
-        // // }
-
-        // let buffer = self.buffer.read(cx);
-        // let messages = self.messages(cx);
-        // let mut images = self.images(cx).peekable();
-
-        // let mut request_messages = Vec::new();
-        // for message in messages {
-        //     if message.status == MessageStatus::Done {
-        //         continue;
-        //     }
-
-        //     let offset_range = message.offset_range;
-        //     let content = Vec::new(); // TextRange, Image
-
-        //     let mut last_offset = offset_range.start;
-
-        //     while let Some(image) = images.peek() {
-        //         // If the image is in our range,
-        //         // then:
-        //         // step the iterator with next
-        //         // split up the previous offset_range with the image's anchor
-        //         // Push the resulting text and images into content
-        //         let image_offset = image.anchor.to_offset(snapshot); // TODO: Switch to a bulk conversion
-
-        //         if image_offset is after message anchor {
-        //             break;
-        //         }
-
-        //         let preceding_text = buffer.text_for_range(last_offset..image_offset);
-        //         last_offset = image_offset;
-        //         // image section
-        //         //
-        //         images.next();
-        //     }
-
-        //     //Finish up:
-        //     let post_text = buffer.text_for_range(last_offset..message.offset_range.end);
-
-        //     request_messages.push(LanguageModelRequestMessage {
-        //         role: message.role,
-        //         content,
-        //     })
-        // }
 
         LanguageModelRequest {
             messages: request_messages,
@@ -1971,7 +1904,10 @@ impl Context {
             let mut edited_buffer = false;
 
             let mut suffix_start = None;
-            if range.start > message.offset_range.start && range.end < message.offset_range.end - 1
+
+            // TODO: why did this start panicking?
+            if range.start > message.offset_range.start
+                && range.end < message.offset_range.end.saturating_sub(1)
             {
                 if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
                     suffix_start = Some(range.end + 1);
@@ -2253,7 +2189,7 @@ impl Context {
 
                 let mut image_offsets = SmallVec::new();
                 while let Some(image_anchor) = images.peek() {
-                    if image_anchor.anchor.offset < message_end_anchor.offset {
+                    if image_anchor.anchor.cmp(&message_end_anchor, buffer).is_lt() {
                         image_offsets.push((
                             image_anchor.anchor.to_offset(buffer),
                             image_anchor.data.clone(),
