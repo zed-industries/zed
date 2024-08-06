@@ -122,5 +122,32 @@ async fn perform_completion(
 
             Ok(Response::new(Body::wrap_stream(stream)))
         }
+        LanguageModelProvider::OpenAi => {
+            let api_key = state
+                .config
+                .openai_api_key
+                .as_ref()
+                .context("no OpenAI API key configured on the server")?;
+            let chunks = open_ai::stream_completion(
+                &state.http_client,
+                open_ai::OPEN_AI_API_URL,
+                api_key,
+                serde_json::from_str(&params.provider_request.get())?,
+                None,
+            )
+            .await?;
+
+            let stream = chunks.map(|event| {
+                let mut buffer = Vec::new();
+                event.map(|chunk| {
+                    buffer.clear();
+                    serde_json::to_writer(&mut buffer, &chunk).unwrap();
+                    buffer.push(b'\n');
+                    buffer
+                })
+            });
+
+            Ok(Response::new(Body::wrap_stream(stream)))
+        }
     }
 }

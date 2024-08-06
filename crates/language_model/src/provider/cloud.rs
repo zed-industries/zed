@@ -392,19 +392,86 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
                 let request = request.into_open_ai(model.id().into());
-                let future = self.request_limiter.stream(async move {
-                    let request = serde_json::to_string(&request)?;
-                    let stream = client
-                        .request_stream(proto::StreamCompleteWithLanguageModel {
-                            provider: proto::LanguageModelProvider::OpenAi as i32,
-                            request,
-                        })
-                        .await?;
-                    Ok(open_ai::extract_text_from_events(
-                        stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
-                    ))
-                });
-                async move { Ok(future.await?.boxed()) }.boxed()
+
+                if cx
+                    .update(|cx| cx.has_flag::<LlmServiceFeatureFlag>())
+                    .unwrap_or(false)
+                {
+                    let http_client = self.client.http_client();
+                    let llm_api_token = self.llm_api_token.clone();
+                    let future = self.request_limiter.stream(async move {
+                        let mut token = llm_api_token.acquire(&client).await?;
+                        let mut did_retry = false;
+
+                        let response = loop {
+                            let request = http_client::Request::builder()
+                                .method(Method::POST)
+                                .uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+                                .header("Content-Type", "application/json")
+                                .header("Authorization", format!("Bearer {token}"))
+                                .body(
+                                    serde_json::to_string(&PerformCompletionParams {
+                                        provider: client::LanguageModelProvider::OpenAi,
+                                        model: request.model.clone(),
+                                        provider_request: RawValue::from_string(
+                                            serde_json::to_string(&request)?,
+                                        )?,
+                                    })?
+                                    .into(),
+                                )?;
+                            let response = http_client.send(request).await?;
+                            if response.status().is_success() {
+                                break response;
+                            } else if !did_retry
+                                && response
+                                    .headers()
+                                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
+                                    .is_some()
+                            {
+                                did_retry = true;
+                                token = llm_api_token.refresh(&client).await?;
+                            } else {
+                                break Err(anyhow!(
+                                    "cloud language model completion failed with status {}",
+                                    response.status()
+                                ))?;
+                            }
+                        };
+
+                        let body = BufReader::new(response.into_body());
+
+                        let stream =
+                            futures::stream::try_unfold(body, move |mut body| async move {
+                                let mut buffer = String::new();
+                                match body.read_line(&mut buffer).await {
+                                    Ok(0) => Ok(None),
+                                    Ok(_) => {
+                                        let event: open_ai::ResponseStreamEvent =
+                                            serde_json::from_str(&buffer)?;
+                                        Ok(Some((event, body)))
+                                    }
+                                    Err(e) => Err(e.into()),
+                                }
+                            });
+
+                        Ok(open_ai::extract_text_from_events(stream))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                } else {
+                    let future = self.request_limiter.stream(async move {
+                        let request = serde_json::to_string(&request)?;
+                        let stream = client
+                            .request_stream(proto::StreamCompleteWithLanguageModel {
+                                provider: proto::LanguageModelProvider::OpenAi as i32,
+                                request,
+                            })
+                            .await?;
+                        Ok(open_ai::extract_text_from_events(
+                            stream.map(|item| Ok(serde_json::from_str(&item?.event)?)),
+                        ))
+                    });
+                    async move { Ok(future.await?.boxed()) }.boxed()
+                }
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();

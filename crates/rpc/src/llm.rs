@@ -6,6 +6,7 @@ pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 #[serde(rename_all = "snake_case")]
 pub enum LanguageModelProvider {
     Anthropic,
+    OpenAi,
 }
 
 #[derive(Serialize, Deserialize)]
