@@ -39,7 +39,7 @@ TBD: Document JSDoc support in Zed.
 ### ESLint
 
 You can configure Zed to format code using `eslint --fix` by running the ESLint
-code action when formatting (requires Zed `0.125.0`):
+code action when formatting:
 
 ```json
 {
@@ -82,7 +82,7 @@ You can also only execute a single ESLint rule when using `fixAll`:
 > errors.
 
 If you **only** want to run ESLint on save, you can configure code actions as
-the formatter (requires Zed `0.130.x`):
+the formatter:
 
 ```json
 {
@@ -100,7 +100,7 @@ the formatter (requires Zed `0.130.x`):
 
 #### Configure ESLint's `nodePath`:
 
-You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
+You can configure ESLint's `nodePath` setting:
 
 ```json
 {
@@ -116,7 +116,7 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 
 #### Configure ESLint's `problems`:
 
-You can configure ESLint's `problems` setting (requires Zed `0.130.x`).
+You can configure ESLint's `problems` setting.
 
 For example, here's how to set `problems.shortenToSingleLine`:
 

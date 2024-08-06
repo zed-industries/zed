@@ -94,13 +94,19 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-### R
+### R (Ark Kernel) {#r-ark}
 
 Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
 
 ```
 ark --install
 ```
+
+TBD: Expand R REPL (Ark Kernel) instructions
+
+### R (XEOS-R) {#r-xeos-r}
+
+TBD: Add R REPL (XEOS-R) instructions
 
 ### Typescript: Deno {#typescript-deno}
 
@@ -110,9 +116,28 @@ ark --install
 deno jupyter --install
 ```
 
+### Julia
+
+TBD: Add Julia REPL instructions
+
+- [/docs/languages/julia](/docs/languages/julia)
+
+### Scala
+
+TBD: Add Scala REPL instructions
+
+- Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
+  - `brew install coursier/formulas/coursier && cs setup`
+- REPL (Almond) Setup Instructions https://almond.sh/docs/quick-start-install
+  - `brew install --cask temurin` (Eclipse foundation official OpenJDK binaries)
+  - `brew install coursier/formulas/coursier && cs setup`
+  - `coursier launch --use-bootstrap almond -- --install`
+
 ### Other languages
 
 The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
+
+TBD: Remove this section if Julia/Ark/Xeus-R/Scala are added
 
 - [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
 - R

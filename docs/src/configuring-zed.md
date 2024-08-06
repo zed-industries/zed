@@ -586,7 +586,7 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
-3. Or to use code actions provided by the connected language servers, use `"code_actions"` (requires Zed `0.130.x`):
+3. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
 ```json
 {
@@ -626,6 +626,8 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 **Examples**
 
+TBD: Add Python Ruff source.organizeImports example
+
 1. Organize imports on format in TypeScript and TSX buffers:
 
 ```json
@@ -645,7 +647,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 }
 ```
 
-2. Run ESLint `fixAll` code action when formatting (requires Zed `0.125.0`):
+2. Run ESLint `fixAll` code action when formatting:
 
 ```json
 {
@@ -659,7 +661,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 }
 ```
 
-3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+3. Run only a single ESLint rule when using `fixAll`:
 
 ```json
 {
@@ -779,7 +781,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ### Indent Guides
 
-- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
 - Default:
 
@@ -848,7 +850,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ### Inline Git Blame
 
-- Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
+- Description: Whether or not to show git blame information inline, on the currently focused line.
 - Setting: `inline_blame`
 - Default:
 
@@ -1035,7 +1037,6 @@ These values take in the same options as the root-level settings with the same n
 ## Preview tabs
 
 - Description:
-  (requires Zed `0.132.x`) \
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
 
@@ -1068,7 +1069,7 @@ These values take in the same options as the root-level settings with the same n
 
 ### Enable preview from code navigation
 
-- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab (requires Zed `0.134.x`).
+- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
 - Setting: `enable_preview_from_code_navigation`
 - Default: `false`
 
@@ -1262,7 +1263,7 @@ List of `integer` column numbers
 }
 ```
 
-### Alternate Scroll
+### Terminal Alternate Scroll
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
