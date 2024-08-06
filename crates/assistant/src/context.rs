@@ -284,7 +284,7 @@ pub enum ContextEvent {
     AssistError(String),
     MessagesEdited,
     SummaryChanged,
-    EditStepsChanged,
+    WorkflowStepsChanged,
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -351,21 +351,33 @@ pub struct WorkflowStep {
     pub edit_suggestions: WorkflowStepEditSuggestions,
 }
 
-pub enum WorkflowStepEditSuggestions {
-    Pending(Task<Option<()>>),
-    Resolved {
-        title: String,
-        edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
-    },
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedWorkflowStepEditSuggestions {
+    pub title: String,
+    pub edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
 }
 
-#[derive(Clone, Debug)]
+pub enum WorkflowStepEditSuggestions {
+    Pending(Task<Option<()>>),
+    Resolved(ResolvedWorkflowStepEditSuggestions),
+}
+
+impl WorkflowStepEditSuggestions {
+    pub fn as_resolved(&self) -> Option<&ResolvedWorkflowStepEditSuggestions> {
+        match self {
+            WorkflowStepEditSuggestions::Resolved(suggestions) => Some(suggestions),
+            WorkflowStepEditSuggestions::Pending(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditSuggestionGroup {
     pub context_range: Range<language::Anchor>,
     pub suggestions: Vec<EditSuggestion>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EditSuggestion {
     Update {
         range: Range<language::Anchor>,
@@ -561,10 +573,10 @@ impl Debug for WorkflowStepEditSuggestions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WorkflowStepEditSuggestions::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            WorkflowStepEditSuggestions::Resolved {
+            WorkflowStepEditSuggestions::Resolved(ResolvedWorkflowStepEditSuggestions {
                 title,
                 edit_suggestions,
-            } => f
+            }) => f
                 .debug_struct("EditStepOperations::Parsed")
                 .field("title", title)
                 .field("edit_suggestions", edit_suggestions)
@@ -597,7 +609,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    edit_steps: Vec<WorkflowStep>,
+    workflow_steps: Vec<WorkflowStep>,
     project: Option<Model<Project>>,
 }
 
@@ -667,7 +679,7 @@ impl Context {
             telemetry,
             project,
             language_registry,
-            edit_steps: Vec::new(),
+            workflow_steps: Vec::new(),
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -987,8 +999,14 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_steps(&self) -> &[WorkflowStep] {
-        &self.edit_steps
+    pub fn workflow_steps(&self) -> &[WorkflowStep] {
+        &self.workflow_steps
+    }
+
+    pub fn workflow_step_for_range(&self, range: Range<language::Anchor>) -> Option<&WorkflowStep> {
+        self.workflow_steps
+            .iter()
+            .find(|step| step.tagged_range == range)
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1133,12 +1151,12 @@ impl Context {
 
     fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
-        let prev_len = self.edit_steps.len();
-        self.edit_steps.retain(|step| {
+        let prev_len = self.workflow_steps.len();
+        self.workflow_steps.retain(|step| {
             step.tagged_range.start.is_valid(buffer) && step.tagged_range.end.is_valid(buffer)
         });
-        if self.edit_steps.len() != prev_len {
-            cx.emit(ContextEvent::EditStepsChanged);
+        if self.workflow_steps.len() != prev_len {
+            cx.emit(ContextEvent::WorkflowStepsChanged);
             cx.notify();
         }
     }
@@ -1174,7 +1192,7 @@ impl Context {
 
                     // Check if a step with the same range already exists
                     let existing_step_index = self
-                        .edit_steps
+                        .workflow_steps
                         .binary_search_by(|probe| probe.tagged_range.cmp(&tagged_range, &buffer));
 
                     if let Err(ix) = existing_step_index {
@@ -1202,10 +1220,10 @@ impl Context {
 
         // Insert new steps and generate their corresponding tasks
         for (index, step) in new_edit_steps.into_iter().rev() {
-            self.edit_steps.insert(index, step);
+            self.workflow_steps.insert(index, step);
         }
 
-        cx.emit(ContextEvent::EditStepsChanged);
+        cx.emit(ContextEvent::WorkflowStepsChanged);
         cx.notify();
     }
 
@@ -1321,17 +1339,19 @@ impl Context {
 
                 this.update(&mut cx, |this, cx| {
                     let step_index = this
-                        .edit_steps
+                        .workflow_steps
                         .binary_search_by(|step| {
                             step.tagged_range.cmp(&tagged_range, this.buffer.read(cx))
                         })
                         .map_err(|_| anyhow!("edit step not found"))?;
-                    if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                        edit_step.edit_suggestions = WorkflowStepEditSuggestions::Resolved {
-                            title: step_suggestions.step_title,
-                            edit_suggestions: suggestion_groups_by_buffer,
-                        };
-                        cx.emit(ContextEvent::EditStepsChanged);
+                    if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
+                        edit_step.edit_suggestions = WorkflowStepEditSuggestions::Resolved(
+                            ResolvedWorkflowStepEditSuggestions {
+                                title: step_suggestions.step_title,
+                                edit_suggestions: suggestion_groups_by_buffer,
+                            },
+                        );
+                        cx.emit(ContextEvent::WorkflowStepsChanged);
                     }
                     anyhow::Ok(())
                 })?
@@ -2959,7 +2979,7 @@ mod tests {
         // Verify that the edit steps were parsed correctly
         context.read_with(cx, |context, cx| {
             assert_eq!(
-                edit_steps(context, cx),
+                workflow_steps(context, cx),
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
@@ -2998,7 +3018,7 @@ mod tests {
         // Verify that the last edit step is not pending anymore.
         context.read_with(cx, |context, cx| {
             assert_eq!(
-                edit_steps(context, cx),
+                workflow_steps(context, cx),
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
@@ -3020,12 +3040,12 @@ mod tests {
             Resolved,
         }
 
-        fn edit_steps(
+        fn workflow_steps(
             context: &Context,
             cx: &AppContext,
         ) -> Vec<(Range<Point>, WorkflowStepEditSuggestionStatus)> {
             context
-                .edit_steps
+                .workflow_steps
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
