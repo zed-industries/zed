@@ -2036,6 +2036,12 @@ struct Diff {
     inserted_row_ranges: Vec<RangeInclusive<Anchor>>,
 }
 
+impl Diff {
+    fn is_empty(&self) -> bool {
+        self.deleted_row_ranges.is_empty() && self.inserted_row_ranges.is_empty()
+    }
+}
+
 impl EventEmitter<CodegenEvent> for Codegen {}
 
 impl Codegen {
@@ -2467,7 +2473,11 @@ impl Codegen {
 
     pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
         self.last_equal_ranges.clear();
-        self.status = CodegenStatus::Done;
+        if self.diff.is_empty() {
+            self.status = CodegenStatus::Idle;
+        } else {
+            self.status = CodegenStatus::Done;
+        }
         self.generation = Task::ready(());
         cx.emit(CodegenEvent::Finished);
         cx.notify();
