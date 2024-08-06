@@ -8948,7 +8948,7 @@ impl Editor {
     ) -> Task<Result<bool>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx)
     }
-    
+
     pub fn go_to_declaration(
         &mut self,
         _: &GoToDeclaration,
@@ -8956,7 +8956,7 @@ impl Editor {
     ) -> Task<Result<bool>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, false, cx)
     }
-    
+
     pub fn go_to_declaration_split(
         &mut self,
         _: &GoToDeclaration,
