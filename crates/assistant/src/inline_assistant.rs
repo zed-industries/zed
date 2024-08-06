@@ -1,6 +1,6 @@
 use crate::{
     humanize_token_count, prompts::generate_content_prompt, AssistantPanel, AssistantPanelEvent,
-    Hunk, ModelSelector, StreamingDiff,
+    CharOperation, LineDiff, LineOperation, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -35,7 +35,6 @@ use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
 use settings::Settings;
-use similar::TextDiff;
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -2033,8 +2032,6 @@ pub enum CodegenStatus {
 
 #[derive(Default)]
 struct Diff {
-    task: Option<Task<()>>,
-    should_update: bool,
     deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)>,
     inserted_row_ranges: Vec<RangeInclusive<Anchor>>,
 }
@@ -2264,7 +2261,7 @@ impl Codegen {
             async move {
                 let chunks = stream.await;
                 let generate = async {
-                    let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
+                    let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                     let diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
                             let mut response_latency = None;
@@ -2273,6 +2270,7 @@ impl Codegen {
                                 let chunks = StripInvalidSpans::new(chunks?);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
+                                let mut line_diff = LineDiff::default();
 
                                 let mut new_text = String::new();
                                 let mut base_indent = None;
@@ -2323,12 +2321,22 @@ impl Codegen {
                                         }
 
                                         if line_indent.is_some() {
-                                            hunks_tx.send(diff.push_new(&new_text)).await?;
+                                            let char_ops = diff.push_new(&new_text);
+                                            line_diff
+                                                .push_char_operations(&char_ops, &selected_text);
+                                            diff_tx
+                                                .send((char_ops, line_diff.line_operations()))
+                                                .await?;
                                             new_text.clear();
                                         }
 
                                         if lines.peek().is_some() {
-                                            hunks_tx.send(diff.push_new("\n")).await?;
+                                            let char_ops = diff.push_new("\n");
+                                            line_diff
+                                                .push_char_operations(&char_ops, &selected_text);
+                                            diff_tx
+                                                .send((char_ops, line_diff.line_operations()))
+                                                .await?;
                                             if line_indent.is_none() {
                                                 // Don't write out the leading indentation in empty lines on the next line
                                                 // This is the case where the above if statement didn't clear the buffer
@@ -2339,8 +2347,14 @@ impl Codegen {
                                         }
                                     }
                                 }
-                                hunks_tx.send(diff.push_new(&new_text)).await?;
-                                hunks_tx.send(diff.finish()).await?;
+
+                                let mut char_ops = diff.push_new(&new_text);
+                                char_ops.extend(diff.finish());
+                                line_diff.push_char_operations(&char_ops, &selected_text);
+                                line_diff.finish(&selected_text);
+                                diff_tx
+                                    .send((char_ops, line_diff.line_operations()))
+                                    .await?;
 
                                 anyhow::Ok(())
                             };
@@ -2363,7 +2377,7 @@ impl Codegen {
                             Ok(())
                         });
 
-                    while let Some(hunks) = hunks_rx.next().await {
+                    while let Some((char_ops, line_diff)) = diff_rx.next().await {
                         this.update(&mut cx, |this, cx| {
                             this.last_equal_ranges.clear();
 
@@ -2373,27 +2387,29 @@ impl Codegen {
 
                                 buffer.start_transaction(cx);
                                 buffer.edit(
-                                    hunks.into_iter().filter_map(|hunk| match hunk {
-                                        Hunk::Insert { text } => {
-                                            let edit_start = snapshot.anchor_after(edit_start);
-                                            Some((edit_start..edit_start, text))
-                                        }
-                                        Hunk::Remove { len } => {
-                                            let edit_end = edit_start + len;
-                                            let edit_range = snapshot.anchor_after(edit_start)
-                                                ..snapshot.anchor_before(edit_end);
-                                            edit_start = edit_end;
-                                            Some((edit_range, String::new()))
-                                        }
-                                        Hunk::Keep { len } => {
-                                            let edit_end = edit_start + len;
-                                            let edit_range = snapshot.anchor_after(edit_start)
-                                                ..snapshot.anchor_before(edit_end);
-                                            edit_start = edit_end;
-                                            this.last_equal_ranges.push(edit_range);
-                                            None
-                                        }
-                                    }),
+                                    char_ops
+                                        .into_iter()
+                                        .filter_map(|operation| match operation {
+                                            CharOperation::Insert { text } => {
+                                                let edit_start = snapshot.anchor_after(edit_start);
+                                                Some((edit_start..edit_start, text))
+                                            }
+                                            CharOperation::Delete { bytes } => {
+                                                let edit_end = edit_start + bytes;
+                                                let edit_range = snapshot.anchor_after(edit_start)
+                                                    ..snapshot.anchor_before(edit_end);
+                                                edit_start = edit_end;
+                                                Some((edit_range, String::new()))
+                                            }
+                                            CharOperation::Keep { bytes } => {
+                                                let edit_end = edit_start + bytes;
+                                                let edit_range = snapshot.anchor_after(edit_start)
+                                                    ..snapshot.anchor_before(edit_end);
+                                                edit_start = edit_end;
+                                                this.last_equal_ranges.push(edit_range);
+                                                None
+                                            }
+                                        }),
                                     None,
                                     cx,
                                 );
@@ -2421,7 +2437,8 @@ impl Codegen {
                                 }
                             }
 
-                            this.update_diff(edit_range.clone(), cx);
+                            this.update_diff(edit_range.clone(), line_diff, cx);
+
                             cx.notify();
                         })?;
                     }
@@ -2468,102 +2485,63 @@ impl Codegen {
         });
     }
 
-    fn update_diff(&mut self, edit_range: Range<Anchor>, cx: &mut ModelContext<Self>) {
-        if self.diff.task.is_some() {
-            self.diff.should_update = true;
-        } else {
-            self.diff.should_update = false;
+    fn update_diff(
+        &mut self,
+        edit_range: Range<Anchor>,
+        line_operations: Vec<LineOperation>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let old_snapshot = self.snapshot.clone();
+        let old_range = edit_range.to_point(&old_snapshot);
+        let new_snapshot = self.buffer.read(cx).snapshot(cx);
+        let new_range = edit_range.to_point(&new_snapshot);
 
-            let old_snapshot = self.snapshot.clone();
-            let old_range = edit_range.to_point(&old_snapshot);
-            let new_snapshot = self.buffer.read(cx).snapshot(cx);
-            let new_range = edit_range.to_point(&new_snapshot);
+        let mut old_row = old_range.start.row;
+        let mut new_row = new_range.start.row;
 
-            self.diff.task = Some(cx.spawn(|this, mut cx| async move {
-                let (deleted_row_ranges, inserted_row_ranges) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let old_text = old_snapshot
-                            .text_for_range(
-                                Point::new(old_range.start.row, 0)
-                                    ..Point::new(
-                                        old_range.end.row,
-                                        old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
-                                    ),
-                            )
-                            .collect::<String>();
-                        let new_text = new_snapshot
-                            .text_for_range(
-                                Point::new(new_range.start.row, 0)
-                                    ..Point::new(
-                                        new_range.end.row,
-                                        new_snapshot.line_len(MultiBufferRow(new_range.end.row)),
-                                    ),
-                            )
-                            .collect::<String>();
+        self.diff.deleted_row_ranges.clear();
+        self.diff.inserted_row_ranges.clear();
+        for operation in line_operations {
+            match operation {
+                LineOperation::Keep { lines } => {
+                    old_row += lines;
+                    new_row += lines;
+                }
+                LineOperation::Delete { lines } => {
+                    let old_end_row = old_row + lines - 1;
+                    let new_row = new_snapshot.anchor_before(Point::new(new_row, 0));
 
-                        let mut old_row = old_range.start.row;
-                        let mut new_row = new_range.start.row;
-                        let diff = TextDiff::from_lines(old_text.as_str(), new_text.as_str());
-
-                        let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
-                        let mut inserted_row_ranges = Vec::new();
-                        for change in diff.iter_all_changes() {
-                            let line_count = change.value().lines().count() as u32;
-                            match change.tag() {
-                                similar::ChangeTag::Equal => {
-                                    old_row += line_count;
-                                    new_row += line_count;
-                                }
-                                similar::ChangeTag::Delete => {
-                                    let old_end_row = old_row + line_count - 1;
-                                    let new_row =
-                                        new_snapshot.anchor_before(Point::new(new_row, 0));
-
-                                    if let Some((_, last_deleted_row_range)) =
-                                        deleted_row_ranges.last_mut()
-                                    {
-                                        if *last_deleted_row_range.end() + 1 == old_row {
-                                            *last_deleted_row_range =
-                                                *last_deleted_row_range.start()..=old_end_row;
-                                        } else {
-                                            deleted_row_ranges
-                                                .push((new_row, old_row..=old_end_row));
-                                        }
-                                    } else {
-                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                                    }
-
-                                    old_row += line_count;
-                                }
-                                similar::ChangeTag::Insert => {
-                                    let new_end_row = new_row + line_count - 1;
-                                    let start = new_snapshot.anchor_before(Point::new(new_row, 0));
-                                    let end = new_snapshot.anchor_before(Point::new(
-                                        new_end_row,
-                                        new_snapshot.line_len(MultiBufferRow(new_end_row)),
-                                    ));
-                                    inserted_row_ranges.push(start..=end);
-                                    new_row += line_count;
-                                }
-                            }
+                    if let Some((_, last_deleted_row_range)) =
+                        self.diff.deleted_row_ranges.last_mut()
+                    {
+                        if *last_deleted_row_range.end() + 1 == old_row {
+                            *last_deleted_row_range = *last_deleted_row_range.start()..=old_end_row;
+                        } else {
+                            self.diff
+                                .deleted_row_ranges
+                                .push((new_row, old_row..=old_end_row));
                         }
-
-                        (deleted_row_ranges, inserted_row_ranges)
-                    })
-                    .await;
-
-                this.update(&mut cx, |this, cx| {
-                    this.diff.deleted_row_ranges = deleted_row_ranges;
-                    this.diff.inserted_row_ranges = inserted_row_ranges;
-                    this.diff.task = None;
-                    if this.diff.should_update {
-                        this.update_diff(edit_range, cx);
+                    } else {
+                        self.diff
+                            .deleted_row_ranges
+                            .push((new_row, old_row..=old_end_row));
                     }
-                    cx.notify();
-                })
-                .ok();
-            }));
+
+                    old_row += lines;
+                }
+                LineOperation::Insert { lines } => {
+                    let new_end_row = new_row + lines - 1;
+                    let start = new_snapshot.anchor_before(Point::new(new_row, 0));
+                    let end = new_snapshot.anchor_before(Point::new(
+                        new_end_row,
+                        new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                    ));
+                    self.diff.inserted_row_ranges.push(start..=end);
+                    new_row += lines;
+                }
+            }
+
+            cx.notify();
         }
     }
 }
