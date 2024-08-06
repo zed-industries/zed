@@ -99,9 +99,9 @@ mod tests {
                 provider,
                 "the-model",
             )
-            .expect(&format!(
-                "expected authorization to return Ok for {provider:?}: {country_code}"
-            ))
+            .unwrap_or_else(|_| {
+                panic!("expected authorization to return Ok for {provider:?}: {country_code}")
+            })
         }
     }
 
