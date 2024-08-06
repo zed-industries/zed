@@ -15,7 +15,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::{with_clone, ResultExt};
+use util::ResultExt;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -222,22 +222,20 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
             menu.entry("Sign In", None, initiate_sign_in)
-                .entry(
-                    "Disable Copilot",
-                    None,
-                    with_clone!(fs, move |cx| hide_copilot(fs.clone(), cx)),
-                )
-                .entry(
-                    "Use Supermaven",
-                    None,
-                    with_clone!(fs, move |cx| {
+                .entry("Disable Copilot", None, {
+                    let fs = fs.clone();
+                    move |cx| hide_copilot(fs.clone(), cx)
+                })
+                .entry("Use Supermaven", None, {
+                    let fs = fs.clone();
+                    move |cx| {
                         set_completion_provider(
                             fs.clone(),
                             cx,
                             InlineCompletionProvider::Supermaven,
                         )
-                    }),
-                )
+                    }
+                })
         })
     }
 
