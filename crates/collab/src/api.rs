@@ -81,14 +81,14 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "missing authorization header".to_string(),
             )
         })?
         .strip_prefix("token ")
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "invalid authorization header".to_string(),
             )
@@ -97,7 +97,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
     if token != state.config.api_token {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),
         ))?
@@ -185,13 +185,13 @@ async fn create_access_token(
             if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
                 impersonated_user_id = Some(impersonated_user.id);
             } else {
-                return Err(Error::Http(
+                return Err(Error::http(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     format!("user {impersonate} does not exist"),
                 ));
             }
         } else {
-            return Err(Error::Http(
+            return Err(Error::http(
                 StatusCode::UNAUTHORIZED,
                 "you do not have permission to impersonate other users".to_string(),
             ));

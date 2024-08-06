@@ -13,7 +13,10 @@ mod tests;
 
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use db::{ChannelId, Database};
 use executor::Executor;
 pub use rate_limiter::*;
@@ -24,7 +27,7 @@ use util::ResultExt;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
-    Http(StatusCode, String),
+    Http(StatusCode, String, HeaderMap),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
     Stripe(stripe::StripeError),
@@ -66,12 +69,18 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl Error {
+    fn http(code: StatusCode, message: String) -> Self {
+        Self::Http(code, message, HeaderMap::default())
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
-            Error::Http(code, message) => {
+            Error::Http(code, message, headers) => {
                 log::error!("HTTP error {}: {}", code, &message);
-                (code, message).into_response()
+                (code, headers, message).into_response()
             }
             Error::Database(error) => {
                 log::error!(
@@ -104,7 +113,7 @@ impl IntoResponse for Error {
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => (code, message).fmt(f),
+            Error::Http(code, message, _headers) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
             Error::Stripe(error) => error.fmt(f),
@@ -115,7 +124,7 @@ impl std::fmt::Debug for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Http(code, message, _) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
             Error::Stripe(error) => error.fmt(f),
@@ -141,6 +150,7 @@ pub struct Config {
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
     pub live_kit_secret: Option<String>,
+    pub llm_api_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
     pub blob_store_url: Option<String>,
