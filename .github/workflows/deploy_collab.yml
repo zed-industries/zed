@@ -106,10 +106,12 @@ jobs:
             export ZED_KUBE_NAMESPACE=production
             export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=10
             export ZED_API_LOAD_BALANCER_SIZE_UNIT=2
+            export ZED_LLM_LOAD_BALANCER_SIZE_UNIT=2
           elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
             export ZED_KUBE_NAMESPACE=staging
             export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=1
             export ZED_API_LOAD_BALANCER_SIZE_UNIT=1
+            export ZED_LLM_LOAD_BALANCER_SIZE_UNIT=1
           else
             echo "cowardly refusing to deploy from an unknown branch"
             exit 1
