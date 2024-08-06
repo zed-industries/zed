@@ -6,6 +6,7 @@ name: "Publish to Cachix"
 on:
   pull_request:
   merge_group:
+  workflow_dispatch:
 
 jobs:
   build-and-cache:
