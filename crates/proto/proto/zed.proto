@@ -48,6 +48,8 @@ message Envelope {
 
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
+        GetDeclaration get_declaration = 237;
+        GetDeclarationResponse get_declaration_response = 238; // current max
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
@@ -126,7 +128,7 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
-        UpdateUserPlan update_user_plan = 234; // current max
+        UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
 
         OnTypeFormatting on_type_formatting = 105;
@@ -270,6 +272,9 @@ message Envelope {
 
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
+
+        GetLlmToken get_llm_token = 235;
+        GetLlmTokenResponse get_llm_token_response = 236; // current max
     }
 
     reserved 158 to 161;
@@ -693,9 +698,20 @@ message GetDefinition {
      uint64 buffer_id = 2;
      Anchor position = 3;
      repeated VectorClockEntry version = 4;
- }
+}
 
 message GetDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetDeclaration {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDeclarationResponse {
     repeated LocationLink links = 1;
 }
 
@@ -2423,6 +2439,12 @@ message SynchronizeContexts {
 
 message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
+}
+
+message GetLlmToken {}
+
+message GetLlmTokenResponse {
+    string token = 1;
 }
 
 // Remote FS
