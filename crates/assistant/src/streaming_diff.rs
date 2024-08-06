@@ -281,27 +281,24 @@ impl LineDiff {
             }
             CharOperation::Delete { bytes } => {
                 self.buffered_delete += bytes;
+
+                let common_suffix_len = self.trim_buffered_end(old_text);
                 self.flush_insert(old_text);
-                if !is_line_end(self.old_end, old_text) {
+
+                if common_suffix_len > 0 || !is_line_end(self.old_end, old_text) {
                     self.flush_delete(old_text);
+                    self.keep(common_suffix_len, old_text);
                 }
             }
             CharOperation::Keep { bytes } => {
                 self.flush_delete(old_text);
                 self.flush_insert(old_text);
-                let lines = old_text
-                    .offset_to_point(old_text.point_to_offset(self.old_end) + bytes)
-                    - self.old_end;
-                self.old_end += lines;
-                self.new_end += lines;
-                self.inserted_newline_at_end = false;
+                self.keep(*bytes, old_text);
             }
         }
     }
 
     fn flush_insert(&mut self, old_text: &Rope) {
-        self.truncate_common_suffix(old_text);
-
         if self.buffered_insert.is_empty() {
             return;
         }
@@ -337,8 +334,6 @@ impl LineDiff {
     }
 
     fn flush_delete(&mut self, old_text: &Rope) {
-        self.truncate_common_suffix(old_text);
-
         if self.buffered_delete == 0 {
             return;
         }
@@ -364,7 +359,19 @@ impl LineDiff {
         self.buffered_delete = 0;
     }
 
-    fn truncate_common_suffix(&mut self, old_text: &Rope) {
+    fn keep(&mut self, bytes: usize, old_text: &Rope) {
+        if bytes == 0 {
+            return;
+        }
+
+        let lines =
+            old_text.offset_to_point(old_text.point_to_offset(self.old_end) + bytes) - self.old_end;
+        self.old_end += lines;
+        self.new_end += lines;
+        self.inserted_newline_at_end = false;
+    }
+
+    fn trim_buffered_end(&mut self, old_text: &Rope) -> usize {
         let old_start_offset = old_text.point_to_offset(self.old_end);
         let old_end_offset = old_start_offset + self.buffered_delete;
 
@@ -385,6 +392,8 @@ impl LineDiff {
         self.buffered_delete -= common_suffix_len;
         self.buffered_insert
             .truncate(self.buffered_insert.len() - common_suffix_len);
+
+        common_suffix_len
     }
 
     pub fn finish(&mut self, old_text: &Rope) {
@@ -946,8 +955,8 @@ mod tests {
 
         let old_lines: Vec<&str> = old_text.split('\n').collect();
         let new_lines: Vec<&str> = new_text.split('\n').collect();
-        let mut old_start = 0 as usize;
-        let mut new_start = 0 as usize;
+        let mut old_start = 0_usize;
+        let mut new_start = 0_usize;
 
         for op in line_ops {
             match op {
