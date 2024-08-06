@@ -218,7 +218,7 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, cx| {
                                 cx.open_url(
-                                    "https://docs.jupyter.org/en/latest/install/kernels.html",
+                                    "https://zed.dev/docs/repl#language-specific-instructions",
                                 )
                             }),
                     ),
@@ -236,6 +236,23 @@ impl Render for ReplSessionsPage {
         let kernels_available = v_flex()
             .child(Label::new("Kernels available").size(LabelSize::Large))
             .gap_2()
+            .child(
+                h_flex()
+                    .child(Label::new(
+                        "Defaults indicated with a checkmark. Learn how to change your default kernel in the ",
+                    ))
+                    .child(
+                        ButtonLike::new("configure-kernels")
+                            .style(ButtonStyle::Filled)
+                            // .size(ButtonSize::Compact)
+                            .layer(ElevationIndex::Surface)
+                            .child(Label::new("REPL documentation"))
+                            .child(Icon::new(IconName::Link))
+                            .on_click(move |_, cx| {
+                                cx.open_url("https://zed.dev/docs/repl#changing-kernels")
+                            }),
+                    ),
+            )
             .children(kernels_by_language.into_iter().map(|(language, specs)| {
                 let chosen_kernel = store.read(cx).kernelspec(&language, cx);
 
@@ -252,17 +269,25 @@ impl Render for ReplSessionsPage {
 
                         let path = SharedString::from(spec.path.to_string_lossy().to_string());
 
-                        // Ok I can make this div be a interactive instead
-                        let button = ButtonLike::new(ElementId::Name(path.clone()))
-                            .tooltip(move |cx| Tooltip::text(path.clone(), cx))
+                        ListItem::new(path.clone())
+                            .selectable(false)
+                            .tooltip({
+                                let path = path.clone();
+                                move |cx| Tooltip::text(path.clone(), cx)})
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .child(Label::new(spec.name.clone()))
-                                    .when(is_choice, |el| el.child(Icon::new(IconName::Check))),
-                            );
+                                    .child(div().id(path.clone()).child(Label::new(spec.name.clone())))
+                                    .when(is_choice, |el| {
 
-                        button
+                                        let language = language.clone();
+
+                                        el.child(
+
+                                        div().id("check").tooltip(move |cx| Tooltip::text(format!("Default Kernel for {language}"), cx))
+                                            .child(Icon::new(IconName::Check)))}),
+                            )
+
                     }))
             }));
 
