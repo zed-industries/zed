@@ -27,7 +27,7 @@ Use
 
 ```json
 "lsp": {
-    "$LANGUAGE_SERVER_NAME": {
+    "gopls": {
         "initialization_options": {
             "hints": {
                 ....
@@ -39,7 +39,7 @@ Use
 
 to override these settings.
 
-See https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md for more information.
+See [gopls inlayHints documentation](https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md) for more information.
 
 # Go Mod
 
@@ -48,7 +48,8 @@ See https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md for more
 
 # Go Sum
 
-TODO: https://github.com/zed-industries/zed/pull/7139
+- Tree Sitter: [amaanq/tree-sitter-go-sum](https://github.com/amaanq/tree-sitter-go-sum)
+- Language Server: N/A
 
 # Go Work
 

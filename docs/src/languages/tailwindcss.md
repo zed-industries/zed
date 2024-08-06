@@ -1,17 +1,23 @@
 # TailWind CSS
 
+Tailwind CSS support is built into Zed.
+
+- Tree Sitter: []
+- Language Server: [tailwindcss-language-server](https://github.com/tailwindlabs/tailwindcss-intellisense)
+
+##
+
 TBD: Document Tailwind CSS
 
-Cross link languages which can be used with Tailwind CSS:
+Languages which can be used with Tailwind CSS in Zed
 
-  - [CSS](/docs/languages/css)
-  - [TypeScript](/docs/languages/typescript)
-  - [JavaScript](/docs/languages/javascript)
-  - [Astro](/docs/languages/astro)
-  - [Svelte](/docs/languages/svelte)
-  - [Vue](/docs/languages/vue)
-  - [Heex](/docs/languages/heex)
-  - [Elixer](/docs/languages/elixir)
-  - [PHP](/docs/languages/php)
-
-[tailwindlabs/tailwindcss-language-server](https://github.com/tailwindlabs/tailwindcss-intellisense)
+- [Astro](/docs/languages/astro)
+- [CSS](/docs/languages/css)
+- [ERB](/docs/languages/ruby#ERB)
+- [HEEx](/docs/languages/elixir#HEEx)
+- [HTML](/docs/languages/html)
+- [TypeScript](/docs/languages/typescript)
+- [JavaScript](/docs/languages/javascript)
+- [PHP](/docs/languages/php)
+- [Svelte](/docs/languages/svelte)
+- [Vue](/docs/languages/vue)

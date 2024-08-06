@@ -6,6 +6,10 @@ TypeScript and TSX support are available natively in Zed.
 - Language Server: [vtsls](https://github.com/yioneko/vtsls)
 - Alternate Language Server: [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
+TBD: Document the difference between Language servers
+TBD: Include instructions for configuring vtsls.
+TBD: Mention something about TSX support / configuration
+
 ## Inlay Hints
 
 Zed sets the following initialization options for inlay hints:
@@ -41,8 +45,9 @@ Use
 
 to override these settings.
 
-See https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint for more information.
+See [typescript-language-server inlayhints documentation](https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint) for more information.
 
-## Yarn integration
+## See also
 
-See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [Zed Yarn documentation](/docs/languages/yarn) for a walkthrough of configuring your project to use Yarn.
+- [Zed Deno documentation](/docs/languages/deno)

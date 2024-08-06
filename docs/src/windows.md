@@ -2,7 +2,7 @@
 
 Zed is not supported on Windows (yet).
 
-- TBD: Explain why Zed is not supported on Windows.
+TBD: Explain why Zed is not supported on Windows.
 
 Zed Employees are not currently working on Windows support.
 However, we welcome contributions from the community to improve Windows support.

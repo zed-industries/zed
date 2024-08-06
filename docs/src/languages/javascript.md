@@ -26,6 +26,16 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 }
 ```
 
+### JSX
+
+TBD: Mention JSX
+
+### JSDoc
+
+TBD: Document JSDoc support in Zed.
+
+- Tree Sitter: [jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
+
 ### ESLint
 
 You can configure Zed to format code using `eslint --fix` by running the ESLint
@@ -143,6 +153,7 @@ You can configure ESLint's `rulesCustomizations` setting:
 }
 ```
 
-## Yarn integration
+## See also
 
-See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [Yarn documentation](/docs/languages/yarn) for a walkthrough of configuring your project to use Yarn.
+- [TypeScript documentation](/docs/languages/typescript)

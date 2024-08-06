@@ -2,7 +2,19 @@
 
 Ruby support is available through the [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby).
 
+- Tree-sitters:
+  - [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
+  - [tree-sitter-embedded-template](https://github.com/tree-sitter/tree-sitter-embedded-template)
+- Language Servers:
+  - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
+  - [solargraph](https://github.com/castwide/solargraph)
+  - [rubocop](https://github.com/rubocop/rubocop)
+
 The Ruby extension also provides support for ERB files.
+
+## Language Servers:
+
+TBD: Add introduction paragraph about the language servers and their roles (e.g. rubocop for linting, etc)
 
 ## Choosing a language server
 

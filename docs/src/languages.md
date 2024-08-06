@@ -26,7 +26,6 @@ Pick top 6 or 8 for grid:
 - [TOML](/docs/languages/toml)
 - [HTML](/docs/languages/html)
 - [CSS](/docs/languages/css)
-- [JSX](/docs/languages/jsx)
 - [Terraform](/docs/languages/terraform)
 
 ## Built-in Language Support
@@ -37,7 +36,7 @@ Pick top 6 or 8 for grid:
 - [CSS](/docs/languages/css)
 - [Dart](/docs/languages/dart)
 - [Deno](/docs/languages/deno)
-- [Elixer](/docs/languages/elixir)
+- [Elixir](/docs/languages/elixir)
 - [Elm](/docs/languages/elm)
 - [Lua](/docs/languages/lua)
 - [OCaml](/docs/languages/ocaml)
@@ -53,4 +52,4 @@ Pick top 6 or 8 for grid:
 
 ## Extension Provided Language Support
 
-- TBD Enumerate Extension Provided Languages
+TBD Enumerate Extension Provided Languages

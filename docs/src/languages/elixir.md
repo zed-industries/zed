@@ -2,10 +2,9 @@
 
 Elixir support is available through the [Elixir extension](https://github.com/zed-industries/zed/tree/main/extensions/elixir).
 
-- Tree-sitter:
+- Tree Sitter:
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
-
 - Language servers:
   - [elixir-lsp/elixir-ls](https://github.com/elixir-lsp/elixir-ls)
   - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
@@ -95,3 +94,9 @@ The following example disables dialyzer:
 ```
 
 See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.
+
+### HEEx
+
+TBD: Document HEEx Template support
+
+- Tree Sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
