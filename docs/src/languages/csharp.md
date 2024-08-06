@@ -1,3 +1,21 @@
 # C#
 
 C# support is available through the [C# extension](https://github.com/zed-industries/zed/tree/main/extensions/csharp).
+
+## Configuration
+
+The `OmniSharp` binary can be configured in a Zed settings file with:
+
+```jsonc
+{
+  "lsp": {
+    "OmniSharp": {
+      "binary": {
+        "path": "/path/to/OmniSharp",
+        // "-lsp" is automatically inserted at the start
+        "args": ["optional", "additional", "args"],
+      },
+    },
+  },
+}
+```

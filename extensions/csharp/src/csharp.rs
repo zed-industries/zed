@@ -1,5 +1,5 @@
 use std::fs;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
 struct CsharpExtension {
     cached_binary_path: Option<String>,
@@ -104,9 +104,21 @@ impl zed::Extension for CsharpExtension {
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let binary = LspSettings::for_worktree("OmniSharp", worktree)
+            .ok()
+            .and_then(|v| v.binary);
+        let command = binary.as_ref().and_then(|v| v.path.clone()).map_or_else(
+            || self.language_server_binary_path(language_server_id, worktree),
+            |v| Ok(v),
+        )?;
+        let args: Vec<String> = ["-lsp".to_string()]
+            .into_iter()
+            .chain(binary.and_then(|v| v.arguments).iter().flatten().cloned())
+            .collect();
+
         Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
-            args: vec!["-lsp".to_string()],
+            command,
+            args,
             env: Default::default(),
         })
     }
