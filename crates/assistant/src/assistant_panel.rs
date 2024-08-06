@@ -3014,6 +3014,10 @@ impl Render for ContextEditorToolbarItem {
                     )
                     .child(self.model_summary_editor.clone())
             });
+
+        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+
         let right_side = h_flex()
             .gap_2()
             .child(ModelSelector::new(
@@ -3029,22 +3033,25 @@ impl Render for ContextEditorToolbarItem {
                                     .overflow_x_hidden()
                                     .flex_grow()
                                     .whitespace_nowrap()
-                                    .child(
-                                        Label::new(
-                                            LanguageModelRegistry::read_global(cx)
-                                                .active_model()
-                                                .map(|model| {
-                                                    format!(
-                                                        "{}: {}",
-                                                        model.provider_name().0,
-                                                        model.name().0
-                                                    )
-                                                })
-                                                .unwrap_or_else(|| "No model selected".into()),
-                                        )
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
+                                    .child(match (active_provider, active_model) {
+                                        (Some(provider), Some(model)) => h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Icon::new(provider.icon())
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
+                                            )
+                                            .child(
+                                                Label::new(model.name().0)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                            .into_any_element(),
+                                        _ => Label::new("No model selected")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                    }),
                             )
                             .child(
                                 Icon::new(IconName::ChevronDown)

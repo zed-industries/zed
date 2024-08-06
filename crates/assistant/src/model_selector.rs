@@ -1,3 +1,4 @@
+use feature_flags::LanguageModels;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 
@@ -34,7 +35,6 @@ pub struct ModelPickerDelegate {
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    _provider_name: SharedString,
     provider_icon: IconName,
     availability: LanguageModelAvailability,
     is_selected: bool,
@@ -123,11 +123,14 @@ impl PickerDelegate for ModelPickerDelegate {
 
             // Update the selection status
             let selected_model_id = model_info.model.id();
+            let selected_provider_id = model_info.model.provider_id();
             for model in &mut self.all_models {
-                model.is_selected = model.model.id() == selected_model_id;
+                model.is_selected = model.model.id() == selected_model_id
+                    && model.model.provider_id() == selected_provider_id;
             }
             for model in &mut self.filtered_models {
-                model.is_selected = model.model.id() == selected_model_id;
+                model.is_selected = model.model.id() == selected_model_id
+                    && model.model.provider_id() == selected_provider_id;
             }
         }
     }
@@ -186,6 +189,11 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        use feature_flags::FeatureFlagAppExt;
+        if !cx.has_flag::<LanguageModels>() {
+            return None;
+        }
+
         let plan = proto::Plan::ZedPro;
         let is_trial = false;
 
@@ -247,9 +255,8 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .providers()
             .iter()
             .flat_map(|provider| {
-                let provider_name = provider.name().0.clone();
-                let provider_icon = provider.icon();
                 let provider_id = provider.id();
+                let provider_icon = provider.icon();
                 let selected_model = selected_model.clone();
                 let selected_provider = selected_provider.clone();
 
@@ -258,7 +265,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
 
                     ModelInfo {
                         model: model.clone(),
-                        _provider_name: provider_name.clone(),
                         provider_icon,
                         availability: model.availability(),
                         is_selected: selected_model.as_ref() == Some(&model.id())
