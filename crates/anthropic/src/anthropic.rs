@@ -54,16 +54,6 @@ impl Model {
         }
     }
 
-    pub fn family(&self) -> &str {
-        match self {
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-",
-            Model::Claude3Opus => "claude-3",
-            Model::Claude3Sonnet => "claude-3",
-            Model::Claude3Haiku => "claude-3",
-            Self::Custom { .. } => "custom",
-        }
-    }
-
     pub fn display_name(&self) -> &str {
         match self {
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
