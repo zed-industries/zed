@@ -90,7 +90,7 @@ impl ZigExtension {
                 zed::Os::Windows => "windows",
             },
             extension = match platform {
-                zed::Os::Mac | zed::Os::Linux => "tar.gz",
+                zed::Os::Mac | zed::Os::Linux => "tar.xz",
                 zed::Os::Windows => "zip",
             }
         );
