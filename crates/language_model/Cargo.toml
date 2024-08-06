@@ -50,6 +50,7 @@ tiktoken-rs.workspace = true
 ui.workspace = true
 util.workspace = true
 base64.workspace = true
+image.workspace = true
 
 
 [dev-dependencies]

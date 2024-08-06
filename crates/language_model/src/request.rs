@@ -1,26 +1,78 @@
+use std::io::{BufWriter, Cursor};
+
 use crate::role::Role;
-use base64::Engine;
-use gpui::{AppContext, DevicePixels, ImageSource, Size};
+use base64::{write::EncoderWriter, Engine};
+use gpui::{point, size, AppContext, DevicePixels, ImageSource, ObjectFit, Size};
+use image::{
+    codecs::png::{PngDecoder, PngEncoder},
+    imageops::resize,
+    ImageEncoder,
+};
 use serde::{Deserialize, Serialize};
+use ui::px;
+use util::ResultExt;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct LanguageModelImage {
-    source: String,
+    // Abase64 encoded PNG image
+    source: Vec<u8>,
     size: Size<DevicePixels>,
 }
 
 impl LanguageModelImage {
     /// Resolves an image source into an LLM-ready format (base64)
     pub async fn resolve_source(source: ImageSource, cx: &mut AppContext) -> Option<Self> {
-        let data = source.data(cx).await?;
+        let data = source.data(cx).await?; // BGRA
 
-        let size = data.size(0);
-        // TODO: These are raw BGRA bytes, we need them in a specific format...
-        let bytes = data.as_bytes(0).unwrap_or(&[]);
+        let image_size = data.size(0);
+
+        let bytes = data.as_bytes(0).unwrap_or(&[]).to_vec();
+        // Convert from BGRA to RGBA.
+        for pixel in bytes.chunks_exact_mut(4) {
+            pixel.swap(2, 0);
+        }
+        let mut image = image::RgbaImage::from_vec(
+            image_size.width.raw() as u32,
+            image_size.height.raw() as u32,
+            bytes,
+        )
+        .expect("We already know this works");
+
+        const ANTHROPIC_SIZE_LIMT: f32 = 1568.0; // Anthropic wants uploaded images to be smaller than this in both dimensions
+
+        // https://docs.anthropic.com/en/docs/build-with-claude/vision
+        if image_size.width.raw() > ANTHROPIC_SIZE_LIMT as i32
+            || image_size.height.raw() > ANTHROPIC_SIZE_LIMT as i32
+        {
+            let new_bounds = ObjectFit::ScaleDown.get_bounds(
+                gpui::Bounds {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
+                },
+                image_size,
+            );
+
+            image = resize(
+                &image,
+                new_bounds.size.width.0 as u32,
+                new_bounds.size.height.0 as u32,
+                image::imageops::FilterType::Triangle,
+            );
+        }
+
+        let base64_image = Vec::new();
+        let base64_writer = BufWriter::new(EncoderWriter::new(
+            Cursor::new(base64_image),
+            &base64::engine::general_purpose::STANDARD,
+        ));
+
+        image
+            .write_to(&mut Cursor::new(base64_writer), image::ImageFormat::Png)
+            .log_err()?;
 
         Some(LanguageModelImage {
-            source: base64::engine::general_purpose::STANDARD.encode(bytes),
-            size,
+            source: base64_image,
+            size: image_size,
         })
     }
 

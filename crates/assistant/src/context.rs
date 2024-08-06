@@ -15,7 +15,8 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, Subscription, Task,
+    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, SmallVec, Subscription,
+    Task,
 };
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
@@ -315,6 +316,7 @@ pub struct MessageMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
+    pub image_offsets: SmallVec<[(usize, Arc<ImageData>); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub id: MessageId,
@@ -1720,13 +1722,107 @@ impl Context {
     }
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
-        let messages = self
+        let buffer = self.buffer.read(cx);
+        let request_messages = self
             .messages(cx)
-            .filter(|message| matches!(message.status, MessageStatus::Done))
-            .map(|message| message.to_request_message(self.buffer.read(cx)));
+            .filter(|message| message.status == MessageStatus::Done)
+            .map(|message| message.to_request_message(&buffer))
+            .collect();
+        // Goal: Augment this with image data
+        // For each message, determine a role
+        //
+        // Within each message, split the upload into:
+        // {
+        //  "role": User,
+        //  "content": [
+        //    { "type": "text", ...},
+        //    { "type": "image", ...}
+        //   ]
+        // }
+        //
+        // What we have:
+        // editor: ['a', 'a', 'a', 'a'....]
+        // messages: [1..4, 4..7],
+        // images: [3, 5]
+        //
+        //
+        //
+        // let i, j = 0 (ix into messages and images)
+        // messages: [1..4, 4..7],
+        //            i
+        // images: [3, 5]
+        //          j
+
+        // let images = self.images(cx).peekable();
+        // let messages = self.messages(cx).peekable();
+
+        // // {"role": "user", "content": "Hello, Claude"}
+
+        // // {"role": "user", "content": [{"type": "text", "text": "Hello, Claude"}]}
+
+        // let text_iter: impl Iterator<Item=&str> // what we have right now
+        // let image_iter: impl Iterator<Item=Image> // what we have right now
+        // let mut next_text = text_iter.next();
+        // let mut next_image = image_iter.next();
+
+        // while next_text.is_some() || next_image.is_some() {
+        //     let text_range_start = next_text.unwrap_or(-1);
+        //     let image_range_start = next_text.unwrap_or(-1);
+
+        // }
+
+        // // ///
+
+        // // for message_range in message_iter {
+        // //     let images = self.images_anchors.get_intersecting(text_range);
+        // //     return (text_range, intersecting_images)
+        // // }
+
+        // let buffer = self.buffer.read(cx);
+        // let messages = self.messages(cx);
+        // let mut images = self.images(cx).peekable();
+
+        // let mut request_messages = Vec::new();
+        // for message in messages {
+        //     if message.status == MessageStatus::Done {
+        //         continue;
+        //     }
+
+        //     let offset_range = message.offset_range;
+        //     let content = Vec::new(); // TextRange, Image
+
+        //     let mut last_offset = offset_range.start;
+
+        //     while let Some(image) = images.peek() {
+        //         // If the image is in our range,
+        //         // then:
+        //         // step the iterator with next
+        //         // split up the previous offset_range with the image's anchor
+        //         // Push the resulting text and images into content
+        //         let image_offset = image.anchor.to_offset(snapshot); // TODO: Switch to a bulk conversion
+
+        //         if image_offset is after message anchor {
+        //             break;
+        //         }
+
+        //         let preceding_text = buffer.text_for_range(last_offset..image_offset);
+        //         last_offset = image_offset;
+        //         // image section
+        //         //
+        //         images.next();
+        //     }
+
+        //     //Finish up:
+        //     let post_text = buffer.text_for_range(last_offset..message.offset_range.end);
+
+        //     request_messages.push(LanguageModelRequestMessage {
+        //         role: message.role,
+        //         content,
+        //     })
+        // }
 
         LanguageModelRequest {
-            messages: messages.collect(),
+            messages: request_messages,
             stop: vec![],
             temperature: 1.0,
         }
@@ -2122,9 +2218,22 @@ impl Context {
     pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
+        let mut image_anchors = self.image_anchors.iter().peekable();
+
+        Self::messages_from_iters(buffer, self.messages_metadata, messages, images)
+    }
+
+    pub fn messages_from_iters<'a>(
+        buffer: &Buffer,
+        metadata: HashMap<MessageId, MessageMetadata>,
+        messages: impl Iterator<Item = MessageAnchor>,
+        images: impl Iterator<Item = ImageAnchor>,
+    ) -> impl 'a + Iterator<Item = Message> {
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = message_anchors.next() {
-                let metadata = self.messages_metadata.get(&message_anchor.id)?;
+                let metadata = metadata.get(&message_anchor.id)?;
+
+                let message_start_anchor = message_anchor.start;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
                 let mut end_ix = start_ix;
@@ -2137,9 +2246,19 @@ impl Context {
                         message_anchors.next();
                     }
                 }
-                let message_end = message_end
-                    .unwrap_or(language::Anchor::MAX)
-                    .to_offset(buffer);
+                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end = message_anchor.to_offset(buffer);
+
+                let image_offsets = SmallVec::new();
+                while let Some(image_anchor) = image_anchors.peek() {
+                    if image_anchor.anchor < message_end_anchor {
+                        image_anchors.next();
+                        image_offsets
+                            .push((image_anchor.anchor.to_offset(buffer), image_anchor.data))
+                    } else {
+                        break;
+                    }
+                }
 
                 return Some(Message {
                     index_range: start_ix..end_ix,
@@ -2148,6 +2267,7 @@ impl Context {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    image_offsets,
                 });
             }
             None

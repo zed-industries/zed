@@ -5990,6 +5990,7 @@ dependencies = [
  "google_ai",
  "gpui",
  "http_client",
+ "image",
  "inline_completion_button",
  "language",
  "log",

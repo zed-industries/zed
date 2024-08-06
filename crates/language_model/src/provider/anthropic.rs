@@ -220,8 +220,7 @@ pub fn count_anthropic_tokens(
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_executor()
         .spawn(async move {
-            // TODO: Split out images, use this formula:
-            // https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
+            // TODO: Split out images from the messages, calculate their tokens seperately and add in
             let messages = request
                 .messages
                 .into_iter()
