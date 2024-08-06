@@ -480,11 +480,13 @@ fn main() {
         let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
+        println!("==> Args: {:?}", args);
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
             .filter_map(|arg| parse_url_arg(arg, cx).log_err())
             .collect();
+        println!("==> Urls: {:?}", urls);
 
         if !urls.is_empty() {
             open_listener.open_urls(urls)
@@ -1048,7 +1050,10 @@ struct Args {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Ok(path) => Ok(format!(
+            "file://{}",
+            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
+        )),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
