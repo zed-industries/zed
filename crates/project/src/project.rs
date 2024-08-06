@@ -5463,7 +5463,7 @@ impl Project {
         let position = position.to_point_utf16(buffer.read(cx));
         self.definition_impl(buffer, position, cx)
     }
-    
+
     fn declaration_impl(
         &self,
         buffer: &Model<Buffer>,
