@@ -15,8 +15,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, ClipboardImage, Context as _, EventEmitter, ImageData, ImageSource, Model,
-    ModelContext, Subscription, Task,
+    AppContext, Context as _, EventEmitter, ImageSource, Model, ModelContext, Subscription, Task,
 };
 use language::{
     AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
@@ -328,7 +327,10 @@ impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
         LanguageModelRequestMessage {
             role: self.role,
-            content: buffer.text_for_range(self.offset_range.clone()).collect(),
+            content: vec![buffer
+                .text_for_range(self.offset_range.clone())
+                .collect::<String>()
+                .into()],
         }
     }
 }
@@ -1423,7 +1425,7 @@ impl Context {
 
                 request.messages.push(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: prompt,
+                    content: vec![prompt.into()],
                 });
 
                 let resolution = model.use_tool::<EditStepResolution>(request, &cx).await?;
@@ -2015,7 +2017,9 @@ impl Context {
                 .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the context into a short title without punctuation.".into(),
+                    content: vec![
+                        "Summarize the context into a short title without punctuation.".into(),
+                    ],
                 }));
             let request = LanguageModelRequest {
                 messages: messages.collect(),

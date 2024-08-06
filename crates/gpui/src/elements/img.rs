@@ -1,7 +1,8 @@
 use crate::{
-    px, AbsoluteLength, Asset, Bounds, DefiniteLength, Element, ElementId, GlobalElementId, Hitbox,
-    ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
-    SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
+    px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
+    GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, ObjectFit, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
+    UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use http_client;
@@ -29,7 +30,7 @@ pub enum ImageSource {
     /// Cached image data
     Data(Arc<ImageData>),
     /// Image content will be loaded from Asset at render time.
-    Asset(SharedString),
+    Embedded(SharedString),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -47,7 +48,7 @@ impl From<&'static str> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s.into())
+            Self::Embedded(s.into())
         }
     }
 }
@@ -57,7 +58,7 @@ impl From<String> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s.into())
+            Self::Embedded(s.into())
         }
     }
 }
@@ -67,7 +68,7 @@ impl From<SharedString> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s)
+            Self::Embedded(s)
         }
     }
 }
@@ -162,7 +163,7 @@ impl Element for Img {
             let layout_id = self
                 .interactivity
                 .request_layout(global_id, cx, |mut style, cx| {
-                    if let Some(data) = self.source.data(cx) {
+                    if let Some(data) = self.source.use_data(cx) {
                         if let Some(state) = &mut state {
                             let frame_count = data.frame_count();
                             if frame_count > 1 {
@@ -234,7 +235,7 @@ impl Element for Img {
             .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                if let Some(data) = source.data(cx) {
+                if let Some(data) = source.use_data(cx) {
                     let new_bounds = self.object_fit.get_bounds(bounds, data.size(*frame_index));
                     cx.paint_image(
                         new_bounds,
@@ -270,17 +271,35 @@ impl InteractiveElement for Img {
 }
 
 impl ImageSource {
-    fn data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
+    fn use_data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::Asset(_) | ImageSource::File(_) => {
+            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
                     ImageSource::Uri(uri) => uri.clone().into(),
                     ImageSource::File(path) => path.clone().into(),
-                    ImageSource::Asset(path) => UriOrPath::Asset(path.clone()),
+                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
                     _ => unreachable!(),
                 };
 
-                cx.use_cached_asset::<Image>(&uri_or_path)?.log_err()
+                cx.use_asset::<Image>(&uri_or_path)?.log_err()
+            }
+
+            ImageSource::Data(data) => Some(data.to_owned()),
+        }
+    }
+
+    /// Fetch the data associated with this source, using GPUI's asset caching
+    pub async fn data(&self, cx: &mut AppContext) -> Option<Arc<ImageData>> {
+        match self {
+            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
+                let uri_or_path: UriOrPath = match self {
+                    ImageSource::Uri(uri) => uri.clone().into(),
+                    ImageSource::File(path) => path.clone().into(),
+                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
+                    _ => unreachable!(),
+                };
+
+                cx.fetch_asset::<Image>(&uri_or_path).0.await.log_err()
             }
 
             ImageSource::Data(data) => Some(data.to_owned()),
@@ -297,10 +316,11 @@ impl Asset for Image {
 
     fn load(
         source: Self::Source,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
-        let scale_factor = cx.scale_factor();
+        // TODO: Can we make SVGs always rescale?
+        // let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
         let asset_source = cx.asset_source().clone();
         async move {
@@ -319,7 +339,7 @@ impl Asset for Image {
                     }
                     body
                 }
-                UriOrPath::Asset(path) => {
+                UriOrPath::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
                     if let Some(data) = data {
                         data.to_vec()
@@ -364,7 +384,8 @@ impl Asset for Image {
                 ImageData::new(data)
             } else {
                 let pixmap =
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(scale_factor))?;
+                    // TODO: Can we make svgs always rescale?
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();

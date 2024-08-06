@@ -193,7 +193,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         if let Some(message) = request.messages.last() {
-            if message.content.trim().is_empty() {
+            if message.content.is_empty() || message.content[0].as_string().trim().is_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
@@ -270,7 +270,7 @@ impl CopilotChatLanguageModel {
                         Role::Assistant => CopilotChatRole::Assistant,
                         Role::System => CopilotChatRole::System,
                     },
-                    content: msg.content,
+                    content: msg.string_contents(),
                 })
                 .collect(),
         )

@@ -5978,6 +5978,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "base64 0.22.1",
  "client",
  "collections",
  "copilot",

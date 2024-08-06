@@ -220,6 +220,8 @@ pub fn count_anthropic_tokens(
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_executor()
         .spawn(async move {
+            // TODO: Split out images, use this formula:
+            // https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
             let messages = request
                 .messages
                 .into_iter()
@@ -229,7 +231,7 @@ pub fn count_anthropic_tokens(
                         Role::Assistant => "assistant".into(),
                         Role::System => "system".into(),
                     },
-                    content: Some(message.content),
+                    content: Some(message.string_contents()),
                     name: None,
                     function_call: None,
                 })

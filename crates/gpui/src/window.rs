@@ -1,5 +1,5 @@
 use crate::{
-    hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
+    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
@@ -20,7 +20,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use futures::{future::Shared, FutureExt};
+use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
@@ -1956,36 +1956,6 @@ impl<'a> WindowContext<'a> {
         self.window.requested_autoscroll.take()
     }
 
-    /// Remove an asset from GPUI's cache
-    pub fn remove_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.remove::<A>(source)
-    }
-
-    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
-    /// Your view will be re-drawn once the asset has finished loading.
-    ///
-    /// Note that the multiple calls to this method will only result in one `Asset::load` call.
-    /// The results of that call will be cached, and returned on subsequent uses of this API.
-    ///
-    /// Use [Self::remove_cached_asset] to reload your asset.
-    pub fn use_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.get::<A>(source).or_else(|| {
-            if let Some(asset) = self.use_asset::<A>(source) {
-                self.asset_cache
-                    .insert::<A>(source.to_owned(), asset.clone());
-                Some(asset)
-            } else {
-                None
-            }
-        })
-    }
-
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///
@@ -1994,19 +1964,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// This asset will not be cached by default, see [Self::use_cached_asset]
     pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
-        let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
-                let task = self.background_executor().spawn(future).shared();
-                task
-            });
-
+        let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
                 let parent_id = self.parent_view_id();
@@ -2027,12 +1985,9 @@ impl<'a> WindowContext<'a> {
                 .detach();
             }
 
-            self.loading_assets.insert(asset_id, Box::new(task));
-
             None
         })
     }
-
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
@@ -2608,6 +2563,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint an image into the scene for the next frame at the current z-index.
+    /// This method will panic if the frame_index is not valid
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_image(
@@ -2637,7 +2593,10 @@ impl<'a> WindowContext<'a> {
             .get_or_insert_with(&params.clone().into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
-                    Cow::Borrowed(data.as_bytes(frame_index)),
+                    Cow::Borrowed(
+                        data.as_bytes(frame_index)
+                            .expect("It's the caller's job to pass a valid frame index"),
+                    ),
                 )))
             })?
             .expect("Callback above only returns Some");

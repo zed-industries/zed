@@ -32,11 +32,10 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
     div, img, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardImage, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
-    EventEmitter, FocusHandle, FocusableView, ImageData, ImageSource, InteractiveElement,
-    IntoElement, Model, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
+    FocusHandle, FocusableView, ImageSource, InteractiveElement, IntoElement, Model, ParentElement,
+    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -2407,12 +2406,9 @@ impl ContextEditor {
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
-                        height: 10,
+                        height: 10, // TODO: make this auto height
                         style: BlockStyle::Sticky,
-                        render: Box::new({
-                            let context = self.context.clone();
-                            move |cx| img(image.data.clone()).into_any_element()
-                        }),
+                        render: Box::new(move |_cx| img(image.data.clone()).into_any_element()),
                         disposition: BlockDisposition::Above,
                     })
                 })
