@@ -3606,3 +3606,19 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_messages_from_iters_empty() {
+        let buffer = Buffer::new(0);
+        let metadata = HashMap::new();
+        let messages = std::iter::empty();
+        let images = std::iter::empty();
+
+        let result: Vec<Message> =
+            Context::messages_from_iters(&buffer, &metadata, messages, images).collect();
+
+        assert!(result.is_empty());
+    }
+}
