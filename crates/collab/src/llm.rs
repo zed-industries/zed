@@ -26,23 +26,30 @@ pub use token::*;
 pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
-    pub db: Arc<LlmDatabase>,
+    pub db: Option<Arc<LlmDatabase>>,
     pub http_client: IsahcHttpClient,
 }
 
 impl LlmState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
-        let database_url = config
-            .llm_database_url
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
-        let max_connections = config
-            .llm_database_max_connections
-            .ok_or_else(|| anyhow!("missing LLM_DATABASE_MAX_CONNECTIONS"))?;
+        // TODO: This is temporary until we have the LLM database stood up.
+        let db = if config.is_development() {
+            let database_url = config
+                .llm_database_url
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+            let max_connections = config
+                .llm_database_max_connections
+                .ok_or_else(|| anyhow!("missing LLM_DATABASE_MAX_CONNECTIONS"))?;
 
-        let mut db_options = db::ConnectOptions::new(database_url);
-        db_options.max_connections(max_connections);
-        let db = LlmDatabase::new(db_options, executor.clone()).await?;
+            let mut db_options = db::ConnectOptions::new(database_url);
+            db_options.max_connections(max_connections);
+            let db = LlmDatabase::new(db_options, executor.clone()).await?;
+
+            Some(Arc::new(db))
+        } else {
+            None
+        };
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
         let http_client = IsahcHttpClient::builder()
@@ -53,7 +60,7 @@ impl LlmState {
         let this = Self {
             config,
             executor,
-            db: Arc::new(db),
+            db,
             http_client,
         };
 

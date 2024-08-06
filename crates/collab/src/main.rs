@@ -240,6 +240,11 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 }
 
 async fn setup_llm_database(config: &Config) -> Result<()> {
+    // TODO: This is temporary until we have the LLM database stood up.
+    if !config.is_development() {
+        return Ok(());
+    }
+
     let database_url = config
         .llm_database_url
         .as_ref()
