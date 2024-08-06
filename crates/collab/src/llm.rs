@@ -1,5 +1,5 @@
 mod authorization;
-mod db;
+pub mod db;
 mod token;
 
 use crate::api::CloudflareIpCountryHeader;

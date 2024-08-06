@@ -5,6 +5,8 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use collab::llm::db::LlmDatabase;
+use collab::migrations::run_database_migrations;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
@@ -81,6 +83,8 @@ async fn main() -> Result<()> {
             let mut on_shutdown = None;
 
             if mode.is_llm() {
+                setup_llm_database(&config).await?;
+
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
 
                 app = app
@@ -216,7 +220,7 @@ async fn setup_app_database(config: &Config) -> Result<()> {
         Path::new(default_migrations)
     });
 
-    let migrations = db.migrate(&migrations_path, false).await?;
+    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
     for (migration, duration) in migrations {
         log::info!(
             "Migrated {} {} {:?}",
@@ -232,7 +236,41 @@ async fn setup_app_database(config: &Config) -> Result<()> {
         collab::seed::seed(&config, &db, false).await?;
     }
 
-    return Ok(());
+    Ok(())
+}
+
+async fn setup_llm_database(config: &Config) -> Result<()> {
+    let database_url = config
+        .llm_database_url
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+
+    let db_options = db::ConnectOptions::new(database_url.clone());
+    let db = LlmDatabase::new(db_options).await?;
+
+    let migrations_path = config
+        .llm_database_migrations_path
+        .as_deref()
+        .unwrap_or_else(|| {
+            #[cfg(feature = "sqlite")]
+            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm.sqlite");
+            #[cfg(not(feature = "sqlite"))]
+            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm");
+
+            Path::new(default_migrations)
+        });
+
+    let migrations = run_database_migrations(db.options(), migrations_path, false).await?;
+    for (migration, duration) in migrations {
+        log::info!(
+            "Migrated {} {} {:?}",
+            migration.version,
+            migration.description,
+            duration
+        );
+    }
+
+    Ok(())
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {

@@ -653,6 +653,7 @@ impl TestServer {
                 live_kit_secret: None,
                 llm_database_url: None,
                 llm_database_max_connections: None,
+                llm_database_migrations_path: None,
                 llm_api_secret: None,
                 rust_log: None,
                 log_json: None,

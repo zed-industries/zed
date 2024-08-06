@@ -19,4 +19,8 @@ impl LlmDatabase {
             pool: sea_orm::Database::connect(options).await?,
         })
     }
+
+    pub fn options(&self) -> &ConnectOptions {
+        &self.options
+    }
 }
