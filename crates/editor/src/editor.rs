@@ -5126,14 +5126,21 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
+        overlaps_breakpoint: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
+            let color = if overlaps_breakpoint {
+                Color::Error
+            } else {
+                Color::Muted
+            };
+
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .shape(ui::IconButtonShape::Square)
                     .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
+                    .icon_color(color)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
                         editor.focus(cx);
@@ -5161,16 +5168,52 @@ impl Editor {
         }
     }
 
+    fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
+        let mut breakpoint_display_points = HashSet::default();
+
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return breakpoint_display_points;
+        };
+
+        let Some(opened_breakpoints) = self.opened_breakpoints.clone() else {
+            return breakpoint_display_points;
+        };
+
+        let snapshot = self.snapshot(cx);
+        let buffer = buffer.read(cx);
+
+        if let Some(breakpoints) = opened_breakpoints.read().get(&buffer.remote_id()) {
+            for breakpoint in breakpoints {
+                breakpoint_display_points.insert(breakpoint.position.to_display_point(&snapshot));
+            }
+        }
+
+        if let Some(gutter_point) = self.gutter_breakpoint_indicator.clone() {
+            breakpoint_display_points.insert(gutter_point);
+        }
+
+        breakpoint_display_points
+    }
+
     fn render_breakpoint(
         &self,
         position: Anchor,
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
+        let color = if self
+            .gutter_breakpoint_indicator
+            .is_some_and(|gutter_bp| gutter_bp.row() == row)
+        {
+            Color::Hint
+        } else {
+            Color::Error
+        };
+
         IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
-            .icon_color(Color::Error)
+            .icon_color(color)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
                 editor.toggle_breakpoint_at_row(position, cx) //TODO handle folded

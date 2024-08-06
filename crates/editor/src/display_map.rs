@@ -1047,7 +1047,7 @@ impl DisplaySnapshot {
     }
 }
 
-#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct DisplayPoint(BlockPoint);
 
 impl Debug for DisplayPoint {

@@ -583,6 +583,10 @@ impl Breakpoint {
         }
     }
 
+    pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
+        buffer.summary_for_anchor::<Point>(&self.position.text_anchor)
+    }
+
     pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
         SourceBreakpoint {
             line: (snapshot
