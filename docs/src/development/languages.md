@@ -140,8 +140,6 @@ language = "Some Language"
 
 TBD: Document additional extension.toml keys: `language_servers.{language_ids, code_action_kinds}`
 
-For more examples on providing language servers via extensions, take a look at the [`extensions/`](https://github.com/zed-industries/zed/tree/main/extensions) in the Zed repository. The Zed Rust Extension API is also included under [`crates/extension_api`](https://github.com/zed-industries/zed/blob/main/crates/extension_api/README.md) directory.
-
 ## Slash commands
 
 TBD: Document extension.toml `slash_commands` and `indexed_docs_providers`.
