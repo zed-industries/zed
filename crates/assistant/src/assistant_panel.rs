@@ -1384,17 +1384,22 @@ impl WorkflowStepStatus {
                     })
                     .into_any_element()
             }
-            WorkflowStepStatus::Pending => IconButton::new("stop-workflow-step", IconName::Stop)
-                .icon_color(Color::Error)
-                .on_click({
-                    let editor = editor.clone();
-                    let step_range = step_range.clone();
-                    move |_, cx| {
-                        editor
-                            .update(cx, |this, cx| this.stop_edit_step(&step_range, cx))
-                            .ok();
-                    }
-                })
+            WorkflowStepStatus::Pending => h_flex()
+                .gap_1()
+                .child(div().child(Label::new("Applying")).cursor_not_allowed())
+                .child(
+                    IconButton::new("stop-workflow-step", IconName::Stop)
+                        .icon_color(Color::Error)
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| this.stop_edit_step(&step_range, cx))
+                                    .ok();
+                            }
+                        }),
+                )
                 .into_any_element(),
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
@@ -1428,19 +1433,21 @@ impl WorkflowStepStatus {
                 )
                 .into_any_element(),
             WorkflowStepStatus::Confirmed => h_flex()
-                .child(Label::new("Applied"))
                 .child(
-                    IconButton::new("revert-workflow-step", IconName::Eraser).on_click({
-                        let editor = editor.clone();
-                        let step_range = step_range.clone();
-                        move |_, cx| {
-                            editor
-                                .update(cx, |this, cx| {
-                                    this.undo_edit_step(&step_range, cx);
-                                })
-                                .ok();
-                        }
-                    }),
+                    Button::new("revert-workflow-step", "Undo")
+                        .icon(Some(IconName::Undo))
+                        .tooltip(|cx| Tooltip::text("Undo step", cx))
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.undo_edit_step(&step_range, cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
                 )
                 .into_any_element(),
         }
