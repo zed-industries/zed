@@ -68,7 +68,7 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_status_updates:
+    assist_observations:
         HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
     confirmed_assists: HashSet<InlineAssistId>,
     prompt_history: VecDeque<String>,
@@ -91,7 +91,7 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
-            assist_status_updates: HashMap::default(),
+            assist_observations: HashMap::default(),
             confirmed_assists: HashSet::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -663,13 +663,11 @@ impl InlineAssistant {
                 self.confirmed_assists.insert(assist_id);
             }
 
-            if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
-                tx.send(()).ok();
-            }
+            self.assist_observations.remove(&assist_id);
         }
 
         // Remove the assist from the status updates map
-        self.assist_status_updates.remove(&assist_id);
+        self.assist_observations.remove(&assist_id);
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -869,7 +867,7 @@ impl InlineAssistant {
             })
             .log_err();
 
-        if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
+        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
             tx.send(()).ok();
         }
     }
@@ -883,16 +881,12 @@ impl InlineAssistant {
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
 
-        if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
+        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
             tx.send(()).ok();
         }
     }
 
-    pub fn assist_status(
-        &self,
-        assist_id: InlineAssistId,
-        cx: &WindowContext,
-    ) -> InlineAssistStatus {
+    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
         if let Some(assist) = self.assists.get(&assist_id) {
             match &assist.codegen.read(cx).status {
                 CodegenStatus::Idle => InlineAssistStatus::Idle,
@@ -1088,13 +1082,12 @@ impl InlineAssistant {
         })
     }
 
-    pub fn subscribe_to_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
-        if let Some((_, rx)) = self.assist_status_updates.get(&assist_id) {
+    pub fn observe_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
+        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
             rx.clone()
         } else {
             let (tx, rx) = async_watch::channel(());
-            self.assist_status_updates
-                .insert(assist_id, (tx, rx.clone()));
+            self.assist_observations.insert(assist_id, (tx, rx.clone()));
             rx
         }
     }
@@ -1107,6 +1100,18 @@ pub enum InlineAssistStatus {
     Error(anyhow::Error),
     Confirmed,
     Canceled,
+}
+
+impl InlineAssistStatus {
+    pub(crate) fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+    pub(crate) fn is_confirmed(&self) -> bool {
+        matches!(self, Self::Confirmed)
+    }
+    pub(crate) fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
+    }
 }
 
 struct EditorInlineAssists {
@@ -2011,7 +2016,7 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
-                            } else if let Some(tx) = this.assist_status_updates.get(&assist_id) {
+                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
                                 tx.0.send(()).ok();
                             }
                         }

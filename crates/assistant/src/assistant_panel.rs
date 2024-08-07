@@ -11,10 +11,10 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
     DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup, InlineAssist,
-    InlineAssistId, InlineAssistStatus, InlineAssistant, InsertIntoEditor, MessageStatus,
-    ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector, WorkflowStepEditSuggestions,
+    InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector, WorkflowStepEditSuggestions,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -1310,12 +1310,45 @@ struct WorkflowStep {
     footer_block_id: CustomBlockId,
     suggestions: Option<ResolvedWorkflowStepEditSuggestions>,
     assists: Option<WorkflowStepAssists>,
-    status: WorkflowStepStatus,
+}
+
+impl WorkflowStep {
+    fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
+        if self.suggestions.is_none() {
+            WorkflowStepStatus::ComputingSuggestions
+        } else if let Some(assists) = self.assists.as_ref() {
+            let assistant = InlineAssistant::global(cx);
+            if assists
+                .assist_ids
+                .iter()
+                .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
+            {
+                WorkflowStepStatus::Pending
+            } else if assists
+                .assist_ids
+                .iter()
+                .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
+            {
+                WorkflowStepStatus::Confirmed
+            } else if assists
+                .assist_ids
+                .iter()
+                .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
+            {
+                WorkflowStepStatus::Done
+            } else {
+                WorkflowStepStatus::Idle
+            }
+        } else {
+            WorkflowStepStatus::Idle
+        }
+    }
 }
 
 struct WorkflowStepAssists {
     assist_ids: Vec<InlineAssistId>,
     editor: WeakView<Editor>,
+    _observe_assist_status: Task<()>,
 }
 
 enum WorkflowStepStatus {
@@ -1324,6 +1357,18 @@ enum WorkflowStepStatus {
     Pending,
     Done,
     Confirmed,
+}
+
+impl std::fmt::Display for WorkflowStepStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ComputingSuggestions => write!(f, "Computing Suggestions"),
+            Self::Idle => write!(f, "Idle"),
+            Self::Pending => write!(f, "Pending"),
+            Self::Done => write!(f, "Done"),
+            Self::Confirmed => write!(f, "Confirmed"),
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1967,29 +2012,32 @@ impl ContextEditor {
         let buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
         let (&excerpt_id, _, _) = buffer_snapshot.as_singleton().unwrap();
         for range in updated_steps {
-            let suggestions = self
-                .context
-                .read(cx)
-                .workflow_step_for_range(range.clone())
-                .and_then(|step| step.edit_suggestions.as_resolved().cloned());
+            let Some(step) = self.context.read(cx).workflow_step_for_range(range.clone()) else {
+                continue;
+            };
 
-            if let Some(step) = self.workflow_steps.get_mut(range) {
-                step.suggestions = suggestions;
+            if let Some(existing_step) = self.workflow_steps.get_mut(range) {
+                if existing_step.suggestions.is_none() {
+                    existing_step.suggestions = step.edit_suggestions.as_resolved().cloned();
+                }
             } else {
+                let suggestions = step.edit_suggestions.as_resolved().cloned();
                 let start = buffer_snapshot
                     .anchor_in_excerpt(excerpt_id, range.start)
                     .unwrap();
                 let end = buffer_snapshot
                     .anchor_in_excerpt(excerpt_id, range.end)
                     .unwrap();
+                let weak_self = cx.view().downgrade();
                 let block_ids = self.editor.update(cx, |editor, cx| {
+                    let step_range = range.clone();
                     editor.insert_blocks(
                         vec![
                             BlockProperties {
                                 position: start,
                                 height: 1,
                                 style: BlockStyle::Sticky,
-                                render: Box::new(|cx| {
+                                render: Box::new(move |cx| {
                                     h_flex()
                                         .h(1. * cx.line_height())
                                         .w_full()
@@ -1998,8 +2046,17 @@ impl ContextEditor {
                                         .justify_end()
                                         .gap_2()
                                         .pr_6()
-                                        .child("Hello")
-                                        .child("World")
+                                        .children(
+                                            weak_self
+                                                .update(&mut **cx, |context_editor, cx| {
+                                                    let step = context_editor
+                                                        .workflow_steps
+                                                        .get(&step_range)?;
+                                                    Some(step.status(cx).to_string())
+                                                })
+                                                .ok()
+                                                .flatten(),
+                                        )
                                         .into_any()
                                 }),
                                 disposition: BlockDisposition::Above,
@@ -2030,7 +2087,6 @@ impl ContextEditor {
                         footer_block_id: block_ids[1],
                         suggestions,
                         assists: None,
-                        status: WorkflowStepStatus::Idle,
                     },
                 );
             }
@@ -2067,14 +2123,7 @@ impl ContextEditor {
             return;
         };
 
-        let can_cancel = assists.assist_ids.iter().all(|assist_id| {
-            matches!(
-                InlineAssistant::global(cx).assist_status(*assist_id, cx),
-                InlineAssistStatus::Idle | InlineAssistStatus::Canceled
-            )
-        });
-
-        if can_cancel {
+        if matches!(step.status(cx), WorkflowStepStatus::Idle) {
             let assist_ids = step.assists.take().unwrap().assist_ids;
             InlineAssistant::update_global(cx, |assistant, cx| {
                 for assist_id in assist_ids {
@@ -2107,49 +2156,86 @@ impl ContextEditor {
             return;
         };
 
-        let mut suggest_edits = true;
-        if let Some(step_assists) = step.assists.as_ref() {
-            if let Some(editor) = step_assists.editor.upgrade() {
-                for assist_id in &step_assists.assist_ids {
-                    match InlineAssistant::global(cx).assist_status(*assist_id, cx) {
-                        InlineAssistStatus::Idle | InlineAssistStatus::Canceled => {}
-                        InlineAssistStatus::Confirmed => suggest_edits = false,
-                        _ => {
-                            self.workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.activate_item(&editor, false, false, cx);
-                                })
-                                .ok();
-                            InlineAssistant::update_global(cx, |assistant, cx| {
-                                assistant.scroll_to_assist(*assist_id, cx)
-                            });
-                            suggest_edits = false;
-                            break;
-                        }
+        let mut scroll_to_assist_id = None;
+        match step.status(cx) {
+            WorkflowStepStatus::Idle => {
+                if let Some(ResolvedWorkflowStepEditSuggestions {
+                    title,
+                    edit_suggestions,
+                }) = step.suggestions.as_ref()
+                {
+                    if let Some((editor, assist_ids)) = Self::suggest_edits(
+                        title.clone(),
+                        edit_suggestions.clone(),
+                        &self.project,
+                        &self.assistant_panel,
+                        &self.workspace,
+                        cx,
+                    ) {
+                        let mut observations = Vec::new();
+                        InlineAssistant::update_global(cx, |assistant, _cx| {
+                            for assist_id in &assist_ids {
+                                observations.push(assistant.observe_assist(*assist_id));
+                            }
+                        });
+
+                        step.assists = Some(WorkflowStepAssists {
+                            assist_ids,
+                            editor: editor.downgrade(),
+                            _observe_assist_status: cx.spawn(|this, mut cx| async move {
+                                while !observations.is_empty() {
+                                    let (result, ix, _) = futures::future::select_all(
+                                        observations
+                                            .iter_mut()
+                                            .map(|observation| Box::pin(observation.changed())),
+                                    )
+                                    .await;
+
+                                    if result.is_err() {
+                                        observations.remove(ix);
+                                    }
+
+                                    if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
+                                        break;
+                                    }
+                                }
+                            }),
+                        });
                     }
                 }
             }
+            WorkflowStepStatus::Pending => {
+                if let Some(assists) = step.assists.as_ref() {
+                    let assistant = InlineAssistant::global(cx);
+                    scroll_to_assist_id = assists
+                        .assist_ids
+                        .iter()
+                        .copied()
+                        .find(|assist_id| assistant.assist_status(*assist_id, cx).is_pending());
+                }
+            }
+            WorkflowStepStatus::Done => {
+                if let Some(assists) = step.assists.as_ref() {
+                    scroll_to_assist_id = assists.assist_ids.first().copied();
+                }
+            }
+            _ => {}
         }
 
-        if suggest_edits {
-            if let Some(ResolvedWorkflowStepEditSuggestions {
-                title,
-                edit_suggestions,
-            }) = step.suggestions.as_ref()
+        if let Some(assist_id) = scroll_to_assist_id {
+            if let Some(editor) = step
+                .assists
+                .as_ref()
+                .and_then(|assists| assists.editor.upgrade())
             {
-                if let Some((editor, assist_ids)) = Self::suggest_edits(
-                    title.clone(),
-                    edit_suggestions.clone(),
-                    &self.project,
-                    &self.assistant_panel,
-                    &self.workspace,
-                    cx,
-                ) {
-                    step.assists = Some(WorkflowStepAssists {
-                        assist_ids,
-                        editor: editor.downgrade(),
-                    });
-                }
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.activate_item(&editor, false, false, cx);
+                    })
+                    .ok();
+                InlineAssistant::update_global(cx, |assistant, cx| {
+                    assistant.scroll_to_assist(assist_id, cx)
+                });
             }
         }
 
