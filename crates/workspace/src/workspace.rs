@@ -2611,6 +2611,25 @@ impl Workspace {
         open_project_item
     }
 
+    pub fn is_project_item_open<T>(
+        &self,
+        pane: &View<Pane>,
+        project_item: &Model<T::Item>,
+        cx: &AppContext,
+    ) -> bool
+    where
+        T: ProjectItem,
+    {
+        use project::Item as _;
+
+        project_item
+            .read(cx)
+            .entry_id(cx)
+            .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
+            .and_then(|item| item.downcast::<T>())
+            .is_some()
+    }
+
     pub fn open_project_item<T>(
         &mut self,
         pane: View<Pane>,

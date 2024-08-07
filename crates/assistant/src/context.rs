@@ -348,25 +348,32 @@ pub struct SlashCommandId(clock::Lamport);
 #[derive(Debug)]
 pub struct WorkflowStep {
     pub tagged_range: Range<language::Anchor>,
-    pub edit_suggestions: WorkflowStepEditSuggestions,
+    pub status: WorkflowStepStatus,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedWorkflowStepEditSuggestions {
+pub struct WorkflowStepSuggestions {
     pub title: String,
     pub edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
 }
 
-pub enum WorkflowStepEditSuggestions {
+pub enum WorkflowStepStatus {
     Pending(Task<Option<()>>),
-    Resolved(ResolvedWorkflowStepEditSuggestions),
+    Resolved(WorkflowStepSuggestions),
 }
 
-impl WorkflowStepEditSuggestions {
-    pub fn as_resolved(&self) -> Option<&ResolvedWorkflowStepEditSuggestions> {
+impl WorkflowStepStatus {
+    pub fn as_resolved(&self) -> Option<&WorkflowStepSuggestions> {
         match self {
-            WorkflowStepEditSuggestions::Resolved(suggestions) => Some(suggestions),
-            WorkflowStepEditSuggestions::Pending(_) => None,
+            WorkflowStepStatus::Resolved(suggestions) => Some(suggestions),
+            WorkflowStepStatus::Pending(_) => None,
+        }
+    }
+
+    pub fn is_resolved(&self) -> bool {
+        match self {
+            WorkflowStepStatus::Resolved(_) => true,
+            WorkflowStepStatus::Pending(_) => false,
         }
     }
 }
@@ -569,11 +576,11 @@ impl EditSuggestion {
     }
 }
 
-impl Debug for WorkflowStepEditSuggestions {
+impl Debug for WorkflowStepStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkflowStepEditSuggestions::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            WorkflowStepEditSuggestions::Resolved(ResolvedWorkflowStepEditSuggestions {
+            WorkflowStepStatus::Pending(_) => write!(f, "EditStepOperations::Pending"),
+            WorkflowStepStatus::Resolved(WorkflowStepSuggestions {
                 title,
                 edit_suggestions,
             }) => f
@@ -1214,7 +1221,7 @@ impl Context {
                             ix,
                             WorkflowStep {
                                 tagged_range,
-                                edit_suggestions: WorkflowStepEditSuggestions::Pending(task),
+                                status: WorkflowStepStatus::Pending(task),
                             },
                         ));
                     }
@@ -1353,12 +1360,10 @@ impl Context {
                         })
                         .map_err(|_| anyhow!("edit step not found"))?;
                     if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
-                        edit_step.edit_suggestions = WorkflowStepEditSuggestions::Resolved(
-                            ResolvedWorkflowStepEditSuggestions {
-                                title: step_suggestions.step_title,
-                                edit_suggestions: suggestion_groups_by_buffer,
-                            },
-                        );
+                        edit_step.status = WorkflowStepStatus::Resolved(WorkflowStepSuggestions {
+                            title: step_suggestions.step_title,
+                            edit_suggestions: suggestion_groups_by_buffer,
+                        });
                         cx.emit(ContextEvent::WorkflowStepsChanged);
                     }
                     anyhow::Ok(())
@@ -3074,11 +3079,9 @@ mod tests {
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    let status = match &step.edit_suggestions {
-                        WorkflowStepEditSuggestions::Pending(_) => {
-                            WorkflowStepEditSuggestionStatus::Pending
-                        }
-                        WorkflowStepEditSuggestions::Resolved { .. } => {
+                    let status = match &step.status {
+                        WorkflowStepStatus::Pending(_) => WorkflowStepEditSuggestionStatus::Pending,
+                        WorkflowStepStatus::Resolved { .. } => {
                             WorkflowStepEditSuggestionStatus::Resolved
                         }
                     };
