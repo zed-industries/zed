@@ -69,11 +69,11 @@ async function main() {
       continue;
     }
 
-    let credits = getCreditsString(pullRequestWebURL, contributor);
+    let paperTrail = getPaperTrailString(pullRequestWebURL, contributor);
 
     console.log("*", pullRequest.title);
     console.log("  PR URL:    ", pullRequestWebURL);
-    console.log("  Credits:   ", credits);
+    console.log("  Trail:     ", paperTrail);
 
     releaseNotes = notes.trim().split("\n");
 
@@ -87,16 +87,12 @@ async function main() {
   }
 }
 
-function getCreditsString(pullRequestURL, contributor) {
+function getPaperTrailString(pullRequestURL, contributor) {
   let creditsString = pullRequestURL;
 
   if (contributor) {
     const contributorUrl = `[${contributor}](${GITHUB_URL}/${contributor})`;
     creditsString += `; thanks ${contributorUrl}`;
-  }
-
-  if (creditsString) {
-    creditsString = `(${creditsString})`;
   }
 
   return creditsString;
