@@ -2465,8 +2465,7 @@ impl ContextEditor {
             assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
         });
 
-
-        if show_zed_ai {
+        if nudge.map_or(false, |value| value) {
             Some(
                 h_flex()
                     .p_3()
@@ -2637,7 +2636,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::debug_edit_steps))
             .size_full()
-            .children(self.render_banner(cx))
+            .children(self.render_notice(cx))
             .child(
                 div()
                     .flex_grow()
