@@ -895,9 +895,8 @@ impl Item for Editor {
         }
     }
 
-    fn edited_since_preview(&self, _cx: &AppContext) -> bool {
-        // todo! actually implement this
-        false
+    fn should_dismiss_preview(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).should_dismiss_preview(cx)
     }
 }
 

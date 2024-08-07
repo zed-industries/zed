@@ -1762,6 +1762,21 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    pub fn preserve_preview(&self, cx: &mut ModelContext<Self>) {
+        for buffer_state in self.buffers.borrow().values() {
+            buffer_state
+                .buffer
+                .update(cx, |buffer, _cx| buffer.preserve_preview());
+        }
+    }
+
+    pub fn should_dismiss_preview(&self, cx: &AppContext) -> bool {
+        self.buffers
+            .borrow()
+            .values()
+            .any(|state| state.buffer.read(cx).should_dismiss_preview())
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()

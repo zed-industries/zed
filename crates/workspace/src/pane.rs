@@ -695,7 +695,7 @@ impl Pane {
 
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
         if let Some(preview_item) = self.preview_item() {
-            if preview_item.item_id() == item_id && preview_item.edited_since_preview(cx) {
+            if preview_item.item_id() == item_id && preview_item.should_dismiss_preview(cx) {
                 self.set_preview_item_id(None, cx);
             }
         }
