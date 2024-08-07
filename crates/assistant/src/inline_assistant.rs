@@ -70,7 +70,7 @@ pub struct InlineAssistant {
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
     assist_observations:
         HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
-    confirmed_assists: HashSet<InlineAssistId>,
+    confirmed_assists: HashMap<InlineAssistId, Model<Codegen>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
@@ -92,7 +92,7 @@ impl InlineAssistant {
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
             assist_observations: HashMap::default(),
-            confirmed_assists: HashSet::default(),
+            confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
             telemetry: Some(telemetry),
@@ -660,12 +660,20 @@ impl InlineAssistant {
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
             } else {
-                self.confirmed_assists.insert(assist_id);
+                self.confirmed_assists.insert(assist_id, assist.codegen);
             }
         }
 
         // Remove the assist from the status updates map
         self.assist_observations.remove(&assist_id);
+    }
+
+    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
+        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
+            return false;
+        };
+        codegen.update(cx, |this, cx| this.undo(cx));
+        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -892,7 +900,7 @@ impl InlineAssistant {
                 CodegenStatus::Done => InlineAssistStatus::Done,
                 CodegenStatus::Error(error) => InlineAssistStatus::Error(anyhow!("{:?}", error)),
             }
-        } else if self.confirmed_assists.contains(&assist_id) {
+        } else if self.confirmed_assists.contains_key(&assist_id) {
             InlineAssistStatus::Confirmed
         } else {
             InlineAssistStatus::Canceled

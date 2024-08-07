@@ -1427,8 +1427,21 @@ impl WorkflowStepStatus {
                     }),
                 )
                 .into_any_element(),
-            WorkflowStepStatus::Confirmed => Label::new("Applied")
-                .color(Color::Ignored)
+            WorkflowStepStatus::Confirmed => h_flex()
+                .child(Label::new("Applied"))
+                .child(
+                    IconButton::new("revert-workflow-step", IconName::Eraser).on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            editor
+                                .update(cx, |this, cx| {
+                                    this.undo_edit_step(&step_range, cx);
+                                })
+                                .ok();
+                        }
+                    }),
+                )
                 .into_any_element(),
         }
     }
@@ -1601,6 +1614,31 @@ impl ContextEditor {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         for assist_id in assist_ids {
                             assistant.stop_assist(assist_id, cx);
+                        }
+                    })
+                });
+
+                !assists.assist_ids.is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn undo_edit_step(
+        &mut self,
+        range: &Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(workflow_step) = self.workflow_steps.get(range) {
+            if let Some(assists) = workflow_step.assists.as_ref() {
+                let assist_ids = assists.assist_ids.clone();
+                cx.window_context().defer(|cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for assist_id in assist_ids {
+                            assistant.undo_assist(assist_id, cx);
                         }
                     })
                 });
