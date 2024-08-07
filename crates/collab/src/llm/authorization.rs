@@ -22,10 +22,6 @@ fn authorize_access_to_model(
     provider: LanguageModelProvider,
     model: &str,
 ) -> Result<()> {
-    if config.is_development() {
-        return Ok(());
-    }
-
     if claims.is_staff {
         return Ok(());
     }
