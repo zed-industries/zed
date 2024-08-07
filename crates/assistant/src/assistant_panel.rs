@@ -2447,10 +2447,10 @@ impl ContextEditor {
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let nudge = self
-            .assistant_panel
-            .upgrade()
-            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
+        use feature_flags::FeatureFlagAppExt;
+        let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
+            assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
+        });
 
         if let Some(error) = self.error_message.clone() {
             Some(Self::render_error_popover(error, cx).into_any_element())
