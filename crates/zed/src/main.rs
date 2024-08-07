@@ -7,6 +7,7 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
+use assistant::PromptBuilder;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -161,7 +162,7 @@ fn init_headless(
 }
 
 // init_common is called for both headless and normal mode.
-fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
+fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
@@ -182,7 +183,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
     );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    let prompt_builder = assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
@@ -196,9 +197,14 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         ThemeRegistry::global(cx),
         cx,
     );
+    prompt_builder
 }
 
-fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
+fn init_ui(
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) -> Result<()> {
     match cx.try_global::<AppMode>() {
         Some(AppMode::Headless(_)) => {
             return Err(anyhow!(
@@ -289,7 +295,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     watch_file_types(fs.clone(), cx);
 
     cx.set_menus(app_menus());
-    initialize_workspace(app_state.clone(), cx);
+    initialize_workspace(app_state.clone(), prompt_builder, cx);
 
     cx.activate(true);
 
@@ -467,7 +473,7 @@ fn main() {
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);
-        init_common(app_state.clone(), cx);
+        let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -487,7 +493,7 @@ fn main() {
             .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
         {
             Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
+                handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
             }
             None => {
                 if let Some(dev_server_token) = args.dev_server_token {
@@ -503,7 +509,7 @@ fn main() {
                     })
                     .detach();
                 } else {
-                    init_ui(app_state.clone(), cx).unwrap();
+                    init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
                     cx.spawn({
                         let app_state = app_state.clone();
                         |mut cx| async move {
@@ -518,11 +524,12 @@ fn main() {
         }
 
         let app_state = app_state.clone();
+        let prompt_builder = prompt_builder.clone();
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
+                        handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
                     }
                 })
                 .ok();
@@ -532,15 +539,20 @@ fn main() {
     });
 }
 
-fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut AppContext) {
+fn handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
-        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, prompt_builder, cx))
             .detach();
         return;
     }
 
-    if let Err(e) = init_ui(app_state.clone(), cx) {
+    if let Err(e) = init_ui(app_state.clone(), prompt_builder, cx) {
         fail_to_open_window(e, cx);
         return;
     };

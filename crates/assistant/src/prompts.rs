@@ -125,22 +125,20 @@ impl PromptBuilder {
     }
 
     fn register_templates(handlebars: &mut Handlebars) -> Result<(), Box<TemplateError>> {
-        let content_prompt = Assets::get("prompts/content_prompt.hbs")
-            .expect("Content prompt template not found")
-            .data;
-        let terminal_assistant_prompt = Assets::get("prompts/terminal_assistant_prompt.hbs")
-            .expect("Terminal assistant prompt template not found")
-            .data;
+        let mut register_template = |id: &str| {
+            let prompt = Assets::get(&format!("prompts/{}.hbs", id))
+                .unwrap_or_else(|| panic!("{} prompt template not found", id))
+                .data;
+            handlebars
+                .register_template_string(id, String::from_utf8_lossy(&prompt))
+                .map_err(Box::new)
+        };
 
-        handlebars
-            .register_template_string("content_prompt", String::from_utf8_lossy(&content_prompt))
-            .map_err(Box::new)?;
-        handlebars
-            .register_template_string(
-                "terminal_assistant_prompt",
-                String::from_utf8_lossy(&terminal_assistant_prompt),
-            )
-            .map_err(Box::new)?;
+        register_template("content_prompt")?;
+        register_template("terminal_assistant_prompt")?;
+        register_template("edit_workflow")?;
+        register_template("step_resolution")?;
+
         Ok(())
     }
 
@@ -235,5 +233,13 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("terminal_assistant_prompt", &context)
+    }
+
+    pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("edit_workflow", &())
+    }
+
+    pub fn generate_step_resolution_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("step_resolution", &())
     }
 }
