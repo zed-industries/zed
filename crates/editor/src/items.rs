@@ -894,6 +894,11 @@ impl Item for Editor {
             _ => {}
         }
     }
+
+    fn edited_since_preview(&self, _cx: &AppContext) -> bool {
+        // todo! actually implement this
+        false
+    }
 }
 
 impl SerializableItem for Editor {
