@@ -1,6 +1,5 @@
 mod actions;
 mod app_menus;
-mod assets;
 mod stories;
 mod story_selector;
 
@@ -19,9 +18,9 @@ use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
 use crate::app_menus::app_menus;
-use crate::assets::Assets;
 use crate::story_selector::{ComponentStory, StorySelector};
 use actions::Quit;
+use assets::Assets;
 pub use indoc::indoc;
 
 #[derive(Parser)]
