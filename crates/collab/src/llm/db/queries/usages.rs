@@ -69,8 +69,8 @@ impl LlmDatabase {
         now: DateTimeUtc,
     ) -> Result<Usage> {
         self.transaction(|tx| async move {
-            let model_id = self
-                .model_ids
+            let model = self
+                .models
                 .get(&(provider, model_name.to_string()))
                 .ok_or_else(|| anyhow!("unknown model {provider}:{model_name}"))?;
 
@@ -78,7 +78,7 @@ impl LlmDatabase {
                 .filter(
                     usage::Column::UserId
                         .eq(user_id)
-                        .and(usage::Column::ModelId.eq(*model_id)),
+                        .and(usage::Column::ModelId.eq(model.id)),
                 )
                 .all(&*tx)
                 .await?;
@@ -127,23 +127,20 @@ impl LlmDatabase {
         now: DateTimeUtc,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            let model_id = self
-                .model_ids
-                .get(&(provider, model_name.to_string()))
-                .ok_or_else(|| anyhow!("unknown model {provider}:{model_name}"))?;
+            let model = self.model(provider, model_name)?;
 
             let usages = usage::Entity::find()
                 .filter(
                     usage::Column::UserId
                         .eq(user_id)
-                        .and(usage::Column::ModelId.eq(*model_id)),
+                        .and(usage::Column::ModelId.eq(model.id)),
                 )
                 .all(&*tx)
                 .await?;
 
             self.update_usage_for_measure(
                 user_id,
-                *model_id,
+                model.id,
                 &usages,
                 UsageMeasure::RequestsPerMinute,
                 now,
@@ -155,7 +152,7 @@ impl LlmDatabase {
             .await?;
             self.update_usage_for_measure(
                 user_id,
-                *model_id,
+                model.id,
                 &usages,
                 UsageMeasure::TokensPerMinute,
                 now,
@@ -167,7 +164,7 @@ impl LlmDatabase {
             .await?;
             self.update_usage_for_measure(
                 user_id,
-                *model_id,
+                model.id,
                 &usages,
                 UsageMeasure::TokensPerDay,
                 now,
@@ -179,7 +176,7 @@ impl LlmDatabase {
             .await?;
             self.update_usage_for_measure(
                 user_id,
-                *model_id,
+                model.id,
                 &usages,
                 UsageMeasure::TokensPerMonth,
                 now,

@@ -125,19 +125,21 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
+    let model = normalize_model_name(params.provider, params.model);
+
     authorize_access_to_language_model(
         &state.config,
         &claims,
         country_code_header.map(|header| header.to_string()),
         params.provider,
-        &params.model,
+        &model,
     )?;
 
     let user_id = claims.user_id as i32;
 
     let db = state.db.clone();
     if let Some(db) = &db {
-        check_usage_limit(&db, params.provider, &params.model, &claims).await?;
+        check_usage_limit(&db, params.provider, &model, &claims).await?;
     }
 
     match params.provider {
@@ -161,7 +163,7 @@ async fn perform_completion(
                 executor: state.executor.clone(),
                 user_id,
                 provider: params.provider,
-                model: params.model,
+                model,
                 token_count: 0,
             });
 
@@ -278,6 +280,28 @@ async fn perform_completion(
     }
 }
 
+fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String {
+    match provider {
+        LanguageModelProvider::Anthropic => {
+            for prefix in &[
+                "claude-3-5-sonnet",
+                "claude-3-haiku",
+                "claude-3-opus",
+                "claude-3-sonnet",
+            ] {
+                if name.starts_with(prefix) {
+                    return prefix.to_string();
+                }
+            }
+        }
+        LanguageModelProvider::OpenAi => {}
+        LanguageModelProvider::Google => {}
+        LanguageModelProvider::Zed => {}
+    }
+
+    name
+}
+
 async fn check_usage_limit(
     db: &Arc<LlmDatabase>,
     provider: LanguageModelProvider,
@@ -288,35 +312,27 @@ async fn check_usage_limit(
         .get_usage(claims.user_id as i32, provider, model, Utc::now())
         .await?;
 
-    const MAX_REQUESTS_PER_MINUTE: usize = 40_000;
-    const MAX_TOKENS_PER_MINUTE: usize = 40_000;
-    const MAX_TOKENS_PER_DAY: usize = 40_000;
-    const MAX_TOKENS_PER_MONTH: usize = 40_000;
+    let model = db.model(provider, model)?;
 
-    if usage.requests_this_minute > MAX_REQUESTS_PER_MINUTE {
+    if usage.requests_this_minute > model.max_requests_per_minute as usize {
         return Err(Error::http(
             StatusCode::TOO_MANY_REQUESTS,
             "Rate limit exceeded. Maximum requests per minute reached.".to_string(),
         ));
     }
-    if usage.tokens_this_minute > MAX_TOKENS_PER_MINUTE {
+    if usage.tokens_this_minute > model.max_tokens_per_minute as usize {
         return Err(Error::http(
             StatusCode::TOO_MANY_REQUESTS,
             "Rate limit exceeded. Maximum tokens per minute reached.".to_string(),
         ));
     }
-    if usage.tokens_this_day > MAX_TOKENS_PER_DAY {
+    if usage.tokens_this_day > model.max_tokens_per_day as usize {
         return Err(Error::http(
             StatusCode::TOO_MANY_REQUESTS,
             "Rate limit exceeded. Maximum tokens per day reached.".to_string(),
         ));
     }
-    if usage.tokens_this_month > MAX_TOKENS_PER_MONTH {
-        return Err(Error::http(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Rate limit exceeded. Maximum tokens per day reached.".to_string(),
-        ));
-    }
+
     Ok(())
 }
 

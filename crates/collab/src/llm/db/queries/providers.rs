@@ -5,25 +5,13 @@ use strum::IntoEnumIterator as _;
 
 use super::*;
 
-const KNOWN_MODELS: &[(LanguageModelProvider, &str)] = &[
-    (LanguageModelProvider::Anthropic, "claude-3-5-sonnet"),
-    (LanguageModelProvider::Anthropic, "claude-3-opus"),
-    (LanguageModelProvider::Anthropic, "claude-3-sonnet"),
-    (LanguageModelProvider::Anthropic, "claude-3-haiku"),
-    (LanguageModelProvider::OpenAi, "gpt-3.5-turbo"),
-    (LanguageModelProvider::OpenAi, "gpt-4"),
-    (LanguageModelProvider::OpenAi, "gpt-4-turbo-preview"),
-    (LanguageModelProvider::OpenAi, "gpt-4o"),
-    (LanguageModelProvider::OpenAi, "gpt-4o-mini"),
-];
-
 impl LlmDatabase {
     pub async fn initialize_providers(&mut self) -> Result<()> {
         let (all_providers, all_models) = self
             .transaction(|tx| async move {
                 let existing_providers = provider::Entity::find().all(&*tx).await?;
 
-                let new_providers = LanguageModelProvider::iter()
+                let mut new_providers = LanguageModelProvider::iter()
                     .filter(|provider| {
                         !existing_providers
                             .iter()
@@ -32,11 +20,14 @@ impl LlmDatabase {
                     .map(|provider| provider::ActiveModel {
                         name: ActiveValue::set(provider.to_string()),
                         ..Default::default()
-                    });
+                    })
+                    .peekable();
 
-                provider::Entity::insert_many(new_providers)
-                    .exec(&*tx)
-                    .await?;
+                if new_providers.peek().is_some() {
+                    provider::Entity::insert_many(new_providers)
+                        .exec(&*tx)
+                        .await?;
+                }
 
                 let all_providers: HashMap<_, _> = provider::Entity::find()
                     .all(&*tx)
@@ -48,26 +39,6 @@ impl LlmDatabase {
                             .map(|p| (p, provider.id))
                     })
                     .collect();
-
-                let existing_models = model::Entity::find().all(&*tx).await?;
-
-                let new_models = KNOWN_MODELS.iter().filter_map(|(provider, model_name)| {
-                    let provider_id = all_providers.get(provider)?;
-                    if !existing_models
-                        .iter()
-                        .any(|m| m.name == *model_name && m.provider_id == *provider_id)
-                    {
-                        Some(model::ActiveModel {
-                            provider_id: ActiveValue::set(*provider_id),
-                            name: ActiveValue::set(model_name.to_string()),
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    }
-                });
-
-                model::Entity::insert_many(new_models).exec(&*tx).await?;
 
                 let all_models: HashMap<_, _> = model::Entity::find()
                     .all(&*tx)
@@ -81,7 +52,7 @@ impl LlmDatabase {
                                 None
                             }
                         })?;
-                        Some(((*provider, model.name), model.id))
+                        Some(((*provider, model.name.clone()), model))
                     })
                     .collect();
 
@@ -90,7 +61,7 @@ impl LlmDatabase {
             .await?;
 
         self.provider_ids = all_providers;
-        self.model_ids = all_models;
+        self.models = all_models;
 
         Ok(())
     }

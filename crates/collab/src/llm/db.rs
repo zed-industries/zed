@@ -1,5 +1,6 @@
 mod ids;
 mod queries;
+mod seed;
 mod tables;
 
 #[cfg(test)]
@@ -8,6 +9,7 @@ mod tests;
 use collections::HashMap;
 pub use ids::*;
 use rpc::LanguageModelProvider;
+pub use seed::*;
 pub use tables::*;
 
 #[cfg(test)]
@@ -35,7 +37,7 @@ pub struct LlmDatabase {
     #[allow(unused)]
     executor: Executor,
     provider_ids: HashMap<LanguageModelProvider, ProviderId>,
-    model_ids: HashMap<(LanguageModelProvider, String), ModelId>,
+    models: HashMap<(LanguageModelProvider, String), model::Model>,
     usage_measure_ids: HashMap<UsageMeasure, UsageMeasureId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
@@ -50,7 +52,7 @@ impl LlmDatabase {
             pool: sea_orm::Database::connect(options).await?,
             executor,
             provider_ids: HashMap::default(),
-            model_ids: HashMap::default(),
+            models: HashMap::default(),
             usage_measure_ids: HashMap::default(),
             #[cfg(test)]
             runtime: None,
@@ -61,6 +63,13 @@ impl LlmDatabase {
         self.initialize_providers().await?;
         self.initialize_usage_measures().await?;
         Ok(())
+    }
+
+    pub fn model(&self, provider: LanguageModelProvider, name: &str) -> Result<&model::Model> {
+        Ok(self
+            .models
+            .get(&(provider, name.to_string()))
+            .ok_or_else(|| anyhow!("unknown model {provider:?}:{name}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {
