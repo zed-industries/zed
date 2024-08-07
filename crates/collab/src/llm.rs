@@ -16,10 +16,12 @@ use axum::{
     routing::post,
     Extension, Json, Router,
 };
+use chrono::Utc;
 use futures::StreamExt as _;
 use http_client::IsahcHttpClient;
 use rpc::{LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use std::sync::Arc;
+use util::ResultExt;
 
 pub use token::*;
 
@@ -131,6 +133,13 @@ async fn perform_completion(
         &params.model,
     )?;
 
+    let user_id = claims.user_id as i32;
+
+    let db = state.db.clone();
+    if let Some(db) = &db {
+        check_usage_limit(&db, params.provider, &params.model, &claims).await?;
+    }
+
     match params.provider {
         LanguageModelProvider::Anthropic => {
             let api_key = state
@@ -147,9 +156,31 @@ async fn perform_completion(
             )
             .await?;
 
-            let stream = chunks.map(|event| {
+            let mut recorder = db.map(|db| UsageRecorder {
+                db,
+                executor: state.executor.clone(),
+                user_id,
+                provider: params.provider,
+                model: params.model,
+                token_count: 0,
+            });
+
+            let stream = chunks.map(move |event| {
                 let mut buffer = Vec::new();
                 event.map(|chunk| {
+                    match &chunk {
+                        anthropic::Event::MessageStart {
+                            message: anthropic::Response { usage, .. },
+                        }
+                        | anthropic::Event::MessageDelta { usage, .. } => {
+                            if let Some(recorder) = &mut recorder {
+                                recorder.token_count += usage.input_tokens.unwrap_or(0) as usize;
+                                recorder.token_count += usage.output_tokens.unwrap_or(0) as usize;
+                            }
+                        }
+                        _ => {}
+                    }
+
                     buffer.clear();
                     serde_json::to_writer(&mut buffer, &chunk).unwrap();
                     buffer.push(b'\n');
@@ -244,5 +275,71 @@ async fn perform_completion(
 
             Ok(Response::new(Body::wrap_stream(stream)))
         }
+    }
+}
+
+async fn check_usage_limit(
+    db: &Arc<LlmDatabase>,
+    provider: LanguageModelProvider,
+    model: &str,
+    claims: &LlmTokenClaims,
+) -> Result<()> {
+    let usage = db
+        .get_usage(claims.user_id as i32, provider, model, Utc::now())
+        .await?;
+
+    const MAX_REQUESTS_PER_MINUTE: usize = 40_000;
+    const MAX_TOKENS_PER_MINUTE: usize = 40_000;
+    const MAX_TOKENS_PER_DAY: usize = 40_000;
+    const MAX_TOKENS_PER_MONTH: usize = 40_000;
+
+    if usage.requests_this_minute > MAX_REQUESTS_PER_MINUTE {
+        return Err(Error::http(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded. Maximum requests per minute reached.".to_string(),
+        ));
+    }
+    if usage.tokens_this_minute > MAX_TOKENS_PER_MINUTE {
+        return Err(Error::http(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded. Maximum tokens per minute reached.".to_string(),
+        ));
+    }
+    if usage.tokens_this_day > MAX_TOKENS_PER_DAY {
+        return Err(Error::http(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded. Maximum tokens per day reached.".to_string(),
+        ));
+    }
+    if usage.tokens_this_month > MAX_TOKENS_PER_MONTH {
+        return Err(Error::http(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded. Maximum tokens per day reached.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+struct UsageRecorder {
+    db: Arc<LlmDatabase>,
+    executor: Executor,
+    user_id: i32,
+    provider: LanguageModelProvider,
+    model: String,
+    token_count: usize,
+}
+
+impl Drop for UsageRecorder {
+    fn drop(&mut self) {
+        let db = self.db.clone();
+        let user_id = self.user_id;
+        let provider = self.provider;
+        let model = std::mem::take(&mut self.model);
+        let token_count = self.token_count;
+        self.executor.spawn_detached(async move {
+            db.record_usage(user_id, provider, &model, token_count, Utc::now())
+                .await
+                .log_err();
+        })
     }
 }
