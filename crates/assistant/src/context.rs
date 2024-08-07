@@ -352,18 +352,18 @@ pub struct WorkflowStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkflowStepSuggestions {
+pub struct ResolvedWorkflowStep {
     pub title: String,
-    pub edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+    pub suggestions: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
 }
 
 pub enum WorkflowStepStatus {
     Pending(Task<Option<()>>),
-    Resolved(WorkflowStepSuggestions),
+    Resolved(ResolvedWorkflowStep),
 }
 
 impl WorkflowStepStatus {
-    pub fn as_resolved(&self) -> Option<&WorkflowStepSuggestions> {
+    pub fn as_resolved(&self) -> Option<&ResolvedWorkflowStep> {
         match self {
             WorkflowStepStatus::Resolved(suggestions) => Some(suggestions),
             WorkflowStepStatus::Pending(_) => None,
@@ -379,13 +379,13 @@ impl WorkflowStepStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EditSuggestionGroup {
+pub struct WorkflowSuggestionGroup {
     pub context_range: Range<language::Anchor>,
-    pub suggestions: Vec<EditSuggestion>,
+    pub suggestions: Vec<WorkflowSuggestion>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EditSuggestion {
+pub enum WorkflowSuggestion {
     Update {
         range: Range<language::Anchor>,
         description: String,
@@ -414,40 +414,40 @@ pub enum EditSuggestion {
     },
 }
 
-impl EditSuggestion {
+impl WorkflowSuggestion {
     pub fn range(&self) -> Range<language::Anchor> {
         match self {
-            EditSuggestion::Update { range, .. } => range.clone(),
-            EditSuggestion::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
-            EditSuggestion::InsertSiblingBefore { position, .. }
-            | EditSuggestion::InsertSiblingAfter { position, .. }
-            | EditSuggestion::PrependChild { position, .. }
-            | EditSuggestion::AppendChild { position, .. } => *position..*position,
-            EditSuggestion::Delete { range } => range.clone(),
+            WorkflowSuggestion::Update { range, .. } => range.clone(),
+            WorkflowSuggestion::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
+            WorkflowSuggestion::InsertSiblingBefore { position, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { position, .. }
+            | WorkflowSuggestion::PrependChild { position, .. }
+            | WorkflowSuggestion::AppendChild { position, .. } => *position..*position,
+            WorkflowSuggestion::Delete { range } => range.clone(),
         }
     }
 
     pub fn description(&self) -> Option<&str> {
         match self {
-            EditSuggestion::Update { description, .. }
-            | EditSuggestion::CreateFile { description }
-            | EditSuggestion::InsertSiblingBefore { description, .. }
-            | EditSuggestion::InsertSiblingAfter { description, .. }
-            | EditSuggestion::PrependChild { description, .. }
-            | EditSuggestion::AppendChild { description, .. } => Some(description),
-            EditSuggestion::Delete { .. } => None,
+            WorkflowSuggestion::Update { description, .. }
+            | WorkflowSuggestion::CreateFile { description }
+            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
+            | WorkflowSuggestion::PrependChild { description, .. }
+            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
+            WorkflowSuggestion::Delete { .. } => None,
         }
     }
 
     fn description_mut(&mut self) -> Option<&mut String> {
         match self {
-            EditSuggestion::Update { description, .. }
-            | EditSuggestion::CreateFile { description }
-            | EditSuggestion::InsertSiblingBefore { description, .. }
-            | EditSuggestion::InsertSiblingAfter { description, .. }
-            | EditSuggestion::PrependChild { description, .. }
-            | EditSuggestion::AppendChild { description, .. } => Some(description),
-            EditSuggestion::Delete { .. } => None,
+            WorkflowSuggestion::Update { description, .. }
+            | WorkflowSuggestion::CreateFile { description }
+            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
+            | WorkflowSuggestion::PrependChild { description, .. }
+            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
+            WorkflowSuggestion::Delete { .. } => None,
         }
     }
 
@@ -486,16 +486,16 @@ impl EditSuggestion {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         match self {
-            EditSuggestion::Update { range, description } => {
+            WorkflowSuggestion::Update { range, description } => {
                 initial_prompt = description.clone();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
             }
-            EditSuggestion::CreateFile { description } => {
+            WorkflowSuggestion::CreateFile { description } => {
                 initial_prompt = description.clone();
                 suggestion_range = editor::Anchor::min()..editor::Anchor::min();
             }
-            EditSuggestion::InsertSiblingBefore {
+            WorkflowSuggestion::InsertSiblingBefore {
                 position,
                 description,
             } => {
@@ -510,7 +510,7 @@ impl EditSuggestion {
                     line_start..line_start
                 });
             }
-            EditSuggestion::InsertSiblingAfter {
+            WorkflowSuggestion::InsertSiblingAfter {
                 position,
                 description,
             } => {
@@ -525,7 +525,7 @@ impl EditSuggestion {
                     line_start..line_start
                 });
             }
-            EditSuggestion::PrependChild {
+            WorkflowSuggestion::PrependChild {
                 position,
                 description,
             } => {
@@ -540,7 +540,7 @@ impl EditSuggestion {
                     line_start..line_start
                 });
             }
-            EditSuggestion::AppendChild {
+            WorkflowSuggestion::AppendChild {
                 position,
                 description,
             } => {
@@ -555,7 +555,7 @@ impl EditSuggestion {
                     line_start..line_start
                 });
             }
-            EditSuggestion::Delete { range } => {
+            WorkflowSuggestion::Delete { range } => {
                 initial_prompt = "Delete".to_string();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
@@ -580,13 +580,10 @@ impl Debug for WorkflowStepStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WorkflowStepStatus::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            WorkflowStepStatus::Resolved(WorkflowStepSuggestions {
-                title,
-                edit_suggestions,
-            }) => f
+            WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => f
                 .debug_struct("EditStepOperations::Parsed")
                 .field("title", title)
-                .field("edit_suggestions", edit_suggestions)
+                .field("suggestions", suggestions)
                 .finish(),
         }
     }
@@ -1212,11 +1209,8 @@ impl Context {
 
                     if let Err(ix) = existing_step_index {
                         // Step doesn't exist, so add it
-                        let task = self.compute_workflow_step_edit_suggestions(
-                            tagged_range.clone(),
-                            project.clone(),
-                            cx,
-                        );
+                        let task =
+                            self.resolve_workflow_step(tagged_range.clone(), project.clone(), cx);
                         new_edit_steps.push((
                             ix,
                             WorkflowStep {
@@ -1242,7 +1236,7 @@ impl Context {
         cx.notify();
     }
 
-    fn compute_workflow_step_edit_suggestions(
+    fn resolve_workflow_step(
         &self,
         tagged_range: Range<language::Anchor>,
         project: Model<Project>,
@@ -1272,13 +1266,13 @@ impl Context {
                 });
 
                 // Invoke the model to get its edit suggestions for this workflow step.
-                let step_suggestions = model
-                    .use_tool::<tool::WorkflowStepEditSuggestions>(request, &cx)
+                let resolution = model
+                    .use_tool::<tool::WorkflowStepResolution>(request, &cx)
                     .await?;
 
                 // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
-                let suggestion_tasks: Vec<_> = step_suggestions
-                    .edit_suggestions
+                let suggestion_tasks: Vec<_> = resolution
+                    .suggestions
                     .iter()
                     .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
                     .collect();
@@ -1300,7 +1294,7 @@ impl Context {
 
                 let mut suggestion_groups_by_buffer = HashMap::default();
                 for (buffer, mut suggestions) in suggestions_by_buffer {
-                    let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
+                    let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
                     let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
                     // Sort suggestions by their range so that earlier, larger ranges come first
                     suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
@@ -1335,14 +1329,14 @@ impl Context {
                                 last_group.suggestions.push(suggestion);
                             } else {
                                 // Create a new group
-                                suggestion_groups.push(EditSuggestionGroup {
+                                suggestion_groups.push(WorkflowSuggestionGroup {
                                     context_range,
                                     suggestions: vec![suggestion],
                                 });
                             }
                         } else {
                             // Create the first group
-                            suggestion_groups.push(EditSuggestionGroup {
+                            suggestion_groups.push(WorkflowSuggestionGroup {
                                 context_range,
                                 suggestions: vec![suggestion],
                             });
@@ -1360,9 +1354,9 @@ impl Context {
                         })
                         .map_err(|_| anyhow!("edit step not found"))?;
                     if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
-                        edit_step.status = WorkflowStepStatus::Resolved(WorkflowStepSuggestions {
-                            title: step_suggestions.step_title,
-                            edit_suggestions: suggestion_groups_by_buffer,
+                        edit_step.status = WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
+                            title: resolution.step_title,
+                            suggestions: suggestion_groups_by_buffer,
                         });
                         cx.emit(ContextEvent::WorkflowStepsChanged);
                     }
@@ -3027,19 +3021,17 @@ mod tests {
 
         model
             .as_fake()
-            .respond_to_last_tool_use(Ok(serde_json::to_value(
-                tool::WorkflowStepEditSuggestions {
-                    step_title: "Title".into(),
-                    edit_suggestions: vec![tool::EditSuggestion {
-                        path: "/root/hello.rs".into(),
-                        // Simulate a symbol name that's slightly different than our outline query
-                        kind: tool::EditSuggestionKind::Update {
-                            symbol: "fn main()".into(),
-                            description: "Extract a greeting function".into(),
-                        },
-                    }],
-                },
-            )
+            .respond_to_last_tool_use(Ok(serde_json::to_value(tool::WorkflowStepResolution {
+                step_title: "Title".into(),
+                suggestions: vec![tool::WorkflowSuggestion {
+                    path: "/root/hello.rs".into(),
+                    // Simulate a symbol name that's slightly different than our outline query
+                    kind: tool::WorkflowSuggestionKind::Update {
+                        symbol: "fn main()".into(),
+                        description: "Extract a greeting function".into(),
+                    },
+                }],
+            })
             .unwrap()));
 
         // Wait for tool use to be processed.
@@ -3493,15 +3485,15 @@ mod tool {
     use super::*;
 
     #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowStepEditSuggestions {
+    pub struct WorkflowStepResolution {
         /// An extremely short title for the edit step represented by these operations.
         pub step_title: String,
         /// A sequence of operations to apply to the codebase.
         /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-        pub edit_suggestions: Vec<EditSuggestion>,
+        pub suggestions: Vec<WorkflowSuggestion>,
     }
 
-    impl LanguageModelTool for WorkflowStepEditSuggestions {
+    impl LanguageModelTool for WorkflowStepResolution {
         fn name() -> String {
             "edit".into()
         }
@@ -3530,19 +3522,19 @@ mod tool {
     /// programmatic changes to source code. It provides a structured way to describe
     /// edits for features like refactoring tools or AI-assisted coding suggestions.
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    pub struct EditSuggestion {
+    pub struct WorkflowSuggestion {
         /// The path to the file containing the relevant operation
         pub path: String,
         #[serde(flatten)]
-        pub kind: EditSuggestionKind,
+        pub kind: WorkflowSuggestionKind,
     }
 
-    impl EditSuggestion {
+    impl WorkflowSuggestion {
         pub(super) async fn resolve(
             &self,
             project: Model<Project>,
             mut cx: AsyncAppContext,
-        ) -> Result<(Model<Buffer>, super::EditSuggestion)> {
+        ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
             let path = self.path.clone();
             let kind = self.kind.clone();
             let buffer = project
@@ -3564,7 +3556,7 @@ mod tool {
 
             let suggestion;
             match kind {
-                EditSuggestionKind::Update {
+                WorkflowSuggestionKind::Update {
                     symbol,
                     description,
                 } => {
@@ -3581,12 +3573,12 @@ mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::EditSuggestion::Update { range, description };
+                    suggestion = super::WorkflowSuggestion::Update { range, description };
                 }
-                EditSuggestionKind::Create { description } => {
-                    suggestion = super::EditSuggestion::CreateFile { description };
+                WorkflowSuggestionKind::Create { description } => {
+                    suggestion = super::WorkflowSuggestion::CreateFile { description };
                 }
-                EditSuggestionKind::InsertSiblingBefore {
+                WorkflowSuggestionKind::InsertSiblingBefore {
                     symbol,
                     description,
                 } => {
@@ -3601,12 +3593,12 @@ mod tool {
                                 annotation_range.start
                             }),
                     );
-                    suggestion = super::EditSuggestion::InsertSiblingBefore {
+                    suggestion = super::WorkflowSuggestion::InsertSiblingBefore {
                         position,
                         description,
                     };
                 }
-                EditSuggestionKind::InsertSiblingAfter {
+                WorkflowSuggestionKind::InsertSiblingAfter {
                     symbol,
                     description,
                 } => {
@@ -3615,12 +3607,12 @@ mod tool {
                         .with_context(|| format!("symbol not found: {:?}", symbol))?
                         .to_point(&snapshot);
                     let position = snapshot.anchor_after(symbol.range.end);
-                    suggestion = super::EditSuggestion::InsertSiblingAfter {
+                    suggestion = super::WorkflowSuggestion::InsertSiblingAfter {
                         position,
                         description,
                     };
                 }
-                EditSuggestionKind::PrependChild {
+                WorkflowSuggestionKind::PrependChild {
                     symbol,
                     description,
                 } => {
@@ -3635,18 +3627,18 @@ mod tool {
                                 .body_range
                                 .map_or(symbol.range.start, |body_range| body_range.start),
                         );
-                        suggestion = super::EditSuggestion::PrependChild {
+                        suggestion = super::WorkflowSuggestion::PrependChild {
                             position,
                             description,
                         };
                     } else {
-                        suggestion = super::EditSuggestion::PrependChild {
+                        suggestion = super::WorkflowSuggestion::PrependChild {
                             position: language::Anchor::MIN,
                             description,
                         };
                     }
                 }
-                EditSuggestionKind::AppendChild {
+                WorkflowSuggestionKind::AppendChild {
                     symbol,
                     description,
                 } => {
@@ -3661,18 +3653,18 @@ mod tool {
                                 .body_range
                                 .map_or(symbol.range.end, |body_range| body_range.end),
                         );
-                        suggestion = super::EditSuggestion::AppendChild {
+                        suggestion = super::WorkflowSuggestion::AppendChild {
                             position,
                             description,
                         };
                     } else {
-                        suggestion = super::EditSuggestion::PrependChild {
+                        suggestion = super::WorkflowSuggestion::PrependChild {
                             position: language::Anchor::MAX,
                             description,
                         };
                     }
                 }
-                EditSuggestionKind::Delete { symbol } => {
+                WorkflowSuggestionKind::Delete { symbol } => {
                     let symbol = outline
                         .find_most_similar(&symbol)
                         .with_context(|| format!("symbol not found: {:?}", symbol))?
@@ -3686,7 +3678,7 @@ mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::EditSuggestion::Delete { range };
+                    suggestion = super::WorkflowSuggestion::Delete { range };
                 }
             }
 
@@ -3696,7 +3688,7 @@ mod tool {
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     #[serde(tag = "kind")]
-    pub enum EditSuggestionKind {
+    pub enum WorkflowSuggestionKind {
         /// Rewrites the specified symbol entirely based on the given description.
         /// This operation completely replaces the existing symbol with new content.
         Update {
@@ -3757,7 +3749,7 @@ mod tool {
         },
     }
 
-    impl EditSuggestionKind {
+    impl WorkflowSuggestionKind {
         pub fn symbol(&self) -> Option<&str> {
             match self {
                 Self::Update { symbol, .. } => Some(symbol),
@@ -3784,14 +3776,14 @@ mod tool {
 
         pub fn initial_insertion(&self) -> Option<InitialInsertion> {
             match self {
-                EditSuggestionKind::InsertSiblingBefore { .. } => {
+                WorkflowSuggestionKind::InsertSiblingBefore { .. } => {
                     Some(InitialInsertion::NewlineAfter)
                 }
-                EditSuggestionKind::InsertSiblingAfter { .. } => {
+                WorkflowSuggestionKind::InsertSiblingAfter { .. } => {
                     Some(InitialInsertion::NewlineBefore)
                 }
-                EditSuggestionKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
-                EditSuggestionKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
+                WorkflowSuggestionKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
+                WorkflowSuggestionKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
                 _ => None,
             }
         }

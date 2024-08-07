@@ -13,8 +13,8 @@ use crate::{
     CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, InlineAssist,
     InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
     PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepStatus,
-    WorkflowStepSuggestions,
+    ResolvedWorkflowStep, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    WorkflowStepStatus,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Context as _, Result};
@@ -1329,7 +1329,7 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct StepAssist {
+struct WorkflowAssist {
     editor: WeakView<Editor>,
     editor_was_open: bool,
     assist_ids: Vec<InlineAssistId>,
@@ -1347,7 +1347,7 @@ pub struct ContextEditor {
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
-    step_assists: HashMap<Range<language::Anchor>, StepAssist>,
+    workflow_assists: HashMap<Range<language::Anchor>, WorkflowAssist>,
     active_workflow_step_range: Option<Range<language::Anchor>>,
     _subscriptions: Vec<Subscription>,
     assistant_panel: WeakView<AssistantPanel>,
@@ -1407,7 +1407,7 @@ impl ContextEditor {
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
-            step_assists: HashMap::default(),
+            workflow_assists: HashMap::default(),
             active_workflow_step_range: None,
             assistant_panel,
             error_message: None,
@@ -1443,16 +1443,16 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if !self.apply_edit_step(cx) {
+        if !self.apply_workflow_step(cx) {
             self.error_message = None;
             self.send_to_model(cx);
             cx.notify();
         }
     }
 
-    fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn apply_workflow_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(step_range) = self.active_workflow_step_range.as_ref() {
-            if let Some(assists) = self.step_assists.get(&step_range) {
+            if let Some(assists) = self.workflow_assists.get(&step_range) {
                 let assist_ids = assists.assist_ids.clone();
                 cx.window_context().defer(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1514,13 +1514,10 @@ impl ContextEditor {
                     .collect::<String>()
             ));
             match &step.status {
-                WorkflowStepStatus::Resolved(WorkflowStepSuggestions {
-                    title,
-                    edit_suggestions,
-                }) => {
+                WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", edit_suggestions));
+                    output.push_str(&format!("  {:?}\n", suggestions));
                 }
                 WorkflowStepStatus::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
@@ -1670,7 +1667,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::WorkflowStepsChanged => {
-                self.update_active_workflow_step(cx);
+                self.update_active_workflow_step_from_cursor(cx);
                 cx.notify();
             }
             ContextEvent::SummaryChanged => {
@@ -1935,14 +1932,14 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                self.update_active_workflow_step(cx);
+                self.update_active_workflow_step_from_cursor(cx);
             }
             _ => {}
         }
         cx.emit(event.clone());
     }
 
-    fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_active_workflow_step_from_cursor(&mut self, cx: &mut ViewContext<Self>) {
         let new_step = self
             .workflow_step_range_for_cursor(cx)
             .as_ref()
@@ -1955,7 +1952,7 @@ impl ContextEditor {
             });
         if new_step.as_ref() != self.active_workflow_step_range.as_ref() {
             if let Some(old_step_range) = self.active_workflow_step_range.take() {
-                self.cancel_workflow_step_if_idle(old_step_range, cx);
+                self.hide_workflow_step(old_step_range, cx);
             }
 
             if let Some(new_step) = new_step {
@@ -1964,16 +1961,16 @@ impl ContextEditor {
         }
     }
 
-    fn cancel_workflow_step_if_idle(
+    fn hide_workflow_step(
         &mut self,
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(step_assist) = self.step_assists.get_mut(&step_range) else {
+        let Some(step_assist) = self.workflow_assists.get_mut(&step_range) else {
             return;
         };
         let Some(editor) = step_assist.editor.upgrade() else {
-            self.step_assists.remove(&step_range);
+            self.workflow_assists.remove(&step_range);
             return;
         };
 
@@ -1991,7 +1988,7 @@ impl ContextEditor {
 
         if step_assist.assist_ids.is_empty() {
             let editor_was_open = step_assist.editor_was_open;
-            self.step_assists.remove(&step_range);
+            self.workflow_assists.remove(&step_range);
             self.workspace
                 .update(cx, |workspace, cx| {
                     if let Some(pane) = workspace.pane_for(&editor) {
@@ -2026,20 +2023,20 @@ impl ContextEditor {
         };
 
         let title = resolved.title.clone();
-        let edit_suggestions = resolved.edit_suggestions.clone();
+        let suggestions = resolved.suggestions.clone();
 
         if let Some((editor, assist_ids, editor_was_open)) = {
             let assistant_panel = self.assistant_panel.upgrade()?;
-            if edit_suggestions.is_empty() {
+            if suggestions.is_empty() {
                 return None;
             }
 
             let editor;
             let mut editor_was_open = false;
             let mut suggestion_groups = Vec::new();
-            if edit_suggestions.len() == 1 && edit_suggestions.values().next().unwrap().len() == 1 {
+            if suggestions.len() == 1 && suggestions.values().next().unwrap().len() == 1 {
                 // If there's only one buffer and one suggestion group, open it directly
-                let (buffer, groups) = edit_suggestions.into_iter().next().unwrap();
+                let (buffer, groups) = suggestions.into_iter().next().unwrap();
                 let group = groups.into_iter().next().unwrap();
                 editor = self
                     .workspace
@@ -2087,7 +2084,7 @@ impl ContextEditor {
                     let replica_id = self.project.read(cx).replica_id();
                     let mut multibuffer =
                         MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
-                    for (buffer, groups) in edit_suggestions {
+                    for (buffer, groups) in suggestions {
                         let excerpt_ids = multibuffer.push_excerpts(
                             buffer,
                             groups.iter().map(|suggestion_group| ExcerptRange {
@@ -2125,9 +2122,9 @@ impl ContextEditor {
             }
 
             if let Some(range) = self.active_workflow_step_range.clone() {
-                self.step_assists.insert(
+                self.workflow_assists.insert(
                     range,
-                    StepAssist {
+                    WorkflowAssist {
                         assist_ids: assist_ids.clone(),
                         editor: editor.downgrade(),
                         editor_was_open,
@@ -2137,9 +2134,9 @@ impl ContextEditor {
 
             Some((editor, assist_ids, editor_was_open))
         } {
-            self.step_assists.insert(
+            self.workflow_assists.insert(
                 step_range.clone(),
-                StepAssist {
+                WorkflowAssist {
                     assist_ids,
                     editor_was_open,
                     editor: editor.downgrade(),
@@ -2177,7 +2174,7 @@ impl ContextEditor {
         step_range: &Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        let step_assists = match self.step_assists.get(step_range) {
+        let step_assists = match self.workflow_assists.get(step_range) {
             Some(assists) => assists,
             None => return false,
         };
