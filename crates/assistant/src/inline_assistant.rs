@@ -662,8 +662,6 @@ impl InlineAssistant {
             } else {
                 self.confirmed_assists.insert(assist_id);
             }
-
-            self.assist_observations.remove(&assist_id);
         }
 
         // Remove the assist from the status updates map

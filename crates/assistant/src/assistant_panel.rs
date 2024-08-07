@@ -1315,7 +1315,7 @@ struct WorkflowStep {
 impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         if self.suggestions.is_none() {
-            WorkflowStepStatus::ComputingSuggestions
+            WorkflowStepStatus::ResolvingSuggestions
         } else if let Some(assists) = self.assists.as_ref() {
             let assistant = InlineAssistant::global(cx);
             if assists
@@ -1352,17 +1352,17 @@ struct WorkflowStepAssists {
 }
 
 enum WorkflowStepStatus {
-    ComputingSuggestions,
-    Idle,
-    Pending,
-    Done,
-    Confirmed,
+    ResolvingSuggestions, // => Show "Resolving Step..." (or some UI that makes this status clear)
+    Idle, // => Show a "Transform" icon button (1 sparkle) like the one we have for inline assistant
+    Pending, // => Show a "Stop" icon button like the one we have for inline assistant
+    Done, // => Show a "Cancel" button and a "Confirm" icon button. The former undoes the assists, the latter confirms them all
+    Confirmed, // => Change the color of the borders to be muted, and maybe have a label above the step that says "Applied".
 }
 
 impl std::fmt::Display for WorkflowStepStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ComputingSuggestions => write!(f, "Computing Suggestions"),
+            Self::ResolvingSuggestions => write!(f, "Resolving Suggestions"),
             Self::Idle => write!(f, "Idle"),
             Self::Pending => write!(f, "Pending"),
             Self::Done => write!(f, "Done"),
