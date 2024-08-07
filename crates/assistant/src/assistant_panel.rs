@@ -255,7 +255,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
                     .gap_2()
                     .child(
                         h_flex().flex_1().overflow_x_hidden().child(
-                            Label::new(context.summary.clone().unwrap_or("New Context".into()))
+                            Label::new(context.summary.clone().unwrap_or(DEFAULT_TAB_TITLE.into()))
                                 .size(LabelSize::Small),
                         ),
                     )
@@ -3106,6 +3106,7 @@ impl Render for ContextEditorToolbarItem {
                 left_side
                     .child(
                         IconButton::new("regenerate-context", IconName::ArrowCircle)
+                            .visible_on_hover("toolbar")
                             .tooltip(|cx| Tooltip::text("Regenerate Summary", cx))
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
