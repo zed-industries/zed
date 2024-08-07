@@ -6091,12 +6091,9 @@ impl Editor {
             return;
         };
 
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+        let Some(buffer_id) = breakpoint_position.buffer_id else {
             return;
         };
-
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
 
         let breakpoint = Breakpoint {
             position: breakpoint_position,
