@@ -150,7 +150,7 @@ impl LlmDatabase {
                 1,
                 MINUTE_BUCKET_COUNT,
                 MINUTE_BUCKET_DURATION,
-                &*tx,
+                &tx,
             )
             .await?;
             self.update_usage_for_measure(
@@ -162,7 +162,7 @@ impl LlmDatabase {
                 token_count,
                 MINUTE_BUCKET_COUNT,
                 MINUTE_BUCKET_DURATION,
-                &*tx,
+                &tx,
             )
             .await?;
             self.update_usage_for_measure(
@@ -174,7 +174,7 @@ impl LlmDatabase {
                 token_count,
                 DAY_BUCKET_COUNT,
                 DAY_BUCKET_DURATION,
-                &*tx,
+                &tx,
             )
             .await?;
             self.update_usage_for_measure(
@@ -186,7 +186,7 @@ impl LlmDatabase {
                 token_count,
                 MONTH_BUCKET_COUNT,
                 MONTH_BUCKET_DURATION,
-                &*tx,
+                &tx,
             )
             .await?;
 
@@ -195,6 +195,7 @@ impl LlmDatabase {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_usage_for_measure(
         &self,
         user_id: i32,
@@ -246,10 +247,10 @@ impl LlmDatabase {
 
         if let Some(id) = existing_id {
             model.id = ActiveValue::unchanged(id);
-            model.update(&*tx).await?;
+            model.update(tx).await?;
         } else {
             usage::Entity::insert(model)
-                .exec_without_returning(&*tx)
+                .exec_without_returning(tx)
                 .await?;
         }
 
