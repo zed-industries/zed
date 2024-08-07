@@ -44,7 +44,6 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use ui::SharedString;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -547,37 +546,25 @@ fn main() {
 fn handle_settings_changed(result: Result<()>, cx: &mut AppContext) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
-    match result {
-        Ok(()) => {
-            for workspace in workspace::local_workspace_windows(cx) {
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.dismiss_notification(&id, cx);
-                    })
-                    .log_err();
-            }
-        }
-        Err(error) => {
-            let error_message = SharedString::from(error.to_string());
-            for workspace in workspace::local_workspace_windows(cx) {
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_notification(id.clone(), cx, |cx| {
-                            cx.new_view(|_| {
-                                MessageNotification::new(format!(
-                                    "Invalid settings file\n{error_message}"
-                                ))
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &result {
+                Ok(()) => workspace.dismiss_notification(&id, cx),
+                Err(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid settings file\n{error}"))
                                 .with_click_message("Open settings file")
                                 .on_click(|cx| {
                                     cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
                                     cx.emit(DismissEvent);
                                 })
-                            })
-                        });
-                    })
-                    .log_err();
-            }
-        }
+                        })
+                    });
+                }
+            })
+            .log_err();
     }
 }
 
