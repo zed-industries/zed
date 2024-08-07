@@ -287,10 +287,6 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
-
-    fn edited_since_preview(&self, _cx: &AppContext) -> bool {
-        false
-    }
 }
 
 pub trait SerializableItem: Item {
@@ -431,7 +427,6 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
-    fn edited_since_preview(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -822,10 +817,6 @@ impl<T: Item> ItemHandle for View<T> {
         cx: &AppContext,
     ) -> Option<Box<dyn SerializableItemHandle>> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
-    }
-
-    fn edited_since_preview(&self, cx: &AppContext) -> bool {
-        self.read(cx).edited_since_preview(cx)
     }
 }
 
