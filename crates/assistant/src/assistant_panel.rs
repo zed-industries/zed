@@ -1393,7 +1393,10 @@ impl WorkflowStepStatus {
                     let step_range = step_range.clone();
                     move |_, cx| {
                         editor
-                            .update(cx, |this, cx| this.apply_edit_step(&step_range, cx))
+                            .update(cx, |this, cx| {
+                                this.activate_workflow_step(step_range.clone(), cx);
+                                this.apply_edit_step(&step_range, cx)
+                            })
                             .ok();
                     }
                 })
