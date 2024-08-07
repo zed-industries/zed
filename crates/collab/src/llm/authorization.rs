@@ -103,6 +103,7 @@ mod tests {
         let claims = LlmTokenClaims {
             user_id: 99,
             plan: Plan::ZedPro,
+            is_staff: true,
             ..Default::default()
         };
 
