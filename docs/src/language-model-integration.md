@@ -100,13 +100,17 @@ The custom URL here is `http://localhost:11434/v1`.
 You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
 
 1. Download, for example, the `mistral` model with Ollama:
-  ```
-  ollama pull mistral
-  ```
+
+   ```
+   ollama pull mistral
+   ```
+
 2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
-  ```
-  ollama serve
-  ```
+
+   ```
+   ollama serve
+   ```
+
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
 4. (Optional) If you want to change the default url that is used to access the Ollama server, you can do so by adding the following settings:
 

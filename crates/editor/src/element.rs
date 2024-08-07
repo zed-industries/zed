@@ -17,14 +17,14 @@ use crate::{
     hunk_diff::ExpandedHunk,
     hunk_status,
     items::BufferSearchHighlights,
-    mouse_context_menu::MenuPosition,
-    mouse_context_menu::{self, MouseContextMenu},
+    mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, CodeActionsMenu, CursorShape, DisplayPoint, DisplayRow, DocumentHighlightRead,
-    DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor,
-    HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RangeToAnchorExt, RowExt,
-    RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -59,6 +59,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    rc::Rc,
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -2006,7 +2007,7 @@ impl EditorElement {
     fn render_block(
         &self,
         block: &Block,
-        available_space: Size<AvailableSpace>,
+        available_width: AvailableSpace,
         block_id: BlockId,
         block_row_start: DisplayRow,
         snapshot: &EditorSnapshot,
@@ -2018,6 +2019,7 @@ impl EditorElement {
         em_width: Pixels,
         text_hitbox: &Hitbox,
         scroll_width: &mut Pixels,
+        resized_blocks: &mut HashMap<CustomBlockId, u32>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2047,6 +2049,7 @@ impl EditorElement {
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                     .into_any_element()
             }
@@ -2097,7 +2100,7 @@ impl EditorElement {
                     };
 
                     let line_offset_from_top =
-                        block_row_start.0 + *height as u32 + offset_from_excerpt_start
+                        block_row_start.0 + *height + offset_from_excerpt_start
                             - snapshot
                                 .scroll_anchor
                                 .scroll_position(&snapshot.display_snapshot)
@@ -2130,12 +2133,13 @@ impl EditorElement {
 
                     v_flex()
                         .id(("path excerpt header", EntityId::from(block_id)))
-                        .size_full()
-                        .p(header_padding)
+                        .w_full()
+                        .px(header_padding)
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
+                                .h(2. * cx.line_height())
                                 .pl(gpui::px(12.))
                                 .pr(gpui::px(8.))
                                 .rounded_md()
@@ -2188,6 +2192,7 @@ impl EditorElement {
                         .children(show_excerpt_controls.then(|| {
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
+                                .h(1. * cx.line_height())
                                 .pt_1()
                                 .justify_end()
                                 .flex_none()
@@ -2233,7 +2238,8 @@ impl EditorElement {
                 } else {
                     v_flex()
                         .id(("excerpt header", EntityId::from(block_id)))
-                        .size_full()
+                        .w_full()
+                        .h(snapshot.excerpt_header_height() as f32 * cx.line_height())
                         .child(
                             div()
                                 .flex()
@@ -2385,7 +2391,8 @@ impl EditorElement {
             Block::ExcerptFooter { id, .. } => {
                 let element = v_flex()
                     .id(("excerpt footer", EntityId::from(block_id)))
-                    .size_full()
+                    .w_full()
+                    .h(snapshot.excerpt_footer_height() as f32 * cx.line_height())
                     .child(
                         h_flex()
                             .justify_end()
@@ -2433,8 +2440,24 @@ impl EditorElement {
             }
         };
 
-        let size = element.layout_as_root(available_space, cx);
-        (element, size)
+        // Discover the element's content height, then round up to the nearest multiple of line height.
+        let preliminary_size =
+            element.layout_as_root(size(available_width, AvailableSpace::MinContent), cx);
+        let quantized_height = (preliminary_size.height / line_height).ceil() * line_height;
+        let final_size = if preliminary_size.height == quantized_height {
+            preliminary_size
+        } else {
+            element.layout_as_root(size(available_width, quantized_height.into()), cx)
+        };
+
+        if let BlockId::Custom(custom_block_id) = block_id {
+            let element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
+            if element_height_in_lines != block.height() {
+                resized_blocks.insert(custom_block_id, element_height_in_lines);
+            }
+        }
+
+        (element, final_size)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2451,7 +2474,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         cx: &mut WindowContext,
-    ) -> Vec<BlockLayout> {
+    ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
@@ -2461,11 +2484,9 @@ impl EditorElement {
             .update(cx, |editor, _| editor.take_focused_block());
         let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
+        let mut resized_blocks = HashMap::default();
+
         for (row, block) in fixed_blocks {
-            let available_space = size(
-                AvailableSpace::MinContent,
-                AvailableSpace::Definite(block.height() as f32 * line_height),
-            );
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
@@ -2474,7 +2495,7 @@ impl EditorElement {
 
             let (element, element_size) = self.render_block(
                 block,
-                available_space,
+                AvailableSpace::MinContent,
                 block_id,
                 row,
                 snapshot,
@@ -2486,14 +2507,15 @@ impl EditorElement {
                 em_width,
                 text_hitbox,
                 scroll_width,
+                &mut resized_blocks,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
-                available_space,
+                available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
             });
         }
@@ -2508,19 +2530,15 @@ impl EditorElement {
                     .max(gutter_dimensions.width + *scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let available_space = size(
-                AvailableSpace::Definite(width),
-                AvailableSpace::Definite(block.height() as f32 * line_height),
-            );
             let block_id = block.id();
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
                 focused_block = None;
             }
 
-            let (element, _) = self.render_block(
+            let (element, element_size) = self.render_block(
                 block,
-                available_space,
+                width.into(),
                 block_id,
                 row,
                 snapshot,
@@ -2532,13 +2550,15 @@ impl EditorElement {
                 em_width,
                 text_hitbox,
                 scroll_width,
+                &mut resized_blocks,
                 cx,
             );
+
             blocks.push(BlockLayout {
                 id: block_id,
-                row,
+                row: Some(row),
                 element,
-                available_space,
+                available_space: size(width.into(), element_size.height.into()),
                 style,
             });
         }
@@ -2559,14 +2579,10 @@ impl EditorElement {
                             ),
                             BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
                         };
-                        let available_space = size(
-                            width,
-                            AvailableSpace::Definite(block.height() as f32 * line_height),
-                        );
 
-                        let (element, _) = self.render_block(
+                        let (element, element_size) = self.render_block(
                             &block,
-                            available_space,
+                            width,
                             focused_block.id,
                             rows.end,
                             snapshot,
@@ -2578,14 +2594,15 @@ impl EditorElement {
                             em_width,
                             text_hitbox,
                             scroll_width,
+                            &mut resized_blocks,
                             cx,
                         );
 
                         blocks.push(BlockLayout {
                             id: block.id(),
-                            row: rows.end,
+                            row: None,
                             element,
-                            available_space,
+                            available_space: size(width, element_size.height.into()),
                             style,
                         });
                     }
@@ -2593,10 +2610,16 @@ impl EditorElement {
             }
         }
 
-        *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
-        blocks
+        if resized_blocks.is_empty() {
+            *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
+            Ok(blocks)
+        } else {
+            Err(resized_blocks)
+        }
     }
 
+    /// Returns true if any of the blocks changed size since the previous frame. This will trigger
+    /// a restart of rendering for the editor based on the new sizes.
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
@@ -2606,11 +2629,17 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) {
         for block in blocks {
-            let mut origin = hitbox.origin
-                + point(
-                    Pixels::ZERO,
-                    block.row.as_f32() * line_height - scroll_pixel_position.y,
-                );
+            let mut origin = if let Some(row) = block.row {
+                hitbox.origin
+                    + point(
+                        Pixels::ZERO,
+                        row.as_f32() * line_height - scroll_pixel_position.y,
+                    )
+            } else {
+                // Position the block outside the visible area
+                hitbox.origin + point(Pixels::ZERO, hitbox.size.height)
+            };
+
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
             }
@@ -2794,14 +2823,9 @@ impl EditorElement {
         );
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor.hover_state.render(
-                &snapshot,
-                &self.style,
-                visible_display_row_range.clone(),
-                max_size,
-                editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                cx,
-            )
+            editor
+                .hover_state
+                .render(&snapshot, visible_display_row_range.clone(), max_size, cx)
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -4187,11 +4211,11 @@ fn prepaint_gutter_button(
     );
     let indicator_size = button.layout_as_root(available_space, cx);
 
-    let blame_offset = gutter_dimensions.git_blame_entries_width;
-    let gutter_offset = rows_with_hunk_bounds
+    let blame_width = gutter_dimensions.git_blame_entries_width;
+    let gutter_width = rows_with_hunk_bounds
         .get(&row)
-        .map(|bounds| bounds.origin.x + bounds.size.width);
-    let left_offset = blame_offset.max(gutter_offset).unwrap_or(Pixels::ZERO);
+        .map(|bounds| bounds.size.width);
+    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
     let mut x = left_offset;
     let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
@@ -5021,21 +5045,27 @@ impl Element for EditorElement {
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
-                        let editor_width =
-                            text_width - gutter_dimensions.margin - overscroll.width - em_width;
-                        let wrap_width = match editor.soft_wrap_mode(cx) {
-                            SoftWrap::None => None,
-                            SoftWrap::PreferLine => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
-                            SoftWrap::EditorWidth => Some(editor_width),
-                            SoftWrap::Column(column) => {
-                                Some(editor_width.min(column as f32 * em_advance))
-                            }
-                        };
-
-                        if editor.set_wrap_width(wrap_width, cx) {
-                            editor.snapshot(cx)
-                        } else {
+                        if matches!(editor.mode, EditorMode::AutoHeight { .. }) {
                             snapshot
+                        } else {
+                            let editor_width =
+                                text_width - gutter_dimensions.margin - overscroll.width - em_width;
+                            let wrap_width = match editor.soft_wrap_mode(cx) {
+                                SoftWrap::None => None,
+                                SoftWrap::PreferLine => {
+                                    Some((MAX_LINE_LEN / 2) as f32 * em_advance)
+                                }
+                                SoftWrap::EditorWidth => Some(editor_width),
+                                SoftWrap::Column(column) => {
+                                    Some(editor_width.min(column as f32 * em_advance))
+                                }
+                            };
+
+                            if editor.set_wrap_width(wrap_width, cx) {
+                                editor.snapshot(cx)
+                            } else {
+                                snapshot
+                            }
                         }
                     });
 
@@ -5078,11 +5108,13 @@ impl Element for EditorElement {
                         }
                     };
 
+                    let mut autoscroll_request = None;
                     let mut autoscroll_containing_element = false;
                     let mut autoscroll_horizontally = false;
                     self.editor.update(cx, |editor, cx| {
+                        autoscroll_request = editor.autoscroll_request();
                         autoscroll_containing_element =
-                            editor.autoscroll_requested() || editor.has_pending_selection();
+                            autoscroll_request.is_some() || editor.has_pending_selection();
                         autoscroll_horizontally =
                             editor.autoscroll_vertically(bounds, line_height, max_scroll_top, cx);
                         snapshot = editor.snapshot(cx);
@@ -5217,7 +5249,7 @@ impl Element for EditorElement {
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-                    let mut blocks = cx.with_element_namespace("blocks", |cx| {
+                    let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
                             start_row..end_row,
                             &snapshot,
@@ -5232,6 +5264,15 @@ impl Element for EditorElement {
                             cx,
                         )
                     });
+                    let mut blocks = match blocks {
+                        Ok(blocks) => blocks,
+                        Err(resized_blocks) => {
+                            self.editor.update(cx, |editor, cx| {
+                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
+                            });
+                            return self.prepaint(None, bounds, &mut (), cx);
+                        }
+                    };
 
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
@@ -5609,7 +5650,7 @@ impl Element for EditorElement {
 
                     EditorLayout {
                         mode: snapshot.mode,
-                        position_map: Arc::new(PositionMap {
+                        position_map: Rc::new(PositionMap {
                             size: bounds.size,
                             scroll_pixel_position,
                             scroll_max,
@@ -5760,7 +5801,7 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    position_map: Arc<PositionMap>,
+    position_map: Rc<PositionMap>,
     hitbox: Hitbox,
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
@@ -5990,7 +6031,7 @@ impl PositionMap {
 
 struct BlockLayout {
     id: BlockId,
-    row: DisplayRow,
+    row: Option<DisplayRow>,
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
@@ -6548,7 +6589,7 @@ mod tests {
                         disposition: BlockDisposition::Above,
                         height: 3,
                         position: Anchor::min(),
-                        render: Box::new(|_| div().into_any()),
+                        render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
                     }],
                     None,
                     cx,

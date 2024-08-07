@@ -4,13 +4,14 @@ use anyhow::{anyhow, Context, Result};
 use dap_types::{
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
-        Restart, SetBreakpoints, StepBack, StepIn, StepOut,
+        Restart, SetBreakpoints, StepBack, StepIn, StepOut, Terminate, TerminateThreads,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
     NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
     SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
-    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
+    StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
+    TerminateThreadsArguments, Variable,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
@@ -36,7 +37,6 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType, TCPHost};
 use text::Point;
-use util::ResultExt;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ThreadStatus {
@@ -151,9 +151,11 @@ impl DebugAdapterClient {
         cwd: &PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
+        let host_address = host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
+
         let mut port = host.port;
         if port.is_none() {
-            port = Self::get_port().await;
+            port = Self::get_port(host_address).await;
         }
 
         let mut command = process::Command::new(command);
@@ -178,8 +180,8 @@ impl DebugAdapterClient {
         }
 
         let address = SocketAddrV4::new(
-            host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1)),
-            port.unwrap(),
+            host_address,
+            port.ok_or(anyhow!("Port is required to connect to TCP server"))?,
         );
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
@@ -193,9 +195,9 @@ impl DebugAdapterClient {
     }
 
     /// Get an open port to use with the tcp client when not supplied by debug config
-    async fn get_port() -> Option<u16> {
+    async fn get_port(host: Ipv4Addr) -> Option<u16> {
         Some(
-            TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
+            TcpListener::bind(SocketAddrV4::new(host, 0))
                 .await
                 .ok()?
                 .local_addr()
@@ -371,7 +373,6 @@ impl DebugAdapterClient {
         self.server_tx.send(Payload::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
-        let _ = self.next_sequence_id();
 
         match response.success {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
@@ -460,51 +461,128 @@ impl DebugAdapterClient {
     }
 
     pub async fn resume(&self, thread_id: u64) -> Result<ContinueResponse> {
+        let supports_single_thread_execution_requests = self
+            .capabilities()
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+
         self.request::<Continue>(ContinueArguments {
             thread_id,
-            single_thread: Some(true),
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_over(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<Next>(NextArguments {
             thread_id,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_in(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepIn>(StepInArguments {
             thread_id,
             target_id: None,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_out(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepOut>(StepOutArguments {
             thread_id,
-            granularity: Some(SteppingGranularity::Statement),
-            single_thread: Some(true),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
     pub async fn step_back(&self, thread_id: u64) -> Result<()> {
+        let capabilities = self.capabilities();
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
         self.request::<StepBack>(StepBackArguments {
             thread_id,
-            single_thread: Some(true),
-            granularity: Some(SteppingGranularity::Statement),
+            granularity: if supports_stepping_granularity {
+                Some(SteppingGranularity::Statement)
+            } else {
+                None
+            },
+            single_thread: if supports_single_thread_execution_requests {
+                Some(true)
+            } else {
+                None
+            },
         })
         .await
     }
 
-    pub async fn restart(&self) {
+    pub async fn restart(&self) -> Result<()> {
         self.request::<Restart>(RestartArguments {
             raw: self
                 .config
@@ -514,23 +592,42 @@ impl DebugAdapterClient {
                 .unwrap_or(Value::Null),
         })
         .await
-        .log_err();
     }
 
-    pub async fn pause(&self, thread_id: u64) {
-        self.request::<Pause>(PauseArguments { thread_id })
-            .await
-            .log_err();
+    pub async fn pause(&self, thread_id: u64) -> Result<()> {
+        self.request::<Pause>(PauseArguments { thread_id }).await
     }
 
-    pub async fn stop(&self) {
+    pub async fn disconnect(
+        &self,
+        restart: Option<bool>,
+        terminate: Option<bool>,
+        suspend: Option<bool>,
+    ) -> Result<()> {
+        let supports_terminate_debuggee = self
+            .capabilities()
+            .support_terminate_debuggee
+            .unwrap_or_default();
+
+        let supports_suspend_debuggee = self
+            .capabilities()
+            .support_terminate_debuggee
+            .unwrap_or_default();
+
         self.request::<Disconnect>(DisconnectArguments {
-            restart: Some(false),
-            terminate_debuggee: Some(false),
-            suspend_debuggee: Some(false),
+            restart,
+            terminate_debuggee: if supports_terminate_debuggee {
+                terminate
+            } else {
+                None
+            },
+            suspend_debuggee: if supports_suspend_debuggee {
+                suspend
+            } else {
+                None
+            },
         })
         .await
-        .log_err();
     }
 
     pub async fn set_breakpoints(
@@ -538,7 +635,7 @@ impl DebugAdapterClient {
         absolute_file_path: Arc<Path>,
         breakpoints: Vec<SourceBreakpoint>,
     ) -> Result<SetBreakpointsResponse> {
-        let adapter_data = self.config.request_args.clone().map(|c| c.args);
+        let adapter_data = self.request_args.clone();
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
@@ -559,8 +656,47 @@ impl DebugAdapterClient {
     }
 
     pub async fn configuration_done(&self) -> Result<()> {
-        self.request::<ConfigurationDone>(ConfigurationDoneArguments)
+        let support_configuration_done_request = self
+            .capabilities()
+            .supports_configuration_done_request
+            .unwrap_or_default();
+
+        if support_configuration_done_request {
+            self.request::<ConfigurationDone>(ConfigurationDoneArguments)
+                .await
+        } else {
+            Ok(())
+        }
+    }
+
+    pub async fn terminate(&self) -> Result<()> {
+        let support_terminate_request = self
+            .capabilities()
+            .supports_terminate_request
+            .unwrap_or_default();
+
+        if support_terminate_request {
+            self.request::<Terminate>(TerminateArguments {
+                restart: Some(false),
+            })
             .await
+        } else {
+            self.disconnect(None, Some(true), None).await
+        }
+    }
+
+    pub async fn terminate_threads(&self, thread_ids: Option<Vec<u64>>) -> Result<()> {
+        let support_terminate_threads = self
+            .capabilities()
+            .supports_terminate_threads_request
+            .unwrap_or_default();
+
+        if support_terminate_threads {
+            self.request::<TerminateThreads>(TerminateThreadsArguments { thread_ids })
+                .await
+        } else {
+            self.disconnect(None, Some(true), None).await
+        }
     }
 }
 

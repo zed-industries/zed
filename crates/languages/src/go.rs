@@ -537,7 +537,7 @@ impl ContextProvider for GoContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "go test {} -run {}/{}",
+                    "go test {} -v -run {}/{}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
                     GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),

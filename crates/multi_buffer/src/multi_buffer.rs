@@ -298,6 +298,7 @@ pub struct ReversedMultiBufferBytes<'a> {
 }
 
 struct ExcerptChunks<'a> {
+    excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
 }
@@ -673,7 +674,7 @@ impl MultiBuffer {
                         let mut insertions = Vec::new();
                         let mut original_indent_columns = Vec::new();
                         let mut deletions = Vec::new();
-                        let empty_str: Arc<str> = "".into();
+                        let empty_str: Arc<str> = Arc::default();
                         while let Some(BufferEdit {
                             mut range,
                             new_text,
@@ -2424,7 +2425,7 @@ impl MultiBufferSnapshot {
             excerpt_chunks: None,
             language_aware,
         };
-        chunks.seek(range.start);
+        chunks.seek(range);
         chunks
     }
 
@@ -3645,6 +3646,12 @@ impl MultiBufferSnapshot {
                                     ..self.anchor_in_excerpt(*excerpt_id, body_range.end)?,
                             )
                         }),
+                        annotation_range: item.annotation_range.and_then(|annotation_range| {
+                            Some(
+                                self.anchor_in_excerpt(*excerpt_id, annotation_range.start)?
+                                    ..self.anchor_in_excerpt(*excerpt_id, annotation_range.end)?,
+                            )
+                        }),
                     })
                 })
                 .collect(),
@@ -3675,6 +3682,12 @@ impl MultiBufferSnapshot {
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
+                            Some(
+                                self.anchor_in_excerpt(excerpt_id, body_range.start)?
+                                    ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,
+                            )
+                        }),
+                        annotation_range: item.annotation_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(excerpt_id, body_range.start)?
                                     ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,
@@ -4145,9 +4158,25 @@ impl Excerpt {
         let content_chunks = self.buffer.chunks(chunks_start..chunks_end, language_aware);
 
         ExcerptChunks {
+            excerpt_id: self.id,
             content_chunks,
             footer_height,
         }
+    }
+
+    fn seek_chunks(&self, excerpt_chunks: &mut ExcerptChunks, range: Range<usize>) {
+        let content_start = self.range.context.start.to_offset(&self.buffer);
+        let chunks_start = content_start + range.start;
+        let chunks_end = content_start + cmp::min(range.end, self.text_summary.len);
+        excerpt_chunks.content_chunks.seek(chunks_start..chunks_end);
+        excerpt_chunks.footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
+        {
+            1
+        } else {
+            0
+        };
     }
 
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
@@ -4484,14 +4513,26 @@ impl<'a> MultiBufferChunks<'a> {
         self.range.start
     }
 
-    pub fn seek(&mut self, offset: usize) {
-        self.range.start = offset;
-        self.excerpts.seek(&offset, Bias::Right, &());
+    pub fn seek(&mut self, new_range: Range<usize>) {
+        self.range = new_range.clone();
+        self.excerpts.seek(&new_range.start, Bias::Right, &());
         if let Some(excerpt) = self.excerpts.item() {
-            self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                self.range.start - self.excerpts.start()..self.range.end - self.excerpts.start(),
-                self.language_aware,
-            ));
+            let excerpt_start = self.excerpts.start();
+            if let Some(excerpt_chunks) = self
+                .excerpt_chunks
+                .as_mut()
+                .filter(|chunks| excerpt.id == chunks.excerpt_id)
+            {
+                excerpt.seek_chunks(
+                    excerpt_chunks,
+                    self.range.start - excerpt_start..self.range.end - excerpt_start,
+                );
+            } else {
+                self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                    self.range.start - excerpt_start..self.range.end - excerpt_start,
+                    self.language_aware,
+                ));
+            }
         } else {
             self.excerpt_chunks = None;
         }

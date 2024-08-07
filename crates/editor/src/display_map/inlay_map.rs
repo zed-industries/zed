@@ -225,14 +225,16 @@ pub struct InlayChunks<'a> {
 }
 
 impl<'a> InlayChunks<'a> {
-    pub fn seek(&mut self, offset: InlayOffset) {
-        self.transforms.seek(&offset, Bias::Right, &());
+    pub fn seek(&mut self, new_range: Range<InlayOffset>) {
+        self.transforms.seek(&new_range.start, Bias::Right, &());
 
-        let buffer_offset = self.snapshot.to_buffer_offset(offset);
-        self.buffer_chunks.seek(buffer_offset);
+        let buffer_range = self.snapshot.to_buffer_offset(new_range.start)
+            ..self.snapshot.to_buffer_offset(new_range.end);
+        self.buffer_chunks.seek(buffer_range);
         self.inlay_chunks = None;
         self.buffer_chunk = None;
-        self.output_offset = offset;
+        self.output_offset = new_range.start;
+        self.max_output_offset = new_range.end;
     }
 
     pub fn offset(&self) -> InlayOffset {

@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
     SettingEvent,
 };
 use uuid::Uuid;
@@ -518,6 +518,13 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
+            Event::Repl(event) => to_upload.repl_events.push(ReplEventRow::from_event(
+                event.clone(),
+                &wrapper,
+                &request_body,
+                first_event_at,
+                checksum_matched,
+            )),
         }
     }
 
@@ -542,6 +549,7 @@ struct ToUpload {
     extension_events: Vec<ExtensionEventRow>,
     edit_events: Vec<EditEventRow>,
     action_events: Vec<ActionEventRow>,
+    repl_events: Vec<ReplEventRow>,
 }
 
 impl ToUpload {
@@ -617,6 +625,11 @@ impl ToUpload {
             .await
             .with_context(|| format!("failed to upload to table '{ACTION_EVENTS_TABLE}'"))?;
 
+        const REPL_EVENTS_TABLE: &str = "repl_events";
+        Self::upload_to_table(REPL_EVENTS_TABLE, &self.repl_events, clickhouse_client)
+            .await
+            .with_context(|| format!("failed to upload to table '{REPL_EVENTS_TABLE}'"))?;
+
         Ok(())
     }
 
@@ -625,21 +638,23 @@ impl ToUpload {
         rows: &[T],
         clickhouse_client: &clickhouse::Client,
     ) -> anyhow::Result<()> {
-        if !rows.is_empty() {
-            let mut insert = clickhouse_client.insert(table)?;
-
-            for event in rows {
-                insert.write(event).await?;
-            }
-
-            insert.end().await?;
-
-            let event_count = rows.len();
-            log::info!(
-                "wrote {event_count} {event_specifier} to '{table}'",
-                event_specifier = if event_count == 1 { "event" } else { "events" }
-            );
+        if rows.is_empty() {
+            return Ok(());
         }
+
+        let mut insert = clickhouse_client.insert(table)?;
+
+        for event in rows {
+            insert.write(event).await?;
+        }
+
+        insert.end().await?;
+
+        let event_count = rows.len();
+        log::info!(
+            "wrote {event_count} {event_specifier} to '{table}'",
+            event_specifier = if event_count == 1 { "event" } else { "events" }
+        );
 
         Ok(())
     }
@@ -1185,6 +1200,62 @@ impl ExtensionEventRow {
                     .as_ref()
                     .map(|version| version.to_string())
             }),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, clickhouse::Row)]
+pub struct ReplEventRow {
+    // AppInfoBase
+    app_version: String,
+    major: Option<i32>,
+    minor: Option<i32>,
+    patch: Option<i32>,
+    checksum_matched: bool,
+    release_channel: String,
+    os_name: String,
+    os_version: String,
+
+    // ClientEventBase
+    installation_id: Option<String>,
+    session_id: Option<String>,
+    is_staff: Option<bool>,
+    time: i64,
+
+    // ReplEventRow
+    kernel_language: String,
+    kernel_status: String,
+    repl_session_id: String,
+}
+
+impl ReplEventRow {
+    fn from_event(
+        event: ReplEvent,
+        wrapper: &EventWrapper,
+        body: &EventRequestBody,
+        first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
+    ) -> Self {
+        let semver = body.semver();
+        let time =
+            first_event_at + chrono::Duration::milliseconds(wrapper.milliseconds_since_first_event);
+
+        Self {
+            app_version: body.app_version.clone(),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
+            release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
+            installation_id: body.installation_id.clone(),
+            session_id: body.session_id.clone(),
+            is_staff: body.is_staff,
+            time: time.timestamp_millis(),
+            kernel_language: event.kernel_language,
+            kernel_status: event.kernel_status,
+            repl_session_id: event.repl_session_id,
         }
     }
 }

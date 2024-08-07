@@ -8,6 +8,7 @@ use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{
     tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
 };
+use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
@@ -92,8 +93,8 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                     .root_name()
                     .to_string(),
                 rpc_trace_enabled: false,
-                rpc_trace_selected: false,
-                logs_selected: true,
+                selected_entry: LogKind::Logs,
+                trace_level: lsp::TraceValue::Off,
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");

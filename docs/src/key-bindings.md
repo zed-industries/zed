@@ -50,7 +50,7 @@ Zed has the ability to match against not just a single keypress, but a sequence 
 Each key press is a sequence of modifiers followed by a key. The modifiers are:
 
 - `ctrl-` The control key
-* `cmd-`, `win-` or `super-` for the platform modifier (Command on macOS, Windows key on Windows, and the Super key on Linux).
+- `cmd-`, `win-` or `super-` for the platform modifier (Command on macOS, Windows key on Windows, and the Super key on Linux).
 - `alt-` for alt (option on macOS)
 - `shift-` The shift key
 - `fn-` The function key
@@ -160,7 +160,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Open                      | Workspace    | `⌘ + O`                 |
 | Toggle zoom               | Workspace    | `Shift + Escape`        |
 | Debug elements            | Zed          | `⌘ + Alt + I`           |
-| Decrease buffer font size | Zed          | `⌘ + -`                  |
+| Decrease buffer font size | Zed          | `⌘ + -`                 |
 | Hide                      | Zed          | `⌘ + H`                 |
 | Hide others               | Zed          | `Alt + ⌘ + H`           |
 | Increase buffer font size | Zed          | `⌘ + +`                 |

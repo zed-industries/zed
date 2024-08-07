@@ -147,7 +147,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
-        run: ./script/clippy
+        # Windows can't run shell scripts, so we need to use `cargo xtask`.
+        run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed

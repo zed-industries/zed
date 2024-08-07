@@ -625,13 +625,13 @@ where
     }
 }
 
-pub trait DetachAndPromptErr {
+pub trait DetachAndPromptErr<R> {
     fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()>;
+    ) -> Task<Option<R>>;
 
     fn detach_and_prompt_err(
         self,
@@ -641,7 +641,7 @@ pub trait DetachAndPromptErr {
     );
 }
 
-impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
+impl<R> DetachAndPromptErr<R> for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
@@ -650,10 +650,11 @@ where
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()> {
+    ) -> Task<Option<R>> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
-            if let Err(err) = self.await {
+            let result = self.await;
+            if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
                     let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
@@ -661,7 +662,9 @@ where
                 }) {
                     prompt.await.ok();
                 }
+                return None;
             }
+            return Some(result.unwrap());
         })
     }
 

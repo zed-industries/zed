@@ -16,7 +16,7 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{Settings, SettingsLocation, SettingsSources};
+use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
@@ -1009,16 +1009,10 @@ impl settings::Settings for AllLanguageSettings {
             .definitions
             .extend([("Languages".into(), languages_object_schema.into())]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([(
-                "languages".to_owned(),
-                Schema::new_ref("#/definitions/Languages".into()),
-            )]);
+        add_references_to_properties(
+            &mut root_schema,
+            &[("languages", "#/definitions/Languages")],
+        );
 
         root_schema
     }

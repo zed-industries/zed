@@ -1,9 +1,9 @@
 use crate::{
     humanize_token_count, prompts::generate_content_prompt, AssistantPanel, AssistantPanelEvent,
-    Hunk, LanguageModelCompletionProvider, ModelSelector, StreamingDiff,
+    Hunk, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::telemetry::Telemetry;
+use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -14,20 +14,23 @@ use editor::{
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use futures::{
     channel::mpsc,
-    future::LocalBoxFuture,
+    future::{BoxFuture, LocalBoxFuture},
     stream::{self, BoxStream},
     SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    point, AppContext, EventEmitter, FocusHandle, FocusableView, Global, HighlightStyle, Model,
-    ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
-    WindowContext,
+    anchored, deferred, point, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
+    FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
+    UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
@@ -36,7 +39,7 @@ use similar::TextDiff;
 use smol::future::FutureExt;
 use std::{
     cmp,
-    future::Future,
+    future::{self, Future},
     mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
@@ -45,8 +48,8 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
-use util::RangeExt;
+use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
 pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
@@ -187,7 +190,13 @@ impl InlineAssistant {
             let [prompt_block_id, end_block_id] =
                 self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
 
-            assists.push((assist_id, prompt_editor, prompt_block_id, end_block_id));
+            assists.push((
+                assist_id,
+                range,
+                prompt_editor,
+                prompt_block_id,
+                end_block_id,
+            ));
         }
 
         let editor_assists = self
@@ -195,7 +204,7 @@ impl InlineAssistant {
             .entry(editor.downgrade())
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
         let mut assist_group = InlineAssistGroup::new();
-        for (assist_id, prompt_editor, prompt_block_id, end_block_id) in assists {
+        for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
             self.assists.insert(
                 assist_id,
                 InlineAssist::new(
@@ -206,6 +215,7 @@ impl InlineAssistant {
                     &prompt_editor,
                     prompt_block_id,
                     end_block_id,
+                    range,
                     prompt_editor.read(cx).codegen.clone(),
                     workspace.clone(),
                     cx,
@@ -227,7 +237,7 @@ impl InlineAssistant {
         editor: &View<Editor>,
         mut range: Range<Anchor>,
         initial_prompt: String,
-        initial_insertion: Option<String>,
+        initial_insertion: Option<InitialInsertion>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
@@ -239,22 +249,30 @@ impl InlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
 
         let buffer = editor.read(cx).buffer().clone();
-        let prepend_transaction_id = initial_insertion.and_then(|initial_insertion| {
-            buffer.update(cx, |buffer, cx| {
-                buffer.start_transaction(cx);
-                buffer.edit([(range.start..range.start, initial_insertion)], None, cx);
-                buffer.end_transaction(cx)
-            })
-        });
+        {
+            let snapshot = buffer.read(cx).read(cx);
 
-        range.start = range.start.bias_left(&buffer.read(cx).read(cx));
-        range.end = range.end.bias_right(&buffer.read(cx).read(cx));
+            let mut point_range = range.to_point(&snapshot);
+            if point_range.is_empty() {
+                point_range.start.column = 0;
+                point_range.end.column = 0;
+            } else {
+                point_range.start.column = 0;
+                if point_range.end.row > point_range.start.row && point_range.end.column == 0 {
+                    point_range.end.row -= 1;
+                }
+                point_range.end.column = snapshot.line_len(MultiBufferRow(point_range.end.row));
+            }
+
+            range.start = snapshot.anchor_before(point_range.start);
+            range.end = snapshot.anchor_after(point_range.end);
+        }
 
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
-                prepend_transaction_id,
+                initial_insertion,
                 self.telemetry.clone(),
                 cx,
             )
@@ -295,6 +313,7 @@ impl InlineAssistant {
                 &prompt_editor,
                 prompt_block_id,
                 end_block_id,
+                range,
                 prompt_editor.read(cx).codegen.clone(),
                 workspace.clone(),
                 cx,
@@ -313,11 +332,16 @@ impl InlineAssistant {
         prompt_editor: &View<PromptEditor>,
         cx: &mut WindowContext,
     ) -> [CustomBlockId; 2] {
+        let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
+            prompt_editor
+                .editor
+                .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1 + 2)
+        });
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
                 position: range.start,
-                height: prompt_editor.read(cx).height_in_lines,
+                height: prompt_editor_height,
                 render: build_assist_editor_renderer(prompt_editor),
                 disposition: BlockDisposition::Above,
             },
@@ -428,9 +452,6 @@ impl InlineAssistant {
             PromptEditorEvent::DismissRequested => {
                 self.dismiss_assist(assist_id, cx);
             }
-            PromptEditorEvent::Resized { height_in_lines } => {
-                self.resize_assist(assist_id, *height_in_lines, cx);
-            }
         }
     }
 
@@ -445,7 +466,7 @@ impl InlineAssistant {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
-                let assist_range = assist.codegen.read(cx).range.to_offset(&buffer);
+                let assist_range = assist.range.to_offset(&buffer);
                 if assist_range.contains(&selection.start) && assist_range.contains(&selection.end)
                 {
                     if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
@@ -473,7 +494,7 @@ impl InlineAssistant {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
-                let assist_range = assist.codegen.read(cx).range.to_offset(&buffer);
+                let assist_range = assist.range.to_offset(&buffer);
                 if assist.decorations.is_some()
                     && assist_range.contains(&selection.start)
                     && assist_range.contains(&selection.end)
@@ -551,7 +572,7 @@ impl InlineAssistant {
                         assist.codegen.read(cx).status,
                         CodegenStatus::Error(_) | CodegenStatus::Done
                     ) {
-                        let assist_range = assist.codegen.read(cx).range.to_offset(&snapshot);
+                        let assist_range = assist.range.to_offset(&snapshot);
                         if edited_ranges
                             .iter()
                             .any(|range| range.overlaps(&assist_range))
@@ -721,7 +742,7 @@ impl InlineAssistant {
             });
         }
 
-        let position = assist.codegen.read(cx).range.start;
+        let position = assist.range.start;
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| {
                 selections.select_anchor_ranges([position..position])
@@ -740,8 +761,7 @@ impl InlineAssistant {
                     .0 as f32;
             } else {
                 let snapshot = editor.snapshot(cx);
-                let codegen = assist.codegen.read(cx);
-                let start_row = codegen
+                let start_row = assist
                     .range
                     .start
                     .to_display_point(&snapshot.display_snapshot)
@@ -767,33 +787,6 @@ impl InlineAssistant {
                 }
             }
         });
-    }
-
-    fn resize_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        height_in_lines: u8,
-        cx: &mut WindowContext,
-    ) {
-        if let Some(assist) = self.assists.get_mut(&assist_id) {
-            if let Some(editor) = assist.editor.upgrade() {
-                if let Some(decorations) = assist.decorations.as_ref() {
-                    let mut new_blocks = HashMap::default();
-                    new_blocks.insert(
-                        decorations.prompt_block_id,
-                        (
-                            Some(height_in_lines),
-                            build_assist_editor_renderer(&decorations.prompt_editor),
-                        ),
-                    );
-                    editor.update(cx, |editor, cx| {
-                        editor
-                            .display_map
-                            .update(cx, |map, cx| map.replace_blocks(new_blocks, cx))
-                    });
-                }
-            }
-        }
     }
 
     fn unlink_assist_group(
@@ -829,11 +822,7 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(user_prompt) = assist
-            .decorations
-            .as_ref()
-            .map(|decorations| decorations.prompt_editor.read(cx).prompt(cx))
-        else {
+        let Some(user_prompt) = assist.user_prompt(cx) else {
             return;
         };
 
@@ -843,139 +832,19 @@ impl InlineAssistant {
             self.prompt_history.pop_front();
         }
 
-        let codegen = assist.codegen.clone();
-        let telemetry_id = LanguageModelCompletionProvider::read_global(cx)
-            .active_model()
-            .map(|m| m.telemetry_id())
-            .unwrap_or_default();
-        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
-            if user_prompt.trim().to_lowercase() == "delete" {
-                async { Ok(stream::empty().boxed()) }.boxed_local()
-            } else {
-                let request = self.request_for_inline_assist(assist_id, cx);
-                let mut cx = cx.to_async();
-                async move {
-                    let request = request.await?;
-                    let chunks = cx
-                        .update(|cx| {
-                            LanguageModelCompletionProvider::read_global(cx)
-                                .stream_completion(request, cx)
-                        })?
-                        .await?;
-                    Ok(chunks.boxed())
-                }
-                .boxed_local()
-            };
-        codegen.update(cx, |codegen, cx| {
-            codegen.start(telemetry_id, chunks, cx);
-        });
-    }
+        let assistant_panel_context = assist.assistant_panel_context(cx);
 
-    fn request_for_inline_assist(
-        &self,
-        assist_id: InlineAssistId,
-        cx: &mut WindowContext,
-    ) -> Task<Result<LanguageModelRequest>> {
-        cx.spawn(|mut cx| async move {
-            let (user_prompt, context_request, project_name, buffer, range) =
-                cx.read_global(|this: &InlineAssistant, cx: &WindowContext| {
-                    let assist = this.assists.get(&assist_id).context("invalid assist")?;
-                    let decorations = assist.decorations.as_ref().context("invalid assist")?;
-                    let editor = assist.editor.upgrade().context("invalid assist")?;
-                    let user_prompt = decorations.prompt_editor.read(cx).prompt(cx);
-                    let context_request = if assist.include_context {
-                        assist.workspace.as_ref().and_then(|workspace| {
-                            let workspace = workspace.upgrade()?.read(cx);
-                            let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
-                            Some(
-                                assistant_panel
-                                    .read(cx)
-                                    .active_context(cx)?
-                                    .read(cx)
-                                    .to_completion_request(cx),
-                            )
-                        })
-                    } else {
-                        None
-                    };
-                    let project_name = assist.workspace.as_ref().and_then(|workspace| {
-                        let workspace = workspace.upgrade()?;
-                        Some(
-                            workspace
-                                .read(cx)
-                                .project()
-                                .read(cx)
-                                .worktree_root_names(cx)
-                                .collect::<Vec<&str>>()
-                                .join("/"),
-                        )
-                    });
-                    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-                    let range = assist.codegen.read(cx).range.clone();
-                    anyhow::Ok((user_prompt, context_request, project_name, buffer, range))
-                })??;
-
-            let language = buffer.language_at(range.start);
-            let language_name = if let Some(language) = language.as_ref() {
-                if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
-                    None
-                } else {
-                    Some(language.name())
-                }
-            } else {
-                None
-            };
-
-            // Higher Temperature increases the randomness of model outputs.
-            // If Markdown or No Language is Known, increase the randomness for more creative output
-            // If Code, decrease temperature to get more deterministic outputs
-            let temperature = if let Some(language) = language_name.clone() {
-                if language.as_ref() == "Markdown" {
-                    1.0
-                } else {
-                    0.5
-                }
-            } else {
-                1.0
-            };
-
-            let prompt = cx
-                .background_executor()
-                .spawn(async move {
-                    let language_name = language_name.as_deref();
-                    let start = buffer.point_to_buffer_offset(range.start);
-                    let end = buffer.point_to_buffer_offset(range.end);
-                    let (buffer, range) = if let Some((start, end)) = start.zip(end) {
-                        let (start_buffer, start_buffer_offset) = start;
-                        let (end_buffer, end_buffer_offset) = end;
-                        if start_buffer.remote_id() == end_buffer.remote_id() {
-                            (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
-                        } else {
-                            return Err(anyhow!("invalid transformation range"));
-                        }
-                    } else {
-                        return Err(anyhow!("invalid transformation range"));
-                    };
-                    generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
-                })
-                .await?;
-
-            let mut messages = Vec::new();
-            if let Some(context_request) = context_request {
-                messages = context_request.messages;
-            }
-
-            messages.push(LanguageModelRequestMessage {
-                role: Role::User,
-                content: prompt,
-            });
-
-            Ok(LanguageModelRequest {
-                messages,
-                stop: vec!["|END|>".to_string()],
-                temperature,
+        assist
+            .codegen
+            .update(cx, |codegen, cx| {
+                codegen.start(
+                    assist.range.clone(),
+                    user_prompt,
+                    assistant_panel_context,
+                    cx,
+                )
             })
-        })
+            .log_err();
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1006,12 +875,11 @@ impl InlineAssistant {
                 let codegen = assist.codegen.read(cx);
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
 
-                if codegen.edit_position != codegen.range.end {
-                    gutter_pending_ranges.push(codegen.edit_position..codegen.range.end);
-                }
+                gutter_pending_ranges
+                    .push(codegen.edit_position.unwrap_or(assist.range.start)..assist.range.end);
 
-                if codegen.range.start != codegen.edit_position {
-                    gutter_transformed_ranges.push(codegen.range.start..codegen.edit_position);
+                if let Some(edit_position) = codegen.edit_position {
+                    gutter_transformed_ranges.push(assist.range.start..edit_position);
                 }
 
                 if assist.decorations.is_some() {
@@ -1137,8 +1005,8 @@ impl InlineAssistant {
                     editor
                 });
 
-                let height = deleted_lines_editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 as u8 + 1);
+                let height =
+                    deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     position: new_row,
                     height,
@@ -1147,6 +1015,7 @@ impl InlineAssistant {
                         div()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
+                            .h(height as f32 * cx.line_height())
                             .pl(cx.gutter_dimensions.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
@@ -1268,6 +1137,12 @@ fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     })
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum InitialInsertion {
+    NewlineBefore,
+    NewlineAfter,
+}
+
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineAssistId(usize);
 
@@ -1296,13 +1171,11 @@ enum PromptEditorEvent {
     ConfirmRequested,
     CancelRequested,
     DismissRequested,
-    Resized { height_in_lines: u8 },
 }
 
 struct PromptEditor {
     id: InlineAssistId,
     fs: Arc<dyn Fs>,
-    height_in_lines: u8,
     editor: View<Editor>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -1316,6 +1189,7 @@ struct PromptEditor {
     token_count: Option<usize>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
+    show_rate_limit_notice: bool,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1323,7 +1197,8 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let buttons = match &self.codegen.read(cx).status {
+        let status = &self.codegen.read(cx).status;
+        let buttons = match status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
@@ -1376,7 +1251,7 @@ impl Render for PromptEditor {
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
-                    if self.edited_since_done {
+                    if self.edited_since_done || matches!(status, CodegenStatus::Error(_)) {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
@@ -1408,9 +1283,8 @@ impl Render for PromptEditor {
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
-            .py_1p5()
-            .h_full()
-            .w_full()
+            .size_full()
+            .py(cx.line_height() / 2.)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
@@ -1420,31 +1294,64 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
-                        self.fs.clone(),
-                        IconButton::new("context", IconName::Settings)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    format!(
-                                        "Using {}",
-                                        LanguageModelCompletionProvider::read_global(cx)
-                                            .active_model()
-                                            .map(|model| model.name().0)
-                                            .unwrap_or_else(|| "No model selected".into()),
-                                    ),
-                                    None,
-                                    "Change Model",
-                                    cx,
-                                )
-                            }),
-                    ))
-                    .children(
-                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                            let error_message = SharedString::from(error.to_string());
-                            Some(
+                    .child(
+                        ModelSelector::new(
+                            self.fs.clone(),
+                            IconButton::new("context", IconName::SlidersAlt)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(
+                                        format!(
+                                            "Using {}",
+                                            LanguageModelRegistry::read_global(cx)
+                                                .active_model()
+                                                .map(|model| model.name().0)
+                                                .unwrap_or_else(|| "No model selected".into()),
+                                        ),
+                                        None,
+                                        "Change Model",
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_info_text(
+                            "Inline edits use context\n\
+                            from the currently selected\n\
+                            assistant panel tab.",
+                        ),
+                    )
+                    .map(|el| {
+                        let CodegenStatus::Error(error) = &self.codegen.read(cx).status else {
+                            return el;
+                        };
+
+                        let error_message = SharedString::from(error.to_string());
+                        if error.error_code() == proto::ErrorCode::RateLimitExceeded
+                            && cx.has_flag::<ZedPro>()
+                        {
+                            el.child(
+                                v_flex()
+                                    .child(
+                                        IconButton::new("rate-limit-error", IconName::XCircle)
+                                            .selected(self.show_rate_limit_notice)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                    )
+                                    .children(self.show_rate_limit_notice.then(|| {
+                                        deferred(
+                                            anchored()
+                                                .position_mode(gpui::AnchoredPositionMode::Local)
+                                                .position(point(px(0.), px(24.)))
+                                                .anchor(gpui::AnchorCorner::TopLeft)
+                                                .child(self.render_rate_limit_notice(cx)),
+                                        )
+                                    })),
+                            )
+                        } else {
+                            el.child(
                                 div()
                                     .id("error")
                                     .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
@@ -1454,10 +1361,8 @@ impl Render for PromptEditor {
                                             .color(Color::Error),
                                     ),
                             )
-                        } else {
-                            None
-                        },
-                    ),
+                        }
+                    }),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
             .child(
@@ -1521,7 +1426,6 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            height_in_lines: 1,
             editor: prompt_editor,
             edited_since_done: false,
             gutter_dimensions,
@@ -1536,8 +1440,8 @@ impl PromptEditor {
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
+            show_rate_limit_notice: false,
         };
-        this.count_lines(cx);
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
@@ -1545,8 +1449,6 @@ impl PromptEditor {
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.editor_subscriptions.clear();
-        self.editor_subscriptions
-            .push(cx.observe(&self.editor, Self::handle_prompt_editor_changed));
         self.editor_subscriptions
             .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
     }
@@ -1581,20 +1483,12 @@ impl PromptEditor {
         self.editor.read(cx).text(cx)
     }
 
-    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
-        let height_in_lines = cmp::max(
-            2, // Make the editor at least two lines tall, to account for padding and buttons.
-            cmp::min(
-                self.editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
-                Self::MAX_LINES as u32,
-            ),
-        ) as u8;
-
-        if height_in_lines != self.height_in_lines {
-            self.height_in_lines = height_in_lines;
-            cx.emit(PromptEditorEvent::Resized { height_in_lines });
+    fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        self.show_rate_limit_notice = !self.show_rate_limit_notice;
+        if self.show_rate_limit_notice {
+            cx.focus_view(&self.editor);
         }
+        cx.notify();
     }
 
     fn handle_parent_editor_event(
@@ -1622,26 +1516,21 @@ impl PromptEditor {
         let assist_id = self.id;
         self.pending_token_count = cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(Duration::from_secs(1)).await;
-            let request = cx
+            let token_count = cx
                 .update_global(|inline_assistant: &mut InlineAssistant, cx| {
-                    inline_assistant.request_for_inline_assist(assist_id, cx)
-                })?
+                    let assist = inline_assistant
+                        .assists
+                        .get(&assist_id)
+                        .context("assist not found")?;
+                    anyhow::Ok(assist.count_tokens(cx))
+                })??
                 .await?;
 
-            let token_count = cx
-                .update(|cx| {
-                    LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-                })?
-                .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
                 cx.notify();
             })
         })
-    }
-
-    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
-        self.count_lines(cx);
     }
 
     fn handle_prompt_editor_events(
@@ -1667,6 +1556,12 @@ impl PromptEditor {
             EditorEvent::BufferEdited => {
                 self.count_tokens(cx);
             }
+            EditorEvent::Blurred => {
+                if self.show_rate_limit_notice {
+                    self.show_rate_limit_notice = false;
+                    cx.notify();
+                }
+            }
             _ => {}
         }
     }
@@ -1681,7 +1576,20 @@ impl PromptEditor {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Error(error) => {
+                if cx.has_flag::<ZedPro>()
+                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
+                    && !dismissed_rate_limit_notice()
+                {
+                    self.show_rate_limit_notice = true;
+                    cx.notify();
+                }
+
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1759,7 +1667,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1825,6 +1733,7 @@ impl PromptEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
@@ -1840,10 +1749,88 @@ impl PromptEditor {
             },
         )
     }
+
+    fn render_rate_limit_notice(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Popover::new().child(
+            v_flex()
+                .occlude()
+                .p_2()
+                .child(
+                    Label::new("Out of Tokens")
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD),
+                )
+                .child(Label::new(
+                    "Try Zed Pro for higher limits, a wider range of models, and more.",
+                ))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(CheckboxWithLabel::new(
+                            "dont-show-again",
+                            Label::new("Don't show again"),
+                            if dismissed_rate_limit_notice() {
+                                ui::Selection::Selected
+                            } else {
+                                ui::Selection::Unselected
+                            },
+                            |selection, cx| {
+                                let is_dismissed = match selection {
+                                    ui::Selection::Unselected => false,
+                                    ui::Selection::Indeterminate => return,
+                                    ui::Selection::Selected => true,
+                                };
+
+                                set_rate_limit_notice_dismissed(is_dismissed, cx)
+                            },
+                        ))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("dismiss", "Dismiss")
+                                        .style(ButtonStyle::Transparent)
+                                        .on_click(cx.listener(Self::toggle_rate_limit_notice)),
+                                )
+                                .child(Button::new("more-info", "More Info").on_click(
+                                    |_event, cx| {
+                                        cx.dispatch_action(Box::new(
+                                            zed_actions::OpenAccountSettings,
+                                        ))
+                                    },
+                                )),
+                        ),
+                ),
+        )
+    }
+}
+
+const DISMISSED_RATE_LIMIT_NOTICE_KEY: &str = "dismissed-rate-limit-notice";
+
+fn dismissed_rate_limit_notice() -> bool {
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY)
+        .log_err()
+        .map_or(false, |s| s.is_some())
+}
+
+fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
+    db::write_and_log(cx, move || async move {
+        if is_dismissed {
+            db::kvp::KEY_VALUE_STORE
+                .write_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into(), "1".into())
+                .await
+        } else {
+            db::kvp::KEY_VALUE_STORE
+                .delete_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into())
+                .await
+        }
+    })
 }
 
 struct InlineAssist {
     group_id: InlineAssistGroupId,
+    range: Range<Anchor>,
     editor: WeakView<Editor>,
     decorations: Option<InlineAssistDecorations>,
     codegen: Model<Codegen>,
@@ -1862,6 +1849,7 @@ impl InlineAssist {
         prompt_editor: &View<PromptEditor>,
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
+        range: Range<Anchor>,
         codegen: Model<Codegen>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -1877,6 +1865,7 @@ impl InlineAssist {
                 removed_line_block_ids: HashSet::default(),
                 end_block_id,
             }),
+            range,
             codegen: codegen.clone(),
             workspace: workspace.clone(),
             _subscriptions: vec![
@@ -1952,6 +1941,41 @@ impl InlineAssist {
             ],
         }
     }
+
+    fn user_prompt(&self, cx: &AppContext) -> Option<String> {
+        let decorations = self.decorations.as_ref()?;
+        Some(decorations.prompt_editor.read(cx).prompt(cx))
+    }
+
+    fn assistant_panel_context(&self, cx: &WindowContext) -> Option<LanguageModelRequest> {
+        if self.include_context {
+            let workspace = self.workspace.as_ref()?;
+            let workspace = workspace.upgrade()?.read(cx);
+            let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
+            Some(
+                assistant_panel
+                    .read(cx)
+                    .active_context(cx)?
+                    .read(cx)
+                    .to_completion_request(cx),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<usize>> {
+        let Some(user_prompt) = self.user_prompt(cx) else {
+            return future::ready(Err(anyhow!("no user prompt"))).boxed();
+        };
+        let assistant_panel_context = self.assistant_panel_context(cx);
+        self.codegen.read(cx).count_tokens(
+            self.range.clone(),
+            user_prompt,
+            assistant_panel_context,
+            cx,
+        )
+    }
 }
 
 struct InlineAssistDecorations {
@@ -1971,16 +1995,15 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
-    range: Range<Anchor>,
-    edit_position: Anchor,
+    edit_position: Option<Anchor>,
     last_equal_ranges: Vec<Range<Anchor>>,
-    prepend_transaction_id: Option<TransactionId>,
-    generation_transaction_id: Option<TransactionId>,
+    transaction_id: Option<TransactionId>,
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
+    initial_insertion: Option<InitialInsertion>,
 }
 
 enum CodegenStatus {
@@ -2004,7 +2027,7 @@ impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
-        prepend_transaction_id: Option<TransactionId>,
+        initial_insertion: Option<InitialInsertion>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2033,17 +2056,16 @@ impl Codegen {
         Self {
             buffer: buffer.clone(),
             old_buffer,
-            edit_position: range.start,
-            range,
+            edit_position: None,
             snapshot,
             last_equal_ranges: Default::default(),
-            prepend_transaction_id,
-            generation_transaction_id: None,
+            transaction_id: None,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+            initial_insertion,
         }
     }
 
@@ -2054,13 +2076,8 @@ impl Codegen {
         cx: &mut ModelContext<Self>,
     ) {
         if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
-            if self.generation_transaction_id == Some(*transaction_id) {
-                self.generation_transaction_id = None;
-                self.generation = Task::ready(());
-                cx.emit(CodegenEvent::Undone);
-            } else if self.prepend_transaction_id == Some(*transaction_id) {
-                self.prepend_transaction_id = None;
-                self.generation_transaction_id = None;
+            if self.transaction_id == Some(*transaction_id) {
+                self.transaction_id = None;
                 self.generation = Task::ready(());
                 cx.emit(CodegenEvent::Undone);
             }
@@ -2071,19 +2088,157 @@ impl Codegen {
         &self.last_equal_ranges
     }
 
+    pub fn count_tokens(
+        &self,
+        edit_range: Range<Anchor>,
+        user_prompt: String,
+        assistant_panel_context: Option<LanguageModelRequest>,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            let request = self.build_request(user_prompt, assistant_panel_context, edit_range, cx);
+            model.count_tokens(request, cx)
+        } else {
+            future::ready(Err(anyhow!("no active model"))).boxed()
+        }
+    }
+
     pub fn start(
         &mut self,
-        telemetry_id: String,
+        mut edit_range: Range<Anchor>,
+        user_prompt: String,
+        assistant_panel_context: Option<LanguageModelRequest>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let model = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .context("no active model")?;
+
+        self.undo(cx);
+
+        // Handle initial insertion
+        self.transaction_id = if let Some(initial_insertion) = self.initial_insertion {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.start_transaction(cx);
+                let offset = edit_range.start.to_offset(&self.snapshot);
+                let edit_position;
+                match initial_insertion {
+                    InitialInsertion::NewlineBefore => {
+                        buffer.edit([(offset..offset, "\n\n")], None, cx);
+                        self.snapshot = buffer.snapshot(cx);
+                        edit_position = self.snapshot.anchor_after(offset + 1);
+                    }
+                    InitialInsertion::NewlineAfter => {
+                        buffer.edit([(offset..offset, "\n")], None, cx);
+                        self.snapshot = buffer.snapshot(cx);
+                        edit_position = self.snapshot.anchor_after(offset);
+                    }
+                }
+                self.edit_position = Some(edit_position);
+                edit_range = edit_position.bias_left(&self.snapshot)..edit_position;
+                buffer.end_transaction(cx)
+            })
+        } else {
+            self.edit_position = Some(edit_range.start.bias_right(&self.snapshot));
+            None
+        };
+
+        let telemetry_id = model.telemetry_id();
+        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> = if user_prompt
+            .trim()
+            .to_lowercase()
+            == "delete"
+        {
+            async { Ok(stream::empty().boxed()) }.boxed_local()
+        } else {
+            let request =
+                self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx);
+            let chunks =
+                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+            async move { Ok(chunks.await?.boxed()) }.boxed_local()
+        };
+        self.handle_stream(telemetry_id, edit_range, chunks, cx);
+        Ok(())
+    }
+
+    fn build_request(
+        &self,
+        user_prompt: String,
+        assistant_panel_context: Option<LanguageModelRequest>,
+        edit_range: Range<Anchor>,
+        cx: &AppContext,
+    ) -> LanguageModelRequest {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let language = buffer.language_at(edit_range.start);
+        let language_name = if let Some(language) = language.as_ref() {
+            if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
+                None
+            } else {
+                Some(language.name())
+            }
+        } else {
+            None
+        };
+
+        // Higher Temperature increases the randomness of model outputs.
+        // If Markdown or No Language is Known, increase the randomness for more creative output
+        // If Code, decrease temperature to get more deterministic outputs
+        let temperature = if let Some(language) = language_name.clone() {
+            if language.as_ref() == "Markdown" {
+                1.0
+            } else {
+                0.5
+            }
+        } else {
+            1.0
+        };
+
+        let language_name = language_name.as_deref();
+        let start = buffer.point_to_buffer_offset(edit_range.start);
+        let end = buffer.point_to_buffer_offset(edit_range.end);
+        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+            let (start_buffer, start_buffer_offset) = start;
+            let (end_buffer, end_buffer_offset) = end;
+            if start_buffer.remote_id() == end_buffer.remote_id() {
+                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
+            } else {
+                panic!("invalid transformation range");
+            }
+        } else {
+            panic!("invalid transformation range");
+        };
+        let prompt = generate_content_prompt(user_prompt, language_name, buffer, range);
+
+        let mut messages = Vec::new();
+        if let Some(context_request) = assistant_panel_context {
+            messages = context_request.messages;
+        }
+
+        messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: prompt,
+        });
+
+        LanguageModelRequest {
+            messages,
+            stop: vec!["|END|>".to_string()],
+            temperature,
+        }
+    }
+
+    pub fn handle_stream(
+        &mut self,
+        model_telemetry_id: String,
+        edit_range: Range<Anchor>,
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let range = self.range.clone();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
-            .text_for_range(range.start..range.end)
+            .text_for_range(edit_range.start..edit_range.end)
             .collect::<Rope>();
 
-        let selection_start = range.start.to_point(&snapshot);
+        let selection_start = edit_range.start.to_point(&snapshot);
 
         // Start with the indentation of the first line in the selection
         let mut suggested_line_indent = snapshot
@@ -2094,7 +2249,7 @@ impl Codegen {
 
         // If the first line in the selection does not have indentation, check the following lines
         if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
-            for row in selection_start.row..=range.end.to_point(&snapshot).row {
+            for row in selection_start.row..=edit_range.end.to_point(&snapshot).row {
                 let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
                 // Prefer tabs if a line in the selection uses tabs as indentation
                 if line_indent.kind == IndentKind::Tab {
@@ -2105,19 +2260,13 @@ impl Codegen {
         }
 
         let telemetry = self.telemetry.clone();
-        self.edit_position = range.start;
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
-        if let Some(transaction_id) = self.generation_transaction_id.take() {
-            self.buffer
-                .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        }
+        let mut edit_start = edit_range.start.to_offset(&snapshot);
         self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let chunks = stream.await;
                 let generate = async {
-                    let mut edit_start = range.start.to_offset(&snapshot);
-
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
                     let diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
@@ -2207,7 +2356,7 @@ impl Codegen {
                                 telemetry.report_assistant_event(
                                     None,
                                     telemetry_events::AssistantKind::Inline,
-                                    telemetry_id,
+                                    model_telemetry_id,
                                     response_latency,
                                     error_message,
                                 );
@@ -2251,13 +2400,13 @@ impl Codegen {
                                     None,
                                     cx,
                                 );
-                                this.edit_position = snapshot.anchor_after(edit_start);
+                                this.edit_position = Some(snapshot.anchor_after(edit_start));
 
                                 buffer.end_transaction(cx)
                             });
 
                             if let Some(transaction) = transaction {
-                                if let Some(first_transaction) = this.generation_transaction_id {
+                                if let Some(first_transaction) = this.transaction_id {
                                     // Group all assistant edits into the first transaction.
                                     this.buffer.update(cx, |buffer, cx| {
                                         buffer.merge_transactions(
@@ -2267,14 +2416,14 @@ impl Codegen {
                                         )
                                     });
                                 } else {
-                                    this.generation_transaction_id = Some(transaction);
+                                    this.transaction_id = Some(transaction);
                                     this.buffer.update(cx, |buffer, cx| {
                                         buffer.finalize_last_transaction(cx)
                                     });
                                 }
                             }
 
-                            this.update_diff(cx);
+                            this.update_diff(edit_range.clone(), cx);
                             cx.notify();
                         })?;
                     }
@@ -2310,27 +2459,22 @@ impl Codegen {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(transaction_id) = self.prepend_transaction_id.take() {
-            self.buffer
-                .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        }
-
-        if let Some(transaction_id) = self.generation_transaction_id.take() {
+        if let Some(transaction_id) = self.transaction_id.take() {
             self.buffer
                 .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
         }
     }
 
-    fn update_diff(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_diff(&mut self, edit_range: Range<Anchor>, cx: &mut ModelContext<Self>) {
         if self.diff.task.is_some() {
             self.diff.should_update = true;
         } else {
             self.diff.should_update = false;
 
             let old_snapshot = self.snapshot.clone();
-            let old_range = self.range.to_point(&old_snapshot);
+            let old_range = edit_range.to_point(&old_snapshot);
             let new_snapshot = self.buffer.read(cx).snapshot(cx);
-            let new_range = self.range.to_point(&new_snapshot);
+            let new_range = edit_range.to_point(&new_snapshot);
 
             self.diff.task = Some(cx.spawn(|this, mut cx| async move {
                 let (deleted_row_ranges, inserted_row_ranges) = cx
@@ -2411,7 +2555,7 @@ impl Codegen {
                     this.diff.inserted_row_ranges = inserted_row_ranges;
                     this.diff.task = None;
                     if this.diff.should_update {
-                        this.update_diff(cx);
+                        this.update_diff(edit_range, cx);
                     }
                     cx.notify();
                 })
@@ -2600,7 +2744,6 @@ mod tests {
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_model::LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -2618,12 +2761,14 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), range.clone(), None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
-            codegen.start(
+            codegen.handle_stream(
                 String::new(),
+                range,
                 future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
                 cx,
             )
@@ -2679,12 +2824,14 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), range.clone(), None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
-            codegen.start(
+            codegen.handle_stream(
                 String::new(),
+                range.clone(),
                 future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
                 cx,
             )
@@ -2728,7 +2875,6 @@ mod tests {
         mut rng: StdRng,
     ) {
         cx.update(LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2744,12 +2890,14 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), range.clone(), None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
-            codegen.start(
+            codegen.handle_stream(
                 String::new(),
+                range.clone(),
                 future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
                 cx,
             )
@@ -2790,7 +2938,6 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
-        cx.update(completion::LanguageModelCompletionProvider::test);
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2808,12 +2955,14 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
-        let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, None, cx));
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), range.clone(), None, None, cx));
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
-            codegen.start(
+            codegen.handle_stream(
                 String::new(),
+                range.clone(),
                 future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
                 cx,
             )

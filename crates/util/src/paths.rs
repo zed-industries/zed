@@ -96,51 +96,56 @@ pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 /// A representation of a path-like string with optional row and column numbers.
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct PathLikeWithPosition<P> {
-    pub path_like: P,
+pub struct PathWithPosition {
+    pub path: PathBuf,
     pub row: Option<u32>,
     // Absent if row is absent.
     pub column: Option<u32>,
 }
 
-impl<P> PathLikeWithPosition<P> {
+impl PathWithPosition {
+    /// Returns a PathWithPosition from a path.
+    pub fn from_path(path: PathBuf) -> Self {
+        Self {
+            path,
+            row: None,
+            column: None,
+        }
+    }
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
-    /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    /// If on Windows, `s` will replace `/` with `\` for compatibility.
-    pub fn parse_str<E>(
-        s: &str,
-        parse_path_like_str: impl Fn(&str, &str) -> Result<P, E>,
-    ) -> Result<Self, E> {
-        #[cfg(target_os = "windows")]
-        let s = &s.replace('/', "\\");
-
-        let fallback = |fallback_str| {
-            Ok(Self {
-                path_like: parse_path_like_str(s, fallback_str)?,
-                row: None,
-                column: None,
-            })
+    /// If the suffix parsing fails, the whole string is parsed as a path.
+    pub fn parse_str(s: &str) -> Self {
+        let fallback = |fallback_str| Self {
+            path: Path::new(fallback_str).to_path_buf(),
+            row: None,
+            column: None,
         };
 
         let trimmed = s.trim();
-
-        #[cfg(target_os = "windows")]
-        {
-            let is_absolute = trimmed.starts_with(r"\\?\");
-            if is_absolute {
-                return Self::parse_absolute_path(trimmed, |p| parse_path_like_str(s, p));
-            }
+        let path = Path::new(trimmed);
+        let maybe_file_name_with_row_col = path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default();
+        if maybe_file_name_with_row_col.is_empty() {
+            return fallback(s);
         }
 
-        match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
-            Some((path_like_str, maybe_row_and_col_str)) => {
-                let path_like_str = path_like_str.trim();
+        match maybe_file_name_with_row_col.split_once(FILE_ROW_COLUMN_DELIMITER) {
+            Some((file_name, maybe_row_and_col_str)) => {
+                let file_name = file_name.trim();
                 let maybe_row_and_col_str = maybe_row_and_col_str.trim();
-                if path_like_str.is_empty() {
-                    fallback(s)
-                } else if maybe_row_and_col_str.is_empty() {
-                    fallback(path_like_str)
+                if file_name.is_empty() {
+                    return fallback(s);
+                }
+
+                let suffix_length = maybe_row_and_col_str.len() + 1;
+                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
+
+                if maybe_row_and_col_str.is_empty() {
+                    fallback(path_without_suffix)
                 } else {
                     let (row_parse_result, maybe_col_str) =
                         match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
@@ -150,36 +155,38 @@ impl<P> PathLikeWithPosition<P> {
                             None => (maybe_row_and_col_str.parse::<u32>(), ""),
                         };
 
+                    let path = Path::new(path_without_suffix).to_path_buf();
+
                     match row_parse_result {
                         Ok(row) => {
                             if maybe_col_str.is_empty() {
-                                Ok(Self {
-                                    path_like: parse_path_like_str(s, path_like_str)?,
+                                Self {
+                                    path,
                                     row: Some(row),
                                     column: None,
-                                })
+                                }
                             } else {
                                 let (maybe_col_str, _) =
                                     maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
                                 match maybe_col_str.parse::<u32>() {
-                                    Ok(col) => Ok(Self {
-                                        path_like: parse_path_like_str(s, path_like_str)?,
+                                    Ok(col) => Self {
+                                        path,
                                         row: Some(row),
                                         column: Some(col),
-                                    }),
-                                    Err(_) => Ok(Self {
-                                        path_like: parse_path_like_str(s, path_like_str)?,
+                                    },
+                                    Err(_) => Self {
+                                        path,
                                         row: Some(row),
                                         column: None,
-                                    }),
+                                    },
                                 }
                             }
                         }
-                        Err(_) => Ok(Self {
-                            path_like: parse_path_like_str(s, path_like_str)?,
+                        Err(_) => Self {
+                            path,
                             row: None,
                             column: None,
-                        }),
+                        },
                     }
                 }
             }
@@ -187,79 +194,27 @@ impl<P> PathLikeWithPosition<P> {
         }
     }
 
-    /// This helper function is used for parsing absolute paths on Windows. It exists because absolute paths on Windows are quite different from other platforms. See [this page](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#dos-device-paths) for more information.
-    #[cfg(target_os = "windows")]
-    fn parse_absolute_path<E>(
-        s: &str,
-        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
-    ) -> Result<Self, E> {
-        let fallback = |fallback_str| {
-            Ok(Self {
-                path_like: parse_path_like_str(fallback_str)?,
-                row: None,
-                column: None,
-            })
-        };
-
-        let mut iterator = s.split(FILE_ROW_COLUMN_DELIMITER);
-
-        let drive_prefix = iterator.next().unwrap_or_default();
-        let file_path = iterator.next().unwrap_or_default();
-
-        // TODO: How to handle drives without a letter? UNC paths?
-        let complete_path = drive_prefix.replace("\\\\?\\", "") + ":" + &file_path;
-
-        if let Some(row_str) = iterator.next() {
-            if let Some(column_str) = iterator.next() {
-                match row_str.parse::<u32>() {
-                    Ok(row) => match column_str.parse::<u32>() {
-                        Ok(col) => {
-                            return Ok(Self {
-                                path_like: parse_path_like_str(&complete_path)?,
-                                row: Some(row),
-                                column: Some(col),
-                            });
-                        }
-
-                        Err(_) => {
-                            return Ok(Self {
-                                path_like: parse_path_like_str(&complete_path)?,
-                                row: Some(row),
-                                column: None,
-                            });
-                        }
-                    },
-
-                    Err(_) => {
-                        return fallback(&complete_path);
-                    }
-                }
-            }
-        }
-        return fallback(&complete_path);
-    }
-
-    pub fn map_path_like<P2, E>(
+    pub fn map_path<E>(
         self,
-        mapping: impl FnOnce(P) -> Result<P2, E>,
-    ) -> Result<PathLikeWithPosition<P2>, E> {
-        Ok(PathLikeWithPosition {
-            path_like: mapping(self.path_like)?,
+        mapping: impl FnOnce(PathBuf) -> Result<PathBuf, E>,
+    ) -> Result<PathWithPosition, E> {
+        Ok(PathWithPosition {
+            path: mapping(self.path)?,
             row: self.row,
             column: self.column,
         })
     }
 
-    pub fn to_string(&self, path_like_to_string: impl Fn(&P) -> String) -> String {
-        let path_like_string = path_like_to_string(&self.path_like);
+    pub fn to_string(&self, path_to_string: impl Fn(&PathBuf) -> String) -> String {
+        let path_string = path_to_string(&self.path);
         if let Some(row) = self.row {
             if let Some(column) = self.column {
-                format!("{path_like_string}:{row}:{column}")
+                format!("{path_string}:{row}:{column}")
             } else {
-                format!("{path_like_string}:{row}")
+                format!("{path_string}:{row}")
             }
         } else {
-            path_like_string
+            path_string
         }
     }
 }
@@ -327,38 +282,29 @@ impl PathMatcher {
 mod tests {
     use super::*;
 
-    type TestPath = PathLikeWithPosition<(String, String)>;
-
-    fn parse_str(s: &str) -> TestPath {
-        TestPath::parse_str(s, |normalized, s| {
-            Ok::<_, std::convert::Infallible>((normalized.to_string(), s.to_string()))
-        })
-        .expect("infallible")
-    }
-
     #[test]
     fn path_with_position_parsing_positive() {
         let input_and_expected = [
             (
                 "test_file.rs",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: None,
                     column: None,
                 },
             ),
             (
                 "test_file.rs:1",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:1".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: Some(1),
                     column: None,
                 },
             ),
             (
                 "test_file.rs:1:2",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:1:2".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: Some(1),
                     column: Some(2),
                 },
@@ -366,7 +312,7 @@ mod tests {
         ];
 
         for (input, expected) in input_and_expected {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual, expected,
                 "For positive case input str '{input}', got a parse mismatch"
@@ -386,11 +332,11 @@ mod tests {
             ("test_file.rs:1::2", Some(1), None),
             ("test_file.rs:1:2:3", Some(1), Some(2)),
         ] {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual,
-                PathLikeWithPosition {
-                    path_like: (input.to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row,
                     column,
                 },
@@ -406,27 +352,24 @@ mod tests {
         let input_and_expected = [
             (
                 "test_file.rs:",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: None,
                     column: None,
                 },
             ),
             (
                 "test_file.rs:1:",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: Some(1),
                     column: None,
                 },
             ),
             (
                 "crates/file_finder/src/file_finder.rs:1902:13:",
-                PathLikeWithPosition {
-                    path_like: (
-                        "crates/file_finder/src/file_finder.rs:1902:13:".to_string(),
-                        "crates/file_finder/src/file_finder.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("crates/file_finder/src/file_finder.rs"),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -437,71 +380,64 @@ mod tests {
         let input_and_expected = [
             (
                 "test_file.rs:",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: None,
                     column: None,
                 },
             ),
             (
                 "test_file.rs:1:",
-                PathLikeWithPosition {
-                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
+                PathWithPosition {
+                    path: PathBuf::from("test_file.rs"),
                     row: Some(1),
                     column: None,
                 },
             ),
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
-                PathLikeWithPosition {
-                    path_like: (
-                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:".to_string(),
-                        "C:\\Users\\someone\\test_file.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: Some(13),
                 },
             ),
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
-                PathLikeWithPosition {
-                    path_like: (
-                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:".to_string(),
-                        "C:\\Users\\someone\\test_file.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: Some(13),
                 },
             ),
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
-                PathLikeWithPosition {
-                    path_like: (
-                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:".to_string(),
-                        "C:\\Users\\someone\\test_file.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                     row: Some(1902),
                     column: None,
                 },
             ),
             (
+                "C:\\Users\\someone\\test_file.rs:1902:13:",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
                 "crates/utils/paths.rs",
-                PathLikeWithPosition {
-                    path_like: (
-                        "crates\\utils\\paths.rs".to_string(),
-                        "crates\\utils\\paths.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("crates\\utils\\paths.rs"),
                     row: None,
                     column: None,
                 },
             ),
             (
                 "crates/utils/paths.rs:101",
-                PathLikeWithPosition {
-                    path_like: (
-                        "crates\\utils\\paths.rs:101".to_string(),
-                        "crates\\utils\\paths.rs".to_string(),
-                    ),
+                PathWithPosition {
+                    path: PathBuf::from("crates\\utils\\paths.rs"),
                     row: Some(101),
                     column: None,
                 },
@@ -509,7 +445,7 @@ mod tests {
         ];
 
         for (input, expected) in input_and_expected {
-            let actual = parse_str(input);
+            let actual = PathWithPosition::parse_str(input);
             assert_eq!(
                 actual, expected,
                 "For special case input str '{input}', got a parse mismatch"

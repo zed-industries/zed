@@ -73,7 +73,7 @@ thiserror.workspace = true
 time.workspace = true
 util.workspace = true
 uuid.workspace = true
-waker-fn = "1.1.0"
+waker-fn = "1.2.0"
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -93,6 +93,7 @@ cbindgen = { version = "0.26.0", default-features = false }
 block = "0.1"
 cocoa.workspace = true
 core-foundation.workspace = true
+core-foundation-sys = "0.8"
 core-graphics = "0.23"
 core-text = "20.1"
 foreign-types = "0.5"
@@ -150,7 +151,7 @@ x11-clipboard = "0.9.2"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-windows-core = "0.57"
+windows-core = "0.58"
 
 [[example]]
 name = "hello_world"

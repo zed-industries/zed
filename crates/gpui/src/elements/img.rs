@@ -1,19 +1,24 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use crate::{
     point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
     ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
-    WindowContext,
+    LayoutId, Length, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
+    UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
-use image::{ImageBuffer, ImageError};
+use http_client;
+use image::{
+    codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
+};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
-
-use http_client;
+use smallvec::SmallVec;
+use std::{
+    fs,
+    io::Cursor,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use util::ResultExt;
 
@@ -26,10 +31,16 @@ pub enum ImageSource {
     File(Arc<PathBuf>),
     /// Cached image data
     Data(Arc<ImageData>),
+    /// Image content will be loaded from Asset at render time.
+    Asset(SharedString),
     // TODO: move surface definitions into mac platform module
     /// A CoreVideo image buffer
     #[cfg(target_os = "macos")]
     Surface(CVImageBuffer),
+}
+
+fn is_uri(uri: &str) -> bool {
+    uri.contains("://")
 }
 
 impl From<SharedUri> for ImageSource {
@@ -39,14 +50,32 @@ impl From<SharedUri> for ImageSource {
 }
 
 impl From<&'static str> for ImageSource {
-    fn from(uri: &'static str) -> Self {
-        Self::Uri(uri.into())
+    fn from(s: &'static str) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s.into())
+        }
     }
 }
 
 impl From<String> for ImageSource {
-    fn from(uri: String) -> Self {
-        Self::Uri(uri.into())
+    fn from(s: String) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s.into())
+        }
+    }
+}
+
+impl From<SharedString> for ImageSource {
+    fn from(s: SharedString) -> Self {
+        if is_uri(&s) {
+            Self::Uri(s.into())
+        } else {
+            Self::Asset(s)
+        }
     }
 }
 
@@ -230,8 +259,14 @@ impl Img {
     }
 }
 
+/// The image state between frames
+struct ImgState {
+    frame_index: usize,
+    last_frame_time: Option<Instant>,
+}
+
 impl Element for Img {
-    type RequestLayoutState = ();
+    type RequestLayoutState = usize;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -243,29 +278,65 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |mut style, cx| {
-                if let Some(data) = self.source.data(cx) {
-                    let image_size = data.size();
-                    match (style.size.width, style.size.height) {
-                        (Length::Auto, Length::Auto) => {
-                            style.size = Size {
-                                width: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                                )),
-                                height: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                                )),
+        cx.with_optional_element_state(global_id, |state, cx| {
+            let mut state = state.map(|state| {
+                state.unwrap_or(ImgState {
+                    frame_index: 0,
+                    last_frame_time: None,
+                })
+            });
+
+            let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
+
+            let layout_id = self
+                .interactivity
+                .request_layout(global_id, cx, |mut style, cx| {
+                    if let Some(data) = self.source.data(cx) {
+                        if let Some(state) = &mut state {
+                            let frame_count = data.frame_count();
+                            if frame_count > 1 {
+                                let current_time = Instant::now();
+                                if let Some(last_frame_time) = state.last_frame_time {
+                                    let elapsed = current_time - last_frame_time;
+                                    let frame_duration =
+                                        Duration::from(data.delay(state.frame_index));
+
+                                    if elapsed >= frame_duration {
+                                        state.frame_index = (state.frame_index + 1) % frame_count;
+                                        state.last_frame_time =
+                                            Some(current_time - (elapsed - frame_duration));
+                                    }
+                                } else {
+                                    state.last_frame_time = Some(current_time);
+                                }
                             }
                         }
-                        _ => {}
-                    }
-                }
 
-                cx.request_layout(style, [])
-            });
-        (layout_id, ())
+                        let image_size = data.size(frame_index);
+                        match (style.size.width, style.size.height) {
+                            (Length::Auto, Length::Auto) => {
+                                style.size = Size {
+                                    width: Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
+                                    )),
+                                    height: Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
+                                    )),
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        if global_id.is_some() && data.frame_count() > 1 {
+                            cx.request_animation_frame();
+                        }
+                    }
+
+                    cx.request_layout(style, [])
+                });
+
+            ((layout_id, frame_index), state)
+        })
     }
 
     fn prepaint(
@@ -283,7 +354,7 @@ impl Element for Img {
         &mut self,
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        frame_index: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
@@ -293,9 +364,15 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    let new_bounds = self.object_fit.get_bounds(bounds, data.size());
-                    cx.paint_image(new_bounds, corner_radii, data.clone(), self.grayscale)
-                        .log_err();
+                    let new_bounds = self.object_fit.get_bounds(bounds, data.size(*frame_index));
+                    cx.paint_image(
+                        new_bounds,
+                        corner_radii,
+                        data.clone(),
+                        *frame_index,
+                        self.grayscale,
+                    )
+                    .log_err();
                 }
 
                 match source {
@@ -335,10 +412,11 @@ impl InteractiveElement for Img {
 impl ImageSource {
     fn data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::File(_) => {
+            ImageSource::Uri(_) | ImageSource::Asset(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
                     ImageSource::Uri(uri) => uri.clone().into(),
                     ImageSource::File(path) => path.clone().into(),
+                    ImageSource::Asset(path) => UriOrPath::Asset(path.clone()),
                     _ => unreachable!(),
                 };
 
@@ -366,6 +444,7 @@ impl Asset for Image {
         let client = cx.http_client();
         let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
+        let asset_source = cx.asset_source().clone();
         async move {
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
@@ -382,15 +461,47 @@ impl Asset for Image {
                     }
                     body
                 }
+                UriOrPath::Asset(path) => {
+                    let data = asset_source.load(&path).ok().flatten();
+                    if let Some(data) = data {
+                        data.to_vec()
+                    } else {
+                        return Err(ImageCacheError::Asset(
+                            format!("not found: {}", path).into(),
+                        ));
+                    }
+                }
             };
 
             let data = if let Ok(format) = image::guess_format(&bytes) {
-                let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                let data = match format {
+                    ImageFormat::Gif => {
+                        let decoder = GifDecoder::new(Cursor::new(&bytes))?;
+                        let mut frames = SmallVec::new();
 
-                // Convert from RGBA to BGRA.
-                for pixel in data.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
-                }
+                        for frame in decoder.into_frames() {
+                            let mut frame = frame?;
+                            // Convert from RGBA to BGRA.
+                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                            frames.push(frame);
+                        }
+
+                        frames
+                    }
+                    _ => {
+                        let mut data =
+                            image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+
+                        // Convert from RGBA to BGRA.
+                        for pixel in data.chunks_exact_mut(4) {
+                            pixel.swap(0, 2);
+                        }
+
+                        SmallVec::from_elem(Frame::new(data), 1)
+                    }
+                };
 
                 ImageData::new(data)
             } else {
@@ -400,7 +511,7 @@ impl Asset for Image {
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                ImageData::new(buffer)
+                ImageData::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };
 
             Ok(Arc::new(data))
@@ -427,6 +538,9 @@ pub enum ImageCacheError {
         /// The HTTP response body.
         body: String,
     },
+    /// An error that occurred while processing an asset.
+    #[error("asset error: {0}")]
+    Asset(SharedString),
     /// An error that occurred while processing an image.
     #[error("image error: {0}")]
     Image(Arc<ImageError>),

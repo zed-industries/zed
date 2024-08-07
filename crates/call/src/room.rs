@@ -493,7 +493,7 @@ impl Room {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, leaving room");
-            let _ = this.update(&mut cx, |this, cx| this.leave(cx))?;
+            let _ = this.update(&mut cx, |this, cx| this.leave(cx))?.await?;
         }
         Err(anyhow!(
             "can't reconnect to room: client failed to re-establish connection"
@@ -942,7 +942,7 @@ impl Room {
                 this.pending_room_update.take();
                 if this.should_leave() {
                     log::info!("room is empty, leaving");
-                    let _ = this.leave(cx);
+                    let _ = this.leave(cx).detach();
                 }
 
                 this.user_store.update(cx, |user_store, cx| {

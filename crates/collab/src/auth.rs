@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use base64::prelude::*;
 use prometheus::{exponential_buckets, register_histogram, Histogram};
 pub use rpc::auth::random_token;
 use scrypt::{
@@ -155,10 +156,7 @@ pub async fn create_access_token(
 /// protection.
 pub fn hash_access_token(token: &str) -> String {
     let digest = sha2::Sha256::digest(token);
-    format!(
-        "$sha256${}",
-        base64::encode_config(digest, base64::URL_SAFE)
-    )
+    format!("$sha256${}", BASE64_URL_SAFE.encode(digest))
 }
 
 /// Encrypts the given access token with the given public key to avoid leaking it on the way
@@ -402,14 +400,15 @@ mod test {
     fn previous_hash_access_token(token: &str) -> Result<String> {
         // Avoid slow hashing in debug mode.
         let params = if cfg!(debug_assertions) {
-            scrypt::Params::new(1, 1, 1).unwrap()
+            scrypt::Params::new(1, 1, 1, scrypt::Params::RECOMMENDED_LEN).unwrap()
         } else {
-            scrypt::Params::new(14, 8, 1).unwrap()
+            scrypt::Params::new(14, 8, 1, scrypt::Params::RECOMMENDED_LEN).unwrap()
         };
 
         Ok(Scrypt
-            .hash_password(
+            .hash_password_customized(
                 token.as_bytes(),
+                None,
                 None,
                 params,
                 &SaltString::generate(thread_rng()),

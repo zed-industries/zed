@@ -21,7 +21,6 @@ assistant_slash_command.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
-cap-std.workspace = true
 client.workspace = true
 collections.workspace = true
 fs.workspace = true

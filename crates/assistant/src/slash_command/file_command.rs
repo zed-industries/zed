@@ -29,7 +29,7 @@ impl FileSlashCommand {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = "".into();
+            let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
@@ -136,7 +136,7 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {
@@ -273,20 +273,25 @@ fn collect_files(
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
-                        let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
+                        let buffer_snapshot =
+                            cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
                         let prev_len = text.len();
-                        collect_file_content(&mut text, &snapshot, filename.clone());
+                        collect_file_content(
+                            &mut text,
+                            &buffer_snapshot,
+                            path_including_worktree_name.to_string_lossy().to_string(),
+                        );
                         text.push('\n');
                         if !write_single_file_diagnostics(
                             &mut text,
                             Some(&path_including_worktree_name),
-                            &snapshot,
+                            &buffer_snapshot,
                         ) {
                             text.pop();
                         }
                         ranges.push((
                             prev_len..text.len(),
-                            PathBuf::from(filename),
+                            path_including_worktree_name,
                             EntryType::File,
                         ));
                         text.push('\n');

@@ -8,15 +8,15 @@ repository = "https://github.com/zed-industries/zed"
 
 [language_servers.solargraph]
 name = "Solargraph"
-language = "Ruby"
+languages = ["Ruby"]
 
 [language_servers.ruby-lsp]
 name = "Ruby LSP"
-language = "Ruby"
+languages = ["Ruby", "ERB"]
 
 [language_servers.rubocop]
 name = "Rubocop"
-language = "Ruby"
+languages = ["Ruby"]
 
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"

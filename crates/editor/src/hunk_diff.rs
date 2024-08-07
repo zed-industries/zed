@@ -13,8 +13,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Styled, ViewContext, VisualContext,
+    div, h_flex, rems, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -364,7 +364,7 @@ impl Editor {
                         .row;
                     let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
                     let line_count = diff_end_row - diff_start_row;
-                    line_count as u8
+                    line_count
                 })?;
                 Some((diff_base_buffer, deleted_text_lines))
             } else {
@@ -422,7 +422,7 @@ impl Editor {
     fn insert_deleted_text_block(
         &mut self,
         diff_base_buffer: Model<Buffer>,
-        deleted_text_height: u8,
+        deleted_text_height: u32,
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<CustomBlockId> {
@@ -431,10 +431,11 @@ impl Editor {
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let editor = cx.view().clone();
         let hunk = hunk.clone();
+        let height = editor_height.max(deleted_text_height);
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position: hunk.multi_buffer_range.start,
-                height: editor_height.max(deleted_text_height),
+                height,
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
@@ -474,7 +475,8 @@ impl Editor {
                     h_flex()
                         .id("gutter with editor")
                         .bg(deleted_hunk_color)
-                        .size_full()
+                        .h(height as f32 * cx.line_height())
+                        .w_full()
                         .child(
                             h_flex()
                                 .id("gutter")
@@ -484,7 +486,10 @@ impl Editor {
                                 .child(
                                     h_flex()
                                         .id("gutter hunk")
-                                        .pl(hunk_bounds.origin.x)
+                                        .pl(gutter_dimensions.margin
+                                            + gutter_dimensions
+                                                .git_blame_entries_width
+                                                .unwrap_or_default())
                                         .max_w(hunk_bounds.size.width)
                                         .min_w(hunk_bounds.size.width)
                                         .size_full()
@@ -512,7 +517,7 @@ impl Editor {
                                 .child(
                                     v_flex()
                                         .size_full()
-                                        .pt(ui::rems(0.25))
+                                        .pt(rems(0.25))
                                         .justify_start()
                                         .child(close_button),
                                 ),
@@ -780,7 +785,7 @@ fn editor_with_deleted_text(
     deleted_color: Hsla,
     hunk: &HoveredHunk,
     cx: &mut ViewContext<'_, Editor>,
-) -> (u8, View<Editor>) {
+) -> (u32, View<Editor>) {
     let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
@@ -882,7 +887,7 @@ fn editor_with_deleted_text(
         editor
     });
 
-    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0 as u8);
+    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0);
     (editor_height, editor)
 }
 

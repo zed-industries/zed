@@ -1,3 +1,4 @@
+#![allow(clippy::reversed_empty_ranges)]
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;

@@ -10,7 +10,7 @@ use gpui::{
     TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
-use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
@@ -61,6 +61,7 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
+    parse_links_only: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -86,6 +87,33 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
+            parse_links_only: false,
+        };
+        this.parse(cx);
+        this
+    }
+
+    pub fn new_text(
+        source: String,
+        style: MarkdownStyle,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut ViewContext<Self>,
+        fallback_code_block_language: Option<String>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let mut this = Self {
+            source,
+            selection: Selection::default(),
+            pressed_link: None,
+            autoscroll_request: None,
+            style,
+            should_reparse: false,
+            parsed_markdown: ParsedMarkdown::default(),
+            pending_parse: None,
+            focus_handle,
+            language_registry,
+            fallback_code_block_language,
+            parse_links_only: true,
         };
         this.parse(cx);
         this
@@ -136,9 +164,13 @@ impl Markdown {
         }
 
         let text = self.source.clone();
+        let parse_text_only = self.parse_links_only;
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
-            let events = Arc::from(parse_markdown(text.as_ref()));
+            let events = match parse_text_only {
+                true => Arc::from(parse_links_only(text.as_ref())),
+                false => Arc::from(parse_markdown(text.as_ref())),
+            };
             anyhow::Ok(ParsedMarkdown {
                 source: text,
                 events,
@@ -216,7 +248,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -229,15 +261,6 @@ impl ParsedMarkdown {
 
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
         return &self.events;
-    }
-}
-
-impl Default for ParsedMarkdown {
-    fn default() -> Self {
-        Self {
-            source: SharedString::default(),
-            events: Arc::from([]),
-        }
     }
 }
 

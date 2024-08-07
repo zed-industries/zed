@@ -21,6 +21,7 @@ pub struct OutlineItem<T> {
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
     pub body_range: Option<Range<T>>,
+    pub annotation_range: Option<Range<T>>,
 }
 
 impl<T> Outline<T> {
@@ -162,6 +163,7 @@ pub fn render_item<T>(
         color: cx.theme().colors().text,
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),

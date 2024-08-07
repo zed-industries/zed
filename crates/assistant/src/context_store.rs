@@ -8,7 +8,9 @@ use clock::ReplicaId;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, Task, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
+};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
@@ -26,6 +28,7 @@ use util::{ResultExt, TryFutureExt};
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
+    client.add_model_request_handler(ContextStore::handle_create_context);
     client.add_model_message_handler(ContextStore::handle_update_context);
     client.add_model_request_handler(ContextStore::handle_synchronize_contexts);
 }
@@ -50,6 +53,12 @@ pub struct ContextStore {
     client_subscription: Option<client::Subscription>,
     _project_subscriptions: Vec<gpui::Subscription>,
 }
+
+pub enum ContextStoreEvent {
+    ContextCreated(ContextId),
+}
+
+impl EventEmitter<ContextStoreEvent> for ContextStore {}
 
 enum ContextHandle {
     Weak(WeakModel<Context>),
@@ -165,6 +174,34 @@ impl ContextStore {
         })??;
         let operations = operations.await;
         Ok(proto::OpenContextResponse {
+            context: Some(proto::Context { operations }),
+        })
+    }
+
+    async fn handle_create_context(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::CreateContext>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::CreateContextResponse> {
+        let (context_id, operations) = this.update(&mut cx, |this, cx| {
+            if this.project.read(cx).is_remote() {
+                return Err(anyhow!("can only create contexts as the host"));
+            }
+
+            let context = this.create(cx);
+            let context_id = context.read(cx).id().clone();
+            cx.emit(ContextStoreEvent::ContextCreated(context_id.clone()));
+
+            anyhow::Ok((
+                context_id,
+                context
+                    .read(cx)
+                    .serialize_ops(&ContextVersion::default(), cx),
+            ))
+        })??;
+        let operations = operations.await;
+        Ok(proto::CreateContextResponse {
+            context_id: context_id.to_proto(),
             context: Some(proto::Context { operations }),
         })
     }
@@ -299,6 +336,60 @@ impl ContextStore {
         context
     }
 
+    pub fn create_remote_context(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Context>>> {
+        let project = self.project.read(cx);
+        let Some(project_id) = project.remote_id() else {
+            return Task::ready(Err(anyhow!("project was not remote")));
+        };
+        if project.is_local() {
+            return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
+        }
+
+        let replica_id = project.replica_id();
+        let capability = project.capability();
+        let language_registry = self.languages.clone();
+        let telemetry = self.telemetry.clone();
+        let request = self.client.request(proto::CreateContext { project_id });
+        cx.spawn(|this, mut cx| async move {
+            let response = request.await?;
+            let context_id = ContextId::from_proto(response.context_id);
+            let context_proto = response.context.context("invalid context")?;
+            let context = cx.new_model(|cx| {
+                Context::new(
+                    context_id.clone(),
+                    replica_id,
+                    capability,
+                    language_registry,
+                    Some(telemetry),
+                    cx,
+                )
+            })?;
+            let operations = cx
+                .background_executor()
+                .spawn(async move {
+                    context_proto
+                        .operations
+                        .into_iter()
+                        .map(|op| ContextOperation::from_proto(op))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .await?;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            this.update(&mut cx, |this, cx| {
+                if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
+                    existing_context
+                } else {
+                    this.register_context(&context, cx);
+                    this.synchronize_contexts(cx);
+                    context
+                }
+            })
+        })
+    }
+
     pub fn open_local_context(
         &mut self,
         path: PathBuf,
@@ -346,7 +437,11 @@ impl ContextStore {
         })
     }
 
-    fn loaded_context_for_id(&self, id: &ContextId, cx: &AppContext) -> Option<Model<Context>> {
+    pub(super) fn loaded_context_for_id(
+        &self,
+        id: &ContextId,
+        cx: &AppContext,
+    ) -> Option<Model<Context>> {
         self.contexts.iter().find_map(|context| {
             let context = context.upgrade()?;
             if context.read(cx).id() == id {

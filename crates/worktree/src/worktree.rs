@@ -510,7 +510,7 @@ impl Worktree {
                                 }
                             }
                         };
-                        cx.emit(Event::UpdatedEntries(Arc::from([])));
+                        cx.emit(Event::UpdatedEntries(Arc::default()));
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
                             if this.observed_snapshot(*scan_id) {
@@ -1698,7 +1698,7 @@ impl LocalWorktree {
         let (snapshots_tx, mut snapshots_rx) =
             mpsc::unbounded::<(LocalSnapshot, UpdatedEntriesSet, UpdatedGitRepositoriesSet)>();
         snapshots_tx
-            .unbounded_send((self.snapshot(), Arc::from([]), Arc::from([])))
+            .unbounded_send((self.snapshot(), Arc::default(), Arc::default()))
             .ok();
 
         let worktree_id = cx.entity_id().as_u64();
@@ -2116,6 +2116,24 @@ impl Snapshot {
         }
 
         Ok(())
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries_by_path.summary().count
+    }
+
+    pub fn visible_entry_count(&self) -> usize {
+        self.entries_by_path.summary().non_ignored_count
+    }
+
+    pub fn dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.count - summary.file_count
+    }
+
+    pub fn visible_dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.non_ignored_count - summary.non_ignored_file_count
     }
 
     pub fn file_count(&self) -> usize {
@@ -3127,7 +3145,7 @@ pub struct Entry {
     pub inode: u64,
     pub mtime: Option<SystemTime>,
 
-    pub canonical_path: Option<PathBuf>,
+    pub canonical_path: Option<Box<Path>>,
     pub is_symlink: bool,
     /// Whether this entry is ignored by Git.
     ///
@@ -3186,7 +3204,7 @@ impl Entry {
         metadata: &fs::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
-        canonical_path: Option<PathBuf>,
+        canonical_path: Option<Box<Path>>,
     ) -> Self {
         Self {
             id: ProjectEntryId::new(next_entry_id),
@@ -3942,7 +3960,7 @@ impl BackgroundScanner {
                     child_entry.is_external = true;
                 }
 
-                child_entry.canonical_path = Some(canonical_path);
+                child_entry.canonical_path = Some(canonical_path.into());
             }
 
             if child_entry.is_dir() {
@@ -4073,21 +4091,21 @@ impl BackgroundScanner {
             }
         }
 
-        for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
+        for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
                         .snapshot
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
-
+                    let is_external = !canonical_path.starts_with(&root_canonical_path);
                     let mut fs_entry = Entry::new(
                         path.clone(),
-                        metadata,
+                        &metadata,
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
-                            Some(canonical_path.to_path_buf())
+                            Some(canonical_path.into())
                         } else {
                             None
                         },
@@ -4096,7 +4114,7 @@ impl BackgroundScanner {
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
 
-                    fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
+                    fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
 
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {

@@ -243,6 +243,7 @@ pub struct Project {
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
+    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
 pub enum LanguageServerToQuery {
@@ -855,6 +856,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             }
         })
     }
@@ -1053,6 +1055,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                cached_shell_environments: HashMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1572,6 +1575,15 @@ impl Project {
                 })
                 .await
                 .unwrap();
+
+            project.update(cx, |project, cx| {
+                let tree_id = tree.read(cx).id();
+                // In tests we always populate the environment to be empty so we don't run the shell
+                project
+                    .cached_shell_environments
+                    .insert(tree_id, HashMap::default());
+            });
+
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
@@ -2267,6 +2279,13 @@ impl Project {
     }
 
     pub fn is_local(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
+    pub fn is_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
             ProjectClientState::Remote { .. } => false,
@@ -3391,9 +3410,18 @@ impl Project {
                 .join(", ")
         );
 
-        for adapter in enabled_lsp_adapters {
-            self.start_language_server(worktree, adapter, language.clone(), cx);
+        for adapter in &enabled_lsp_adapters {
+            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
+
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages()
+            .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
     fn start_language_server(
@@ -8086,11 +8114,7 @@ impl Project {
     ) -> Option<(Model<Worktree>, PathBuf)> {
         self.worktree_store.read_with(cx, |worktree_store, cx| {
             for tree in worktree_store.worktrees() {
-                if let Some(relative_path) = tree
-                    .read(cx)
-                    .as_local()
-                    .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-                {
+                if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
                     return Some((tree.clone(), relative_path.into()));
                 }
             }
@@ -8297,6 +8321,7 @@ impl Project {
         }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
+        self.cached_shell_environments.remove(&id_to_remove);
 
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
@@ -8754,36 +8779,47 @@ impl Project {
         })
     }
 
-    /// Attempts to find a `ProjectPath` corresponding to the given full path.
+    /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
+    /// is a *full path*, meaning it starts with the root name of a worktree, we'll locate
+    /// it in that worktree. Otherwise, we'll attempt to find it as a relative path in
+    /// the first visible worktree that has an entry for that relative path.
     ///
-    /// This method iterates through all worktrees in the project, trying to match
-    /// the given full path against each worktree's root name. If a match is found,
-    /// it returns a `ProjectPath` containing the worktree ID and the relative path
-    /// within that worktree.
+    /// We use this to resolve edit steps, when there's a chance an LLM may omit the workree
+    /// root name from paths.
     ///
     /// # Arguments
     ///
-    /// * `full_path` - A reference to a `Path` representing the full path to resolve.
+    /// * `path` - A full path that starts with a worktree root name, or alternatively a
+    ///            relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
     /// # Returns
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
-    pub fn project_path_for_full_path(
-        &self,
-        full_path: &Path,
-        cx: &AppContext,
-    ) -> Option<ProjectPath> {
-        self.worktree_store.read_with(cx, |worktree_store, cx| {
-            worktree_store.worktrees().find_map(|worktree| {
-                let worktree_root_name = worktree.read(cx).root_name();
-                let relative_path = full_path.strip_prefix(worktree_root_name).ok()?;
-                Some(ProjectPath {
+    pub fn find_project_path(&self, path: &Path, cx: &AppContext) -> Option<ProjectPath> {
+        let worktree_store = self.worktree_store.read(cx);
+
+        for worktree in worktree_store.visible_worktrees(cx) {
+            let worktree_root_name = worktree.read(cx).root_name();
+            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                return Some(ProjectPath {
                     worktree_id: worktree.read(cx).id(),
                     path: relative_path.into(),
-                })
-            })
-        })
+                });
+            }
+        }
+
+        for worktree in worktree_store.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            if let Some(entry) = worktree.entry_for_path(path) {
+                return Some(ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: entry.path.clone(),
+                });
+            }
+        }
+
+        None
     }
 
     pub fn project_path_for_absolute_path(
@@ -9746,6 +9782,7 @@ impl Project {
         })?;
         let task_context = context_task.await.unwrap_or_default();
         Ok(proto::TaskContext {
+            project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
                 .cwd
                 .map(|cwd| cwd.to_string_lossy().to_string()),
@@ -10679,8 +10716,10 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_for_buffer(buffer, cx)
-            .find(|s| s.0.is_primary)
+        // The list of language servers is ordered based on the `language_servers` setting
+        // for each language, thus we can consider the first one in the list to be the
+        // primary one.
+        self.language_servers_for_buffer(buffer, cx).next()
     }
 
     pub fn language_server_for_buffer(
@@ -10724,7 +10763,14 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local() {
-            let cwd = self.task_cwd(cx).log_err().flatten();
+            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+                (
+                    Some(worktree.read(cx).id()),
+                    Some(self.task_cwd(worktree, cx)),
+                )
+            } else {
+                (None, None)
+            };
 
             cx.spawn(|project, cx| async move {
                 let mut task_variables = cx
@@ -10741,7 +10787,17 @@ impl Project {
                     .flatten()?;
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
+
+                let mut project_env = None;
+                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
+                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
+                    if let Some(env) = env {
+                        project_env.replace(env);
+                    }
+                };
+
                 Some(TaskContext {
+                    project_env: project_env.unwrap_or_default(),
                     cwd,
                     task_variables,
                 })
@@ -10761,6 +10817,7 @@ impl Project {
             cx.background_executor().spawn(async move {
                 let task_context = task_context.await.log_err()?;
                 Some(TaskContext {
+                    project_env: task_context.project_env.into_iter().collect(),
                     cwd: task_context.cwd.map(PathBuf::from),
                     task_variables: task_context
                         .task_variables
@@ -10779,6 +10836,50 @@ impl Project {
             })
         } else {
             Task::ready(None)
+        }
+    }
+
+    async fn get_worktree_shell_env(
+        this: WeakModel<Self>,
+        worktree_id: WorktreeId,
+        cwd: &PathBuf,
+        mut cx: AsyncAppContext,
+    ) -> Option<HashMap<String, String>> {
+        let cached_env = this
+            .update(&mut cx, |project, _| {
+                project.cached_shell_environments.get(&worktree_id).cloned()
+            })
+            .ok()?;
+
+        if let Some(env) = cached_env {
+            Some(env)
+        } else {
+            let load_direnv = this
+                .update(&mut cx, |_, cx| {
+                    ProjectSettings::get_global(cx).load_direnv.clone()
+                })
+                .ok()?;
+
+            let shell_env = cx
+                .background_executor()
+                .spawn({
+                    let cwd = cwd.clone();
+                    async move {
+                        load_shell_environment(&cwd, &load_direnv)
+                            .await
+                            .unwrap_or_default()
+                    }
+                })
+                .await;
+
+            this.update(&mut cx, |project, _| {
+                project
+                    .cached_shell_environments
+                    .insert(worktree_id, shell_env.clone());
+            })
+            .ok()?;
+
+            Some(shell_env)
         }
     }
 
@@ -10906,7 +11007,7 @@ impl Project {
         })
     }
 
-    fn task_cwd(&self, cx: &AppContext) -> anyhow::Result<Option<PathBuf>> {
+    fn task_worktree(&self, cx: &AppContext) -> Option<Model<Worktree>> {
         let available_worktrees = self
             .worktrees(cx)
             .filter(|worktree| {
@@ -10916,28 +11017,24 @@ impl Project {
                     && worktree.root_entry().map_or(false, |e| e.is_dir())
             })
             .collect::<Vec<_>>();
-        let cwd = match available_worktrees.len() {
+
+        match available_worktrees.len() {
             0 => None,
-            1 => Some(available_worktrees[0].read(cx).abs_path()),
-            _ => {
-                let cwd_for_active_entry = self.active_entry().and_then(|entry_id| {
-                    available_worktrees.into_iter().find_map(|worktree| {
-                        let worktree = worktree.read(cx);
-                        if worktree.contains_entry(entry_id) {
-                            Some(worktree.abs_path())
-                        } else {
-                            None
-                        }
-                    })
-                });
-                anyhow::ensure!(
-                    cwd_for_active_entry.is_some(),
-                    "Cannot determine task cwd for multiple worktrees"
-                );
-                cwd_for_active_entry
-            }
-        };
-        Ok(cwd.map(|path| path.to_path_buf()))
+            1 => Some(available_worktrees[0].clone()),
+            _ => self.active_entry().and_then(|entry_id| {
+                available_worktrees.into_iter().find_map(|worktree| {
+                    if worktree.read(cx).contains_entry(entry_id) {
+                        Some(worktree)
+                    } else {
+                        None
+                    }
+                })
+            }),
+        }
+    }
+
+    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
+        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 
@@ -11296,10 +11393,30 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn len(&self) -> usize {
-        if self.include_ignored {
-            self.snapshot.file_count()
-        } else {
-            self.snapshot.visible_file_count()
+        match self.candidates {
+            Candidates::Files => {
+                if self.include_ignored {
+                    self.snapshot.file_count()
+                } else {
+                    self.snapshot.visible_file_count()
+                }
+            }
+
+            Candidates::Directories => {
+                if self.include_ignored {
+                    self.snapshot.dir_count()
+                } else {
+                    self.snapshot.visible_dir_count()
+                }
+            }
+
+            Candidates::Entries => {
+                if self.include_ignored {
+                    self.snapshot.entry_count()
+                } else {
+                    self.snapshot.visible_entry_count()
+                }
+            }
         }
     }
 
@@ -11309,7 +11426,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         } else if self.include_root_name {
             format!("{}/", self.snapshot.root_name()).into()
         } else {
-            "".into()
+            Arc::default()
         }
     }
 

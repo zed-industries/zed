@@ -27,8 +27,8 @@ use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
 use workspace::Workspace;
 
-use std::{fmt::Debug, ops::RangeInclusive};
-use std::{mem, sync::Arc};
+use std::mem;
+use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
 use crate::{BlockContext, BlockProperties, TerminalView};
 
@@ -73,8 +73,8 @@ impl DisplayCursor {
 }
 
 #[derive(Debug, Default)]
-struct LayoutCell {
-    point: AlacPoint<i32, i32>,
+pub struct LayoutCell {
+    pub point: AlacPoint<i32, i32>,
     text: gpui::ShapedLine,
 }
 
@@ -83,10 +83,10 @@ impl LayoutCell {
         LayoutCell { point, text }
     }
 
-    fn paint(
+    pub fn paint(
         &self,
         origin: Point<Pixels>,
-        layout: &LayoutState,
+        dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) {
@@ -94,17 +94,17 @@ impl LayoutCell {
             let point = self.point;
 
             Point::new(
-                (origin.x + point.column as f32 * layout.dimensions.cell_width).floor(),
-                origin.y + point.line as f32 * layout.dimensions.line_height,
+                (origin.x + point.column as f32 * dimensions.cell_width).floor(),
+                origin.y + point.line as f32 * dimensions.line_height,
             )
         };
 
-        self.text.paint(pos, layout.dimensions.line_height, cx).ok();
+        self.text.paint(pos, dimensions.line_height, cx).ok();
     }
 }
 
 #[derive(Clone, Debug, Default)]
-struct LayoutRect {
+pub struct LayoutRect {
     point: AlacPoint<i32, i32>,
     num_of_cells: usize,
     color: Hsla,
@@ -127,17 +127,17 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
+    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, cx: &mut WindowContext) {
         let position = {
             let alac_point = self.point;
             point(
-                (origin.x + alac_point.column as f32 * layout.dimensions.cell_width).floor(),
-                origin.y + alac_point.line as f32 * layout.dimensions.line_height,
+                (origin.x + alac_point.column as f32 * dimensions.cell_width).floor(),
+                origin.y + alac_point.line as f32 * dimensions.line_height,
             )
         };
         let size = point(
-            (layout.dimensions.cell_width * self.num_of_cells as f32).ceil(),
-            layout.dimensions.line_height,
+            (dimensions.cell_width * self.num_of_cells as f32).ceil(),
+            dimensions.line_height,
         )
         .into();
 
@@ -156,7 +156,7 @@ pub struct TerminalElement {
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
     interactivity: Interactivity,
-    block_below_cursor: Option<Arc<BlockProperties>>,
+    block_below_cursor: Option<Rc<BlockProperties>>,
 }
 
 impl InteractiveElement for TerminalElement {
@@ -177,7 +177,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
-        block_below_cursor: Option<Arc<BlockProperties>>,
+        block_below_cursor: Option<Rc<BlockProperties>>,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -196,8 +196,8 @@ impl TerminalElement {
 
     //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
 
-    fn layout_grid(
-        grid: &Vec<IndexedCell>,
+    pub fn layout_grid(
+        grid: impl Iterator<Item = IndexedCell>,
         text_style: &TextStyle,
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
@@ -614,16 +614,24 @@ impl Element for TerminalElement {
                 let buffer_font_size = settings.buffer_font_size(cx);
 
                 let terminal_settings = TerminalSettings::get_global(cx);
+
                 let font_family = terminal_settings
                     .font_family
                     .as_ref()
-                    .map(|string| string.clone().into())
-                    .unwrap_or(settings.buffer_font.family);
+                    .unwrap_or(&settings.buffer_font.family)
+                    .clone();
+
+                let font_fallbacks = terminal_settings
+                    .font_fallbacks
+                    .as_ref()
+                    .or(settings.buffer_font.fallbacks.as_ref())
+                    .map(|fallbacks| fallbacks.clone());
 
                 let font_features = terminal_settings
                     .font_features
-                    .clone()
-                    .unwrap_or(settings.buffer_font.features.clone());
+                    .as_ref()
+                    .unwrap_or(&settings.buffer_font.features)
+                    .clone();
 
                 let font_weight = terminal_settings.font_weight.unwrap_or_default();
 
@@ -653,6 +661,7 @@ impl Element for TerminalElement {
                     font_family,
                     font_features,
                     font_weight,
+                    font_fallbacks,
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
@@ -746,7 +755,7 @@ impl Element for TerminalElement {
                 // then have that representation be converted to the appropriate highlight data structure
 
                 let (cells, rects) = TerminalElement::layout_grid(
-                    cells,
+                    cells.iter().cloned(),
                     &text_style,
                     &cx.text_system(),
                     last_hovered_word
@@ -909,7 +918,7 @@ impl Element for TerminalElement {
                     });
 
                     for rect in &layout.rects {
-                        rect.paint(origin, &layout, cx);
+                        rect.paint(origin, &layout.dimensions, cx);
                     }
 
                     for (relative_highlighted_range, color) in
@@ -930,7 +939,7 @@ impl Element for TerminalElement {
                     }
 
                     for cell in &layout.cells {
-                        cell.paint(origin, &layout, bounds, cx);
+                        cell.paint(origin, &layout.dimensions, bounds, cx);
                     }
 
                     if self.cursor_visible {

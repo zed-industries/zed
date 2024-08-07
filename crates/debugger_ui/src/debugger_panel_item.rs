@@ -1,7 +1,10 @@
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
-use dap::{Scope, StackFrame, StoppedEvent, ThreadEvent, Variable};
+use dap::{
+    OutputEvent, OutputEventCategory, Scope, StackFrame, StoppedEvent, ThreadEvent, Variable,
+};
+use editor::Editor;
 use gpui::{
     actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, ListState, Subscription, View, WeakView,
@@ -11,6 +14,13 @@ use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
 use workspace::item::{Item, ItemEvent};
 
+#[derive(PartialEq, Eq)]
+enum ThreadItem {
+    Variables,
+    Console,
+    Output,
+}
+
 pub struct DebugPanelItem {
     thread_id: u64,
     focus_handle: FocusHandle,
@@ -18,11 +28,13 @@ pub struct DebugPanelItem {
     client: Arc<DebugAdapterClient>,
     _subscriptions: Vec<Subscription>,
     current_stack_frame_id: Option<u64>,
+    active_thread_item: ThreadItem,
+    output_editor: View<Editor>,
 }
 
 actions!(
     debug_panel_item,
-    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop]
+    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop, Disconnect]
 );
 
 impl DebugPanelItem {
@@ -54,17 +66,36 @@ impl DebugPanelItem {
                     DebugPanelEvent::Thread((client_id, event)) => {
                         Self::handle_thread_event(this, client_id, event, cx)
                     }
+                    DebugPanelEvent::Output((client_id, event)) => {
+                        Self::handle_output_event(this, client_id, event, cx)
+                    }
                 };
             }
         })];
+
+        let output_editor = cx.new_view(|cx| {
+            let mut editor = Editor::multi_line(cx);
+            editor.set_placeholder_text("Debug adapter and script output", cx);
+            editor.set_read_only(true);
+            editor.set_show_inline_completions(false);
+            editor.set_searchable(true);
+            editor.set_auto_replace_emoji_shortcode(false);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_autoindent(false);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor
+        });
 
         Self {
             client,
             thread_id,
             focus_handle,
+            output_editor,
             _subscriptions,
             stack_frame_list,
             current_stack_frame_id: None,
+            active_thread_item: ThreadItem::Variables,
         }
     }
 
@@ -102,6 +133,35 @@ impl DebugPanelItem {
         }
 
         // TODO: handle thread event
+    }
+
+    fn handle_output_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        event: &OutputEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if Self::should_skip_event(this, client_id, this.thread_id) {
+            return;
+        }
+
+        if event
+            .category
+            .as_ref()
+            .map(|c| *c == OutputEventCategory::Telemetry)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        this.output_editor.update(cx, |editor, cx| {
+            editor.set_read_only(false);
+            editor.move_to_end(&editor::actions::MoveToEnd, cx);
+            editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
+            editor.set_read_only(true);
+
+            cx.notify();
+        });
     }
 }
 
@@ -172,9 +232,8 @@ impl DebugPanelItem {
 
     fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .w_1_3()
             .gap_3()
-            .h_full()
+            .size_full()
             .child(list(self.stack_frame_list.clone()).size_full())
             .into_any()
     }
@@ -397,7 +456,7 @@ impl DebugPanelItem {
 
         cx.background_executor()
             .spawn(async move { client.restart().await })
-            .detach();
+            .detach_and_log_err(cx);
     }
 
     fn handle_pause_action(&mut self, _: &Pause, cx: &mut ViewContext<Self>) {
@@ -405,22 +464,32 @@ impl DebugPanelItem {
         let thread_id = self.thread_id;
         cx.background_executor()
             .spawn(async move { client.pause(thread_id).await })
-            .detach();
+            .detach_and_log_err(cx);
     }
 
     fn handle_stop_action(&mut self, _: &Stop, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
+        let thread_ids = vec![self.thread_id; 1];
+
         cx.background_executor()
-            .spawn(async move { client.stop().await })
-            .detach();
+            .spawn(async move { client.terminate_threads(Some(thread_ids)).await })
+            .detach_and_log_err(cx);
+    }
+
+    fn handle_disconnect_action(&mut self, _: &Disconnect, cx: &mut ViewContext<Self>) {
+        let client = self.client.clone();
+        cx.background_executor()
+            .spawn(async move { client.disconnect(None, Some(true), None).await })
+            .detach_and_log_err(cx);
     }
 }
 
 impl Render for DebugPanelItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let thread_status = self.current_thread_state().status;
+        let active_thread_item = &self.active_thread_item;
 
-        v_flex()
+        h_flex()
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle)
             .capture_action(cx.listener(Self::handle_continue_action))
@@ -430,84 +499,176 @@ impl Render for DebugPanelItem {
             .capture_action(cx.listener(Self::handle_restart_action))
             .capture_action(cx.listener(Self::handle_pause_action))
             .capture_action(cx.listener(Self::handle_stop_action))
+            .capture_action(cx.listener(Self::handle_disconnect_action))
             .p_2()
             .size_full()
             .items_start()
             .child(
-                h_flex()
-                    .gap_2()
-                    .map(|this| {
-                        if self.current_thread_state().status == ThreadStatus::Running {
-                            this.child(
-                                IconButton::new("debug-pause", IconName::DebugPause)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Pause))),
+                v_flex()
+                    .size_full()
+                    .items_start()
+                    .child(
+                        h_flex()
+                            .py_1()
+                            .gap_2()
+                            .map(|this| {
+                                if thread_status == ThreadStatus::Running {
+                                    this.child(
+                                        IconButton::new("debug-pause", IconName::DebugPause)
+                                            .on_click(cx.listener(|_, _, cx| {
+                                                cx.dispatch_action(Box::new(Pause))
+                                            }))
+                                            .tooltip(move |cx| Tooltip::text("Pause program", cx)),
                                     )
-                                    .tooltip(move |cx| Tooltip::text("Pause program", cx)),
-                            )
-                        } else {
-                            this.child(
-                                IconButton::new("debug-continue", IconName::DebugContinue)
+                                } else {
+                                    this.child(
+                                        IconButton::new("debug-continue", IconName::DebugContinue)
+                                            .on_click(cx.listener(|_, _, cx| {
+                                                cx.dispatch_action(Box::new(Continue))
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Continue program", cx)
+                                            }),
+                                    )
+                                }
+                            })
+                            .child(
+                                IconButton::new("debug-step-over", IconName::DebugStepOver)
                                     .on_click(cx.listener(|_, _, cx| {
-                                        cx.dispatch_action(Box::new(Continue))
+                                        cx.dispatch_action(Box::new(StepOver))
                                     }))
                                     .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |cx| Tooltip::text("Continue program", cx)),
+                                    .tooltip(move |cx| Tooltip::text("Step over", cx)),
                             )
-                        }
-                    })
-                    .child(
-                        IconButton::new("debug-step-over", IconName::DebugStepOver)
-                            .on_click(
-                                cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepOver))),
+                            .child(
+                                IconButton::new("debug-step-in", IconName::DebugStepInto)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| {
+                                            cx.dispatch_action(Box::new(StepIn))
+                                        }),
+                                    )
+                                    .disabled(thread_status != ThreadStatus::Stopped)
+                                    .tooltip(move |cx| Tooltip::text("Step in", cx)),
                             )
-                            .disabled(thread_status != ThreadStatus::Stopped)
-                            .tooltip(move |cx| Tooltip::text("Step over", cx)),
+                            .child(
+                                IconButton::new("debug-step-out", IconName::DebugStepOut)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| {
+                                            cx.dispatch_action(Box::new(StepOut))
+                                        }),
+                                    )
+                                    .disabled(thread_status != ThreadStatus::Stopped)
+                                    .tooltip(move |cx| Tooltip::text("Step out", cx)),
+                            )
+                            .child(
+                                IconButton::new("debug-restart", IconName::DebugRestart)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| {
+                                            cx.dispatch_action(Box::new(Restart))
+                                        }),
+                                    )
+                                    .disabled(
+                                        !self
+                                            .client
+                                            .capabilities()
+                                            .supports_restart_request
+                                            .unwrap_or_default()
+                                            || thread_status != ThreadStatus::Stopped
+                                                && thread_status != ThreadStatus::Running,
+                                    )
+                                    .tooltip(move |cx| Tooltip::text("Restart", cx)),
+                            )
+                            .child(
+                                IconButton::new("debug-stop", IconName::DebugStop)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Stop))),
+                                    )
+                                    .disabled(
+                                        thread_status != ThreadStatus::Stopped
+                                            && thread_status != ThreadStatus::Running,
+                                    )
+                                    .tooltip(move |cx| Tooltip::text("Stop", cx)),
+                            )
+                            .child(
+                                IconButton::new("debug-disconnect", IconName::DebugDisconnect)
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(Disconnect))
+                                    }))
+                                    .disabled(
+                                        thread_status == ThreadStatus::Exited
+                                            || thread_status == ThreadStatus::Ended,
+                                    )
+                                    .tooltip(move |cx| Tooltip::text("Disconnect", cx)),
+                            ),
                     )
                     .child(
-                        IconButton::new("debug-step-in", IconName::DebugStepInto)
-                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepIn))))
-                            .disabled(thread_status != ThreadStatus::Stopped)
-                            .tooltip(move |cx| Tooltip::text("Step in", cx)),
-                    )
-                    .child(
-                        IconButton::new("debug-step-out", IconName::DebugStepOut)
-                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(StepOut))))
-                            .disabled(thread_status != ThreadStatus::Stopped)
-                            .tooltip(move |cx| Tooltip::text("Step out", cx)),
-                    )
-                    .child(
-                        IconButton::new("debug-restart", IconName::DebugRestart)
-                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Restart))))
-                            .disabled(
-                                !self
-                                    .client
-                                    .capabilities()
-                                    .supports_restart_request
-                                    .unwrap_or_default()
-                                    || thread_status != ThreadStatus::Stopped
-                                        && thread_status != ThreadStatus::Running,
-                            )
-                            .tooltip(move |cx| Tooltip::text("Restart", cx)),
-                    )
-                    .child(
-                        IconButton::new("debug-stop", IconName::DebugStop)
-                            .on_click(cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Stop))))
-                            .disabled(
-                                thread_status != ThreadStatus::Stopped
-                                    && thread_status != ThreadStatus::Running,
-                            )
-                            .tooltip(move |cx| Tooltip::text("Stop", cx)),
+                        h_flex()
+                            .size_full()
+                            .items_start()
+                            .p_1()
+                            .gap_4()
+                            .child(self.render_stack_frames(cx)),
                     ),
             )
             .child(
-                h_flex()
+                v_flex()
                     .size_full()
                     .items_start()
-                    .p_1()
-                    .gap_4()
-                    .child(self.render_stack_frames(cx))
-                    .child(self.render_scopes(cx)),
+                    .child(
+                        h_flex()
+                            .child(
+                                div()
+                                    .id("variables")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .border_b_2()
+                                    .when(*active_thread_item == ThreadItem::Variables, |this| {
+                                        this.border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new("Variables"))
+                                    .on_click(cx.listener(|this, _, _| {
+                                        this.active_thread_item = ThreadItem::Variables;
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("console")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .border_b_2()
+                                    .when(*active_thread_item == ThreadItem::Console, |this| {
+                                        this.border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new("Console"))
+                                    .on_click(cx.listener(|this, _, _| {
+                                        this.active_thread_item = ThreadItem::Console;
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("output")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .border_b_2()
+                                    .when(*active_thread_item == ThreadItem::Output, |this| {
+                                        this.border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new("Output"))
+                                    .on_click(cx.listener(|this, _, _| {
+                                        this.active_thread_item = ThreadItem::Output;
+                                    })),
+                            ),
+                    )
+                    .when(*active_thread_item == ThreadItem::Variables, |this| {
+                        this.child(self.render_scopes(cx))
+                    })
+                    .when(*active_thread_item == ThreadItem::Output, |this| {
+                        this.child(self.output_editor.clone())
+                    }),
             )
             .into_any()
     }
