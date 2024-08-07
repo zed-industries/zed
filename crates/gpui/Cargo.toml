@@ -172,3 +172,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "input"
 path = "examples/input.rs"
+
+[[example]]
+name = "shadow"
+path = "examples/shadow.rs"
