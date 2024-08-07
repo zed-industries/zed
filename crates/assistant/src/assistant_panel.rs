@@ -2436,17 +2436,14 @@ impl ContextEditor {
                 h_flex()
                     .p_3()
                     .border_b_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border_variant)
                     .bg(cx.theme().colors().editor_background)
                     .justify_between()
                     .child(
                         h_flex()
                             .gap_3()
                             .child(Icon::new(IconName::ZedAssistant).color(Color::Accent))
-                            .child(
-                                Label::new("Zed AI is here! Get started by signing in →")
-                                    .size(LabelSize::Small),
-                            ),
+                            .child(Label::new("Zed AI is here! Get started by signing in →")),
                     )
                     .child(
                         Button::new("sign-in", "Sign in")
@@ -2471,20 +2468,24 @@ impl ContextEditor {
             )
         } else if let Some(configuration_error) = configuration_error(cx) {
             let label = match configuration_error {
-                ConfigurationError::NoProvider => "No LLM provider selected",
-                ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured",
+                ConfigurationError::NoProvider => "No LLM provider selected.",
+                ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
             };
             Some(
                 h_flex()
                     .p_3()
                     .border_b_1()
-                    .border_color(cx.theme().colors().border_disabled)
+                    .border_color(cx.theme().colors().border_variant)
                     .bg(cx.theme().colors().editor_background)
                     .justify_between()
                     .child(
                         h_flex()
-                            .gap_2()
-                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
+                            .gap_3()
+                            .child(
+                                Icon::new(IconName::ExclamationTriangle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Warning),
+                            )
                             .child(Label::new(label)),
                     )
                     .child(
@@ -2647,7 +2648,7 @@ impl Render for ErrorPopover {
             .bg(cx.theme().colors().surface_background)
             .occlude()
             .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
-            .child(Label::new(self.error.clone().repeat(8)))
+            .child(Label::new(self.error.clone()))
             .child(
                 h_flex().justify_end().mt_1().child(
                     Button::new("dismiss", "Dismiss")
@@ -3286,7 +3287,7 @@ impl ConfigurationView {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
+                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Small))
                     .when(provider.is_authenticated(cx), move |this| {
                         this.child(
                             h_flex().justify_end().child(
@@ -3303,9 +3304,9 @@ impl ConfigurationView {
             .child(
                 div()
                     .p(Spacing::Large.rems(cx))
-                    .bg(cx.theme().colors().title_bar_background)
+                    .bg(cx.theme().colors().surface_background)
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
                     .when(configuration_view.is_none(), |this| {
                         this.child(div().child(Label::new(format!(
@@ -3472,7 +3473,7 @@ fn render_docs_slash_command_trailer(
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
-                .tooltip(move |cx| Tooltip::text(format!("failed to index: {latest_error}"), cx))
+                .tooltip(move |cx| Tooltip::text(format!("Failed to index: {latest_error}"), cx))
                 .into_any_element(),
         )
     }
