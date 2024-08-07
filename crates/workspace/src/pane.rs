@@ -773,13 +773,13 @@ impl Pane {
     ) {
         let max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
         while max_tabs != 0 && self.items_len() >= max_tabs {
-            let index_to_remove = self.activation_history.iter().find_map(|id| {
+            let index_to_remove = self.activation_history.iter().find_map(|entry| {
                 self.items.iter().enumerate().find_map(|(index, item)| {
-                    (!item.is_dirty(cx) && item.item_id() == *id).then_some(index)
+                    (!item.is_dirty(cx) && item.item_id() == entry.entity_id).then_some(index)
                 })
             });
             if let Some(index_to_remove) = index_to_remove {
-                self.remove_item(index_to_remove, false, cx);
+                self.remove_item(index_to_remove, false, true, cx);
             } else {
                 break; // Could not remove, too many dirty items.
             }
