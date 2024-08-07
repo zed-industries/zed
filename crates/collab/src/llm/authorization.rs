@@ -17,7 +17,6 @@ pub fn authorize_access_to_language_model(
 }
 
 fn authorize_access_to_model(
-    config: &Config,
     claims: &LlmTokenClaims,
     provider: LanguageModelProvider,
     model: &str,
