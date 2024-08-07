@@ -12,7 +12,7 @@ pub fn authorize_access_to_language_model(
     model: &str,
 ) -> Result<()> {
     authorize_access_for_country(config, country_code, provider)?;
-    authorize_access_to_model(config, claims, provider, model)?;
+    authorize_access_to_model(claims, provider, model)?;
     Ok(())
 }
 
@@ -311,7 +311,13 @@ mod tests {
         ];
 
         for (provider, model) in test_cases {
-            let result = authorize_access_to_model(&config, &claims, provider, model);
+            let result = authorize_access_to_language_model(
+                &config,
+                &claims,
+                Some("US".into()),
+                provider,
+                model,
+            );
 
             assert!(
                 result.is_ok(),
