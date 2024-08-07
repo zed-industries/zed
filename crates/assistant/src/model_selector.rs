@@ -1,4 +1,4 @@
-use feature_flags::LanguageModels;
+use feature_flags::ZedPro;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 
@@ -143,8 +143,9 @@ impl PickerDelegate for ModelPickerDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        use feature_flags::FeatureFlagAppExt;
         let model_info = self.filtered_models.get(ix)?;
-
+        let show_badges = cx.has_flag::<ZedPro>();
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -170,11 +171,13 @@ impl PickerDelegate for ModelPickerDelegate {
                                 .children(match model_info.availability {
                                     LanguageModelAvailability::Public => None,
                                     LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
-                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => Some(
-                                        Label::new("Pro")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    ),
+                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
+                                        show_badges.then(|| {
+                                            Label::new("Pro")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                        })
+                                    }
                                 }),
                         )
                         .child(div().when(model_info.is_selected, |this| {
@@ -190,9 +193,6 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
-        if !cx.has_flag::<LanguageModels>() {
-            return None;
-        }
 
         let plan = proto::Plan::ZedPro;
         let is_trial = false;
@@ -205,26 +205,28 @@ impl PickerDelegate for ModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .child(match plan {
-                    // Already a zed pro subscriber
-                    Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                        .icon(IconName::ZedAssistant)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(Box::new(zed_actions::OpenAccountSettings))
-                        }),
-                    // Free user
-                    Plan::Free => Button::new(
-                        "try-pro",
-                        if is_trial {
-                            "Upgrade to Pro"
-                        } else {
-                            "Try Pro"
-                        },
-                    )
-                    .on_click(|_, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                .when(cx.has_flag::<ZedPro>(), |this| {
+                    this.child(match plan {
+                        // Already a zed pro subscriber
+                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
+                            .icon(IconName::ZedAssistant)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .icon_position(IconPosition::Start)
+                            .on_click(|_, cx| {
+                                cx.dispatch_action(Box::new(zed_actions::OpenAccountSettings))
+                            }),
+                        // Free user
+                        Plan::Free => Button::new(
+                            "try-pro",
+                            if is_trial {
+                                "Upgrade to Pro"
+                            } else {
+                                "Try Pro"
+                            },
+                        )
+                        .on_click(|_, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                    })
                 })
                 .child(
                     Button::new("configure", "Configure")

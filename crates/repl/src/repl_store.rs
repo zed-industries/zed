@@ -7,7 +7,6 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
-use language::Language;
 use project::Fs;
 use settings::{Settings, SettingsStore};
 
@@ -118,26 +117,31 @@ impl ReplStore {
         })
     }
 
-    pub fn kernelspec(
-        &self,
-        language: &Language,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<KernelSpecification> {
+    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let language_name = language.code_fence_block_name();
-        let selected_kernel = settings.kernel_selections.get(language_name.as_ref());
+        let selected_kernel = settings.kernel_selections.get(language_name);
 
-        self.kernel_specifications
+        let found_by_name = self
+            .kernel_specifications
             .iter()
             .find(|runtime_specification| {
                 if let Some(selected) = selected_kernel {
                     // Top priority is the selected kernel
-                    runtime_specification.name.to_lowercase() == selected.to_lowercase()
-                } else {
-                    // Otherwise, we'll try to find a kernel that matches the language
-                    runtime_specification.kernelspec.language.to_lowercase()
-                        == language_name.to_lowercase()
+                    return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
+                return false;
+            })
+            .cloned();
+
+        if let Some(found_by_name) = found_by_name {
+            return Some(found_by_name);
+        }
+
+        self.kernel_specifications
+            .iter()
+            .find(|runtime_specification| {
+                runtime_specification.kernelspec.language.to_lowercase()
+                    == language_name.to_lowercase()
             })
             .cloned()
     }
