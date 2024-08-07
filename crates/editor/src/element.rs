@@ -1592,7 +1592,7 @@ impl EditorElement {
 
                     let position = snapshot
                         .display_snapshot
-                        .display_point_to_anchor(point.clone(), Bias::Left);
+                        .display_point_to_anchor(*point, Bias::Left);
 
                     let button = editor.render_breakpoint(position, point.row(), cx);
 
@@ -1787,6 +1787,7 @@ impl EditorElement {
         relative_rows
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
         rows: Range<DisplayRow>,
@@ -5148,21 +5149,22 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let gutter_breakpoint_position =
+                    let gutter_breakpoint_indicator =
                         self.editor.read(cx).gutter_breakpoint_indicator;
 
                     let breakpoint_rows = breakpoint_lines
                         .iter()
-                        .filter_map(|display_point| {
-                            if gutter_breakpoint_position
-                                .is_some_and(|point| &point == display_point)
-                            {
-                                None
-                            } else {
-                                Some(display_point.row())
-                            }
-                        })
+                        .map(|display_point| display_point.row())
                         .collect();
+
+                    // We want all lines with breakpoint's to have their number's painted
+                    // red & we still want to render a grey breakpoint for the gutter
+                    // indicator so we add that in after creating breakpoint_rows for layout line nums
+                    // Otherwise, when a cursor is on a line number it will always be white even
+                    // if that line has a breakpoint
+                    if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                        breakpoint_lines.insert(gutter_breakpoint_point);
+                    }
 
                     let line_numbers = self.layout_line_numbers(
                         start_row..end_row,

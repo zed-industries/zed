@@ -91,6 +91,7 @@ impl DebugAdapterClient {
     /// - `args`: Arguments of the command that starts the debugger
     /// - `cwd`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
+    #[allow(clippy::too_many_arguments)]
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,

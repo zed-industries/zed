@@ -5181,10 +5181,6 @@ impl Editor {
             }
         }
 
-        if let Some(gutter_point) = self.gutter_breakpoint_indicator.clone() {
-            breakpoint_display_points.insert(gutter_point);
-        }
-
         breakpoint_display_points
     }
 
