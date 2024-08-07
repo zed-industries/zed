@@ -1,7 +1,7 @@
 use assets::Assets;
 use fs::Fs;
 use futures::StreamExt;
-use handlebars::Handlebars;
+use handlebars::{Handlebars, RenderError, TemplateError};
 use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -36,7 +36,7 @@ pub struct PromptBuilder {
 impl PromptBuilder {
     pub fn new(
         fs_and_cx: Option<(Arc<dyn Fs>, &gpui::AppContext)>,
-    ) -> Result<Self, handlebars::TemplateError> {
+    ) -> Result<Self, Box<TemplateError>> {
         let mut handlebars = Handlebars::new();
         Self::register_templates(&mut handlebars)?;
 
@@ -124,7 +124,7 @@ impl PromptBuilder {
             .detach();
     }
 
-    fn register_templates(handlebars: &mut Handlebars) -> Result<(), handlebars::TemplateError> {
+    fn register_templates(handlebars: &mut Handlebars) -> Result<(), Box<TemplateError>> {
         let content_prompt = Assets::get("prompts/content_prompt.hbs")
             .expect("Content prompt template not found")
             .data;
@@ -133,11 +133,14 @@ impl PromptBuilder {
             .data;
 
         handlebars
-            .register_template_string("content_prompt", String::from_utf8_lossy(&content_prompt))?;
-        handlebars.register_template_string(
-            "terminal_assistant_prompt",
-            String::from_utf8_lossy(&terminal_assistant_prompt),
-        )?;
+            .register_template_string("content_prompt", String::from_utf8_lossy(&content_prompt))
+            .map_err(Box::new)?;
+        handlebars
+            .register_template_string(
+                "terminal_assistant_prompt",
+                String::from_utf8_lossy(&terminal_assistant_prompt),
+            )
+            .map_err(Box::new)?;
         Ok(())
     }
 
@@ -147,7 +150,7 @@ impl PromptBuilder {
         language_name: Option<&str>,
         buffer: BufferSnapshot,
         range: Range<usize>,
-    ) -> Result<String, handlebars::RenderError> {
+    ) -> Result<String, RenderError> {
         let content_type = match language_name {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
@@ -219,7 +222,7 @@ impl PromptBuilder {
         shell: Option<&str>,
         working_directory: Option<&str>,
         latest_output: &[String],
-    ) -> Result<String, handlebars::RenderError> {
+    ) -> Result<String, RenderError> {
         let context = TerminalAssistantPromptContext {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
