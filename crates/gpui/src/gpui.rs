@@ -56,7 +56,7 @@
 //!   and [`test`] modules for more details.
 //!
 //! Currently, the best way to learn about these APIs is to read the Zed source code, ask us about it at a fireside hack, or drop
-//! a question in the [Zed Discord](https://discord.gg/U4qhCEhMXP). We're working on improving the documentation, creating more examples,
+//! a question in the [Zed Discord](https://discord.gg/zed-community). We're working on improving the documentation, creating more examples,
 //! and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
 
 #![deny(missing_docs)]

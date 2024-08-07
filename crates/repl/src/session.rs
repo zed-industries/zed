@@ -220,8 +220,6 @@ impl Session {
                 match kernel {
                     Ok((mut kernel, mut messages_rx)) => {
                         this.update(&mut cx, |session, cx| {
-                            // At this point we can create a new kind of kernel that has the process and our long running background tasks
-
                             let stderr = kernel.process.stderr.take();
 
                             cx.spawn(|_session, mut _cx| async move {
@@ -236,7 +234,7 @@ impl Session {
                             })
                             .detach();
 
-                            let stdout = kernel.process.stderr.take();
+                            let stdout = kernel.process.stdout.take();
 
                             cx.spawn(|_session, mut _cx| async move {
                                 if let None = stdout {
@@ -314,7 +312,7 @@ impl Session {
                                 }
                             });
 
-                            // todo!(kyle): send kernelinforequest once our shell channel read/writes are split
+                            // todo!(@rgbkrk): send kernelinforequest once our shell channel read/writes are split
                             // cx.spawn(|this, mut cx| async move {
                             //     cx.background_executor()
                             //         .timer(Duration::from_millis(120))

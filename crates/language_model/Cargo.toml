@@ -37,6 +37,7 @@ log.workspace = true
 menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+parking_lot.workspace = true
 proto = { workspace = true, features = ["test-support"] }
 project.workspace = true
 schemars.workspace = true

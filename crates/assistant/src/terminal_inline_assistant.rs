@@ -1,6 +1,6 @@
 use crate::{
-    humanize_token_count, prompts::generate_terminal_assistant_prompt, AssistantPanel,
-    AssistantPanelEvent, ModelSelector, DEFAULT_CONTEXT_LINES,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
+    ModelSelector, DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -32,8 +32,13 @@ use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
-pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    cx.set_global(TerminalInlineAssistant::new(fs, telemetry));
+pub fn init(
+    fs: Arc<dyn Fs>,
+    prompt_builder: Arc<PromptBuilder>,
+    telemetry: Arc<Telemetry>,
+    cx: &mut AppContext,
+) {
+    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder, telemetry));
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -55,18 +60,24 @@ pub struct TerminalInlineAssistant {
     prompt_history: VecDeque<String>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 impl Global for TerminalInlineAssistant {}
 
 impl TerminalInlineAssistant {
-    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>) -> Self {
+    pub fn new(
+        fs: Arc<dyn Fs>,
+        prompt_builder: Arc<PromptBuilder>,
+        telemetry: Arc<Telemetry>,
+    ) -> Self {
         Self {
             next_assist_id: TerminalInlineAssistId::default(),
             assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             telemetry: Some(telemetry),
             fs,
+            prompt_builder,
         }
     }
 
@@ -246,7 +257,7 @@ impl TerminalInlineAssistant {
             None
         };
 
-        let prompt = generate_terminal_assistant_prompt(
+        let prompt = self.prompt_builder.generate_terminal_assistant_prompt(
             &assist
                 .prompt_editor
                 .clone()
@@ -256,7 +267,7 @@ impl TerminalInlineAssistant {
             shell.as_deref(),
             working_directory.as_deref(),
             &latest_output,
-        );
+        )?;
 
         let mut messages = Vec::new();
         if let Some(context_request) = context_request {

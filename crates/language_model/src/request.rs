@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ui::px;
 use util::ResultExt;
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub struct LanguageModelImage {
     // A base64 encoded PNG image
     source: String,
@@ -91,7 +91,7 @@ impl LanguageModelImage {
     }
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
     Image(LanguageModelImage),
@@ -130,7 +130,7 @@ impl From<&str> for MessageContent {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
@@ -161,7 +161,7 @@ impl LanguageModelRequestMessage {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,

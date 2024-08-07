@@ -33,7 +33,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::UNAUTHORIZED,
                 "missing authorization header".to_string(),
             )
@@ -45,14 +45,14 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     let first = auth_header.next().unwrap_or("");
     if first == "dev-server-token" {
         let dev_server_token = auth_header.next().ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "missing dev-server-token token in authorization header".to_string(),
             )
         })?;
         let dev_server = verify_dev_server_token(dev_server_token, &state.db)
             .await
-            .map_err(|e| Error::Http(StatusCode::UNAUTHORIZED, format!("{}", e)))?;
+            .map_err(|e| Error::http(StatusCode::UNAUTHORIZED, format!("{}", e)))?;
 
         req.extensions_mut()
             .insert(Principal::DevServer(dev_server));
@@ -60,14 +60,14 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     }
 
     let user_id = UserId(first.parse().map_err(|_| {
-        Error::Http(
+        Error::http(
             StatusCode::BAD_REQUEST,
             "missing user id in authorization header".to_string(),
         )
     })?);
 
     let access_token = auth_header.next().ok_or_else(|| {
-        Error::Http(
+        Error::http(
             StatusCode::BAD_REQUEST,
             "missing access token in authorization header".to_string(),
         )
@@ -111,7 +111,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         }
     }
 
-    Err(Error::Http(
+    Err(Error::http(
         StatusCode::UNAUTHORIZED,
         "invalid credentials".to_string(),
     ))

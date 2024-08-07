@@ -92,6 +92,11 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: LLM_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: llm-token
+                  key: secret
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
