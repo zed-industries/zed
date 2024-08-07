@@ -3254,9 +3254,34 @@ impl ConfigurationView {
         let provider_name = provider.name().0.clone();
         let configuration_view = self.configuration_views.get(&provider.id()).cloned();
 
+        let open_new_context = cx.listener({
+            let provider = provider.clone();
+            move |_, _, cx| {
+                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                    provider.clone(),
+                ))
+            }
+        });
+
         v_flex()
             .gap_2()
-            .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
+                    .when(provider.is_authenticated(cx), move |this| {
+                        this.child(
+                            h_flex().justify_end().child(
+                                Button::new("new-context", "Open new context")
+                                    .icon_position(IconPosition::Start)
+                                    .icon(IconName::Plus)
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .on_click(open_new_context),
+                            ),
+                        )
+                    }),
+            )
             .child(
                 div()
                     .p(Spacing::Large.rems(cx))
@@ -3274,25 +3299,6 @@ impl ConfigurationView {
                         this.child(configuration_view)
                     }),
             )
-            .when(provider.is_authenticated(cx), move |this| {
-                this.child(
-                    h_flex().justify_end().child(
-                        Button::new("new-context", format!("Open new context"))
-                            .icon_position(IconPosition::Start)
-                            .icon(IconName::Plus)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ModalSurface)
-                            .on_click(cx.listener({
-                                let provider = provider.clone();
-                                move |_, _, cx| {
-                                    cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                                        provider.clone(),
-                                    ))
-                                }
-                            })),
-                    ),
-                )
-            })
     }
 }
 
