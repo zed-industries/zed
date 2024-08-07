@@ -1,4 +1,5 @@
 use feature_flags::LanguageModels;
+use feature_flags::ZedPro;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 
@@ -143,8 +144,9 @@ impl PickerDelegate for ModelPickerDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        use feature_flags::FeatureFlagAppExt;
         let model_info = self.filtered_models.get(ix)?;
-
+        let show_badges = cx.has_flag::<ZedPro>();
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -170,11 +172,13 @@ impl PickerDelegate for ModelPickerDelegate {
                                 .children(match model_info.availability {
                                     LanguageModelAvailability::Public => None,
                                     LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
-                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => Some(
-                                        Label::new("Pro")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    ),
+                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
+                                        show_badges.then(|| {
+                                            Label::new("Pro")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                        })
+                                    }
                                 }),
                         )
                         .child(div().when(model_info.is_selected, |this| {
