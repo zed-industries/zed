@@ -2775,7 +2775,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let prompt_builder = Arc::new(PromptBuilder::new().unwrap());
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -2847,7 +2847,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
-        let prompt_builder = Arc::new(PromptBuilder::new().unwrap());
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -2922,7 +2922,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
-        let prompt_builder = Arc::new(PromptBuilder::new().unwrap());
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -2996,7 +2996,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
-        let prompt_builder = Arc::new(PromptBuilder::new().unwrap());
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),

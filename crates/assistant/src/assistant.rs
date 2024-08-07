@@ -35,6 +35,7 @@ use slash_command::{
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
+use util::ResultExt;
 
 actions!(
     assistant,
@@ -198,15 +199,16 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
 
-    let prompt_builder =
-        Arc::new(prompts::PromptBuilder::new().expect("Failed to create PromptBuilder"));
-    inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
+    if let Some(prompt_builder) = prompts::PromptBuilder::new(Some((fs.clone(), cx))).log_err() {
+        let prompt_builder = Arc::new(prompt_builder);
+        inline_assistant::init(
+            fs.clone(),
+            prompt_builder.clone(),
+            client.telemetry().clone(),
+            cx,
+        );
+        terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
+    }
     IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {

@@ -1,8 +1,12 @@
 use assets::Assets;
+use fs::Fs;
+use futures::StreamExt;
 use handlebars::Handlebars;
 use language::BufferSnapshot;
+use parking_lot::Mutex;
 use serde::Serialize;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc, time::Duration};
+use util::ResultExt;
 
 #[derive(Serialize)]
 pub struct ContentPromptContext {
@@ -26,14 +30,98 @@ pub struct TerminalAssistantPromptContext {
 }
 
 pub struct PromptBuilder {
-    handlebars: Handlebars<'static>,
+    handlebars: Arc<Mutex<Handlebars<'static>>>,
 }
 
 impl PromptBuilder {
-    pub fn new() -> Result<Self, handlebars::TemplateError> {
+    pub fn new(
+        fs_and_cx: Option<(Arc<dyn Fs>, &gpui::AppContext)>,
+    ) -> Result<Self, handlebars::TemplateError> {
         let mut handlebars = Handlebars::new();
         Self::register_templates(&mut handlebars)?;
+
+        let handlebars = Arc::new(Mutex::new(handlebars));
+
+        if let Some((fs, cx)) = fs_and_cx {
+            Self::watch_fs_for_template_overrides(fs, cx, handlebars.clone());
+        }
+
         Ok(Self { handlebars })
+    }
+
+    fn watch_fs_for_template_overrides(
+        fs: Arc<dyn Fs>,
+        cx: &gpui::AppContext,
+        handlebars: Arc<Mutex<Handlebars<'static>>>,
+    ) {
+        let templates_dir = paths::prompt_templates_dir();
+
+        cx.background_executor()
+            .spawn(async move {
+                // Create the prompt templates directory if it doesn't exist
+                if !fs.is_dir(templates_dir).await {
+                    if let Err(e) = fs.create_dir(templates_dir).await {
+                        log::error!("Failed to create prompt templates directory: {}", e);
+                        return;
+                    }
+                }
+
+                // Initial scan of the prompts directory
+                if let Ok(mut entries) = fs.read_dir(templates_dir).await {
+                    while let Some(Ok(file_path)) = entries.next().await {
+                        if file_path.to_string_lossy().ends_with(".hbs") {
+                            if let Ok(content) = fs.load(&file_path).await {
+                                let file_name = file_path.file_stem().unwrap().to_string_lossy();
+
+                                match handlebars.lock().register_template_string(&file_name, content) {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "Successfully registered template override: {} ({})",
+                                            file_name,
+                                            file_path.display()
+                                        );
+                                    },
+                                    Err(e) => {
+                                        log::error!(
+                                            "Failed to register template during initial scan: {} ({})",
+                                            e,
+                                            file_path.display()
+                                        );
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Watch for changes
+                let (mut changes, watcher) = fs.watch(templates_dir, Duration::from_secs(1)).await;
+                while let Some(changed_paths) = changes.next().await {
+                    for changed_path in changed_paths {
+                        if changed_path.extension().map_or(false, |ext| ext == "hbs") {
+                            log::info!("Reloading template: {}", changed_path.display());
+                            if let Some(content) = fs.load(&changed_path).await.log_err() {
+                                let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                                let file_path = changed_path.to_string_lossy();
+                                match handlebars.lock().register_template_string(&file_name, content) {
+                                    Ok(_) => log::info!(
+                                        "Successfully reloaded template: {} ({})",
+                                        file_name,
+                                        file_path
+                                    ),
+                                    Err(e) => log::error!(
+                                        "Failed to register template: {} ({})",
+                                        e,
+                                        file_path
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                }
+                drop(watcher);
+            })
+            .detach();
     }
 
     fn register_templates(handlebars: &mut Handlebars) -> Result<(), handlebars::TemplateError> {
@@ -122,7 +210,7 @@ impl PromptBuilder {
             rewrite_section,
         };
 
-        self.handlebars.render("content_prompt", &context)
+        self.handlebars.lock().render("content_prompt", &context)
     }
 
     pub fn generate_terminal_assistant_prompt(
@@ -142,6 +230,7 @@ impl PromptBuilder {
         };
 
         self.handlebars
+            .lock()
             .render("terminal_assistant_prompt", &context)
     }
 }
