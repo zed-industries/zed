@@ -2504,6 +2504,7 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
+ "strum",
  "subtle",
  "supermaven_api",
  "telemetry_events",
