@@ -1250,7 +1250,7 @@ impl Project {
     pub fn has_active_debugger(&self) -> bool {
         self.debug_adapters
             .values()
-            .any(|c| matches!(c, DebugAdapterClientState::Starting(_)))
+            .any(|c| matches!(c, DebugAdapterClientState::Running(_)))
     }
 
     pub fn start_debug_adapter_client_from_task(
@@ -1455,7 +1455,7 @@ impl Project {
         let snapshot = buffer.snapshot();
 
         if let Some(breakpoints) = breakpoints {
-            // TODO: Send correct value for sourceModified
+            // TODO debugger: Send correct value for sourceModified
 
             for client in clients {
                 let file_path = file_path.clone();
