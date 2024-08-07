@@ -284,7 +284,10 @@ pub enum ContextEvent {
     AssistError(String),
     MessagesEdited,
     SummaryChanged,
-    WorkflowStepsChanged,
+    WorkflowStepsChanged {
+        removed: Vec<Range<language::Anchor>>,
+        updated: Vec<Range<language::Anchor>>,
+    },
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -1160,11 +1163,20 @@ impl Context {
     fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
         let prev_len = self.workflow_steps.len();
+        let mut removed = Vec::new();
         self.workflow_steps.retain(|step| {
-            step.tagged_range.start.is_valid(buffer) && step.tagged_range.end.is_valid(buffer)
+            if step.tagged_range.start.is_valid(buffer) && step.tagged_range.end.is_valid(buffer) {
+                true
+            } else {
+                removed.push(step.tagged_range.clone());
+                false
+            }
         });
         if self.workflow_steps.len() != prev_len {
-            cx.emit(ContextEvent::WorkflowStepsChanged);
+            cx.emit(ContextEvent::WorkflowStepsChanged {
+                removed,
+                updated: Vec::new(),
+            });
             cx.notify();
         }
     }
@@ -1176,27 +1188,34 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) {
         let mut new_edit_steps = Vec::new();
+        let mut edits = Vec::new();
 
         let buffer = self.buffer.read(cx).snapshot();
         let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
         let mut in_step = false;
-        let mut step_start = 0;
+        let mut step_open_tag_start_ix = 0;
         let mut line_start_offset = message_lines.offset();
 
         while let Some(line) = message_lines.next() {
             if let Some(step_start_index) = line.find("<step>") {
                 if !in_step {
                     in_step = true;
-                    step_start = line_start_offset + step_start_index;
+                    step_open_tag_start_ix = line_start_offset + step_start_index;
                 }
             }
 
             if let Some(step_end_index) = line.find("</step>") {
                 if in_step {
-                    let start_anchor = buffer.anchor_after(step_start);
-                    let end_anchor =
-                        buffer.anchor_before(line_start_offset + step_end_index + "</step>".len());
-                    let tagged_range = start_anchor..end_anchor;
+                    let step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    let mut step_end_tag_start_ix = line_start_offset + step_end_index;
+                    let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
+                    if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
+                        step_end_tag_start_ix -= 1;
+                    }
+                    edits.push((step_open_tag_start_ix..step_open_tag_end_ix, ""));
+                    edits.push((step_end_tag_start_ix..step_end_tag_end_ix, ""));
+                    let tagged_range = buffer.anchor_after(step_open_tag_end_ix)
+                        ..buffer.anchor_before(step_end_tag_start_ix);
 
                     // Check if a step with the same range already exists
                     let existing_step_index = self
@@ -1226,12 +1245,18 @@ impl Context {
             line_start_offset = message_lines.offset();
         }
 
-        // Insert new steps and generate their corresponding tasks
+        let mut updated = Vec::new();
         for (index, step) in new_edit_steps.into_iter().rev() {
+            updated.push(step.tagged_range.clone());
             self.workflow_steps.insert(index, step);
         }
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
 
-        cx.emit(ContextEvent::WorkflowStepsChanged);
+        cx.emit(ContextEvent::WorkflowStepsChanged {
+            removed: Vec::new(),
+            updated,
+        });
         cx.notify();
     }
 
@@ -1359,7 +1384,10 @@ impl Context {
                                 edit_suggestions: suggestion_groups_by_buffer,
                             },
                         );
-                        cx.emit(ContextEvent::WorkflowStepsChanged);
+                        cx.emit(ContextEvent::WorkflowStepsChanged {
+                            updated: vec![tagged_range],
+                            removed: Vec::new(),
+                        });
                     }
                     anyhow::Ok(())
                 })?
