@@ -1359,15 +1359,54 @@ enum WorkflowStepStatus {
     Confirmed, // => Change the color of the borders to be muted, and maybe have a label above the step that says "Applied".
 }
 
-impl std::fmt::Display for WorkflowStepStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl WorkflowStepStatus {
+    pub(crate) fn is_confirmed(&self) -> bool {
+        matches!(self, Self::Confirmed)
+    }
+    pub(crate) fn into_element(
+        &self,
+        step_range: Range<language::Anchor>,
+        editor: WeakView<ContextEditor>,
+        _cx: &mut WindowContext<'_>,
+    ) -> AnyElement {
         match self {
-            Self::ResolvingSuggestions => write!(f, "Resolving Suggestions"),
-            Self::Idle => write!(f, "Idle"),
-            Self::Pending => write!(f, "Pending"),
-            Self::Done => write!(f, "Done"),
-            Self::Confirmed => write!(f, "Confirmed"),
+            WorkflowStepStatus::ResolvingSuggestions => "Resolving Suggestions...".into_any(),
+            WorkflowStepStatus::Idle => {
+                IconButton::new("transform-workflow-step", IconName::Sparkle)
+                    .on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            editor
+                                .update(cx, |this, cx| this.apply_edit_step(&step_range, cx))
+                                .ok();
+                        }
+                    })
+                    .into_any_element()
+            }
+            WorkflowStepStatus::Pending => IconButton::new("stop-workflow-step", IconName::Stop)
+                .icon_color(Color::Error)
+                .into_any_element(),
+            WorkflowStepStatus::Done => h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("confirm-workflow-step", IconName::Check)
+                        .icon_color(Color::Info),
+                )
+                .child(IconButton::new("reject-workflow-step", IconName::Close))
+                .into_any_element(),
+            WorkflowStepStatus::Confirmed => Label::new("Applied")
+                .color(Color::Ignored)
+                .into_any_element(),
         }
+        // match self {
+        //     Self::ResolvingSuggestions => "Resolving Suggestions...",
+        //     Self::Idle => "Transform",
+        //     Self::Pending => "Pending",
+        //     Self::Done => "Done",
+        //     Self::Confirmed => "Applied",
+        // }
+        // .into()
     }
 }
 
@@ -1485,36 +1524,45 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if !self.apply_edit_step(cx) {
+        if !self.apply_active_edit_step(cx) {
             self.error_message = None;
             self.send_to_model(cx);
             cx.notify();
         }
     }
 
-    fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(step) = self.active_workflow_step.as_ref() {
-            if let Some(workflow_step) = self.workflow_steps.get(&step.range) {
-                if let Some(assists) = workflow_step.assists.as_ref() {
-                    let assist_ids = assists.assist_ids.clone();
-                    cx.window_context().defer(|cx| {
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            for assist_id in assist_ids {
-                                assistant.start_assist(assist_id, cx);
-                            }
-                        })
-                    });
+    fn apply_edit_step(
+        &mut self,
+        range: &Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(workflow_step) = self.workflow_steps.get(range) {
+            if let Some(assists) = workflow_step.assists.as_ref() {
+                let assist_ids = assists.assist_ids.clone();
+                cx.window_context().defer(|cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for assist_id in assist_ids {
+                            assistant.start_assist(assist_id, cx);
+                        }
+                    })
+                });
 
-                    !assists.assist_ids.is_empty()
-                } else {
-                    false
-                }
+                !assists.assist_ids.is_empty()
             } else {
                 false
             }
         } else {
             false
         }
+    }
+
+    fn apply_active_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        let Some(step) = self.active_workflow_step.as_ref() else {
+            return false;
+        };
+
+        let range = step.range.clone();
+        self.apply_edit_step(&range, cx)
     }
 
     fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
@@ -2037,27 +2085,46 @@ impl ContextEditor {
                                 position: start,
                                 height: 1,
                                 style: BlockStyle::Sticky,
-                                render: Box::new(move |cx| {
-                                    h_flex()
-                                        .h(1. * cx.line_height())
-                                        .w_full()
-                                        .border_b_1()
-                                        .border_color(cx.theme().status().info_border)
-                                        .justify_end()
-                                        .gap_2()
-                                        .pr_6()
-                                        .children(
-                                            weak_self
-                                                .update(&mut **cx, |context_editor, cx| {
-                                                    let step = context_editor
-                                                        .workflow_steps
-                                                        .get(&step_range)?;
-                                                    Some(step.status(cx).to_string())
-                                                })
-                                                .ok()
-                                                .flatten(),
-                                        )
-                                        .into_any()
+                                render: Box::new({
+                                    let weak_self = weak_self.clone();
+                                    let step_range = step_range.clone();
+                                    move |cx| {
+                                        let current_status = weak_self
+                                            .update(&mut **cx, |context_editor, cx| {
+                                                let step = context_editor
+                                                    .workflow_steps
+                                                    .get(&step_range)?;
+                                                Some(step.status(cx))
+                                            })
+                                            .ok()
+                                            .flatten();
+
+                                        let theme = cx.theme().status();
+                                        let border_color = if current_status
+                                            .as_ref()
+                                            .map_or(false, |status| status.is_confirmed())
+                                        {
+                                            theme.ignored_border
+                                        } else {
+                                            theme.info_border
+                                        };
+                                        h_flex()
+                                            .h(1. * cx.line_height())
+                                            .w_full()
+                                            .border_b_1()
+                                            .border_color(border_color)
+                                            .justify_end()
+                                            .gap_2()
+                                            .pr_6()
+                                            .children(current_status.as_ref().map(|status| {
+                                                status.into_element(
+                                                    step_range.clone(),
+                                                    weak_self.clone(),
+                                                    cx,
+                                                )
+                                            }))
+                                            .into_any()
+                                    }
                                 }),
                                 disposition: BlockDisposition::Above,
                             },
@@ -2065,12 +2132,29 @@ impl ContextEditor {
                                 position: end,
                                 height: 0,
                                 style: BlockStyle::Sticky,
-                                render: Box::new(|cx| {
+                                render: Box::new(move |cx| {
+                                    let current_status = weak_self
+                                        .update(&mut **cx, |context_editor, cx| {
+                                            let step =
+                                                context_editor.workflow_steps.get(&step_range)?;
+                                            Some(step.status(cx))
+                                        })
+                                        .ok()
+                                        .flatten();
+                                    let theme = cx.theme().status();
+                                    let border_color = if current_status
+                                        .as_ref()
+                                        .map_or(false, |status| status.is_confirmed())
+                                    {
+                                        theme.ignored_border
+                                    } else {
+                                        theme.info_border
+                                    };
                                     v_flex()
                                         .h_full()
                                         .w_full()
                                         .border_t_1()
-                                        .border_color(cx.theme().status().info_border)
+                                        .border_color(border_color)
                                         .into_any_element()
                                 }),
                                 disposition: BlockDisposition::Below,
