@@ -8,7 +8,7 @@ Report issues to: [https://github.com/scalameta/metals-zed/issues](https://githu
 
 ## Setup
 
-TBD: Document setup
+TBD: Document Scala setup on MacOS
 
 - Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
   - `brew install coursier/formulas/coursier && cs setup`

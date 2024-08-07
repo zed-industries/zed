@@ -5,9 +5,9 @@ Tailwind CSS support is built into Zed.
 - Tree Sitter: []
 - Language Server: [tailwindcss-language-server](https://github.com/tailwindlabs/tailwindcss-intellisense)
 
-##
+## Confguration
 
-TBD: Document Tailwind CSS
+TBD: Document Tailwind CSS Configuration
 
 Languages which can be used with Tailwind CSS in Zed
 
