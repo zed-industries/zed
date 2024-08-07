@@ -1039,6 +1039,8 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+TBD: Document `language_servers` settings key under languages. See: [Language Settings](./language-settings.md)
+
 ## Preview tabs
 
 - Description:

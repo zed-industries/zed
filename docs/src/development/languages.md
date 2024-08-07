@@ -1,4 +1,4 @@
-# Developing Extensions
+# Developing Language Extensions
 
 TBD: Document how to create an extension in Zed.
 
@@ -13,6 +13,18 @@ Extensions are a way to add extend functionality of Zed. Extensions may contain 
 For example, you can have an extension that provides both a grammar and a language, or one that just provides a theme.
 
 ## Extension Structure
+
+TBD: Document example directory structure of an extension:
+
+```
+my-extension/
+  extension.toml
+  languages/
+    config.toml
+    highlights.scm
+```
+
+## extension.toml
 
 A Zed extension is a Git repository that contains an `extension.toml`:
 
@@ -55,6 +67,23 @@ line_comments = ["# "]
 - `grammar` is the grammar name as specified in the `extension.toml` and in your `grammar.js` tree-sitter grammar.
 - `path_suffixes` (optional) is an array of file suffixes that should be associated with this language. This supports glob patterns like `config/**/*.toml` where `**` matchs 0 or more directories and `*` matches 0 or more characters.
 - `line_comments` (optional) is an array of strings that are used to identify line comments in the language.
+
+## config.toml
+
+TBD: Document `language_name/config.toml` keys
+
+- line_comments, block_comment
+- autoclose_before
+- brackets (start, end, close, newline, not_in: ["comment", "string"])
+- tab_size, hard_tabs
+- word_characters
+- prettier_parser_name
+- opt_into_language_servers
+- first_line_pattern
+- code_fence_block_name
+- scope_opt_in_language_servers
+- increase_indent_pattern, decrease_indent_pattern
+- collapsed_placeholder
 
 ### Languages tree-sitter queries
 
@@ -109,7 +138,15 @@ name = "My Extension LSP"
 language = "Some Language"
 ```
 
+TBD: Document additional extension.toml keys: `language_servers.{language_ids, code_action_kinds}`
+
 For more examples on providing language servers via extensions, take a look at the [`extensions/`](https://github.com/zed-industries/zed/tree/main/extensions) in the Zed repository. The Zed Rust Extension API is also included under [`crates/extension_api`](https://github.com/zed-industries/zed/blob/main/crates/extension_api/README.md) directory.
+
+## Slash commands
+
+TBD: Document extension.toml `slash_commands` and `indexed_docs_providers`.
+
+- Example: https://github.com/zed-industries/zed/blob/13af7c7ebd850ce2e4de500657a35d68fea4b950/extensions/gleam/extension.toml#L17-L28
 
 ## Testing your extension
 

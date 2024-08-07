@@ -40,7 +40,10 @@ TBD: Document `experimental.theme_overrides`
   },
 ```
 
+## Local Themes
+
+TBD: documentation for `~/.config/zed/themes` (see: blog/user-themes-now-in-preview)
+
 ## Theme Development
 
-TBD: Document theme development
-https://zed.dev/schema/themes/v0.1.0.json
+See: [Developing Zed Themes](./development/themes.md)

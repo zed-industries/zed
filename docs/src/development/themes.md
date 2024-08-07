@@ -4,6 +4,8 @@ TBD: Walk through everything necessary for creating a theme extension
 
 - https://zed.dev/schema/themes/v0.1.0.json
 
+Example themes: https://github.com/zed-industries/zed/tree/main/assets/themes
+
 ## Extension Structure
 
 A Zed extension is a Git repository that contains an `extension.toml`:
@@ -27,3 +29,5 @@ TBD: Document structure of theme extension
 TBD: `cmd-shift-x` install dev extension. Click `rebuild`, tail Zed.log, etc.
 
 ## Submitting
+
+TBD: How to submit a theme extension to the Zed Extensions gallery

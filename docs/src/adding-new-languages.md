@@ -1,6 +1,6 @@
 # Adding New Languages to Zed
 
-See: [Developing Zed Language Extensions](./development/language-extensions.md).
+See: [Developing Zed Language Extensions](./development/languages.md).
 
 ## LSP
 

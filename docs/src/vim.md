@@ -287,6 +287,8 @@ If you want to navigate between the editor and docks (terminal, project panel, A
 }
 ```
 
+TBD: VIM Subword motion example is broken. Fix or remove. https://github.com/zed-industries/zed/issues/14663
+
 Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json

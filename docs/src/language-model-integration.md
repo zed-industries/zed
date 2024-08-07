@@ -4,23 +4,18 @@
 
 The assistant panel provides you with a way to interact with OpenAI's large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
 
-> **Note**: A default binding can be set to toggle the right dock via the settings.
+TBD: Shortcut `ctrl-alt-b` (Linux) `cmd-r` (Mac)
 
-### Setup
+> **Note**: A custom [key binding](./key-bindings.md) can be set to toggle the right dock.
 
-1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
-2. Make sure that your OpenAI account has credits
-3. Open the assistant panel, using either the `assistant: toggle focus` or the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
-4. Make sure the assistant panel is focused:
+## Setup
 
-   ![The focused assistant panel](https://zed.dev/img/assistant/assistant-focused.png)
-
-5. Open the command palette (`cmd-shift-p`) and use the now-available `assistant: reset key` action to set your OpenAI API key:
-   ![Enter your OpenAI API key into the field on the right and hit return](https://zed.dev/img/assistant/assistant-reset-key.png)
-
-The OpenAI API key will be saved in your keychain.
-
-Zed will also use the `OPENAI_API_KEY` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
+- [OpenAI API Setup Instructions](#openai)
+- [OpenAI API Custom Endpoint](#openai-custom-endpoint)
+- [Ollama Setup Instructions](#ollama)
+- [Anthropic API Setup Instrucitons](#anthropic)
+- [Google Gemini API Setup Instructions](#google-gemini)
+- [GitHub Copilot Chat](#github-copliot)
 
 ### Having a conversation
 
@@ -77,7 +72,49 @@ After you submit your first message, a name for your conversation is generated b
 
 ![Viewing assistant history](https://zed.dev/img/assistant/assistant-history.png)
 
-### Using a custom API endpoint for OpenAI
+## Inline generation
+
+You can generate and transform text in any editor by selecting text and pressing `ctrl-enter`.
+You can also perform multiple generation requests in parallel by pressing `ctrl-enter` with multiple cursors, or by pressing `ctrl-enter` with a selection that spans multiple excerpts in a multibuffer.
+To create a custom keybinding that prefills a prompt, you can add the following format in your keymap:
+
+```json
+[
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-shift-enter": [
+        "assistant::InlineAssist",
+        { "prompt": "Build a snake game" }
+      ]
+    }
+  }
+]
+```
+
+## Setup Instructions
+
+### OpenAI
+
+TBD: OpenAI Setup flow: Review/Correct/Simplify
+
+1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
+2. Make sure that your OpenAI account has credits
+3. Open the assistant panel, using either the `assistant: toggle focus` or the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
+4. Make sure the assistant panel is focused:
+
+   ![The focused assistant panel](https://zed.dev/img/assistant/assistant-focused.png)
+
+TBD: Remove outdated `assistant: reset key` references.
+
+5. Open the command palette (`cmd-shift-p`) and use the now-available `assistant: reset key` action to set your OpenAI API key:
+   ![Enter your OpenAI API key into the field on the right and hit return](https://zed.dev/img/assistant/assistant-reset-key.png)
+
+The OpenAI API key will be saved in your keychain.
+
+Zed will also use the `OPENAI_API_KEY` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
+
+#### OpenAI Custom Endpoint
 
 You can use a custom API endpoint for OpenAI, as long as it's compatible with the OpenAI API structure.
 
@@ -95,7 +132,9 @@ To do so, add the following to your Zed `settings.json`:
 
 The custom URL here is `http://localhost:11434/v1`.
 
-### Using Ollama on macOS
+### Ollama
+
+Download and install ollama from [ollama.com/download](https://ollama.com/download) (Linux or MacOS) and ensure it's running with `ollama --version`.
 
 You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
 
@@ -124,30 +163,18 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
 }
 ```
 
-### Using Claude 3.5 Sonnet
+### Anthropic
 
-You can use Claude with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+You can use Claude 3.5 Sonnet with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
 You need can obtain an API key [here](https://console.anthropic.com/settings/keys).
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
 
-## Inline generation
+### Google Gemini
 
-You can generate and transform text in any editor by selecting text and pressing `ctrl-enter`.
-You can also perform multiple generation requests in parallel by pressing `ctrl-enter` with multiple cursors, or by pressing `ctrl-enter` with a selection that spans multiple excerpts in a multibuffer.
-To create a custom keybinding that prefills a prompt, you can add the following format in your keymap:
+TBD: Add Google Gemini setup instructions
 
-```json
-[
-  {
-    "context": "Editor && mode == full",
-    "bindings": {
-      "ctrl-shift-enter": [
-        "assistant::InlineAssist",
-        { "prompt": "Build a snake game" }
-      ]
-    }
-  }
-]
-```
+### GitHub Copilot
+
+TBD: Add Github Copilot Chat setup instructions

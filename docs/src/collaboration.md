@@ -1,5 +1,9 @@
 # Collaboration
 
+TBD: Much of this is duplicated content with [channels.md](./channels.md). Consider consolidating the two pages.
+TBD: Mention voice chat, screensharing
+TBD: Mention logging in with GitHub account / user identity tied to GitHub accounts
+
 Only collaborate with people that you trust. Since sharing a project gives them access to your local file system, you should not share projects with people you do not trust; they could potentially do some nasty things.
 
 In the future, we will do more to prevent this type of access beyond the shared project and add more control over what collaborators can do, but for now, only collaborate with people you trust.
