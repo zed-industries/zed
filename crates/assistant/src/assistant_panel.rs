@@ -3255,14 +3255,14 @@ impl ConfigurationView {
         let configuration_view = self.configuration_views.get(&provider.id()).cloned();
 
         v_flex()
-            .gap_4()
+            .gap_2()
             .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
             .child(
                 div()
                     .p(Spacing::Large.rems(cx))
                     .bg(cx.theme().colors().title_bar_background)
                     .border_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(cx.theme().colors().border)
                     .rounded_md()
                     .when(configuration_view.is_none(), |this| {
                         this.child(div().child(Label::new(format!(
@@ -3277,22 +3277,19 @@ impl ConfigurationView {
             .when(provider.is_authenticated(cx), move |this| {
                 this.child(
                     h_flex().justify_end().child(
-                        Button::new(
-                            "new-context",
-                            format!("Open new context using {}", provider_name),
-                        )
-                        .icon_position(IconPosition::Start)
-                        .icon(IconName::Plus)
-                        .style(ButtonStyle::Filled)
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener({
-                            let provider = provider.clone();
-                            move |_, _, cx| {
-                                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                                    provider.clone(),
-                                ))
-                            }
-                        })),
+                        Button::new("new-context", format!("Open new context"))
+                            .icon_position(IconPosition::Start)
+                            .icon(IconName::Plus)
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
+                            .on_click(cx.listener({
+                                let provider = provider.clone();
+                                move |_, _, cx| {
+                                    cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                                        provider.clone(),
+                                    ))
+                                }
+                            })),
                     ),
                 )
             })
@@ -3310,11 +3307,14 @@ impl Render for ConfigurationView {
         v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
+            .bg(cx.theme().colors().editor_background)
             .size_full()
-            .p(Spacing::XXLarge.rems(cx))
-            .gap_6()
+            .overflow_y_scroll()
             .child(
                 v_flex()
+                    .p(Spacing::XXLarge.rems(cx))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
                     .gap_1()
                     .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium))
                     .child(
@@ -3324,7 +3324,14 @@ impl Render for ConfigurationView {
                         .color(Color::Muted),
                     ),
             )
-            .child(v_flex().mt_2().gap_4().size_full().children(provider_views))
+            .child(
+                v_flex()
+                    .p(Spacing::XXLarge.rems(cx))
+                    .mt_1()
+                    .gap_6()
+                    .size_full()
+                    .children(provider_views),
+            )
     }
 }
 
