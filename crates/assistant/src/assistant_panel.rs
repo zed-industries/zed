@@ -2209,6 +2209,15 @@ impl ContextEditor {
                                     }
                                 });
 
+                            let trigger = Button::new("show-error", "Error")
+                                .style(ButtonStyle::Tinted(TintColor::Negative))
+                                .icon(IconName::ExclamationTriangle)
+                                .color(Color::Error)
+                                .icon_color(Color::Error)
+                                .tooltip(move |cx| {
+                                    Tooltip::text("Error interacting with language model", cx)
+                                });
+
                             h_flex()
                                 .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
@@ -2220,13 +2229,14 @@ impl ContextEditor {
                                 .children(
                                     if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
-                                            div()
-                                                .id("error")
-                                                .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(
-                                                    Icon::new(IconName::ExclamationTriangle)
-                                                        .color(Color::Error),
-                                                ),
+                                            PopoverMenu::new("show-error-popover")
+                                                .menu(move |cx| {
+                                                    Some(cx.new_view(|cx| ErrorPopover {
+                                                        error: error.clone(),
+                                                        focus_handle: cx.focus_handle(),
+                                                    }))
+                                                })
+                                                .trigger(trigger),
                                         )
                                     } else {
                                         None
@@ -2411,11 +2421,6 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn dismiss_error_message(&mut self, cx: &mut ViewContext<Self>) {
-        self.error_message = None;
-        cx.notify();
-    }
-
     fn render_banner(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let show_zed_ai = self
             .assistant_panel
@@ -2423,8 +2428,6 @@ impl ContextEditor {
             .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice)
             .unwrap_or(false);
 
-        // if let Some(error) = self.error_message.clone() {
-        //     Some(Self::render_error_popover(error, cx).into_any_element())
         if show_zed_ai {
             Some(
                 h_flex()
@@ -2498,28 +2501,6 @@ impl ContextEditor {
         } else {
             None
         }
-    }
-
-    fn render_error_popover(error: SharedString, cx: &mut ViewContext<Self>) -> Div {
-        v_flex()
-            .p_2()
-            .elevation_2(cx)
-            .bg(cx.theme().colors().surface_background)
-            .min_w_24()
-            .occlude()
-            .child(
-                Label::new("Error interacting with language model")
-                    .size(LabelSize::Small)
-                    .weight(FontWeight::BOLD)
-                    .color(Color::Muted),
-            )
-            .child(Label::new(error).size(LabelSize::Small))
-            .child(
-                h_flex().justify_end().child(
-                    Button::new("dismiss", "Dismiss")
-                        .on_click(cx.listener(|this, _, cx| this.dismiss_error_message(cx))),
-                ),
-            )
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2625,30 +2606,54 @@ impl Render for ContextEditor {
                     .child(self.editor.clone()),
             )
             .child(
-                h_flex()
-                    .flex_none()
-                    .relative()
-                    // .when_some(self.render_banner(cx), |this, notice| {
-                    //     this.child(
-                    //         div()
-                    //             .absolute()
-                    //             .w_3_4()
-                    //             .min_w_24()
-                    //             .max_w_128()
-                    //             .right_4()
-                    //             .bottom_9()
-                    //             .child(notice),
-                    //     )
-                    // })
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .absolute()
-                            .right_4()
-                            .bottom_2()
-                            .justify_end()
-                            .child(self.render_send_button(cx)),
-                    ),
+                h_flex().flex_none().relative().child(
+                    h_flex()
+                        .w_full()
+                        .absolute()
+                        .right_4()
+                        .bottom_2()
+                        .justify_end()
+                        .child(self.render_send_button(cx)),
+                ),
+            )
+    }
+}
+
+struct ErrorPopover {
+    error: SharedString,
+    focus_handle: FocusHandle,
+}
+
+impl EventEmitter<DismissEvent> for ErrorPopover {}
+
+impl FocusableView for ErrorPopover {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for ErrorPopover {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .mt_2()
+            .max_w_96()
+            .py_2()
+            .px_3()
+            .gap_0p5()
+            .elevation_2(cx)
+            .bg(cx.theme().colors().surface_background)
+            .occlude()
+            .child(
+                Label::new("Error interacting with language model")
+                    .size(LabelSize::Large)
+                    .weight(FontWeight::MEDIUM),
+            )
+            .child(Label::new(self.error.clone().repeat(8)))
+            .child(
+                h_flex().justify_end().mt_1().child(
+                    Button::new("dismiss", "Dismiss")
+                        .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+                ),
             )
     }
 }
