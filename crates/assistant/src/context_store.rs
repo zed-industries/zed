@@ -377,9 +377,9 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
-                    prompt_builder,
                     cx,
                 )
             })?;
@@ -435,9 +435,9 @@ impl ContextStore {
                     saved_context,
                     path.clone(),
                     languages,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
-                    prompt_builder,
                     cx,
                 )
             })?;
@@ -514,9 +514,9 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
-                    prompt_builder,
                     cx,
                 )
             })?;

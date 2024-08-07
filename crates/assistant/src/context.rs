@@ -629,21 +629,22 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
             project,
             telemetry,
-            prompt_builder,
             cx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        prompt_builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|_cx| {
@@ -754,9 +755,9 @@ impl Context {
         saved_context: SavedContext,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        prompt_builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(|| ContextId::new());
@@ -765,9 +766,9 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
             project,
             telemetry,
-            prompt_builder,
             cx,
         );
         this.path = Some(path);
@@ -3136,9 +3137,9 @@ mod tests {
                 serialized_context,
                 Default::default(),
                 registry.clone(),
-                None,
-                None,
                 prompt_builder.clone(),
+                None,
+                None,
                 cx,
             )
         });
@@ -3194,9 +3195,9 @@ mod tests {
                     i as ReplicaId,
                     language::Capability::ReadWrite,
                     registry.clone(),
-                    None,
-                    None,
                     prompt_builder.clone(),
+                    None,
+                    None,
                     cx,
                 )
             });
