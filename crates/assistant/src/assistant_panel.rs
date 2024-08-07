@@ -362,8 +362,32 @@ impl AssistantPanel {
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                h_flex()
+                let focus_handle = pane.focus_handle(cx);
+                let left_children = IconButton::new("history", IconName::TextSearch)
+                    .on_click(
+                        cx.listener(|_, _, cx| cx.dispatch_action(DeployHistory.boxed_clone())),
+                    )
+                    .tooltip(move |cx| {
+                        cx.new_view(|cx| {
+                            let keybind =
+                                KeyBinding::for_action_in(&DeployHistory, &focus_handle, cx);
+                            Tooltip::new("History").key_binding(keybind)
+                        })
+                        .into()
+                    })
+                    .selected(
+                        pane.active_item()
+                            .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
+                    );
+                let right_children = h_flex()
                     .gap(Spacing::Small.rems(cx))
+                    .child(
+                        IconButton::new("new-context", IconName::Plus)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(NewFile.boxed_clone())),
+                            )
+                            .tooltip(|cx| Tooltip::for_action("New Context", &NewFile, cx)),
+                    )
                     .child(
                         IconButton::new("menu", IconName::Menu)
                             .icon_size(IconSize::Small)
@@ -392,7 +416,9 @@ impl AssistantPanel {
                         el.child(Pane::render_menu_overlay(new_item_menu))
                     })
                     .into_any_element()
-                    .into()
+                    .into();
+
+                (Some(left_children.into_any_element()), right_children)
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), cx);
