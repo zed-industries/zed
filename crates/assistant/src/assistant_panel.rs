@@ -1372,7 +1372,16 @@ impl WorkflowStepStatus {
     ) -> AnyElement {
         let id = EntityId::from(cx.block_id);
         match self {
-            WorkflowStepStatus::ResolvingSuggestions => "Resolving Suggestions...".into_any(),
+            WorkflowStepStatus::ResolvingSuggestions => div()
+                .id(("resolving-suggestion-container", id))
+                .child(Icon::new(IconName::ArrowCircle).with_animation(
+                    ("resolving-suggestion-label", id),
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ))
+                .tooltip(|cx| Tooltip::text("Resolving steps...", cx))
+                .into_any_element(),
+
             WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
                 .icon(IconName::Sparkle)
                 .icon_position(IconPosition::Start)
