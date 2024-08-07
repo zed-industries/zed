@@ -7,6 +7,7 @@ pub(crate) mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
+use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
@@ -119,7 +120,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
     }
 }
 
-pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn initialize_workspace(
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let workspace_handle = cx.view().clone();
         let center_pane = workspace.active_pane().clone();
@@ -238,9 +243,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
         }
 
+        let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
             let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
+                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -3090,7 +3096,7 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            handle_settings_file_changes(settings_rx, cx);
+            handle_settings_file_changes(settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
@@ -3230,7 +3236,7 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
 
-            handle_settings_file_changes(settings_rx, cx);
+            handle_settings_file_changes(settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
 
@@ -3474,14 +3480,15 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+            let prompt_builder =
+                assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(
                 app_state.fs.clone(),
                 app_state.client.telemetry().clone(),
                 cx,
             );
             tasks_ui::init(cx);
-            initialize_workspace(app_state.clone(), cx);
+            initialize_workspace(app_state.clone(), prompt_builder, cx);
             app_state
         })
     }

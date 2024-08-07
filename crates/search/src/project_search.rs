@@ -1414,7 +1414,8 @@ impl Render for ProjectSearchBar {
                                 .as_ref()
                                 .map(|search| search.read(cx).filters_enabled)
                                 .unwrap_or_default(),
-                        ),
+                        )
+                        .tooltip(|cx| Tooltip::for_action("Toggle filters", &ToggleFilters, cx)),
                 )
                 .child(
                     IconButton::new("project-search-toggle-replace", IconName::Replace)

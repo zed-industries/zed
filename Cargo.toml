@@ -209,6 +209,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
+handlebars = "4.3"
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -340,6 +341,7 @@ git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
+hyper = "0.14"
 html5ever = "0.27.0"
 ignore = "0.4.22"
 image = "0.25.1"

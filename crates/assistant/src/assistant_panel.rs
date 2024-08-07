@@ -2,6 +2,7 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
     prompt_library::open_prompt_library,
+    prompts::PromptBuilder,
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
@@ -315,14 +316,17 @@ impl PickerDelegate for SavedContextPickerDelegate {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
-                    ContextStore::new(workspace.project().clone(), cx)
+                    let project = workspace.project().clone();
+                    ContextStore::new(project, prompt_builder.clone(), cx)
                 })?
                 .await?;
+
             workspace.update(&mut cx, |workspace, cx| {
                 // TODO: deserialize state.
                 cx.new_view(|cx| Self::new(workspace, context_store, cx))
@@ -358,8 +362,32 @@ impl AssistantPanel {
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                h_flex()
+                let focus_handle = pane.focus_handle(cx);
+                let left_children = IconButton::new("history", IconName::TextSearch)
+                    .on_click(
+                        cx.listener(|_, _, cx| cx.dispatch_action(DeployHistory.boxed_clone())),
+                    )
+                    .tooltip(move |cx| {
+                        cx.new_view(|cx| {
+                            let keybind =
+                                KeyBinding::for_action_in(&DeployHistory, &focus_handle, cx);
+                            Tooltip::new("History").key_binding(keybind)
+                        })
+                        .into()
+                    })
+                    .selected(
+                        pane.active_item()
+                            .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
+                    );
+                let right_children = h_flex()
                     .gap(Spacing::Small.rems(cx))
+                    .child(
+                        IconButton::new("new-context", IconName::Plus)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(NewFile.boxed_clone())),
+                            )
+                            .tooltip(|cx| Tooltip::for_action("New Context", &NewFile, cx)),
+                    )
                     .child(
                         IconButton::new("menu", IconName::Menu)
                             .icon_size(IconSize::Small)
@@ -388,7 +416,9 @@ impl AssistantPanel {
                         el.child(Pane::render_menu_overlay(new_item_menu))
                     })
                     .into_any_element()
-                    .into()
+                    .into();
+
+                (Some(left_children.into_any_element()), right_children)
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), cx);
@@ -813,6 +843,11 @@ impl AssistantPanel {
             .and_then(|item| item.act_as::<Editor>(cx))
         {
             Some(InlineAssistTarget::Editor(workspace_editor, true))
+        } else if let Some(terminal_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<TerminalView>(cx))
+        {
+            Some(InlineAssistTarget::Terminal(terminal_view))
         } else {
             None
         }
@@ -2412,10 +2447,10 @@ impl ContextEditor {
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let nudge = self
-            .assistant_panel
-            .upgrade()
-            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
+        use feature_flags::FeatureFlagAppExt;
+        let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
+            assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
+        });
 
         if let Some(error) = self.error_message.clone() {
             Some(Self::render_error_popover(error, cx).into_any_element())

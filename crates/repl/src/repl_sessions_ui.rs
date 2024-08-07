@@ -1,17 +1,18 @@
+use collections::HashMap;
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, View,
+    FontWeight, Subscription, View,
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
-use crate::components::KernelListItem;
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
+use crate::KernelSpecification;
 
 actions!(
     repl,
@@ -216,12 +217,78 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, cx| {
                                 cx.open_url(
-                                    "https://docs.jupyter.org/en/latest/install/kernels.html",
+                                    "https://zed.dev/docs/repl#language-specific-instructions",
                                 )
                             }),
                     ),
                 );
         }
+
+        let mut kernels_by_language: HashMap<String, Vec<KernelSpecification>> = HashMap::default();
+        for spec in kernel_specifications {
+            kernels_by_language
+                .entry(spec.kernelspec.language.clone())
+                .or_insert_with(Vec::new)
+                .push(spec);
+        }
+
+        let kernels_available = v_flex()
+            .child(Label::new("Kernels available").size(LabelSize::Large))
+            .gap_2()
+            .child(
+                h_flex()
+                    .child(Label::new(
+                        "Defaults indicated with a checkmark. Learn how to change your default kernel in the ",
+                    ))
+                    .child(
+                        ButtonLike::new("configure-kernels")
+                            .style(ButtonStyle::Filled)
+                            // .size(ButtonSize::Compact)
+                            .layer(ElevationIndex::Surface)
+                            .child(Label::new("REPL documentation"))
+                            .child(Icon::new(IconName::Link))
+                            .on_click(move |_, cx| {
+                                cx.open_url("https://zed.dev/docs/repl#changing-kernels")
+                            }),
+                    ),
+            )
+            .children(kernels_by_language.into_iter().map(|(language, specs)| {
+                let chosen_kernel = store.read(cx).kernelspec(&language, cx);
+
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(language.clone()).weight(FontWeight::BOLD))
+                    .children(specs.into_iter().map(|spec| {
+                        let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
+                            chosen_kernel.name.to_lowercase() == spec.name.to_lowercase()
+                                && chosen_kernel.path == spec.path
+                        } else {
+                            false
+                        };
+
+                        let path = SharedString::from(spec.path.to_string_lossy().to_string());
+
+                        ListItem::new(path.clone())
+                            .selectable(false)
+                            .tooltip({
+                                let path = path.clone();
+                                move |cx| Tooltip::text(path.clone(), cx)})
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(div().id(path.clone()).child(Label::new(spec.name.clone())))
+                                    .when(is_choice, |el| {
+
+                                        let language = language.clone();
+
+                                        el.child(
+
+                                        div().id("check").tooltip(move |cx| Tooltip::text(format!("Default Kernel for {language}"), cx))
+                                            .child(Icon::new(IconName::Check)))}),
+                            )
+
+                    }))
+            }));
 
         // When there are no sessions, show the command to run code in an editor
         if sessions.is_empty() {
@@ -233,18 +300,12 @@ impl Render for ReplSessionsPage {
                         .child(Label::new(instructions))
                         .children(KeyBinding::for_action(&Run, cx)),
                 )
-                .child(Label::new("Kernels available").size(LabelSize::Large))
-                .children(kernel_specifications.into_iter().map(|spec| {
-                    KernelListItem::new(spec.clone()).child(
-                        h_flex()
-                            .gap_2()
-                            .child(Label::new(spec.name))
-                            .child(Label::new(spec.kernelspec.language).color(Color::Muted)),
-                    )
-                }));
+                .child(div().pt_3().child(kernels_available));
         }
 
-        ReplSessionsContainer::new("Jupyter Kernel Sessions").children(sessions)
+        ReplSessionsContainer::new("Jupyter Kernel Sessions")
+            .children(sessions)
+            .child(kernels_available)
     }
 }
 

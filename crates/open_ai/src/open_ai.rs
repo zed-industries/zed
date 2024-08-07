@@ -1,3 +1,5 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -6,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, future::Future, time::Duration};
 use strum::EnumIter;
+
+pub use supported_countries::*;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
