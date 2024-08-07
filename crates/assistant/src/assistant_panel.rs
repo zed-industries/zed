@@ -2416,28 +2416,37 @@ impl ContextEditor {
         cx.notify();
     }
 
-    fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let nudge = self
+    fn render_banner(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let show_zed_ai = self
             .assistant_panel
             .upgrade()
-            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice);
+            .map(|assistant_panel| assistant_panel.read(cx).show_zed_ai_notice)
+            .unwrap_or(false);
 
-        if let Some(error) = self.error_message.clone() {
-            Some(Self::render_error_popover(error, cx).into_any_element())
-        } else if nudge.unwrap_or(false) {
+        // if let Some(error) = self.error_message.clone() {
+        //     Some(Self::render_error_popover(error, cx).into_any_element())
+        if show_zed_ai {
             Some(
-                v_flex()
-                    .elevation_3(cx)
-                    .p_2()
-                    .gap_2()
+                h_flex()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .justify_between()
                     .child(
-                        Label::new("Use Zed AI")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        h_flex()
+                            .gap_3()
+                            .child(Icon::new(IconName::ZedAssistant).color(Color::Accent))
+                            .child(
+                                Label::new("Zed AI is here! Get started by signing in →")
+                                    .size(LabelSize::Small),
+                            ),
                     )
-                    .child(h_flex().justify_end().child(
-                        Button::new("sign-in", "Sign in to use Zed AI").on_click(cx.listener(
-                            |this, _event, cx| {
+                    .child(
+                        Button::new("sign-in", "Sign in")
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _event, cx| {
                                 let client = this
                                     .workspace
                                     .update(cx, |workspace, _| workspace.client().clone())
@@ -2450,34 +2459,39 @@ impl ContextEditor {
                                     })
                                     .detach_and_log_err(cx)
                                 }
-                            },
-                        )),
-                    ))
+                            })),
+                    )
                     .into_any_element(),
             )
         } else if let Some(configuration_error) = configuration_error(cx) {
             let label = match configuration_error {
-                ConfigurationError::NoProvider => "No provider configured",
-                ConfigurationError::ProviderNotAuthenticated => "Provider is not configured",
+                ConfigurationError::NoProvider => "No LLM provider selected",
+                ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured",
             };
             Some(
-                v_flex()
-                    .elevation_3(cx)
-                    .p_2()
-                    .gap_2()
-                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                h_flex()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .justify_between()
                     .child(
-                        h_flex().justify_end().child(
-                            Button::new("open-configuration", "Open configuration")
-                                .icon(IconName::Settings)
-                                .icon_size(IconSize::Small)
-                                .on_click({
-                                    let focus_handle = self.focus_handle(cx).clone();
-                                    move |_event, cx| {
-                                        focus_handle.dispatch_action(&ShowConfiguration, cx);
-                                    }
-                                }),
-                        ),
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
+                            .child(Label::new(label)),
+                    )
+                    .child(
+                        Button::new("open-configuration", "Open configuration")
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click({
+                                let focus_handle = self.focus_handle(cx).clone();
+                                move |_event, cx| {
+                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                }
+                            }),
                     )
                     .into_any_element(),
             )
@@ -2592,7 +2606,7 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel_last_assist))
             .capture_action(cx.listener(ContextEditor::save))
@@ -2603,7 +2617,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::debug_edit_steps))
             .size_full()
-            .v_flex()
+            .children(self.render_banner(cx))
             .child(
                 div()
                     .flex_grow()
@@ -2614,18 +2628,18 @@ impl Render for ContextEditor {
                 h_flex()
                     .flex_none()
                     .relative()
-                    .when_some(self.render_notice(cx), |this, notice| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .w_3_4()
-                                .min_w_24()
-                                .max_w_128()
-                                .right_4()
-                                .bottom_9()
-                                .child(notice),
-                        )
-                    })
+                    // .when_some(self.render_banner(cx), |this, notice| {
+                    //     this.child(
+                    //         div()
+                    //             .absolute()
+                    //             .w_3_4()
+                    //             .min_w_24()
+                    //             .max_w_128()
+                    //             .right_4()
+                    //             .bottom_9()
+                    //             .child(notice),
+                    //     )
+                    // })
                     .child(
                         h_flex()
                             .w_full()
