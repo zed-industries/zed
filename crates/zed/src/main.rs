@@ -42,7 +42,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
+use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -174,7 +174,12 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx,
     );
     supermaven::init(app_state.client.clone(), cx);
-    language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+    language_model::init(
+        app_state.user_store.clone(),
+        app_state.client.clone(),
+        app_state.fs.clone(),
+        cx,
+    );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
@@ -381,7 +386,10 @@ fn main() {
         })
     };
 
-    app.on_open_urls(with_clone!(open_listener, move |urls| open_listener.open_urls(urls)));
+    app.on_open_urls({
+        let open_listener = open_listener.clone();
+        move |urls| open_listener.open_urls(urls)
+    });
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {

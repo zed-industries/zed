@@ -2,13 +2,11 @@
   // Standard Linux bindings
   {
     "bindings": {
-      "up": "menu::SelectPrev",
       "shift-tab": "menu::SelectPrev",
       "home": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
-      "down": "menu::SelectNext",
       "tab": "menu::SelectNext",
       "end": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
@@ -31,6 +29,20 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen"
+    }
+  },
+  {
+    "context": "Picker || menu",
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext"
+    }
+  },
+  {
+    "context": "Prompt",
+    "bindings": {
+      "left": "menu::SelectPrev",
+      "right": "menu::SelectNext"
     }
   },
   {
@@ -479,7 +491,8 @@
   {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
-      "ctrl-shift-enter": "repl::Run"
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
     }
   },
   {

@@ -5084,34 +5084,28 @@ async fn test_lsp_hover(
 
     client_a.language_registry().add(rust_lang());
     let language_server_names = ["rust-analyzer", "CrabLang-ls"];
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_specific_fake_lsp_adapter(
-            "Rust",
-            true,
-            FakeLspAdapter {
-                name: "rust-analyzer",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
-                ..FakeLspAdapter::default()
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
             },
-        );
-    let _other_server = client_a
-        .language_registry()
-        .register_specific_fake_lsp_adapter(
-            "Rust",
-            false,
-            FakeLspAdapter {
-                name: "CrabLang-ls",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
-                ..FakeLspAdapter::default()
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _other_server = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "CrabLang-ls",
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
             },
-        );
+            ..FakeLspAdapter::default()
+        },
+    );
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a

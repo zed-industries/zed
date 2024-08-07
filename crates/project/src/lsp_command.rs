@@ -117,6 +117,10 @@ pub struct GetDefinition {
     pub position: PointUtf16,
 }
 
+pub(crate) struct GetDeclaration {
+    pub position: PointUtf16,
+}
+
 pub(crate) struct GetTypeDefinition {
     pub position: PointUtf16,
 }
@@ -517,6 +521,106 @@ impl LspCommand for GetDefinition {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDefinition) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDeclaration {
+    type Response = Vec<LocationLink>;
+    type LspRequest = lsp::request::GotoDeclaration;
+    type ProtoRequest = proto::GetDeclaration;
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .declaration_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::GotoDeclarationParams {
+        lsp::GotoDeclarationParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::GotoDeclarationResponse>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<LocationLink>> {
+        location_links_from_lsp(message, project, buffer, server_id, cx).await
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDeclaration {
+        proto::GetDeclaration {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetDeclaration,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self {
+            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+        })
+    }
+
+    fn response_to_proto(
+        response: Vec<LocationLink>,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut AppContext,
+    ) -> proto::GetDeclarationResponse {
+        let links = location_links_to_proto(response, project, peer_id, cx);
+        proto::GetDeclarationResponse { links }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetDeclarationResponse,
+        project: Model<Project>,
+        _: Model<Buffer>,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<LocationLink>> {
+        location_links_from_proto(message.links, project, cx).await
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDeclaration) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

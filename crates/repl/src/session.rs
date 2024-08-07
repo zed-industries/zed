@@ -2,7 +2,7 @@ use crate::components::KernelListItem;
 use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
-    outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
+    outputs::{ExecutionStatus, ExecutionView},
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
@@ -82,7 +82,8 @@ impl EditorBlock {
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
                 position: code_range.end,
-                height: (execution_view.num_lines(cx) + 1) as u32,
+                // Take up at least one height for status, allow the editor to determine the real height based on the content from render
+                height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
@@ -219,8 +220,6 @@ impl Session {
                 match kernel {
                     Ok((mut kernel, mut messages_rx)) => {
                         this.update(&mut cx, |session, cx| {
-                            // At this point we can create a new kind of kernel that has the process and our long running background tasks
-
                             let stderr = kernel.process.stderr.take();
 
                             cx.spawn(|_session, mut _cx| async move {
@@ -235,7 +234,7 @@ impl Session {
                             })
                             .detach();
 
-                            let stdout = kernel.process.stderr.take();
+                            let stdout = kernel.process.stdout.take();
 
                             cx.spawn(|_session, mut _cx| async move {
                                 if let None = stdout {
@@ -313,7 +312,7 @@ impl Session {
                                 }
                             });
 
-                            // todo!(kyle): send kernelinforequest once our shell channel read/writes are split
+                            // todo!(@rgbkrk): send kernelinforequest once our shell channel read/writes are split
                             // cx.spawn(|this, mut cx| async move {
                             //     cx.background_executor()
                             //         .timer(Duration::from_millis(120))
@@ -416,6 +415,7 @@ impl Session {
         code: String,
         anchor_range: Range<Anchor>,
         next_cell: Option<Anchor>,
+        move_down: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(editor) = self.editor.upgrade() else {
@@ -518,12 +518,13 @@ impl Session {
             _ => {}
         }
 
-        // Now move the cursor to after the block
-        editor.update(cx, move |editor, cx| {
-            editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
-                selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+        if move_down {
+            editor.update(cx, move |editor, cx| {
+                editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
+                    selections.select_ranges([new_cursor_pos..new_cursor_pos]);
+                });
             });
-        });
+        }
     }
 
     fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
@@ -547,6 +548,20 @@ impl Session {
             JupyterMessageContent::KernelInfoReply(reply) => {
                 self.kernel.set_kernel_info(&reply);
                 cx.notify();
+            }
+            JupyterMessageContent::UpdateDisplayData(update) => {
+                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
+                    display_id
+                } else {
+                    return;
+                };
+
+                self.blocks.iter_mut().for_each(|(_, block)| {
+                    block.execution_view.update(cx, |execution_view, cx| {
+                        execution_view.update_display_data(&update.data, &display_id, cx);
+                    });
+                });
+                return;
             }
             _ => {}
         }

@@ -81,7 +81,7 @@ If you'd like to install language-server extensions, you can add them to the lis
 
 ## Feedback
 
-Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/qSDQ8VWc7k).
+Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
 
 # Direct SSH Connections
 

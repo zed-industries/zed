@@ -58,7 +58,7 @@ impl SlashCommand for TermSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {

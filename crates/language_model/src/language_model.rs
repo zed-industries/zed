@@ -7,11 +7,12 @@ mod role;
 pub mod settings;
 
 use anyhow::Result;
-use client::Client;
+use client::{Client, UserStore};
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext};
 pub use model::*;
 use project::Fs;
+use proto::Plan;
 pub(crate) use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
@@ -19,10 +20,25 @@ pub use role::*;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use std::{future::Future, sync::Arc};
+use ui::IconName;
 
-pub fn init(client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(
+    user_store: Model<UserStore>,
+    client: Arc<Client>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) {
     settings::init(fs, cx);
-    registry::init(client, cx);
+    registry::init(user_store, client, cx);
+}
+
+/// The availability of a [`LanguageModel`].
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelAvailability {
+    /// The language model is available to the general public.
+    Public,
+    /// The language model is available to users on the indicated plan.
+    RequiresPlan(Plan),
 }
 
 pub trait LanguageModel: Send + Sync {
@@ -31,6 +47,11 @@ pub trait LanguageModel: Send + Sync {
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
+
+    /// Returns the availability of this language model.
+    fn availability(&self) -> LanguageModelAvailability {
+        LanguageModelAvailability::Public
+    }
 
     fn max_token_count(&self) -> usize;
 
@@ -54,6 +75,11 @@ pub trait LanguageModel: Send + Sync {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<serde_json::Value>>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
+        unimplemented!()
+    }
 }
 
 impl dyn LanguageModel {
@@ -80,11 +106,14 @@ pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
+    fn icon(&self) -> IconName {
+        IconName::ZedAssistant
+    }
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 

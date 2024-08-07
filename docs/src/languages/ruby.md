@@ -29,7 +29,7 @@ The Ruby extension also provides support for `rubocop` language server for offen
 {
   "languages": {
     "Ruby": {
-      "language_servers": ["rubocop", "ruby-lsp", "!solargraph", "..."]
+      "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
     }
   }
 }
@@ -60,6 +60,20 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
       "initialization_options": {
         "diagnostics": true,
         "formatting": true
+      }
+    }
+  }
+}
+```
+
+To use Solargraph in the context of the bundle, you can use [folder-specific settings](../configuring-zed#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Solargraph:
+
+```json
+{
+  "lsp": {
+    "solargraph": {
+      "binary": {
+        "path": "<path_to_your_project>/bin/solargraph"
       }
     }
   }
@@ -114,6 +128,20 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
     "rubocop": {
       "initialization_options": {
         "safeAutocorrect": false
+      }
+    }
+  }
+}
+```
+
+To use Rubocop in the context of the bundle, you can use [folder-specific settings](../configuring-zed#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Rubocop:
+
+```json
+{
+  "lsp": {
+    "rubocop": {
+      "binary": {
+        "path": "<path_to_your_project>/bin/rubocop"
       }
     }
   }

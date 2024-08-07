@@ -35,6 +35,7 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -425,7 +426,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(
                 |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
                     let server_url = &client::ClientSettings::get_global(cx).server_url;
-                    cx.open_url(&format!("{server_url}/settings"));
+                    cx.open_url(&format!("{server_url}/account"));
                 },
             )
             .register_action(
@@ -621,7 +622,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
         for window in workspace_windows {
             if let Some(should_close) = window
                 .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
+                    workspace.prepare_to_close(CloseIntent::Quit, cx)
                 })
                 .log_err()
             {
@@ -3467,7 +3468,12 @@ mod tests {
                 app_state.client.http_client().clone(),
                 cx,
             );
-            language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+            language_model::init(
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.fs.clone(),
+                cx,
+            );
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             repl::init(
                 app_state.fs.clone(),

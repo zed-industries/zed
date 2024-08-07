@@ -82,30 +82,6 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.6.0",
- "home",
- "libc",
- "log",
- "miow",
- "parking_lot",
- "piper",
- "polling 3.3.2",
- "regex-automata 0.4.5",
- "rustix-openpty",
- "serde",
- "signal-hook",
- "unicode-width",
- "vte",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "alacritty_terminal"
 version = "0.24.1-dev"
 source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
 dependencies = [
@@ -423,6 +399,7 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "markdown",
  "menu",
  "multi_buffer",
  "ollama",
@@ -443,9 +420,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "similar",
  "smol",
- "strsim 0.11.1",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -1637,9 +1612,9 @@ dependencies = [
 
 [[package]]
 name = "bitstream-io"
-version = "2.4.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415f8399438eb5e4b2f73ed3152a3448b98149dda642a957ee704e1daa5cf1d8"
+checksum = "7c12d1856e42f0d817a835fe55853957c85c8c8a470114029143d3f12671446e"
 
 [[package]]
 name = "bitvec"
@@ -1656,7 +1631,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "ash",
  "ash-window",
@@ -1686,7 +1661,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1696,7 +1671,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2489,7 +2464,9 @@ dependencies = [
  "headless",
  "hex",
  "http_client",
+ "hyper",
  "indoc",
+ "jsonwebtoken",
  "language",
  "language_model",
  "live_kit_client",
@@ -2531,6 +2508,7 @@ dependencies = [
  "telemetry_events",
  "text",
  "theme",
+ "thiserror",
  "time",
  "tokio",
  "toml 0.8.16",
@@ -5435,12 +5413,12 @@ dependencies = [
 
 [[package]]
 name = "image"
-version = "0.25.1"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd54d660e773627692c524beaad361aca785a4f9f5730ce91f42aabe5bce3d11"
+checksum = "99314c8a2152b8ddb211f924cdae532d8c5e4c8bb54728e12fff1b0cd5963a10"
 dependencies = [
  "bytemuck",
- "byteorder",
+ "byteorder-lite",
  "color_quant",
  "exr",
  "gif",
@@ -5683,16 +5661,16 @@ dependencies = [
 
 [[package]]
 name = "ipc-channel"
-version = "0.18.0"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ab3a34c91b7e84a72643bd75d1bac3afd241f78f9859fe0b5e5b2a6a75732c2"
+checksum = "e46231d1db8ea8f874012b1b87efb9e968f763c577220372a9c7caadce1448da"
 dependencies = [
  "bincode",
  "crossbeam-channel",
  "fnv",
  "lazy_static",
  "libc",
- "mio",
+ "mio 1.0.1",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -5975,6 +5953,7 @@ dependencies = [
  "similar",
  "smallvec",
  "smol",
+ "strsim 0.11.1",
  "sum_tree",
  "task",
  "text",
@@ -6017,6 +5996,7 @@ dependencies = [
  "menu",
  "ollama",
  "open_ai",
+ "parking_lot",
  "project",
  "proto",
  "rand 0.8.5",
@@ -6212,9 +6192,9 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.37"
+version = "0.1.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81eb4061c0582dedea1cbc7aff2240300dd6982e0239d1c99e65c1dbf4a30ba7"
+checksum = "23aa6811d3bd4deb8a84dde645f943476d13b248d818edcf8ce0b2f37f036b44"
 dependencies = [
  "cc",
  "libc",
@@ -6254,18 +6234,18 @@ dependencies = [
 
 [[package]]
 name = "linkme"
-version = "0.3.17"
+version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91ed2ee9464ff9707af8e9ad834cffa4802f072caad90639c583dd3c62e6e608"
+checksum = "ccb76662d78edc9f9bf56360d6919bdacc8b7761227727e5082f128eeb90bbf5"
 dependencies = [
  "linkme-impl",
 ]
 
 [[package]]
 name = "linkme-impl"
-version = "0.3.17"
+version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba125974b109d512fccbc6c0244e7580143e460895dfd6ea7f8bbb692fd94396"
+checksum = "f8dccda732e04fa3baf2e17cf835bfe2601c7c2edafd64417c627dabae3a8cda"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6617,9 +6597,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "0.1.41"
+version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f41a2280ded0da56c8cf898babb86e8f10651a34adcfff190ae9a1159c6908d"
+checksum = "68914350ae34959d83f732418d51e2427a794055d0b9529f48259ac07af65633"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -6662,6 +6642,19 @@ dependencies = [
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mio"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4569e456d394deccd22ce1c1913e6ea0e54519f577285001215d33557431afe4"
+dependencies = [
+ "hermit-abi",
+ "libc",
+ "log",
+ "wasi 0.11.0+wasi-snapshot-preview1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6903,7 +6896,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio",
+ "mio 0.8.11",
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -8742,7 +8735,7 @@ dependencies = [
 name = "repl"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal 0.23.0",
+ "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
  "base64 0.22.1",
@@ -8759,6 +8752,7 @@ dependencies = [
  "language",
  "languages",
  "log",
+ "markdown_preview",
  "multi_buffer",
  "project",
  "runtimelib",
@@ -8767,6 +8761,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "terminal",
  "terminal_view",
  "theme",
  "tree-sitter-md",
@@ -10861,7 +10856,7 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal 0.24.1-dev",
+ "alacritty_terminal",
  "anyhow",
  "collections",
  "dirs 4.0.0",
@@ -11221,7 +11216,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
- "mio",
+ "mio 0.8.11",
  "num_cpus",
  "parking_lot",
  "pin-project-lite",
@@ -13862,7 +13857,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13974,7 +13969,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.0.8"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

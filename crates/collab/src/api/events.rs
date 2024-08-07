@@ -1,4 +1,5 @@
 use super::ips_file::IpsFile;
+use crate::api::CloudflareIpCountryHeader;
 use crate::{api::slack, AppState, Error, Result};
 use anyhow::{anyhow, Context};
 use aws_sdk_s3::primitives::ByteStream;
@@ -52,33 +53,6 @@ impl Header for ZedChecksumHeader {
 
         let bytes = hex::decode(checksum).map_err(|_| axum::headers::Error::invalid())?;
         Ok(Self(bytes))
-    }
-
-    fn encode<E: Extend<axum::http::HeaderValue>>(&self, _values: &mut E) {
-        unimplemented!()
-    }
-}
-
-pub struct CloudflareIpCountryHeader(String);
-
-impl Header for CloudflareIpCountryHeader {
-    fn name() -> &'static HeaderName {
-        static CLOUDFLARE_IP_COUNTRY_HEADER: OnceLock<HeaderName> = OnceLock::new();
-        CLOUDFLARE_IP_COUNTRY_HEADER.get_or_init(|| HeaderName::from_static("cf-ipcountry"))
-    }
-
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i axum::http::HeaderValue>,
-    {
-        let country_code = values
-            .next()
-            .ok_or_else(axum::headers::Error::invalid)?
-            .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?;
-
-        Ok(Self(country_code.to_string()))
     }
 
     fn encode<E: Extend<axum::http::HeaderValue>>(&self, _values: &mut E) {
@@ -232,14 +206,14 @@ pub async fn post_hang(
     body: Bytes,
 ) -> Result<()> {
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::INTERNAL_SERVER_ERROR,
             "events not enabled".into(),
         ))?;
     };
 
     if checksum != expected {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::BAD_REQUEST,
             "invalid checksum".into(),
         ))?;
@@ -291,25 +265,25 @@ pub async fn post_panic(
     body: Bytes,
 ) -> Result<()> {
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::INTERNAL_SERVER_ERROR,
             "events not enabled".into(),
         ))?;
     };
 
     if checksum != expected {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::BAD_REQUEST,
             "invalid checksum".into(),
         ))?;
     }
 
     let report: telemetry_events::PanicRequest = serde_json::from_slice(&body)
-        .map_err(|_| Error::Http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
+        .map_err(|_| Error::http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
     let panic = report.panic;
 
     if panic.os_name == "Linux" && panic.os_version == Some("1.0.0".to_string()) {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::BAD_REQUEST,
             "invalid os version".into(),
         ))?;
@@ -388,14 +362,14 @@ pub async fn post_events(
     body: Bytes,
 ) -> Result<()> {
     let Some(clickhouse_client) = app.clickhouse_client.clone() else {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
     };
 
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
-        return Err(Error::Http(
+        return Err(Error::http(
             StatusCode::INTERNAL_SERVER_ERROR,
             "events not enabled".into(),
         ))?;
@@ -411,9 +385,9 @@ pub async fn post_events(
 
     let mut to_upload = ToUpload::default();
     let Some(last_event) = request_body.events.last() else {
-        return Err(Error::Http(StatusCode::BAD_REQUEST, "no events".into()))?;
+        return Err(Error::http(StatusCode::BAD_REQUEST, "no events".into()))?;
     };
-    let country_code = country_code_header.map(|h| h.0 .0);
+    let country_code = country_code_header.map(|h| h.to_string());
 
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);

@@ -552,7 +552,7 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(ModelSelector::new(
                         self.fs.clone(),
-                        IconButton::new("context", IconName::Settings)
+                        IconButton::new("context", IconName::SlidersAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)

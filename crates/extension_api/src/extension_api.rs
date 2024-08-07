@@ -125,7 +125,7 @@ pub trait Extension: Send + Sync {
         &self,
         _command: SlashCommand,
         _argument: Option<String>,
-        _worktree: &Worktree,
+        _worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
     }
@@ -256,7 +256,7 @@ impl wit::Guest for Component {
     fn run_slash_command(
         command: SlashCommand,
         argument: Option<String>,
-        worktree: &Worktree,
+        worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
     }

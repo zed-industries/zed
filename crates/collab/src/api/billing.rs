@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
     Extension, Json, Router,
 };
-use chrono::{DateTime, SecondsFormat};
+use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,7 @@ async fn create_billing_subscription(
         .zip(app.config.stripe_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -153,7 +153,7 @@ async fn create_billing_subscription(
             quantity: Some(1),
             ..Default::default()
         }]);
-        let success_url = format!("{}/settings", app.config.zed_dot_dev_url());
+        let success_url = format!("{}/account", app.config.zed_dot_dev_url());
         params.success_url = Some(&success_url);
 
         CheckoutSession::create(&stripe_client, params).await?
@@ -201,7 +201,7 @@ async fn manage_billing_subscription(
 
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -261,7 +261,7 @@ async fn manage_billing_subscription(
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                 type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
                 redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: format!("{}/settings", app.config.zed_dot_dev_url()),
+                    return_url: format!("{}/account", app.config.zed_dot_dev_url()),
                 }),
                 ..Default::default()
             }),
@@ -278,7 +278,7 @@ async fn manage_billing_subscription(
 
     let mut params = CreateBillingPortalSession::new(customer_id);
     params.flow_data = Some(flow);
-    let return_url = format!("{}/settings", app.config.zed_dot_dev_url());
+    let return_url = format!("{}/account", app.config.zed_dot_dev_url());
     params.return_url = Some(&return_url);
 
     let session = BillingPortalSession::create(&stripe_client, params).await?;
@@ -426,6 +426,24 @@ async fn poll_stripe_events(
             stripe_event_type: event_type_to_string(event.type_),
             stripe_event_created_timestamp: event.created,
         };
+
+        // If the event has happened too far in the past, we don't want to
+        // process it and risk overwriting other more-recent updates.
+        //
+        // 1 hour was chosen arbitrarily. This could be made longer or shorter.
+        let one_hour = Duration::from_secs(60 * 60);
+        let an_hour_ago = Utc::now() - one_hour;
+        if an_hour_ago.timestamp() > event.created {
+            log::info!(
+                "Stripe event {} is more than {one_hour:?} old, marking as processed",
+                event_id
+            );
+            app.db
+                .create_processed_stripe_event(&processed_event_params)
+                .await?;
+
+            return Ok(());
+        }
 
         let process_result = match event.type_ {
             EventType::CustomerCreated | EventType::CustomerUpdated => {

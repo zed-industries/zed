@@ -714,6 +714,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDeclaration>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
@@ -3000,9 +3001,18 @@ impl Project {
                 .join(", ")
         );
 
-        for adapter in enabled_lsp_adapters {
-            self.start_language_server(worktree, adapter, language.clone(), cx);
+        for adapter in &enabled_lsp_adapters {
+            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
+
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages()
+            .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
     fn start_language_server(
@@ -5453,6 +5463,30 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.definition_impl(buffer, position, cx)
+    }
+
+    fn declaration_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetDeclaration { position },
+            cx,
+        )
+    }
+
+    pub fn declaration<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.declaration_impl(buffer, position, cx)
     }
 
     fn type_definition_impl(
@@ -10248,8 +10282,10 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_for_buffer(buffer, cx)
-            .find(|s| s.0.is_primary)
+        // The list of language servers is ordered based on the `language_servers` setting
+        // for each language, thus we can consider the first one in the list to be the
+        // primary one.
+        self.language_servers_for_buffer(buffer, cx).next()
     }
 
     pub fn language_server_for_buffer(
@@ -10918,10 +10954,30 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn len(&self) -> usize {
-        if self.include_ignored {
-            self.snapshot.file_count()
-        } else {
-            self.snapshot.visible_file_count()
+        match self.candidates {
+            Candidates::Files => {
+                if self.include_ignored {
+                    self.snapshot.file_count()
+                } else {
+                    self.snapshot.visible_file_count()
+                }
+            }
+
+            Candidates::Directories => {
+                if self.include_ignored {
+                    self.snapshot.dir_count()
+                } else {
+                    self.snapshot.visible_dir_count()
+                }
+            }
+
+            Candidates::Entries => {
+                if self.include_ignored {
+                    self.snapshot.entry_count()
+                } else {
+                    self.snapshot.visible_entry_count()
+                }
+            }
         }
     }
 

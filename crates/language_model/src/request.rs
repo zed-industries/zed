@@ -1,13 +1,13 @@
 use crate::role::Role;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
@@ -37,6 +37,7 @@ impl LanguageModelRequest {
             stream: true,
             stop: self.stop,
             temperature: self.temperature,
+            max_tokens: None,
             tools: Vec::new(),
             tool_choice: None,
         }
