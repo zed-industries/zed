@@ -18,8 +18,8 @@ use settings::{Settings, SettingsStore};
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, IconName,
-    IconPosition, IconSize, Indicator, IntoElement, Label, LabelCommon, ParentElement, Styled,
+    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
+    IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
     ViewContext, VisualContext, WindowContext,
 };
 
@@ -305,8 +305,8 @@ impl Render for ConfigurationView {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
-                .gap_2()
-                .child(Indicator::dot().color(Color::Success))
+                .gap_1()
+                .child(Icon::new(IconName::Check).color(Color::Success))
                 .child(Label::new(LABEL))
         } else {
             let loading_icon = svg()
