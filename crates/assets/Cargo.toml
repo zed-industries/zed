@@ -14,5 +14,4 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-handlebars.workspace = true
 rust-embed.workspace = true
