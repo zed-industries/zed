@@ -1,6 +1,6 @@
 # Scala
 
-Scala language support in Zed is provided by the user-maintained [scala zed extension](https://github.com/scalameta/metals-zed).
+Scala language support in Zed is provided by the community-maintained [scala zed extension](https://github.com/scalameta/metals-zed).
 Report issues to: [https://github.com/scalameta/metals-zed/issues](https://github.com/scalameta/metals-zed/issues)
 
 - Tree Sitter: [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala)
