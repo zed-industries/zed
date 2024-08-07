@@ -2248,9 +2248,13 @@ impl ContextEditor {
                                 .icon_size(IconSize::Small)
                                 .icon_position(IconPosition::Start)
                                 .tooltip(move |cx| {
-                                    Tooltip::text("Error interacting with language model", cx)
+                                    Tooltip::with_meta(
+                                        "Error interacting with language model",
+                                        None,
+                                        "Click for more details",
+                                        cx,
+                                    )
                                 });
-
                             h_flex()
                                 .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
