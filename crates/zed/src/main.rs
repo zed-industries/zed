@@ -430,33 +430,7 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, |error, cx| {
-            let error_message = SharedString::from(error.to_string());
-            for workspace in workspace::local_workspace_windows(cx) {
-                struct SettingsParseErrorNotification;
-
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_notification(
-                            NotificationId::unique::<SettingsParseErrorNotification>(),
-                            cx,
-                            |cx| {
-                                cx.new_view(|_| {
-                                    MessageNotification::new(format!(
-                                        "Invalid settings file\n{error_message}"
-                                    ))
-                                    .with_click_message("Open settings file")
-                                    .on_click(|cx| {
-                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                        cx.emit(DismissEvent);
-                                    })
-                                })
-                            },
-                        );
-                    })
-                    .log_err();
-            }
-        });
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         client::init_settings(cx);
@@ -568,6 +542,43 @@ fn main() {
         })
         .detach();
     });
+}
+
+fn handle_settings_changed(result: Result<()>, cx: &mut AppContext) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    match result {
+        Ok(()) => {
+            for workspace in workspace::local_workspace_windows(cx) {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.dismiss_notification(&id, cx);
+                    })
+                    .log_err();
+            }
+        }
+        Err(error) => {
+            let error_message = SharedString::from(error.to_string());
+            for workspace in workspace::local_workspace_windows(cx) {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_notification(id.clone(), cx, |cx| {
+                            cx.new_view(|_| {
+                                MessageNotification::new(format!(
+                                    "Invalid settings file\n{error_message}"
+                                ))
+                                .with_click_message("Open settings file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                            })
+                        });
+                    })
+                    .log_err();
+            }
+        }
+    }
 }
 
 fn handle_open_request(
