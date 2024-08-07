@@ -9,7 +9,7 @@ The `OmniSharp` binary can be configured in a Zed settings file with:
 ```jsonc
 {
   "lsp": {
-    "OmniSharp": {
+    "omnisharp": {
       "binary": {
         "path": "/path/to/OmniSharp",
         "args": ["optional", "additional", "args", "-lsp"],
