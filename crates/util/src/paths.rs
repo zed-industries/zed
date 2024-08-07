@@ -134,7 +134,7 @@ impl PathWithPosition {
             },
             Some(filename) => {
                 let split_name: Vec<&str> = filename.split(":").collect();
-                if split_name.len() < 1 {
+                if split_name.len() <= 1 {
                     return Self {
                         path: path.to_path_buf(),
                         row: None,
@@ -338,6 +338,7 @@ mod tests {
     #[test]
     fn path_with_position_parsing_positive() {
         let input_and_expected = [
+            ("1", "1", None, None),
             (".env", ".env", None, None),
             (".env:1", ".env", Some(1), None),
             (".env:1:2", ".env", Some(1), Some(2)),
@@ -345,6 +346,8 @@ mod tests {
             ("test_file.rs", "test_file.rs", None, None),
             ("test_file.rs:1", "test_file.rs", Some(1), None),
             ("test_file.rs:1:2", "test_file.rs", Some(1), Some(2)),
+            ("1.1", "1.1", None, None),
+            ("1.1:1", "1.1", Some(1), None),
         ];
 
         for (input, expected_path, row, column) in input_and_expected {
