@@ -1,24 +1,108 @@
-use std::sync::Arc;
-
+use crate::{
+    llm::db::{queries::usages::Usage, LlmDatabase},
+    test_llm_db,
+};
+use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 use rpc::LanguageModelProvider;
 
-use crate::llm::db::LlmDatabase;
-use crate::test_both_llm_dbs;
+test_llm_db!(test_tracking_usage, test_tracking_usage_postgres);
 
-test_both_llm_dbs!(
-    test_find_or_create_usage,
-    test_find_or_create_usage_postgres,
-    test_find_or_create_usage_sqlite
-);
+async fn test_tracking_usage(db: &mut LlmDatabase) {
+    db.initialize().await.unwrap();
 
-async fn test_find_or_create_usage(db: &Arc<LlmDatabase>) {
-    db.initialize_providers().await.unwrap();
+    let t0 = Utc::now();
+    let user_id = 123;
+    let provider = LanguageModelProvider::Anthropic;
+    let model = "claude-3-5-sonnet";
 
-    let usage = db
-        .find_or_create_usage(123, LanguageModelProvider::Anthropic, "claude-3-5-sonnet")
+    let now = t0;
+    db.record_usage(user_id, provider, model, 1000, now)
         .await
         .unwrap();
 
-    assert_eq!(usage.user_id, 123);
+    let now = t0 + Duration::seconds(10);
+    db.record_usage(user_id, provider, model, 2000, now)
+        .await
+        .unwrap();
+
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 2,
+            tokens_this_minute: 3000,
+            tokens_this_day: 3000,
+            tokens_this_month: 3000,
+        }
+    );
+
+    let now = t0 + Duration::seconds(60);
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 1,
+            tokens_this_minute: 2000,
+            tokens_this_day: 3000,
+            tokens_this_month: 3000,
+        }
+    );
+
+    let now = t0 + Duration::seconds(60);
+    db.record_usage(user_id, provider, model, 3000, now)
+        .await
+        .unwrap();
+
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 2,
+            tokens_this_minute: 5000,
+            tokens_this_day: 6000,
+            tokens_this_month: 6000,
+        }
+    );
+
+    let t1 = t0 + Duration::hours(24);
+    let now = t1;
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 0,
+            tokens_this_minute: 0,
+            tokens_this_day: 5000,
+            tokens_this_month: 6000,
+        }
+    );
+
+    db.record_usage(user_id, provider, model, 4000, now)
+        .await
+        .unwrap();
+
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 1,
+            tokens_this_minute: 4000,
+            tokens_this_day: 9000,
+            tokens_this_month: 10000,
+        }
+    );
+
+    let t2 = t0 + Duration::days(30);
+    let now = t2 + Duration::hours(1);
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 0,
+            tokens_this_minute: 0,
+            tokens_this_day: 0,
+            tokens_this_month: 9000,
+        }
+    );
 }

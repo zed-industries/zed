@@ -1,66 +1,110 @@
-use sea_orm::sea_query::OnConflict;
+use std::str::FromStr;
+
 use sea_orm::QueryOrder;
+use strum::IntoEnumIterator as _;
 
 use super::*;
 
+const KNOWN_MODELS: &[(LanguageModelProvider, &str)] = &[
+    (LanguageModelProvider::Anthropic, "claude-3-5-sonnet"),
+    (LanguageModelProvider::Anthropic, "claude-3-opus"),
+    (LanguageModelProvider::Anthropic, "claude-3-sonnet"),
+    (LanguageModelProvider::Anthropic, "claude-3-haiku"),
+    (LanguageModelProvider::OpenAi, "gpt-3.5-turbo"),
+    (LanguageModelProvider::OpenAi, "gpt-4"),
+    (LanguageModelProvider::OpenAi, "gpt-4-turbo-preview"),
+    (LanguageModelProvider::OpenAi, "gpt-4o"),
+    (LanguageModelProvider::OpenAi, "gpt-4o-mini"),
+];
+
 impl LlmDatabase {
-    pub async fn initialize_providers(&self) -> Result<()> {
-        self.transaction(|tx| async move {
-            let providers_and_models = vec![
-                ("anthropic", "claude-3-5-sonnet"),
-                ("anthropic", "claude-3-opus"),
-                ("anthropic", "claude-3-sonnet"),
-                ("anthropic", "claude-3-haiku"),
-            ];
+    pub async fn initialize_providers(&mut self) -> Result<()> {
+        let (all_providers, all_models) = self
+            .transaction(|tx| async move {
+                let existing_providers = provider::Entity::find().all(&*tx).await?;
 
-            for (provider_name, model_name) in providers_and_models {
-                let insert_provider = provider::Entity::insert(provider::ActiveModel {
-                    name: ActiveValue::set(provider_name.to_owned()),
-                    ..Default::default()
-                })
-                .on_conflict(
-                    OnConflict::columns([provider::Column::Name])
-                        .update_column(provider::Column::Name)
-                        .to_owned(),
-                );
+                let new_providers = LanguageModelProvider::iter()
+                    .filter(|provider| {
+                        !existing_providers
+                            .iter()
+                            .any(|p| p.name == provider.to_string())
+                    })
+                    .map(|provider| provider::ActiveModel {
+                        name: ActiveValue::set(provider.to_string()),
+                        ..Default::default()
+                    });
 
-                let provider = if tx.support_returning() {
-                    insert_provider.exec_with_returning(&*tx).await?
-                } else {
-                    insert_provider.exec_without_returning(&*tx).await?;
-                    provider::Entity::find()
-                        .filter(provider::Column::Name.eq(provider_name))
-                        .one(&*tx)
-                        .await?
-                        .ok_or_else(|| anyhow!("failed to insert provider"))?
-                };
+                provider::Entity::insert_many(new_providers)
+                    .exec(&*tx)
+                    .await?;
 
-                model::Entity::insert(model::ActiveModel {
-                    provider_id: ActiveValue::set(provider.id),
-                    name: ActiveValue::set(model_name.to_owned()),
-                    ..Default::default()
-                })
-                .on_conflict(
-                    OnConflict::columns([model::Column::ProviderId, model::Column::Name])
-                        .update_column(model::Column::Name)
-                        .to_owned(),
-                )
-                .exec_without_returning(&*tx)
-                .await?;
-            }
+                let all_providers: HashMap<_, _> = provider::Entity::find()
+                    .all(&*tx)
+                    .await?
+                    .iter()
+                    .filter_map(|provider| {
+                        LanguageModelProvider::from_str(&provider.name)
+                            .ok()
+                            .map(|p| (p, provider.id))
+                    })
+                    .collect();
 
-            Ok(())
-        })
-        .await
+                let existing_models = model::Entity::find().all(&*tx).await?;
+
+                let new_models = KNOWN_MODELS.iter().filter_map(|(provider, model_name)| {
+                    let provider_id = all_providers.get(provider)?;
+                    if !existing_models
+                        .iter()
+                        .any(|m| m.name == *model_name && m.provider_id == *provider_id)
+                    {
+                        Some(model::ActiveModel {
+                            provider_id: ActiveValue::set(*provider_id),
+                            name: ActiveValue::set(model_name.to_string()),
+                            ..Default::default()
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                model::Entity::insert_many(new_models).exec(&*tx).await?;
+
+                let all_models: HashMap<_, _> = model::Entity::find()
+                    .all(&*tx)
+                    .await?
+                    .into_iter()
+                    .filter_map(|model| {
+                        let provider = all_providers.iter().find_map(|(provider, id)| {
+                            if *id == model.provider_id {
+                                Some(provider)
+                            } else {
+                                None
+                            }
+                        })?;
+                        Some(((*provider, model.name), model.id))
+                    })
+                    .collect();
+
+                Ok((all_providers, all_models))
+            })
+            .await?;
+
+        self.provider_ids = all_providers;
+        self.model_ids = all_models;
+
+        Ok(())
     }
 
     /// Returns the list of LLM providers.
-    pub async fn list_providers(&self) -> Result<Vec<provider::Model>> {
+    pub async fn list_providers(&self) -> Result<Vec<LanguageModelProvider>> {
         self.transaction(|tx| async move {
             Ok(provider::Entity::find()
                 .order_by_asc(provider::Column::Name)
                 .all(&*tx)
-                .await?)
+                .await?
+                .into_iter()
+                .filter_map(|p| LanguageModelProvider::from_str(&p.name).ok())
+                .collect())
         })
         .await
     }

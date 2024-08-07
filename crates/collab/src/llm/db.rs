@@ -5,11 +5,14 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
+use collections::HashMap;
 pub use ids::*;
+use rpc::LanguageModelProvider;
 pub use tables::*;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;
+use usage_measure::UsageMeasure;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -31,6 +34,9 @@ pub struct LlmDatabase {
     pool: DatabaseConnection,
     #[allow(unused)]
     executor: Executor,
+    provider_ids: HashMap<LanguageModelProvider, ProviderId>,
+    model_ids: HashMap<(LanguageModelProvider, String), ModelId>,
+    usage_measure_ids: HashMap<UsageMeasure, UsageMeasureId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -43,9 +49,18 @@ impl LlmDatabase {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             executor,
+            provider_ids: HashMap::default(),
+            model_ids: HashMap::default(),
+            usage_measure_ids: HashMap::default(),
             #[cfg(test)]
             runtime: None,
         })
+    }
+
+    pub async fn initialize(&mut self) -> Result<()> {
+        self.initialize_providers().await?;
+        self.initialize_usage_measures().await?;
+        Ok(())
     }
 
     pub fn options(&self) -> &ConnectOptions {

@@ -44,7 +44,8 @@ impl LlmState {
 
             let mut db_options = db::ConnectOptions::new(database_url);
             db_options.max_connections(max_connections);
-            let db = LlmDatabase::new(db_options, executor.clone()).await?;
+            let mut db = LlmDatabase::new(db_options, executor.clone()).await?;
+            db.initialize().await?;
 
             Some(Arc::new(db))
         } else {
