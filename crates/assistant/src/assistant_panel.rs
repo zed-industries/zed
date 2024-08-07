@@ -66,13 +66,13 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::OffsetRangeExt;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use ui::{IconButtonShape, TintColor};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -1391,10 +1391,10 @@ impl WorkflowStepStatus {
                 .into_any_element(),
             WorkflowStepStatus::Pending => h_flex()
                 .gap_1()
-                .child(div().child(Label::new("Applying")).cursor_not_allowed())
+                .child(div().child(Label::new("Applying...")).cursor_not_allowed())
                 .child(
                     IconButton::new(("stop-workflow-step", id), IconName::Stop)
-                        .icon_color(Color::Error)
+                        .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip(|cx| Tooltip::text("Stop step execution", cx))
                         .on_click({
                             let editor = editor.clone();
@@ -1407,26 +1407,13 @@ impl WorkflowStepStatus {
                         }),
                 )
                 .into_any_element(),
+
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
-                    IconButton::new(("confirm-workflow-step", id), IconName::Check)
-                        .icon_color(Color::Info)
-                        .tooltip(|cx| Tooltip::text("Confirm Step", cx))
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.confirm_edit_step(&step_range, false, cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .child(
                     IconButton::new(("reject-workflow-step", id), IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip(|cx| Tooltip::text("Reject Step", cx))
                         .on_click({
                             let editor = editor.clone();
@@ -1435,6 +1422,23 @@ impl WorkflowStepStatus {
                                 editor
                                     .update(cx, |this, cx| {
                                         this.confirm_edit_step(&step_range, true, cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
+                )
+                .child(
+                    IconButton::new(("confirm-workflow-step", id), IconName::Check)
+                        .shape(IconButtonShape::Square)
+                        .style(ButtonStyle::Tinted(TintColor::Positive))
+                        .tooltip(|cx| Tooltip::text("Confirm Step", cx))
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.confirm_edit_step(&step_range, false, cx);
                                     })
                                     .ok();
                             }
